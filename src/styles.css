@@ -1,0 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color: #1C1B19; background: #F5F3ED; font-family: Vazirmatn, Tahoma, sans-serif; font-synthesis: none; }
+* { box-sizing: border-box; }
+html { background: #F5F3ED; }
+body { margin: 0; min-width: 320px; min-height: 100vh; overscroll-behavior: none; }
+button, input, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+.numbers { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; direction: ltr; unicode-bidi: isolate; }
+.safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 96px); }
+.tap { min-height: 48px; min-width: 48px; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.record-pulse::before, .record-pulse::after { content: ''; position: absolute; inset: -9px; border: 2px solid #A8332A; border-radius: 999px; animation: pulse-ring 1.6s ease-out infinite; }
+.record-pulse::after { animation-delay: .8s; }
+@keyframes pulse-ring { 0% { transform: scale(.86); opacity: .65; } 100% { transform: scale(1.24); opacity: 0; } }
+.sheet-in { animation: sheet-in .24s ease-out; }
+@keyframes sheet-in { from { transform: translateY(32px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
