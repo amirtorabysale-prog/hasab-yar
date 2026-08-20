@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractAmounts, inferLearningKeyword, normalizePersian, parseFinancialText, wordsToNumber } from '../server/parser.js';
+import { extractAmounts, inferLearningKeyword, normalizePersian, parseFinancialText, parseRecognitionCandidates, wordsToNumber } from '../server/parser.js';
 
 test('normalizes Persian and Arabic digits', () => assert.equal(normalizePersian('۱۲٬۵۰۰ و ٣٠٠'), '12,500 و 300'));
 test('parses compound Persian number words', () => assert.equal(wordsToNumber(['دو', 'میلیون', 'و', 'پانصد', 'هزار']), 2_500_000));
@@ -15,4 +15,20 @@ test('uses learned categorization', () => {
   const result = parseFinancialText('ششصد هزار اسنپ‌فود دادم', { learnings: [{ keyword: 'اسنپ‌فود', category: 'خوراک' }] });
   assert.equal(result.transactions[0].category, 'خوراک');
 });
-test('extracts a stable keyword from a corrected phrase', () => assert.equal(inferLearningKeyword('ششصد هزار تومان اسنپ‌فود دادم'), 'اسنپ‌فود'));
+test('extracts a stable keyword from a corrected phrase', () => assert.equal(inferLearningKeyword('ششصد هزار تومان اسنپ‌فود دادم'), 'اسنپ فود'));
+test('parses colloquial omitted thousand scale', () => assert.equal(parseFinancialText('دو میلیون و پونصد حقوق دادم').transactions[0].amount, 2_500_000));
+test('parses half after a large scale', () => assert.equal(parseFinancialText('یه میلیون و نیم اجاره دادم').transactions[0].amount, 1_500_000));
+test('parses decimal and thousands separators without multiplying digits', () => {
+  assert.equal(parseFinancialText('۲.۵ میلیون فروش داشتم').transactions[0].amount, 2_500_000);
+  assert.equal(parseFinancialText('۲,۵۰۰,۰۰۰ تومان فروش داشتم').transactions[0].amount, 2_500_000);
+  assert.equal(parseFinancialText('2.500.000 تومان فروش داشتم').transactions[0].amount, 2_500_000);
+});
+test('compares recognition alternatives and forces review when amounts disagree', () => {
+  const result = parseRecognitionCandidates([
+    { transcript: 'دوازده میلیون فروش داشتم', confidence: 0.91 },
+    { transcript: 'دویست میلیون فروش داشتم', confidence: 0.52 },
+  ]);
+  assert.equal(result.transactions[0].amount, 12_000_000);
+  assert.deepEqual(result.transactions[0].alternatives, [200_000_000]);
+  assert.equal(result.transactions[0].needsReview, true);
+});
