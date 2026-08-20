@@ -70,7 +70,13 @@ app.use('/api', (request, response, next) => {
   request.user = user;
   return next();
 });
-app.get('/api/bootstrap', (_request, response) => response.json({ ...getToday(), categories: getCategories(), settings: getSettings() }));
+app.get('/api/bootstrap', (_request, response) => response.json({
+  ...getToday(),
+  categories: getCategories(),
+  settings: getSettings(),
+  learnings: getLearnings(),
+  averages: typicalAmounts(),
+}));
 app.post('/api/parse/text', (request, response) => {
   const text = String(request.body?.text || '').trim();
   if (!text || text.length > 1500) return response.status(400).json({ message: 'متن ثبت مالی معتبر نیست.' });
