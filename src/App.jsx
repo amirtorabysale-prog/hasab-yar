@@ -269,7 +269,8 @@ export default function App() {
         stopRecordingNow();
         notify('برای سرعت و دقت، ضبط بعد از ۱۲ ثانیه متوقف شد.');
       }, 12_000);
-      if (!holdingRef.current) window.setTimeout(stopRecordingNow, 350);
+      // اگر کاربر هنگام نمایش پنجرهٔ مجوز دستش را برداشته باشد، ضبط بلافاصله بسته می‌شود.
+      if (!holdingRef.current) stopRecordingNow();
     } catch (error) {
       cleanupMedia();
       setRecordState('idle');
@@ -280,9 +281,7 @@ export default function App() {
   const stopRecording = () => {
     holdingRef.current = false;
     if (recordState !== 'recording' || recorderRef.current?.state !== 'recording') return;
-    const remaining = Math.max(0, 350 - (Date.now() - startedAtRef.current));
-    if (remaining) window.setTimeout(stopRecordingNow, remaining);
-    else stopRecordingNow();
+    stopRecordingNow();
   };
 
   const parseManual = (event) => {
@@ -418,16 +417,39 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, livePrev
   const processing = state === 'processing';
   const requesting = state === 'requesting';
   const finalizing = state === 'finalizing';
+  const press = (event) => {
+    if (processing || finalizing || requesting) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    start();
+  };
+  const release = (event) => {
+    event?.preventDefault?.();
+    if (event?.currentTarget?.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    stop();
+  };
+  const keyDown = (event) => {
+    if (![' ', 'Enter'].includes(event.key) || event.repeat || processing || finalizing || requesting) return;
+    event.preventDefault();
+    start();
+  };
+  const keyUp = (event) => {
+    if (![' ', 'Enter'].includes(event.key)) return;
+    event.preventDefault();
+    stop();
+  };
   return (
     <section className="flex flex-col items-center py-2">
       {(recording || finalizing) && liveTranscript && <div aria-live="polite" className="mb-3 w-full rounded-[10px] border border-line bg-surface px-3 py-3 text-right"><p className="truncate text-sm text-muted">شنیدم: «{liveTranscript}»</p>{livePreview.length > 0 && <p className="numbers mt-2 text-lg font-extrabold text-ink">{livePreview.map((item) => formatAmount(item.amount)).join(' + ')} <span className="font-normal text-[12px] text-muted">تومان</span></p>}</div>}
-      <p className="mb-3 text-[13px] text-muted">{recording ? (fastVoiceAvailable ? 'زنده می‌شنوم؛ برای پایان رها کن' : 'حالا بگو؛ برای پایان رها کن') : processing ? 'تشخیص زنده کافی نبود؛ بررسی دقیق‌تر…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'در حال فعال‌کردن میکروفن…' : 'نگه دار و بگو'}</p>
+      <p className="mb-3 text-center text-[13px] text-muted">{recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دستت را برداری تمام می‌شود' : 'در حال ضبط — دستت را برداری تمام می‌شود') : processing ? 'تشخیص زنده کافی نبود؛ بررسی دقیق‌تر…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'دکمه را نگه دار؛ میکروفن در حال فعال‌شدن است…' : 'دکمه را نگه دار و بگو؛ برای پایان دستت را بردار'}</p>
       <button
-        aria-label={processing ? 'لغو پردازش' : recording ? 'پایان ضبط' : 'شروع ضبط'} disabled={requesting || finalizing}
+        type="button" aria-pressed={recording} aria-label={processing ? 'لغو پردازش' : recording ? 'در حال ضبط؛ برای پایان دستت را بردار' : 'برای ضبط نگه دار'} disabled={finalizing}
         onClick={processing ? cancel : undefined}
-        onPointerDown={(event) => { if (processing || finalizing) return; event.currentTarget.setPointerCapture(event.pointerId); start(); }}
-        onPointerUp={stop} onPointerCancel={stop}
-        className={`relative grid place-items-center rounded-full text-white shadow-paper transition-all disabled:opacity-70 ${recording ? 'record-pulse h-20 w-20 bg-expense' : processing ? 'h-[72px] w-[72px] bg-expense' : 'h-[72px] w-[72px] bg-accent'}`}
+        onPointerDown={press} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={stop}
+        onKeyDown={keyDown} onKeyUp={keyUp} onBlur={stop}
+        onContextMenu={(event) => event.preventDefault()} onDragStart={(event) => event.preventDefault()}
+        className={`relative grid touch-none select-none place-items-center rounded-full text-white shadow-paper transition-all disabled:opacity-70 ${recording ? 'record-pulse h-20 w-20 bg-expense' : processing ? 'h-[72px] w-[72px] bg-expense' : 'h-[72px] w-[72px] bg-accent'}`}
       >
         {processing ? <X size={30} /> : requesting || finalizing ? <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/35 border-t-white" /> : <Mic size={31} fill="currentColor" strokeWidth={1.8} />}
       </button>
