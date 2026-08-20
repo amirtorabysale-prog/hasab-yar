@@ -1,0 +1,6 @@
+{
+  "name": "HesabYar AI",
+  "description": "اپراتور هوشمند حسابداری و ثبت اسناد مالی با صوت، تصویر و هوش مصنوعی",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
