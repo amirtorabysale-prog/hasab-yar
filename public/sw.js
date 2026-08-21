@@ -1,4 +1,4 @@
-const CACHE = 'hesab-yar-v2';
+const CACHE = 'hesab-yar-v3';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (event) => {

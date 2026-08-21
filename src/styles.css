@@ -11,6 +11,8 @@ button, input, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 .numbers { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; direction: ltr; unicode-bidi: isolate; }
 .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 96px); }
+.app-shell { display: block; }
+.voice-dock { position: sticky; bottom: 72px; z-index: 15; margin-inline: -16px; padding-inline: 16px; border-top: 1px solid rgba(221,218,209,.7); background: #F5F3ED; }
 .tap { min-height: 48px; min-width: 48px; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .record-pulse::before, .record-pulse::after { content: ''; position: absolute; inset: -9px; border: 2px solid #A8332A; border-radius: 999px; animation: pulse-ring 1.6s ease-out infinite; }
@@ -19,3 +21,15 @@ button { -webkit-tap-highlight-color: transparent; }
 .sheet-in { animation: sheet-in .24s ease-out; }
 @keyframes sheet-in { from { transform: translateY(32px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+@media (min-width: 1024px) {
+  .app-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+  .safe-bottom { padding-bottom: 40px; }
+  .voice-dock { bottom: 0; }
+}
+@media (min-width: 1280px) {
+  .app-shell { grid-template-columns: 220px minmax(0, 1fr) 250px; }
+}
+@media print {
+  nav, aside, .voice-dock, button { display: none !important; }
+  body, html, .app-shell { background: white !important; }
+}
