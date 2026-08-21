@@ -18,7 +18,13 @@ export const api = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
-  parseAudio: (blob, { signal } = {}) => { const form = new FormData(); form.append('audio', blob, 'voice.webm'); return request('/api/parse/audio', { method: 'POST', body: form, signal }); },
+  parseAudio: (blob, { signal, hint } = {}) => {
+    const form = new FormData();
+    const extension = blob.type === 'audio/wav' ? 'wav' : 'webm';
+    form.append('audio', blob, `voice.${extension}`);
+    if (hint) form.append('hint', String(hint).slice(0, 500));
+    return request('/api/parse/audio', { method: 'POST', body: form, signal });
+  },
   saveTransactions: (payload) => request('/api/transactions', { method: 'POST', body: JSON.stringify(payload) }),
   report: (range) => request(`/api/reports?range=${range}`),
   learnings: () => request('/api/learnings'),

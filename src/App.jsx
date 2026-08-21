@@ -4,9 +4,10 @@ import {
   Menu, Mic, Pencil, Plus, RotateCcw, Settings, Trash2, WifiOff, X,
 } from 'lucide-react';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
-import { createPersianRecognizer, liveSpeechSupported } from './lib/liveSpeech.js';
+import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
 import { pendingAudio, removeOfflineAudio, saveOfflineAudio } from './lib/offlineAudio.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
+import { createWavRecorder } from './lib/wavRecorder.js';
 import { parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 
 const EMPTY_SUMMARY = { income: 0, expense: 0, profit: 0, comparison: null };
@@ -37,11 +38,11 @@ export default function App() {
   const [failure, setFailure] = useState(null);
   const [recordState, setRecordState] = useState('idle');
   const [liveTranscript, setLiveTranscript] = useState('');
+  const [liveVoiceNote, setLiveVoiceNote] = useState('');
   const [livePreview, setLivePreview] = useState([]);
   const [levels, setLevels] = useState([12, 20, 32, 18, 28, 15, 24]);
-  const recorderRef = useRef(null);
+  const wavRecorderRef = useRef(null);
   const streamRef = useRef(null);
-  const chunksRef = useRef([]);
   const analyserRef = useRef(null);
   const animationRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -111,6 +112,7 @@ export default function App() {
     window.clearTimeout(finalizeTimerRef.current);
     processingAbortRef.current?.abort('unmount');
     try { recognitionRef.current?.abort(); } catch { /* already stopped */ }
+    wavRecorderRef.current?.dispose();
     audioContextRef.current?.close().catch(() => {});
     streamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
@@ -135,11 +137,12 @@ export default function App() {
     setRecordState('processing');
     const controller = new AbortController();
     processingAbortRef.current = controller;
-    const timeout = window.setTimeout(() => controller.abort('timeout'), 12_000);
+    const timeout = window.setTimeout(() => controller.abort('timeout'), 10_000);
+    const requestedAt = Date.now();
     try {
-      const result = await api.parseAudio(blob, { signal: controller.signal });
+      const result = await api.parseAudio(blob, { signal: controller.signal, hint: speechSnapshotRef.current.transcript });
       if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.' });
-      else setParseResult(result);
+      else setParseResult({ ...result, responseMs: Date.now() - requestedAt });
     } catch (error) {
       if (controller.signal.aborted && controller.signal.reason !== 'timeout') notify('پردازش صدا لغو شد.');
       else if (controller.signal.aborted || error.code === 'VOICE_TIMEOUT') setFailure({ transcript: speechSnapshotRef.current.transcript, message: 'بررسی پشتیبان بیش از حد طول کشید. دوباره کوتاه‌تر بگو یا دستی بنویس.' });
@@ -160,6 +163,8 @@ export default function App() {
   const cleanupMedia = () => {
     cancelAnimationFrame(animationRef.current);
     analyserRef.current = null;
+    wavRecorderRef.current?.dispose();
+    wavRecorderRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     audioContextRef.current?.close().catch(() => {});
@@ -201,8 +206,9 @@ export default function App() {
     fastFinalizeDoneRef.current = false;
     window.clearTimeout(finalizeTimerRef.current);
     if (tryFinishFastResult(false)) return;
-    // نتیجهٔ نهایی Web Speech معمولاً بلافاصله بعد از stop می‌رسد؛ سقف انتظار کمتر از یک ثانیه است.
-    finalizeTimerRef.current = window.setTimeout(() => tryFinishFastResult(true), fastVoiceAvailable ? 900 : 0);
+    // اگر مرورگر حتی متن ناقص هم ندارد، مسیر WAV تقریباً فوری شروع می‌شود؛ فقط فرصت کوتاهی برای نتیجهٔ نهایی می‌دهیم.
+    const hasUsefulLiveSignal = fastVoiceAvailable && speechSnapshotRef.current.transcript && !speechSnapshotRef.current.error;
+    finalizeTimerRef.current = window.setTimeout(() => tryFinishFastResult(true), hasUsefulLiveSignal ? 350 : 120);
   };
 
   const stopRecordingNow = () => {
@@ -210,42 +216,44 @@ export default function App() {
     cancelAnimationFrame(animationRef.current);
     if (!stoppedAtRef.current) stoppedAtRef.current = Date.now();
     try { recognitionRef.current?.stop(); } catch { /* recognition may have ended after silence */ }
-    if (recorderRef.current?.state === 'recording') {
-      setRecordState('finalizing');
-      recorderRef.current.stop();
+    const capture = wavRecorderRef.current?.stop();
+    wavRecorderRef.current = null;
+    if (!capture) return;
+    setRecordState('finalizing');
+    cleanupMedia();
+    if (!capture.durationMs || capture.blob.size <= 44) {
+      setRecordState('idle');
+      setFailure({ transcript: '', message: 'هیچ صدایی ضبط نشد. دکمه را نگه دار، جمله را بگو و بعد دستت را بردار.' });
+      return;
     }
+    finishWithFastResult(capture.blob);
   };
 
   const startRecording = async () => {
     if (recordState !== 'idle') return;
     setRecordState('requesting');
     setLiveTranscript('');
+    setLiveVoiceNote('');
     setLivePreview([]);
     pendingAudioBlobRef.current = null;
     fastFinalizeDoneRef.current = false;
     speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false };
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       streamRef.current = stream;
-      chunksRef.current = [];
-      const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : null;
-      const recorder = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : undefined);
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        cleanupMedia();
-        finishWithFastResult(blob);
-      };
-      const context = new AudioContext();
+      let context;
+      try { context = new AudioContext({ latencyHint: 'interactive', sampleRate: 16_000 }); }
+      catch { context = new AudioContext(); }
       audioContextRef.current = context;
+      await context.resume();
+      const wavRecorder = createWavRecorder(context, stream);
+      wavRecorderRef.current = wavRecorder;
       const analyser = context.createAnalyser();
       analyser.fftSize = 64;
-      context.createMediaStreamSource(stream).connect(analyser);
+      wavRecorder.source.connect(analyser);
       analyserRef.current = analyser;
       startedAtRef.current = Date.now();
       stoppedAtRef.current = 0;
-      recorder.start(250);
       setRecordState('recording');
       animateWave();
       const recognizer = createPersianRecognizer({
@@ -256,14 +264,20 @@ export default function App() {
           setLivePreview(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
           tryFinishFastResult(false);
         },
-        onError: (error) => { speechSnapshotRef.current = { ...speechSnapshotRef.current, error }; },
+        onError: (error) => {
+          speechSnapshotRef.current = { ...speechSnapshotRef.current, error };
+          setLiveVoiceNote(liveSpeechErrorMessage(error));
+        },
         onEnd: () => {
           speechSnapshotRef.current = { ...speechSnapshotRef.current, ended: true };
           tryFinishFastResult(false);
         },
       });
       recognitionRef.current = recognizer;
-      try { recognizer?.start(); } catch { speechSnapshotRef.current.error = 'start-failed'; }
+      try { recognizer?.start(); } catch {
+        speechSnapshotRef.current.error = 'start-failed';
+        setLiveVoiceNote(liveSpeechErrorMessage('start-failed'));
+      }
       maxRecordingTimerRef.current = window.setTimeout(() => {
         holdingRef.current = false;
         stopRecordingNow();
@@ -280,7 +294,7 @@ export default function App() {
 
   const stopRecording = () => {
     holdingRef.current = false;
-    if (recordState !== 'recording' || recorderRef.current?.state !== 'recording') return;
+    if (recordState !== 'recording' || !wavRecorderRef.current) return;
     stopRecordingNow();
   };
 
@@ -333,7 +347,7 @@ export default function App() {
             data={data} loading={loading} manualText={manualText} setManualText={setManualText}
             parseManual={parseManual} recordState={recordState}
             stopRecording={stopRecording} cancelProcessing={cancelProcessing} beginRecording={() => { holdingRef.current = true; startRecording(); }}
-            levels={levels} liveTranscript={liveTranscript} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} openDrawer={() => setDrawer(true)}
+            levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} openDrawer={() => setDrawer(true)}
           />
         )}
         {screen === 'report' && <ReportPage />}
@@ -354,7 +368,7 @@ export default function App() {
   );
 }
 
-function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, livePreview, fastVoiceAvailable, openDrawer }) {
+function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, openDrawer }) {
   return (
     <main>
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line/80 bg-paper/95 px-4 py-3 backdrop-blur-sm">
@@ -377,7 +391,7 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
           </div>
         </form>
 
-        <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} />
+        <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} />
       </div>
     </main>
   );
@@ -412,7 +426,7 @@ function TransactionList({ items, loading }) {
   ))}</div>;
 }
 
-function Recorder({ state, start, stop, cancel, levels, liveTranscript, livePreview, fastVoiceAvailable }) {
+function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable }) {
   const recording = state === 'recording';
   const processing = state === 'processing';
   const requesting = state === 'requesting';
@@ -442,7 +456,8 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, livePrev
   return (
     <section className="flex flex-col items-center py-2">
       {(recording || finalizing) && liveTranscript && <div aria-live="polite" className="mb-3 w-full rounded-[10px] border border-line bg-surface px-3 py-3 text-right"><p className="truncate text-sm text-muted">شنیدم: «{liveTranscript}»</p>{livePreview.length > 0 && <p className="numbers mt-2 text-lg font-extrabold text-ink">{livePreview.map((item) => formatAmount(item.amount)).join(' + ')} <span className="font-normal text-[12px] text-muted">تومان</span></p>}</div>}
-      <p className="mb-3 text-center text-[13px] text-muted">{recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دستت را برداری تمام می‌شود' : 'در حال ضبط — دستت را برداری تمام می‌شود') : processing ? 'تشخیص زنده کافی نبود؛ بررسی دقیق‌تر…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'دکمه را نگه دار؛ میکروفن در حال فعال‌شدن است…' : 'دکمه را نگه دار و بگو؛ برای پایان دستت را بردار'}</p>
+      {(recording || finalizing) && liveVoiceNote && !liveTranscript && <p role="status" className="mb-3 rounded-lg bg-warn-bg px-3 py-2 text-center text-[13px] leading-6 text-expense">{liveVoiceNote}</p>}
+      <p className="mb-3 text-center text-[13px] text-muted">{recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دستت را برداری تمام می‌شود' : 'در حال ضبط — دستت را برداری تمام می‌شود') : processing ? 'صدای ضبط‌شده در حال تبدیل به متن است…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'دکمه را نگه دار؛ میکروفن در حال فعال‌شدن است…' : 'دکمه را نگه دار و بگو؛ برای پایان دستت را بردار'}</p>
       <button
         type="button" aria-pressed={recording} aria-label={processing ? 'لغو پردازش' : recording ? 'در حال ضبط؛ برای پایان دستت را بردار' : 'برای ضبط نگه دار'} disabled={finalizing}
         onClick={processing ? cancel : undefined}
@@ -475,7 +490,7 @@ function ConfirmationSheet({ result, categories, onCancel, onConfirm }) {
         <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
         {items.length > 1 && <div className="mb-3 flex items-center justify-between text-[13px] text-muted"><span>تراکنش {toPersianDigits(index + 1)} از {toPersianDigits(items.length)}</span><div className="flex gap-1">{items.map((_, dot) => <span key={dot} className={`h-1.5 w-6 rounded-full ${dot === index ? 'bg-accent' : 'bg-line'}`} />)}</div></div>}
         <blockquote className="rounded-lg border border-line bg-surface/65 px-3 py-3 text-[14px] leading-7 text-muted">«{result.transcript}»</blockquote>
-        {result.engine === 'browser-live' && Number.isFinite(result.responseMs) && <p className="mt-2 text-center text-[12px] font-medium text-income">تشخیص زنده؛ نتیجه در {toPersianDigits((Math.max(1, result.responseMs) / 1000).toFixed(1))} ثانیه آماده شد</p>}
+        {Number.isFinite(result.responseMs) && <p className="mt-2 text-center text-[12px] font-medium text-income">{result.engine === 'browser-live' ? 'تشخیص زنده' : 'تشخیص از صدای اصلی'}؛ نتیجه در {toPersianDigits((Math.max(1, result.responseMs) / 1000).toFixed(1))} ثانیه آماده شد</p>}
 
         <button onClick={() => setEditAmount(true)} className="my-4 w-full rounded-[10px] border border-transparent py-3 text-center hover:border-line">
           {editAmount ? (
