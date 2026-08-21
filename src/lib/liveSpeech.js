@@ -4,6 +4,21 @@ export function liveSpeechSupported() {
   return typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 }
 
+const SPEECH_ERROR_MESSAGES = {
+  'no-speech': 'تشخیص زنده صدای واضحی نشنید؛ فایل صوتی روی سرور بررسی می‌شود.',
+  network: 'سرویس زندهٔ مرورگر در دسترس نیست؛ فایل صوتی روی سرور بررسی می‌شود.',
+  'audio-capture': 'مرورگر نتوانست صدای میکروفن را دریافت کند.',
+  aborted: 'تشخیص زنده متوقف شد.',
+  'not-allowed': 'اجازهٔ تشخیص صدا در مرورگر داده نشده است.',
+  'service-not-allowed': 'سرویس تشخیص صدای مرورگر در این دستگاه فعال نیست.',
+  'language-not-supported': 'تشخیص زندهٔ فارسی در این مرورگر پشتیبانی نمی‌شود.',
+  'start-failed': 'تشخیص زندهٔ مرورگر شروع نشد؛ فایل صوتی روی سرور بررسی می‌شود.',
+};
+
+export function liveSpeechErrorMessage(code) {
+  return SPEECH_ERROR_MESSAGES[code] || 'تشخیص زنده نتیجه نداد؛ فایل صوتی روی سرور بررسی می‌شود.';
+}
+
 function snapshotResults(results) {
   const primary = [];
   const alternativesByResult = [];

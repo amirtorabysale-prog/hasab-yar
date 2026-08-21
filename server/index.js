@@ -36,7 +36,7 @@ app.use((request, response, next) => {
 });
 app.use(express.json({ limit: '256kb' }));
 
-app.get('/api/health', (_request, response) => response.json({ ok: true }));
+app.get('/api/health', (_request, response) => response.json({ ok: true, voicePipeline: 'wav-16khz-v1' }));
 app.get('/api/auth/status', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'رمز مالک روی سرور تنظیم نشده است.' });
   const user = userFromSession(cookies(request).hy_session);
@@ -85,7 +85,7 @@ app.post('/api/parse/text', (request, response) => {
 app.post('/api/parse/audio', upload.single('audio'), async (request, response, next) => {
   try {
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
-    const result = await parseAudioWithGemini({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'audio/webm', categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
+    const result = await parseAudioWithGemini({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
     return response.json(result);
   } catch (error) { return next(error); }
 });

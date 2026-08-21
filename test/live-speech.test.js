@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPersianRecognizer, liveSpeechSupported } from '../src/lib/liveSpeech.js';
+import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../src/lib/liveSpeech.js';
 
 test('configures Persian live recognition and returns alternatives', () => {
   class FakeRecognition {
@@ -28,4 +28,10 @@ test('configures Persian live recognition and returns alternatives', () => {
   assert.equal(snapshot.transcript, 'دوازده میلیون فروش داشتم');
   assert.deepEqual(snapshot.candidates.map((item) => item.transcript), ['دوازده میلیون فروش داشتم', 'دویست میلیون فروش داشتم']);
   delete global.window;
+});
+
+test('turns browser speech errors into useful Persian diagnostics', () => {
+  assert.match(liveSpeechErrorMessage('network'), /سرور/);
+  assert.match(liveSpeechErrorMessage('no-speech'), /صدای واضح/);
+  assert.match(liveSpeechErrorMessage('unknown'), /تشخیص زنده/);
 });
