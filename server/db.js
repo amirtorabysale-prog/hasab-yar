@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { passwordPolicy } from './security.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -67,6 +68,14 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+  CREATE TABLE IF NOT EXISTS auth_attempts (
+    fingerprint TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    window_started_at TEXT NOT NULL,
+    locked_until TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_auth_attempts_updated ON auth_attempts(updated_at);
   CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -881,7 +890,8 @@ export function ensureAdmin() {
   const password = String(process.env.ADMIN_PASSWORD || '');
   const existing = db.prepare('SELECT id FROM users WHERE username=?').get(username);
   if (existing) return { configured: true, username };
-  if (password.length < 12) return { configured: false, username };
+  const policy = passwordPolicy(password, username);
+  if (!policy.valid || password === 'change-this-to-a-long-random-password') return { configured: false, username };
   const salt = randomBytes(24).toString('hex');
   db.prepare('INSERT INTO users (id,username,password_hash,password_salt) VALUES (?,?,?,?)').run(randomUUID(), username, hashPassword(password, salt), salt);
   return { configured: true, username };
@@ -901,6 +911,9 @@ export function createSession(userId) {
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
   db.prepare('INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)').run(tokenHash, userId, expiresAt);
+  db.prepare(`DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN (
+    SELECT token_hash FROM sessions WHERE user_id=? ORDER BY rowid DESC LIMIT 5
+  )`).run(userId, userId);
   return { token, expiresAt };
 }
 
@@ -915,4 +928,49 @@ export function userFromSession(token) {
 export function deleteSession(token) {
   if (!token) return;
   db.prepare('DELETE FROM sessions WHERE token_hash=?').run(createHash('sha256').update(token).digest('hex'));
+}
+
+export function loginThrottle(fingerprint, now = new Date()) {
+  const row = db.prepare('SELECT attempts,locked_until AS lockedUntil FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
+  if (!row?.lockedUntil || row.lockedUntil <= now.toISOString()) return { blocked: false, retryAfterSeconds: 0 };
+  return { blocked: true, retryAfterSeconds: Math.max(1, Math.ceil((new Date(row.lockedUntil).getTime() - now.getTime()) / 1000)) };
+}
+
+export function recordLoginFailure(fingerprint, now = new Date()) {
+  const windowMs = 15 * 60 * 1000;
+  const current = db.prepare('SELECT attempts,window_started_at AS windowStartedAt FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
+  const insideWindow = current && now.getTime() - new Date(current.windowStartedAt).getTime() < windowMs;
+  const attempts = insideWindow ? Number(current.attempts) + 1 : 1;
+  const windowStartedAt = insideWindow ? current.windowStartedAt : now.toISOString();
+  const lockedUntil = attempts >= 8 ? new Date(now.getTime() + windowMs).toISOString() : null;
+  db.prepare(`INSERT INTO auth_attempts (fingerprint,attempts,window_started_at,locked_until,updated_at) VALUES (?,?,?,?,?)
+    ON CONFLICT(fingerprint) DO UPDATE SET attempts=excluded.attempts,window_started_at=excluded.window_started_at,
+      locked_until=excluded.locked_until,updated_at=excluded.updated_at`)
+    .run(fingerprint, attempts, windowStartedAt, lockedUntil, now.toISOString());
+  db.prepare('DELETE FROM auth_attempts WHERE updated_at<?').run(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
+  return { attempts, blocked: Boolean(lockedUntil), lockedUntil };
+}
+
+export function clearLoginFailures(fingerprint) {
+  db.prepare('DELETE FROM auth_attempts WHERE fingerprint=?').run(fingerprint);
+}
+
+export function changePassword(userId, currentPassword, newPassword) {
+  const user = db.prepare('SELECT id,username,password_hash,password_salt FROM users WHERE id=?').get(userId);
+  if (!user) return { changed: false, code: 'USER_NOT_FOUND' };
+  const supplied = Buffer.from(hashPassword(String(currentPassword || ''), user.password_salt), 'hex');
+  const expected = Buffer.from(user.password_hash, 'hex');
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return { changed: false, code: 'CURRENT_PASSWORD_INVALID' };
+  const policy = passwordPolicy(newPassword, user.username);
+  if (!policy.valid) return { changed: false, code: 'WEAK_PASSWORD', message: policy.message };
+  if (String(currentPassword) === String(newPassword)) return { changed: false, code: 'PASSWORD_UNCHANGED', message: 'رمز جدید باید با رمز فعلی متفاوت باشد.' };
+  const salt = randomBytes(24).toString('hex');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('UPDATE users SET password_hash=?,password_salt=? WHERE id=?').run(hashPassword(String(newPassword), salt), salt, userId);
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(userId);
+    audit('password-change', 'user', userId);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  return { changed: true };
 }

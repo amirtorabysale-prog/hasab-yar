@@ -4,37 +4,36 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  adjustStock, answerFinancialQuestion, authenticateUser, closeDay, createInvoice, createSession, deleteContact,
+  adjustStock, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, exportSnapshot, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
   getToday, insertTransactions, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts,
-  listReceipts, listRecurringRules, listTransactions, markInvoicePaid, materializeRecurringRules, receiptImage, recordVoiceMetric,
+  listReceipts, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, materializeRecurringRules, receiptImage, recordLoginFailure, recordVoiceMetric,
   report, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
   saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, userFromSession, voiceStats,
 } from './db.js';
 import { inferLearningKeyword, parseFinancialText } from './parser.js';
+import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 const adminState = ensureAdmin();
-const loginAttempts = new Map();
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
 function cookies(request) {
   return Object.fromEntries(String(request.headers.cookie || '').split(';').map((part) => part.trim().split('=')).filter(([key, value]) => key && value).map(([key, value]) => [key, decodeURIComponent(value)]));
 }
 
-function sessionCookie(token, maxAge = 30 * 24 * 60 * 60) {
+function sessionCookie(token, maxAge = 7 * 24 * 60 * 60) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `hy_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${maxAge}${secure}`;
+  return `hy_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Strict; Priority=High; Max-Age=${maxAge}${secure}`;
 }
 
 app.disable('x-powered-by');
 app.use((request, response, next) => {
-  response.setHeader('X-Content-Type-Options', 'nosniff');
-  response.setHeader('Referrer-Policy', 'same-origin');
-  response.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
+  setSecurityHeaders(response, { production: process.env.NODE_ENV === 'production' });
   if (request.path.startsWith('/api/')) response.setHeader('Cache-Control', 'no-store, max-age=0');
   next();
 });
@@ -43,36 +42,50 @@ app.use(express.json({ limit: '256kb' }));
 app.get('/api/health', (_request, response) => response.json({ ok: true, voicePipeline: 'openai-transcribe+deterministic-parser+gemini-fallback-v2' }));
 app.get('/api/auth/status', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'رمز مالک روی سرور تنظیم نشده است.' });
-  const user = userFromSession(cookies(request).hy_session);
-  return response.json({ authenticated: Boolean(user), user: user ? { username: user.username } : null });
+  const sessionToken = cookies(request).hy_session;
+  const user = userFromSession(sessionToken);
+  return response.json({ authenticated: Boolean(user), csrfToken: user ? csrfTokenFor(sessionToken) : null, user: user ? { username: user.username } : null });
 });
 app.post('/api/auth/login', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'ابتدا ADMIN_PASSWORD را روی سرور تنظیم کن.' });
-  const key = request.ip || request.socket.remoteAddress || 'unknown';
-  const cutoff = Date.now() - 15 * 60 * 1000;
-  const attempts = (loginAttempts.get(key) || []).filter((time) => time > cutoff);
-  if (attempts.length >= 8) return response.status(429).json({ code: 'LOGIN_RATE_LIMIT', message: 'تلاش‌های ورود زیاد بود؛ پانزده دقیقه بعد دوباره امتحان کن.' });
+  const fingerprint = requestFingerprint(request.ip || request.socket.remoteAddress || 'unknown', request.get('user-agent'));
+  const throttle = loginThrottle(fingerprint);
+  if (throttle.blocked) {
+    response.setHeader('Retry-After', String(throttle.retryAfterSeconds));
+    return response.status(429).json({ code: 'LOGIN_RATE_LIMIT', message: 'تلاش‌های ورود زیاد بود؛ کمی بعد دوباره امتحان کن.' });
+  }
   const user = authenticateUser(request.body?.username, request.body?.password);
-  if (!user) { attempts.push(Date.now()); loginAttempts.set(key, attempts); return response.status(401).json({ code: 'INVALID_LOGIN', message: 'نام کاربری یا رمز درست نیست.' }); }
-  loginAttempts.delete(key);
+  if (!user) { recordLoginFailure(fingerprint); return response.status(401).json({ code: 'INVALID_LOGIN', message: 'نام کاربری یا رمز درست نیست.' }); }
+  clearLoginFailures(fingerprint);
   const session = createSession(user.id);
   response.setHeader('Set-Cookie', sessionCookie(session.token));
-  return response.json({ authenticated: true, user: { username: user.username } });
+  return response.json({ authenticated: true, csrfToken: csrfTokenFor(session.token), user: { username: user.username } });
+});
+app.use('/api', (request, response, next) => {
+  const sessionToken = cookies(request).hy_session;
+  const user = userFromSession(sessionToken);
+  if (!user) return response.status(401).json({ code: 'AUTH_REQUIRED', message: 'برای دیدن اطلاعات مالی وارد حساب شو.' });
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    if (request.headers.origin && !originMatchesHost(request.headers.origin, request.get('host'))) return response.status(403).json({ code: 'INVALID_ORIGIN', message: 'مبدأ درخواست معتبر نیست.' });
+    if (!csrfTokenIsValid(sessionToken, request.get('x-csrf-token'))) return response.status(403).json({ code: 'CSRF_INVALID', message: 'نشست امنیتی معتبر نیست؛ صفحه را تازه‌سازی کن.' });
+  }
+  request.user = user;
+  request.sessionToken = sessionToken;
+  return next();
 });
 app.post('/api/auth/logout', (request, response) => {
-  deleteSession(cookies(request).hy_session);
+  deleteSession(request.sessionToken);
   response.setHeader('Set-Cookie', sessionCookie('', 0));
   return response.status(204).end();
 });
-app.use('/api', (request, response, next) => {
-  const user = userFromSession(cookies(request).hy_session);
-  if (!user) return response.status(401).json({ code: 'AUTH_REQUIRED', message: 'برای دیدن اطلاعات مالی وارد حساب شو.' });
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.headers.origin) {
-    try { if (new URL(request.headers.origin).host !== request.get('host')) return response.status(403).json({ code: 'INVALID_ORIGIN', message: 'درخواست نامعتبر است.' }); }
-    catch { return response.status(403).json({ code: 'INVALID_ORIGIN', message: 'درخواست نامعتبر است.' }); }
+app.post('/api/auth/password', (request, response) => {
+  const result = changePassword(request.user.id, request.body?.currentPassword, request.body?.newPassword);
+  if (!result.changed) {
+    const status = result.code === 'CURRENT_PASSWORD_INVALID' ? 401 : 400;
+    return response.status(status).json({ code: result.code, message: result.message || 'رمز فعلی درست نیست.' });
   }
-  request.user = user;
-  return next();
+  response.setHeader('Set-Cookie', sessionCookie('', 0));
+  return response.status(204).end();
 });
 app.get('/api/bootstrap', (_request, response) => {
   materializeRecurringRules();

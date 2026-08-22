@@ -1,13 +1,38 @@
 const QUEUE_KEY = 'hesab-yar-transaction-queue';
+const CSRF_KEY = 'hesab-yar-csrf';
+
+function currentCsrfToken() {
+  try { return sessionStorage.getItem(CSRF_KEY) || ''; }
+  catch { return ''; }
+}
+
+function rememberCsrfToken(token) {
+  try {
+    if (token) sessionStorage.setItem(CSRF_KEY, token);
+    else sessionStorage.removeItem(CSRF_KEY);
+  } catch { /* storage can be unavailable in hardened browser modes */ }
+}
 
 async function request(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const csrfToken = currentCsrfToken();
   const response = await fetch(path, {
     credentials: 'same-origin',
-    headers: options.body instanceof FormData ? undefined : { 'Content-Type': 'application/json', ...options.headers },
     ...options,
+    headers: {
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(mutating && csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+      ...options.headers,
+    },
   });
   const body = await response.json().catch(() => ({}));
-  if (response.status === 401 && path !== '/api/auth/login') window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
+  if (body.csrfToken) rememberCsrfToken(body.csrfToken);
+  if (response.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/password') {
+    rememberCsrfToken('');
+    window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
+  }
+  if (response.status === 403 && body.code === 'CSRF_INVALID') rememberCsrfToken('');
   if (!response.ok) throw Object.assign(new Error(body.message || 'خطا در ارتباط با سرور'), { status: response.status, code: body.code });
   return body;
 }
@@ -16,6 +41,7 @@ export const api = {
   authStatus: () => request('/api/auth/status'),
   login: (username, password) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
+  changePassword: (currentPassword, newPassword) => request('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
   parseAudio: (blob, { signal, hint } = {}) => {
