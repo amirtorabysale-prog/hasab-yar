@@ -31,6 +31,7 @@ export default function App() {
   const online = useOnlineStatus();
   const [authenticated, setAuthenticated] = useState(null);
   const [authError, setAuthError] = useState('');
+  const [access, setAccess] = useState({ user: null, workspaces: [], workspace: null });
   const [screen, setScreen] = useState('today');
   const [drawer, setDrawer] = useState(false);
   const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, overview: {}, contacts: [], obligations: [], recurring: [] });
@@ -70,6 +71,7 @@ export default function App() {
     try {
       const bootstrap = await api.bootstrap();
       setData({ ...bootstrap, learnings: bootstrap.learnings || [], averages: bootstrap.averages || {} });
+      if (bootstrap.access) setAccess(bootstrap.access);
     } catch (error) {
       notify(error.message);
     } finally {
@@ -81,11 +83,11 @@ export default function App() {
     const requireAuth = () => { localStorage.removeItem('hesab-yar-authenticated'); setAuthenticated(false); };
     window.addEventListener('hesabyar:auth-required', requireAuth);
     if (!navigator.onLine && localStorage.getItem('hesab-yar-authenticated') === '1') setAuthenticated(true);
-    else api.authStatus().then((result) => setAuthenticated(result.authenticated)).catch((error) => { setAuthError(error.message); setAuthenticated(false); });
+    else api.authStatus().then((result) => { setAuthenticated(result.authenticated); if (result.authenticated) setAccess({ user: result.user, workspaces: result.workspaces || [], workspace: result.workspace }); }).catch((error) => { setAuthError(error.message); setAuthenticated(false); });
     return () => window.removeEventListener('hesabyar:auth-required', requireAuth);
   }, []);
 
-  useEffect(() => { if (authenticated) load(); }, [authenticated, load]);
+  useEffect(() => { if (authenticated && !access.user?.mustChangePassword) load(); }, [authenticated, access.user?.mustChangePassword, load]);
 
   useEffect(() => {
     if (!online || !authenticated) return;
@@ -325,7 +327,8 @@ export default function App() {
   const login = async (username, password) => {
     setAuthError('');
     try {
-      await api.login(username, password);
+      const result = await api.login(username, password);
+      setAccess({ user: result.user, workspaces: result.workspaces || [], workspace: result.workspace });
       localStorage.setItem('hesab-yar-authenticated', '1');
       setAuthenticated(true);
     } catch (error) { setAuthError(error.message); }
@@ -335,36 +338,51 @@ export default function App() {
     try { await api.logout(); } catch { /* پاک‌کردن نشست محلی حتی اگر شبکه قطع باشد */ }
     localStorage.removeItem('hesab-yar-authenticated');
     setData({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, overview: {}, contacts: [], obligations: [], recurring: [] });
+    setAccess({ user: null, workspaces: [], workspace: null });
     setAuthenticated(false);
+  };
+
+  const switchWorkspace = async (workspaceId) => {
+    if (!workspaceId || workspaceId === access.workspace?.id) return;
+    api.selectWorkspace(workspaceId);
+    setLoading(true);
+    setParseResult(null);
+    setFailure(null);
+    await load();
+    navigate('today');
+    notify('دفتر فعال عوض شد.');
   };
 
   if (authenticated === null) return <div dir="rtl" className="grid min-h-screen place-items-center bg-paper text-ink"><span className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-accent" aria-label="در حال بارگذاری" /></div>;
   if (!authenticated) return <LoginPage onLogin={login} error={authError} />;
+  if (access.user?.mustChangePassword) return <main dir="rtl" className="min-h-screen bg-paper py-10 text-ink"><div className="mx-auto max-w-[760px] px-4"><p className="text-sm font-bold text-accent">اولین ورود</p><h1 className="mt-2 text-2xl font-extrabold">رمز موقتت را عوض کن</h1><p className="mt-2 text-sm leading-7 text-muted">برای حفاظت از اطلاعات مالی، تا تعیین رمز شخصی امکان ورود به دفتر وجود ندارد.</p></div><PasswordPanel notify={notify} onChanged={logout} /></main>;
+
+  const canWrite = ['owner', 'manager', 'accountant'].includes(access.workspace?.role);
 
   return (
     <div dir="rtl" className="min-h-screen bg-paper text-ink">
       {!online && <div className="sticky top-0 z-50 flex h-9 items-center justify-center gap-2 bg-ink px-4 text-[13px] text-white"><WifiOff size={15} /> آفلاین — ضبط ذخیره می‌شود و بعداً ارسال</div>}
       <div className="app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper">
-        <DesktopNav screen={screen} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} />
+        <DesktopNav screen={screen} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div className="safe-bottom min-w-0 lg:col-start-2">
           {screen === 'today' && (
             <TodayPage
               data={data} loading={loading} manualText={manualText} setManualText={setManualText}
               parseManual={parseManual} recordState={recordState}
               stopRecording={stopRecording} cancelProcessing={cancelProcessing} beginRecording={() => { holdingRef.current = true; startRecording(); }}
-              levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} openDrawer={() => setDrawer(true)}
+              levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
             />
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} /><PasswordPanel notify={notify} onChanged={logout} /></>}
+          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><PasswordPanel notify={notify} onChanged={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} />
       </div>
 
       <BottomNav screen={screen} navigate={navigate} />
-      {drawer && <Drawer profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} />}
+      {drawer && <Drawer profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
       {parseResult && (
         <ConfirmationSheet
           result={parseResult} categories={data.categories} accounts={data.accounts} onCancel={() => setParseResult(null)} onConfirm={saveConfirmed}
@@ -377,7 +395,7 @@ export default function App() {
   );
 }
 
-function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, openDrawer }) {
+function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, openDrawer, readOnly = false }) {
   return (
     <main className="mx-auto w-full max-w-[760px]">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line/80 bg-paper/95 px-4 py-3 backdrop-blur-sm">
@@ -393,15 +411,16 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
           <TransactionList items={data.transactions} loading={loading} />
         </section>
 
+        {readOnly && <div className="rounded-[10px] border-r-4 border-accent bg-warn-bg px-3 py-3 text-sm leading-6">دسترسی تو «فقط مشاهده» است؛ می‌توانی گزارش‌ها و ثبت‌ها را ببینی اما چیزی تغییر نمی‌کند.</div>}
         <form onSubmit={parseManual} className="rounded-[10px] border border-line bg-surface p-2 shadow-paper">
           <label htmlFor="manual-entry" className="sr-only">ورود دستی</label>
           <div className="flex gap-2">
-            <input id="manual-entry" value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder="یا بنویس… مثلاً ۵۰۰ هزار تومان خرید کردم" className="tap min-w-0 flex-1 rounded-lg border-0 bg-transparent px-3 text-[15px] outline-none placeholder:text-muted/80" />
-            <button disabled={!manualText.trim() || recordState === 'processing'} className="tap rounded-lg bg-ink px-4 text-sm font-bold text-white disabled:opacity-35">بررسی</button>
+            <input disabled={readOnly} id="manual-entry" value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder={readOnly ? 'در حالت فقط مشاهده، ثبت غیرفعال است' : 'یا بنویس… مثلاً ۵۰۰ هزار تومان خرید کردم'} className="tap min-w-0 flex-1 rounded-lg border-0 bg-transparent px-3 text-[15px] outline-none placeholder:text-muted/80 disabled:opacity-60" />
+            <button disabled={readOnly || !manualText.trim() || recordState === 'processing'} className="tap rounded-lg bg-ink px-4 text-sm font-bold text-white disabled:opacity-35">بررسی</button>
           </div>
         </form>
 
-        <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} />
+        <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} disabled={readOnly} />
       </div>
     </main>
   );
@@ -440,13 +459,13 @@ function TransactionList({ items, loading }) {
   ))}</div>;
 }
 
-function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable }) {
+function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, disabled = false }) {
   const recording = state === 'recording';
   const processing = state === 'processing';
   const requesting = state === 'requesting';
   const finalizing = state === 'finalizing';
   const press = (event) => {
-    if (processing || finalizing || requesting) return;
+    if (disabled || processing || finalizing || requesting) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -458,7 +477,7 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoic
     stop();
   };
   const keyDown = (event) => {
-    if (![' ', 'Enter'].includes(event.key) || event.repeat || processing || finalizing || requesting) return;
+    if (disabled || ![' ', 'Enter'].includes(event.key) || event.repeat || processing || finalizing || requesting) return;
     event.preventDefault();
     start();
   };
@@ -471,9 +490,9 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoic
     <section className="voice-dock flex flex-col items-center py-2">
       {(recording || finalizing) && liveTranscript && <div aria-live="polite" className="mb-3 w-full rounded-[10px] border border-line bg-surface px-3 py-3 text-right"><p className="truncate text-sm text-muted">شنیدم: «{liveTranscript}»</p>{livePreview.length > 0 && <p className="numbers mt-2 text-lg font-extrabold text-ink">{livePreview.map((item) => formatAmount(item.amount)).join(' + ')} <span className="font-normal text-[12px] text-muted">تومان</span></p>}</div>}
       {(recording || finalizing) && liveVoiceNote && !liveTranscript && <p role="status" className="mb-3 rounded-lg bg-warn-bg px-3 py-2 text-center text-[13px] leading-6 text-expense">{liveVoiceNote}</p>}
-      <p className="mb-3 text-center text-[13px] text-muted">{recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دستت را برداری تمام می‌شود' : 'در حال ضبط — دستت را برداری تمام می‌شود') : processing ? 'صدای ضبط‌شده در حال تبدیل به متن است…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'دکمه را نگه دار؛ میکروفن در حال فعال‌شدن است…' : 'دکمه را نگه دار و بگو؛ برای پایان دستت را بردار'}</p>
+      <p className="mb-3 text-center text-[13px] text-muted">{disabled ? 'ضبط برای نقش فقط مشاهده غیرفعال است' : recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دستت را برداری تمام می‌شود' : 'در حال ضبط — دستت را برداری تمام می‌شود') : processing ? 'صدای ضبط‌شده در حال تبدیل به متن است…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'دکمه را نگه دار؛ میکروفن در حال فعال‌شدن است…' : 'دکمه را نگه دار و بگو؛ برای پایان دستت را بردار'}</p>
       <button
-        type="button" aria-pressed={recording} aria-label={processing ? 'لغو پردازش' : recording ? 'در حال ضبط؛ برای پایان دستت را بردار' : 'برای ضبط نگه دار'} disabled={finalizing}
+        type="button" aria-pressed={recording} aria-label={processing ? 'لغو پردازش' : recording ? 'در حال ضبط؛ برای پایان دستت را بردار' : 'برای ضبط نگه دار'} disabled={disabled || finalizing}
         onClick={processing ? cancel : undefined}
         onPointerDown={press} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={stop}
         onKeyDown={keyDown} onKeyUp={keyUp} onBlur={stop}
@@ -560,14 +579,55 @@ function LearningPage({ categories, notify }) {
   return <main className="px-4 py-5"><h1 className="text-xl font-extrabold">آنچه یاد گرفته‌ام</h1><p className="mt-2 text-sm leading-7 text-muted">هر بار دسته‌ای را اصلاح می‌کنی، اینجا یاد می‌گیرم. می‌توانی نگاشت‌ها را هم خودت اضافه یا پاک کنی.</p><div className="mt-5 flex gap-2 rounded-[10px] border border-line bg-surface p-2"><input value={draft.keyword} onChange={(event) => setDraft({ ...draft, keyword: event.target.value })} placeholder="مثلاً اسنپ‌فود" className="tap min-w-0 flex-1 px-2 outline-none" /><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="tap max-w-32 rounded-lg border border-line px-2">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={save} className="tap grid place-items-center rounded-lg bg-accent text-white" aria-label="افزودن"><Plus size={21} /></button></div><div className="mt-5 divide-y divide-line border-y border-line">{items.length ? items.map((item) => <div key={item.id} className="flex min-h-[64px] items-center gap-2"><span className="min-w-0 flex-1 truncate font-bold">{item.keyword}</span><ChevronLeft size={17} className="text-muted" /><select value={item.category} onChange={(event) => update(item, event.target.value)} className="tap max-w-36 bg-transparent text-sm text-muted outline-none">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={() => remove(item.id)} className="tap grid place-items-center text-expense" aria-label={`حذف ${item.keyword}`}><Trash2 size={18} /></button></div>) : <p className="py-10 text-center text-sm text-muted">هنوز چیزی از اصلاح‌ها یاد نگرفته‌ام.</p>}</div></main>;
 }
 
-function SettingsPage({ initial, accounts = [], notify, refresh, onLogout }) {
+function SettingsPage({ initial, accounts = [], notify, refresh, onLogout, canManage = false }) {
   const [settings, setSettings] = useState({ businessName: '', profileType: 'business', openingBalance: '0', lowBalanceThreshold: '2000000', ...initial });
   const [stats, setStats] = useState(null);
   useEffect(() => setSettings({ businessName: '', profileType: 'business', openingBalance: '0', lowBalanceThreshold: '2000000', ...initial }), [initial]);
   useEffect(() => { api.voiceStats().then(setStats).catch(() => {}); }, []);
-  const save = async () => { const result = await api.settings(settings); setSettings(result.settings); notify('تنظیمات ذخیره شد.'); };
+  const save = async () => { if (!canManage) return notify('برای تغییر تنظیمات، نقش مدیر یا مالک لازم است.'); const result = await api.settings(settings); setSettings(result.settings); notify('تنظیمات ذخیره شد.'); };
   const selectedProfile = profileDefinition(settings.profileType);
   return <main className="mx-auto max-w-[760px] px-4 py-5"><h1 className="text-xl font-extrabold">تنظیمات</h1><section className="mt-5 space-y-4 rounded-[10px] border border-line bg-surface p-4"><div className="grid grid-cols-2 gap-2"><button onClick={() => setSettings({ ...settings, profileType: 'business' })} className={`tap rounded-lg border text-sm font-bold ${settings.profileType === 'business' ? 'border-accent bg-warn-bg text-accent' : 'border-line'}`}>کسب‌وکار</button><button onClick={() => setSettings({ ...settings, profileType: 'personal' })} className={`tap rounded-lg border text-sm font-bold ${settings.profileType === 'personal' ? 'border-accent bg-warn-bg text-accent' : 'border-line'}`}>شخصی</button></div><div className="rounded-lg border border-line bg-paper px-3 py-3"><p className="text-sm font-bold">{selectedProfile.label}</p><p className="mt-1 text-[13px] leading-6 text-muted">{selectedProfile.description}</p><div className="mt-2 flex flex-wrap gap-1.5">{selectedProfile.capabilities.map((capability) => <span key={capability} className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-muted">{capability}</span>)}</div></div><label className="block text-[13px] text-muted">نام دفتر<input value={settings.businessName || ''} onChange={(event) => setSettings({ ...settings, businessName: event.target.value })} placeholder={settings.profileType === 'personal' ? 'مثلاً حساب‌های امیر' : 'مثلاً آرایشگاه آبان'} className="tap mt-2 w-full rounded-lg border border-line px-3 text-[15px] text-ink outline-none focus:border-accent" /></label><div className="grid gap-3 sm:grid-cols-2"><label className="text-[13px] text-muted">مانده شروع ثبت‌ها<input inputMode="numeric" value={settings.openingBalance || ''} onChange={(event) => setSettings({ ...settings, openingBalance: event.target.value.replace(/\D/g, '') })} className="tap numbers mt-2 w-full rounded-lg border border-line px-3" /></label><label className="text-[13px] text-muted">هشدار کاهش مانده<input inputMode="numeric" value={settings.lowBalanceThreshold || ''} onChange={(event) => setSettings({ ...settings, lowBalanceThreshold: event.target.value.replace(/\D/g, '') })} className="tap numbers mt-2 w-full rounded-lg border border-line px-3" /></label></div><div className="rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-muted">واحد نمایش و ذخیره نسخه فعلی تومان است. مهاجرت آینده به ریال بدون تغییر معنای مبالغ موجود انجام می‌شود.</div><button onClick={save} className="tap w-full rounded-lg bg-accent font-bold text-white">ذخیره تنظیمات</button></section><section className="mt-5 border-y border-line py-4"><h2 className="font-extrabold">دقت صوت و حریم خصوصی</h2><p className="mt-2 text-sm leading-7 text-muted">تشخیص اصلی با مدل تخصصی گفتار فارسی انجام می‌شود و مبلغ با قواعد قطعی استخراج می‌شود. اگر سرویس اصلی در دسترس نباشد، مسیر پشتیبان فعال می‌شود. کلیدها فقط روی سرور می‌مانند.</p>{stats && <div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.total || 0)}</b><span className="text-[11px] text-muted">پردازش</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageLatency || 0)}</b><span className="text-[11px] text-muted">میلی‌ثانیه</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.reviewed || 0)}</b><span className="text-[11px] text-muted">نیاز به اصلاح</span></div></div>}</section><section className="mt-5 rounded-[10px] border border-line bg-surface p-4"><h2 className="font-extrabold">محدوده محصول</h2><p className="mt-2 text-[13px] leading-6 text-muted">{PRODUCT_POSITIONING.accountingDisclaimer}</p></section><a href="/api/export" download className="tap mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface font-bold"><Download size={18} />نسخهٔ پشتیبان</a><button onClick={onLogout} className="tap mt-3 w-full rounded-lg border border-expense/40 bg-surface font-bold text-expense">خروج از حساب</button></main>;
+}
+
+const ROLE_LABELS = { owner: 'مالک', manager: 'مدیر', accountant: 'حسابدار', viewer: 'فقط مشاهده' };
+
+function WorkspacePanel({ access, notify, switchWorkspace, refreshAccess }) {
+  const [members, setMembers] = useState([]);
+  const [workspaceDraft, setWorkspaceDraft] = useState({ name: '', profileType: 'business' });
+  const [memberDraft, setMemberDraft] = useState({ username: '', displayName: '', temporaryPassword: '', role: 'viewer' });
+  const role = access.workspace?.role || 'viewer';
+  const canViewMembers = ['owner', 'manager'].includes(role);
+  const isOwner = role === 'owner';
+  const loadMembers = useCallback(() => canViewMembers ? api.members().then((result) => setMembers(result.items)).catch((error) => notify(error.message)) : Promise.resolve(), [canViewMembers, notify]);
+  useEffect(() => { loadMembers(); }, [loadMembers, access.workspace?.id]);
+  const create = async (event) => {
+    event.preventDefault();
+    try {
+      const result = await api.createWorkspace(workspaceDraft);
+      setWorkspaceDraft({ name: '', profileType: 'business' });
+      await switchWorkspace(result.workspace.id);
+      notify('دفتر تازه و پایگاه‌دادهٔ جدا ساخته شد.');
+    } catch (error) { notify(error.message); }
+  };
+  const add = async (event) => {
+    event.preventDefault();
+    try {
+      await api.addMember(memberDraft);
+      setMemberDraft({ username: '', displayName: '', temporaryPassword: '', role: 'viewer' });
+      await loadMembers();
+      notify('دسترسی عضو ذخیره شد.');
+    } catch (error) { notify(error.message); }
+  };
+  const updateRole = async (userId, nextRole) => {
+    try { await api.updateMember(userId, nextRole); await loadMembers(); notify('نقش عضو تغییر کرد.'); }
+    catch (error) { notify(error.message); }
+  };
+  const remove = async (userId) => {
+    if (!window.confirm('دسترسی این عضو از دفتر حذف شود؟')) return;
+    try { await api.removeMember(userId); await loadMembers(); await refreshAccess(); notify('دسترسی عضو حذف شد.'); }
+    catch (error) { notify(error.message); }
+  };
+  return <section className="mx-auto mt-1 max-w-[760px] px-4"><div className="rounded-[10px] border border-line bg-surface p-4"><div className="flex items-start gap-3"><Users className="mt-0.5 shrink-0 text-accent" size={22} /><div><h2 className="font-extrabold">دفترها و دسترسی تیم</h2><p className="mt-1 text-[13px] leading-6 text-muted">اطلاعات هر دفتر در پایگاه‌داده‌ای جدا نگه‌داری می‌شود. نقش فعلی تو: <b className="text-ink">{ROLE_LABELS[role]}</b></p></div></div><label className="mt-4 block text-[13px] text-muted">دفتر فعال<select value={access.workspace?.id || ''} onChange={(event) => switchWorkspace(event.target.value)} className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3 font-bold text-ink">{access.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name} — {ROLE_LABELS[workspace.role]}</option>)}</select></label><form onSubmit={create} className="mt-4 grid gap-2 border-t border-line pt-4 sm:grid-cols-[1fr_150px_120px]"><input required minLength={2} value={workspaceDraft.name} onChange={(event) => setWorkspaceDraft({ ...workspaceDraft, name: event.target.value })} placeholder="نام دفتر تازه" className="tap rounded-lg border border-line px-3" /><select value={workspaceDraft.profileType} onChange={(event) => setWorkspaceDraft({ ...workspaceDraft, profileType: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="business">کسب‌وکار</option><option value="personal">شخصی</option></select><button className="tap rounded-lg bg-ink px-3 text-sm font-bold text-white">ساخت دفتر</button></form>{canViewMembers && <div className="mt-5 border-t border-line pt-4"><div className="flex items-center justify-between"><h3 className="font-extrabold">اعضای این دفتر</h3><span className="text-xs text-muted">{toPersianDigits(members.length)} نفر</span></div><div className="mt-3 divide-y divide-line border-y border-line">{members.map((member) => <div key={member.id} className="flex min-h-[68px] items-center gap-2 py-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{member.displayName || member.username}</p><p className="mt-1 truncate text-xs text-muted" dir="ltr">@{member.username}</p></div>{isOwner ? <select value={member.role} onChange={(event) => updateRole(member.id, event.target.value)} className="tap max-w-32 rounded-lg border border-line bg-surface px-2 text-xs font-bold"><option value="owner">مالک</option><option value="manager">مدیر</option><option value="accountant">حسابدار</option><option value="viewer">فقط مشاهده</option></select> : <span className="rounded-md border border-line px-2 py-1 text-xs">{ROLE_LABELS[member.role]}</span>}{isOwner && member.id !== access.user?.id && <button onClick={() => remove(member.id)} className="tap grid place-items-center text-expense" aria-label="حذف دسترسی"><Trash2 size={17} /></button>}</div>)}</div>{isOwner && <form onSubmit={add} className="mt-4 grid gap-2 sm:grid-cols-2"><input required value={memberDraft.username} onChange={(event) => setMemberDraft({ ...memberDraft, username: event.target.value })} placeholder="نام کاربری انگلیسی" dir="ltr" className="tap rounded-lg border border-line px-3 text-left" /><input value={memberDraft.displayName} onChange={(event) => setMemberDraft({ ...memberDraft, displayName: event.target.value })} placeholder="نام نمایشی" className="tap rounded-lg border border-line px-3" /><input value={memberDraft.temporaryPassword} onChange={(event) => setMemberDraft({ ...memberDraft, temporaryPassword: event.target.value })} placeholder="رمز موقت ۱۴ نویسه‌ای (برای کاربر تازه)" dir="ltr" type="password" autoComplete="new-password" className="tap rounded-lg border border-line px-3 text-left" /><select value={memberDraft.role} onChange={(event) => setMemberDraft({ ...memberDraft, role: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="viewer">فقط مشاهده</option><option value="accountant">حسابدار</option><option value="manager">مدیر</option><option value="owner">مالک</option></select><button className="tap rounded-lg bg-accent font-bold text-white sm:col-span-2">افزودن یا به‌روزرسانی عضو</button></form>}<p className="mt-3 text-[11px] leading-5 text-muted">کاربر تازه در اولین ورود باید رمز موقت را عوض کند. حسابدار ثبت‌های مالی را مدیریت می‌کند؛ مدیر تنظیمات دفتر را هم تغییر می‌دهد؛ فقط مالک اعضا را مدیریت می‌کند.</p></div>}</div></section>;
 }
 
 function PasswordPanel({ notify, onChanged }) {

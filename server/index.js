@@ -4,15 +4,16 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  adjustStock, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, deleteContact,
+  addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, createWorkspace, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, exportSnapshot, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
-  getToday, insertTransactions, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts,
+  getToday, insertTransactions, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
   listReceipts, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, materializeRecurringRules, receiptImage, recordLoginFailure, recordVoiceMetric,
-  report, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
-  saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, userFromSession, voiceStats,
+  removeWorkspaceMember, report, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
+  saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
 import { inferLearningKeyword, parseFinancialText } from './parser.js';
+import { minimumRoleForRequest, roleAllows } from './access.js';
 import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 
@@ -31,6 +32,27 @@ function sessionCookie(token, maxAge = 7 * 24 * 60 * 60) {
   return `hy_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Strict; Priority=High; Max-Age=${maxAge}${secure}`;
 }
 
+function workspaceCookie(workspaceId) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `hy_workspace=${encodeURIComponent(workspaceId)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${30 * 24 * 60 * 60}${secure}`;
+}
+
+function accessPayload(user, requestedWorkspaceId = '') {
+  const workspaces = listUserWorkspaces(user.id);
+  const workspace = workspaceForUser(user.id, requestedWorkspaceId) || workspaces[0] || null;
+  return {
+    user: { id: user.id, username: user.username, displayName: user.displayName || user.username, mustChangePassword: Boolean(user.mustChangePassword) },
+    workspaces,
+    workspace,
+  };
+}
+
+function requireRank(request, response, minimum) {
+  if (roleAllows(request.workspace?.role, minimum)) return true;
+  response.status(403).json({ code: 'ROLE_FORBIDDEN', message: 'نقش فعلی برای انجام این کار اجازه ندارد.' });
+  return false;
+}
+
 app.disable('x-powered-by');
 app.use((request, response, next) => {
   setSecurityHeaders(response, { production: process.env.NODE_ENV === 'production' });
@@ -44,7 +66,7 @@ app.get('/api/auth/status', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'رمز مالک روی سرور تنظیم نشده است.' });
   const sessionToken = cookies(request).hy_session;
   const user = userFromSession(sessionToken);
-  return response.json({ authenticated: Boolean(user), csrfToken: user ? csrfTokenFor(sessionToken) : null, user: user ? { username: user.username } : null });
+  return response.json({ authenticated: Boolean(user), csrfToken: user ? csrfTokenFor(sessionToken) : null, ...(user ? accessPayload(user, request.get('x-workspace-id')) : {}) });
 });
 app.post('/api/auth/login', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'ابتدا ADMIN_PASSWORD را روی سرور تنظیم کن.' });
@@ -59,7 +81,7 @@ app.post('/api/auth/login', (request, response) => {
   clearLoginFailures(fingerprint);
   const session = createSession(user.id);
   response.setHeader('Set-Cookie', sessionCookie(session.token));
-  return response.json({ authenticated: true, csrfToken: csrfTokenFor(session.token), user: { username: user.username } });
+  return response.json({ authenticated: true, csrfToken: csrfTokenFor(session.token), ...accessPayload(user) });
 });
 app.use('/api', (request, response, next) => {
   const sessionToken = cookies(request).hy_session;
@@ -71,7 +93,20 @@ app.use('/api', (request, response, next) => {
   }
   request.user = user;
   request.sessionToken = sessionToken;
-  return next();
+  const requestedWorkspace = request.get('x-workspace-id') || (['GET', 'HEAD'].includes(request.method) ? request.query.workspace : '') || cookies(request).hy_workspace;
+  const workspace = workspaceForUser(user.id, requestedWorkspace);
+  if (!workspace) return response.status(403).json({ code: 'WORKSPACE_FORBIDDEN', message: 'به این دفتر دسترسی نداری.' });
+  request.workspace = workspace;
+  response.append('Set-Cookie', workspaceCookie(workspace.id));
+  return runInWorkspace(workspace.id, workspace, next);
+});
+app.use('/api', (request, response, next) => {
+  const path = request.path;
+  if (request.user.mustChangePassword && !['/auth/password', '/auth/logout'].includes(path)) {
+    return response.status(403).json({ code: 'PASSWORD_CHANGE_REQUIRED', message: 'پیش از ادامه رمز موقت را تغییر بده.' });
+  }
+  const minimum = minimumRoleForRequest(request.method, path);
+  return requireRank(request, response, minimum) ? next() : undefined;
 });
 app.post('/api/auth/logout', (request, response) => {
   deleteSession(request.sessionToken);
@@ -87,12 +122,37 @@ app.post('/api/auth/password', (request, response) => {
   response.setHeader('Set-Cookie', sessionCookie('', 0));
   return response.status(204).end();
 });
-app.get('/api/bootstrap', (_request, response) => {
+app.get('/api/workspaces', (request, response) => response.json(accessPayload(request.user, request.workspace.id)));
+app.post('/api/workspaces', (request, response, next) => {
+  try {
+    const workspace = createWorkspace(request.user.id, request.body || {});
+    return response.status(201).json({ workspace, workspaces: listUserWorkspaces(request.user.id) });
+  } catch (error) { error.status ||= 400; return next(error); }
+});
+app.get('/api/workspace/members', (request, response) => {
+  if (!requireRank(request, response, 'manager')) return undefined;
+  return response.json({ items: listWorkspaceMembers(request.workspace.id) });
+});
+app.post('/api/workspace/members', (request, response, next) => {
+  try { return response.status(201).json({ item: addWorkspaceMember(request.workspace.id, request.body || {}) }); }
+  catch (error) { error.status ||= 400; return next(error); }
+});
+app.put('/api/workspace/members/:userId', (request, response, next) => {
+  try {
+    const item = updateWorkspaceMember(request.workspace.id, request.params.userId, request.body?.role);
+    return item ? response.json({ item }) : response.status(404).json({ message: 'عضو پیدا نشد.' });
+  } catch (error) { error.status ||= 400; return next(error); }
+});
+app.delete('/api/workspace/members/:userId', (request, response, next) => {
+  try { return response.status(removeWorkspaceMember(request.workspace.id, request.params.userId) ? 204 : 404).end(); }
+  catch (error) { error.status ||= 400; return next(error); }
+});
+app.get('/api/bootstrap', (request, response) => {
   materializeRecurringRules();
   return response.json({
     ...getToday(), categories: getCategories(), settings: getSettings(), learnings: getLearnings(),
     averages: typicalAmounts(), overview: financialOverview(), accounts: listAccounts(), contacts: listContacts(),
-    obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(),
+    obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(), access: accessPayload(request.user, request.workspace.id),
   });
 });
 app.post('/api/parse/text', (request, response) => {
@@ -199,7 +259,9 @@ app.use((error, _request, response, _next) => {
 });
 
 function runRecurringJob() {
-  try { materializeRecurringRules(); }
+  try {
+    for (const workspace of allWorkspaces()) runInWorkspace(workspace.id, { role: 'owner' }, () => materializeRecurringRules());
+  }
   catch (error) { console.error('Recurring materialization failed:', error); }
 }
 

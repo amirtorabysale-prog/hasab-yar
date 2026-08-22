@@ -2,12 +2,25 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
 
-export const db = new DatabaseSync(databasePath);
+const controlDb = new DatabaseSync(databasePath);
+const workspaceContext = new AsyncLocalStorage();
+const workspaceConnections = new Map();
+
+// Financial functions keep using `db`, but each authenticated request receives an
+// isolated SQLite connection. Authentication and membership always use controlDb.
+export const db = new Proxy(controlDb, {
+  get(target, property) {
+    const active = workspaceContext.getStore()?.database || target;
+    const value = active[property];
+    return typeof value === 'function' ? value.bind(active) : value;
+  },
+});
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
 db.exec(`
@@ -188,6 +201,23 @@ db.exec(`
     payload TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    profile_type TEXT NOT NULL DEFAULT 'business' CHECK(profile_type IN ('personal','business')),
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('owner','manager','accountant','viewer')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (workspace_id,user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id,workspace_id);
 `);
 
 function ensureColumn(table, definition) {
@@ -204,6 +234,8 @@ ensureColumn('transactions', "status TEXT NOT NULL DEFAULT 'confirmed'");
 ensureColumn('transactions', 'due_at TEXT');
 ensureColumn('transactions', 'updated_at TEXT');
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
+ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
+ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -228,6 +260,142 @@ if (!openingMigrated) {
   const legacyOpening = Number(db.prepare("SELECT value FROM settings WHERE key='openingBalance'").get()?.value || 0);
   db.prepare("UPDATE accounts SET opening_balance=? WHERE id='cash'").run(Math.round(legacyOpening));
   insertSetting.run('accountOpeningMigrated', 'true');
+}
+
+function workspaceDatabase(workspaceId) {
+  if (workspaceId === 'primary') return controlDb;
+  if (workspaceConnections.has(workspaceId)) return workspaceConnections.get(workspaceId);
+  const folder = resolve(dirname(databasePath), 'workspaces');
+  mkdirSync(folder, { recursive: true });
+  const database = new DatabaseSync(resolve(folder, `${workspaceId}.sqlite`));
+  database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  const empty = database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").get().count === 0;
+  if (empty) {
+    const schema = controlDb.prepare(`SELECT type,sql FROM sqlite_master
+      WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND type IN ('table','index')
+      ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END,rowid`).all();
+    database.exec('PRAGMA foreign_keys = OFF');
+    for (const item of schema) database.exec(item.sql);
+    database.exec('PRAGMA foreign_keys = ON');
+    const categoryInsert = database.prepare('INSERT OR IGNORE INTO categories (id,name,type,sort_order) VALUES (?,?,?,?)');
+    for (const item of categorySeed) categoryInsert.run(...item);
+    database.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,opening_balance,sort_order)
+      VALUES ('cash','صندوق نقدی','cash',0,1)`).run();
+    const settingInsert = database.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
+    for (const [key, value] of Object.entries(defaults)) settingInsert.run(key, String(value));
+    settingInsert.run('accountOpeningMigrated', 'true');
+  }
+  workspaceConnections.set(workspaceId, database);
+  return database;
+}
+
+export function runInWorkspace(workspaceId, member, callback) {
+  return workspaceContext.run({ workspaceId, member, database: workspaceDatabase(workspaceId) }, callback);
+}
+
+export function currentWorkspace() {
+  const context = workspaceContext.getStore();
+  return context ? { id: context.workspaceId, role: context.member?.role } : null;
+}
+
+export function listUserWorkspaces(userId) {
+  return controlDb.prepare(`SELECT workspaces.id,workspaces.name,workspaces.profile_type AS profileType,
+    workspace_members.role,workspaces.created_at AS createdAt
+    FROM workspace_members JOIN workspaces ON workspaces.id=workspace_members.workspace_id
+    WHERE workspace_members.user_id=? ORDER BY CASE workspace_members.role WHEN 'owner' THEN 0 ELSE 1 END,workspaces.created_at`).all(userId);
+}
+
+export function workspaceForUser(userId, requestedId = '') {
+  const requested = String(requestedId || '').trim();
+  const row = requested
+    ? controlDb.prepare(`SELECT workspaces.id,workspaces.name,workspaces.profile_type AS profileType,workspace_members.role
+        FROM workspace_members JOIN workspaces ON workspaces.id=workspace_members.workspace_id
+        WHERE workspace_members.user_id=? AND workspaces.id=?`).get(userId, requested)
+    : listUserWorkspaces(userId)[0];
+  return row || null;
+}
+
+export function createWorkspace(userId, values = {}) {
+  const name = String(values.name || '').trim().slice(0, 100);
+  if (name.length < 2) throw new Error('نام دفتر باید حداقل دو نویسه باشد.');
+  const profileType = values.profileType === 'personal' ? 'personal' : 'business';
+  const id = randomUUID();
+  controlDb.exec('BEGIN IMMEDIATE');
+  try {
+    controlDb.prepare('INSERT INTO workspaces (id,name,profile_type,created_by) VALUES (?,?,?,?)').run(id, name, profileType, userId);
+    controlDb.prepare("INSERT INTO workspace_members (workspace_id,user_id,role) VALUES (?,?, 'owner')").run(id, userId);
+    controlDb.exec('COMMIT');
+  } catch (error) { controlDb.exec('ROLLBACK'); throw error; }
+  const database = workspaceDatabase(id);
+  database.prepare("UPDATE settings SET value=? WHERE key='businessName'").run(name);
+  database.prepare("UPDATE settings SET value=? WHERE key='profileType'").run(profileType);
+  return workspaceForUser(userId, id);
+}
+
+export function listWorkspaceMembers(workspaceId) {
+  return controlDb.prepare(`SELECT users.id,users.username,users.display_name AS displayName,
+    users.must_change_password AS mustChangePassword,workspace_members.role,workspace_members.created_at AS createdAt
+    FROM workspace_members JOIN users ON users.id=workspace_members.user_id
+    WHERE workspace_members.workspace_id=?
+    ORDER BY CASE workspace_members.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 WHEN 'accountant' THEN 2 ELSE 3 END,users.username`).all(workspaceId);
+}
+
+function assertWorkspaceRole(role) {
+  if (!['owner', 'manager', 'accountant', 'viewer'].includes(role)) throw new Error('نقش انتخاب‌شده معتبر نیست.');
+  return role;
+}
+
+export function addWorkspaceMember(workspaceId, values = {}) {
+  const username = String(values.username || '').trim().toLowerCase().slice(0, 80);
+  const displayName = String(values.displayName || '').trim().slice(0, 100);
+  const role = assertWorkspaceRole(values.role || 'viewer');
+  if (!/^[a-z0-9._-]{3,80}$/i.test(username)) throw new Error('نام کاربری باید حداقل سه نویسه و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.');
+  let user = controlDb.prepare('SELECT id,username FROM users WHERE username=?').get(username);
+  controlDb.exec('BEGIN IMMEDIATE');
+  try {
+    if (!user) {
+      const password = String(values.temporaryPassword || '');
+      const policy = passwordPolicy(password, username);
+      if (!policy.valid) throw new Error(policy.message);
+      const salt = randomBytes(24).toString('hex');
+      user = { id: randomUUID(), username };
+      controlDb.prepare(`INSERT INTO users (id,username,password_hash,password_salt,display_name,must_change_password,role)
+        VALUES (?,?,?,?,?,1,?)`).run(user.id, username, hashPassword(password, salt), salt, displayName, role);
+    } else if (displayName) {
+      controlDb.prepare('UPDATE users SET display_name=? WHERE id=?').run(displayName, user.id);
+    }
+    controlDb.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role) VALUES (?,?,?)
+      ON CONFLICT(workspace_id,user_id) DO UPDATE SET role=excluded.role,updated_at=CURRENT_TIMESTAMP`).run(workspaceId, user.id, role);
+    controlDb.exec('COMMIT');
+  } catch (error) { controlDb.exec('ROLLBACK'); throw error; }
+  return listWorkspaceMembers(workspaceId).find((item) => item.id === user.id);
+}
+
+export function updateWorkspaceMember(workspaceId, userId, role) {
+  const nextRole = assertWorkspaceRole(role);
+  const current = controlDb.prepare('SELECT role FROM workspace_members WHERE workspace_id=? AND user_id=?').get(workspaceId, userId);
+  if (!current) return null;
+  const owners = controlDb.prepare("SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=? AND role='owner'").get(workspaceId).count;
+  if (current.role === 'owner' && nextRole !== 'owner' && owners <= 1) throw new Error('دفتر باید حداقل یک مالک داشته باشد.');
+  controlDb.prepare('UPDATE workspace_members SET role=?,updated_at=CURRENT_TIMESTAMP WHERE workspace_id=? AND user_id=?').run(nextRole, workspaceId, userId);
+  return listWorkspaceMembers(workspaceId).find((item) => item.id === userId);
+}
+
+export function removeWorkspaceMember(workspaceId, userId) {
+  const current = controlDb.prepare('SELECT role FROM workspace_members WHERE workspace_id=? AND user_id=?').get(workspaceId, userId);
+  if (!current) return false;
+  const owners = controlDb.prepare("SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=? AND role='owner'").get(workspaceId).count;
+  if (current.role === 'owner' && owners <= 1) throw new Error('آخرین مالک دفتر قابل حذف نیست.');
+  return controlDb.prepare('DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?').run(workspaceId, userId).changes > 0;
+}
+
+export function allWorkspaces() {
+  return controlDb.prepare('SELECT id,name,profile_type AS profileType FROM workspaces ORDER BY created_at').all();
+}
+
+export function closeWorkspaceDatabases() {
+  for (const database of workspaceConnections.values()) database.close();
+  workspaceConnections.clear();
 }
 
 export function getSettings() {
@@ -888,30 +1056,39 @@ function hashPassword(password, salt) {
 export function ensureAdmin() {
   const username = String(process.env.ADMIN_USERNAME || 'owner').trim().toLowerCase();
   const password = String(process.env.ADMIN_PASSWORD || '');
-  const existing = db.prepare('SELECT id FROM users WHERE username=?').get(username);
-  if (existing) return { configured: true, username };
-  const policy = passwordPolicy(password, username);
-  if (!policy.valid || password === 'change-this-to-a-long-random-password') return { configured: false, username };
-  const salt = randomBytes(24).toString('hex');
-  db.prepare('INSERT INTO users (id,username,password_hash,password_salt) VALUES (?,?,?,?)').run(randomUUID(), username, hashPassword(password, salt), salt);
+  let existing = controlDb.prepare('SELECT id FROM users WHERE username=?').get(username);
+  if (!existing) {
+    const policy = passwordPolicy(password, username);
+    if (!policy.valid || password === 'change-this-to-a-long-random-password') return { configured: false, username };
+    const salt = randomBytes(24).toString('hex');
+    existing = { id: randomUUID() };
+    controlDb.prepare('INSERT INTO users (id,username,password_hash,password_salt,display_name) VALUES (?,?,?,?,?)')
+      .run(existing.id, username, hashPassword(password, salt), salt, username);
+  }
+  const primaryName = controlDb.prepare("SELECT value FROM settings WHERE key='businessName'").get()?.value || 'دفتر اصلی';
+  const primaryProfile = controlDb.prepare("SELECT value FROM settings WHERE key='profileType'").get()?.value === 'personal' ? 'personal' : 'business';
+  controlDb.prepare(`INSERT OR IGNORE INTO workspaces (id,name,profile_type,created_by) VALUES ('primary',?,?,?)`)
+    .run(primaryName, primaryProfile, existing.id);
+  controlDb.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id,user_id,role) VALUES ('primary',?,'owner')`).run(existing.id);
   return { configured: true, username };
 }
 
 export function authenticateUser(username, password) {
-  const user = db.prepare('SELECT id,username,password_hash,password_salt FROM users WHERE username=?').get(String(username || '').trim().toLowerCase());
+  const user = controlDb.prepare('SELECT id,username,display_name AS displayName,must_change_password AS mustChangePassword,password_hash,password_salt FROM users WHERE username=?').get(String(username || '').trim().toLowerCase());
   if (!user) { hashPassword(String(password || ''), '000000000000000000000000000000000000000000000000'); return null; }
   const supplied = Buffer.from(hashPassword(String(password || ''), user.password_salt), 'hex');
   const expected = Buffer.from(user.password_hash, 'hex');
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected) ? { id: user.id, username: user.username } : null;
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected)
+    ? { id: user.id, username: user.username, displayName: user.displayName, mustChangePassword: Boolean(user.mustChangePassword) } : null;
 }
 
 export function createSession(userId) {
   const token = randomBytes(32).toString('base64url');
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
-  db.prepare('INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)').run(tokenHash, userId, expiresAt);
-  db.prepare(`DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN (
+  controlDb.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
+  controlDb.prepare('INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)').run(tokenHash, userId, expiresAt);
+  controlDb.prepare(`DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN (
     SELECT token_hash FROM sessions WHERE user_id=? ORDER BY rowid DESC LIMIT 5
   )`).run(userId, userId);
   return { token, expiresAt };
@@ -920,43 +1097,44 @@ export function createSession(userId) {
 export function userFromSession(token) {
   if (!token) return null;
   const tokenHash = createHash('sha256').update(token).digest('hex');
-  return db.prepare(`SELECT users.id,users.username,sessions.expires_at AS expiresAt
+  return controlDb.prepare(`SELECT users.id,users.username,users.display_name AS displayName,
+    users.must_change_password AS mustChangePassword,sessions.expires_at AS expiresAt
     FROM sessions JOIN users ON users.id=sessions.user_id
     WHERE sessions.token_hash=? AND sessions.expires_at>?`).get(tokenHash, new Date().toISOString()) || null;
 }
 
 export function deleteSession(token) {
   if (!token) return;
-  db.prepare('DELETE FROM sessions WHERE token_hash=?').run(createHash('sha256').update(token).digest('hex'));
+  controlDb.prepare('DELETE FROM sessions WHERE token_hash=?').run(createHash('sha256').update(token).digest('hex'));
 }
 
 export function loginThrottle(fingerprint, now = new Date()) {
-  const row = db.prepare('SELECT attempts,locked_until AS lockedUntil FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
+  const row = controlDb.prepare('SELECT attempts,locked_until AS lockedUntil FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
   if (!row?.lockedUntil || row.lockedUntil <= now.toISOString()) return { blocked: false, retryAfterSeconds: 0 };
   return { blocked: true, retryAfterSeconds: Math.max(1, Math.ceil((new Date(row.lockedUntil).getTime() - now.getTime()) / 1000)) };
 }
 
 export function recordLoginFailure(fingerprint, now = new Date()) {
   const windowMs = 15 * 60 * 1000;
-  const current = db.prepare('SELECT attempts,window_started_at AS windowStartedAt FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
+  const current = controlDb.prepare('SELECT attempts,window_started_at AS windowStartedAt FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
   const insideWindow = current && now.getTime() - new Date(current.windowStartedAt).getTime() < windowMs;
   const attempts = insideWindow ? Number(current.attempts) + 1 : 1;
   const windowStartedAt = insideWindow ? current.windowStartedAt : now.toISOString();
   const lockedUntil = attempts >= 8 ? new Date(now.getTime() + windowMs).toISOString() : null;
-  db.prepare(`INSERT INTO auth_attempts (fingerprint,attempts,window_started_at,locked_until,updated_at) VALUES (?,?,?,?,?)
+  controlDb.prepare(`INSERT INTO auth_attempts (fingerprint,attempts,window_started_at,locked_until,updated_at) VALUES (?,?,?,?,?)
     ON CONFLICT(fingerprint) DO UPDATE SET attempts=excluded.attempts,window_started_at=excluded.window_started_at,
       locked_until=excluded.locked_until,updated_at=excluded.updated_at`)
     .run(fingerprint, attempts, windowStartedAt, lockedUntil, now.toISOString());
-  db.prepare('DELETE FROM auth_attempts WHERE updated_at<?').run(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
+  controlDb.prepare('DELETE FROM auth_attempts WHERE updated_at<?').run(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
   return { attempts, blocked: Boolean(lockedUntil), lockedUntil };
 }
 
 export function clearLoginFailures(fingerprint) {
-  db.prepare('DELETE FROM auth_attempts WHERE fingerprint=?').run(fingerprint);
+  controlDb.prepare('DELETE FROM auth_attempts WHERE fingerprint=?').run(fingerprint);
 }
 
 export function changePassword(userId, currentPassword, newPassword) {
-  const user = db.prepare('SELECT id,username,password_hash,password_salt FROM users WHERE id=?').get(userId);
+  const user = controlDb.prepare('SELECT id,username,password_hash,password_salt FROM users WHERE id=?').get(userId);
   if (!user) return { changed: false, code: 'USER_NOT_FOUND' };
   const supplied = Buffer.from(hashPassword(String(currentPassword || ''), user.password_salt), 'hex');
   const expected = Buffer.from(user.password_hash, 'hex');
@@ -965,12 +1143,13 @@ export function changePassword(userId, currentPassword, newPassword) {
   if (!policy.valid) return { changed: false, code: 'WEAK_PASSWORD', message: policy.message };
   if (String(currentPassword) === String(newPassword)) return { changed: false, code: 'PASSWORD_UNCHANGED', message: 'رمز جدید باید با رمز فعلی متفاوت باشد.' };
   const salt = randomBytes(24).toString('hex');
-  db.exec('BEGIN IMMEDIATE');
+  controlDb.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('UPDATE users SET password_hash=?,password_salt=? WHERE id=?').run(hashPassword(String(newPassword), salt), salt, userId);
-    db.prepare('DELETE FROM sessions WHERE user_id=?').run(userId);
-    audit('password-change', 'user', userId);
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    controlDb.prepare('UPDATE users SET password_hash=?,password_salt=?,must_change_password=0 WHERE id=?').run(hashPassword(String(newPassword), salt), salt, userId);
+    controlDb.prepare('DELETE FROM sessions WHERE user_id=?').run(userId);
+    controlDb.prepare('INSERT INTO audit_log (id,action,entity_type,entity_id,payload) VALUES (?,?,?,?,?)')
+      .run(randomUUID(), 'password-change', 'user', userId, '{}');
+    controlDb.exec('COMMIT');
+  } catch (error) { controlDb.exec('ROLLBACK'); throw error; }
   return { changed: true };
 }
