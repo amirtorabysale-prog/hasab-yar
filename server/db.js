@@ -242,7 +242,9 @@ export function getToday() {
 export function summarize(items) {
   const income = items.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount), 0);
   const expense = items.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount), 0);
-  return { income, expense, profit: income - expense, comparison: null };
+  const netCashFlow = income - expense;
+  // profit برای سازگاری نسخهٔ قبلی نگه داشته شده و نباید با سود حسابداری اشتباه شود.
+  return { income, expense, netCashFlow, profit: netCashFlow, comparison: null };
 }
 
 export function insertTransactions({ transcript, transactions }) {
@@ -658,7 +660,7 @@ export function financialOverview() {
   const runwayDays = monthlyExpense > 0 ? Math.max(0, Math.round((cash / monthlyExpense) * 30)) : null;
   const alerts = [];
   if (obligations.overdue) alerts.push({ level: 'danger', title: `${obligations.overdue} سررسید عقب‌افتاده داری`, action: 'obligations' });
-  if (cash < Number(settings.lowBalanceThreshold || 2_000_000)) alerts.push({ level: 'warning', title: 'موجودی تخمینی به حد هشدار رسیده است', action: 'reports' });
+  if (cash < Number(settings.lowBalanceThreshold || 2_000_000)) alerts.push({ level: 'warning', title: 'ماندهٔ برآوردی ثبت‌ها به حد هشدار رسیده است', action: 'reports' });
   if (month.summary.expense > month.summary.income && month.summary.expense > 0) alerts.push({ level: 'warning', title: 'هزینهٔ این ماه از درآمد بیشتر شده است', action: 'reports' });
   return {
     cash, receivable: Number(obligations.receivable), payable: Number(obligations.payable), overdue: Number(obligations.overdue),
@@ -683,10 +685,10 @@ export function answerFinancialQuestion(question = '') {
     answer = `در ۳۰ روز اخیر ${new Intl.NumberFormat('fa-IR').format(month.summary.income)} تومان درآمد ثبت کرده‌ای.`;
     evidence = month.points;
   } else if (/سود|وضع|چطور/.test(normalized)) {
-    answer = `سود تقریبی ۳۰ روز اخیر ${new Intl.NumberFormat('fa-IR').format(month.summary.profit)} تومان و موجودی تخمینی ${new Intl.NumberFormat('fa-IR').format(overview.cash)} تومان است.`;
+    answer = `خالص دریافت و پرداخت ۳۰ روز اخیر ${new Intl.NumberFormat('fa-IR').format(month.summary.netCashFlow)} تومان و ماندهٔ برآوردی ثبت‌ها ${new Intl.NumberFormat('fa-IR').format(overview.cash)} تومان است. این عدد سود حسابداری نیست.`;
     evidence = [month.summary];
   } else {
-    answer = `موجودی تخمینی ${new Intl.NumberFormat('fa-IR').format(overview.cash)} تومان است. می‌توانی دربارهٔ فروش، هزینه، سود، طلب یا بدهی بپرسی.`;
+    answer = `ماندهٔ برآوردی ثبت‌ها ${new Intl.NumberFormat('fa-IR').format(overview.cash)} تومان است. می‌توانی دربارهٔ فروش، هزینه، خالص دریافت و پرداخت، طلب یا بدهی بپرسی.`;
     evidence = [overview.month];
   }
   return { question: normalized, answer, evidence, generatedAt: new Date().toISOString(), deterministic: true };
