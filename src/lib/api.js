@@ -31,6 +31,8 @@ export const api = {
   deleteTransaction: (id) => request(`/api/transactions/${id}`, { method: 'DELETE' }),
   report: (range) => request(`/api/reports?range=${range}`),
   overview: () => request('/api/overview'),
+  accounts: () => request('/api/accounts'),
+  saveAccount: (payload) => request(payload.id ? `/api/accounts/${payload.id}` : '/api/accounts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   contacts: () => request('/api/contacts'),
   saveContact: (payload) => request(payload.id ? `/api/contacts/${payload.id}` : '/api/contacts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   deleteContact: (id) => request(`/api/contacts/${id}`, { method: 'DELETE' }),
