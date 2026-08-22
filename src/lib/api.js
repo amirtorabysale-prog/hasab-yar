@@ -1,5 +1,15 @@
 const QUEUE_KEY = 'hesab-yar-transaction-queue';
 const CSRF_KEY = 'hesab-yar-csrf';
+const WORKSPACE_KEY = 'hesab-yar-workspace';
+
+function currentWorkspaceId() {
+  try { return localStorage.getItem(WORKSPACE_KEY) || ''; }
+  catch { return ''; }
+}
+
+function queueKey() {
+  return `${QUEUE_KEY}:${currentWorkspaceId() || 'primary'}`;
+}
 
 function currentCsrfToken() {
   try { return sessionStorage.getItem(CSRF_KEY) || ''; }
@@ -23,11 +33,16 @@ async function request(path, options = {}) {
     headers: {
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...(mutating && csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+      ...(currentWorkspaceId() ? { 'X-Workspace-Id': currentWorkspaceId() } : {}),
       ...options.headers,
     },
   });
   const body = await response.json().catch(() => ({}));
   if (body.csrfToken) rememberCsrfToken(body.csrfToken);
+  const selectedWorkspace = body.workspace || body.access?.workspace;
+  if (selectedWorkspace?.id) {
+    try { localStorage.setItem(WORKSPACE_KEY, selectedWorkspace.id); } catch { /* private mode */ }
+  }
   if (response.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/password') {
     rememberCsrfToken('');
     window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
@@ -38,10 +53,27 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  activeWorkspaceId: currentWorkspaceId,
+  selectWorkspace: (workspaceId) => {
+    if (workspaceId) localStorage.setItem(WORKSPACE_KEY, workspaceId);
+    else localStorage.removeItem(WORKSPACE_KEY);
+  },
+  workspacePath: (path) => {
+    const id = currentWorkspaceId();
+    if (!id) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}workspace=${encodeURIComponent(id)}`;
+  },
   authStatus: () => request('/api/auth/status'),
   login: (username, password) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   changePassword: (currentPassword, newPassword) => request('/api/auth/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
+  workspaces: () => request('/api/workspaces'),
+  createWorkspace: (payload) => request('/api/workspaces', { method: 'POST', body: JSON.stringify(payload) }),
+  members: () => request('/api/workspace/members'),
+  addMember: (payload) => request('/api/workspace/members', { method: 'POST', body: JSON.stringify(payload) }),
+  updateMember: (userId, role) => request(`/api/workspace/members/${userId}`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  removeMember: (userId) => request(`/api/workspace/members/${userId}`, { method: 'DELETE' }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
   parseAudio: (blob, { signal, hint } = {}) => {
@@ -91,17 +123,19 @@ export const api = {
 };
 
 export function queueTransactions(payload) {
-  const queue = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+  const key = queueKey();
+  const queue = JSON.parse(localStorage.getItem(key) || '[]');
   queue.push({ id: crypto.randomUUID(), payload, createdAt: new Date().toISOString() });
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+  localStorage.setItem(key, JSON.stringify(queue));
 }
 
 export async function flushTransactionQueue() {
-  const queue = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+  const key = queueKey();
+  const queue = JSON.parse(localStorage.getItem(key) || '[]');
   const remaining = [];
   for (const item of queue) {
     try { await api.saveTransactions(item.payload); } catch { remaining.push(item); }
   }
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+  localStorage.setItem(key, JSON.stringify(remaining));
   return queue.length - remaining.length;
 }
