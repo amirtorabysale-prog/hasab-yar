@@ -7,9 +7,9 @@ import {
   adjustStock, answerFinancialQuestion, authenticateUser, closeDay, createInvoice, createSession, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, exportSnapshot, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
-  getToday, insertTransactions, listContacts, listDailyClosings, listInvoices, listObligations, listProducts,
+  getToday, insertTransactions, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts,
   listReceipts, listRecurringRules, listTransactions, markInvoicePaid, materializeRecurringRules, receiptImage, recordVoiceMetric,
-  report, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
+  report, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
   saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, userFromSession, voiceStats,
 } from './db.js';
 import { inferLearningKeyword, parseFinancialText } from './parser.js';
@@ -78,7 +78,7 @@ app.get('/api/bootstrap', (_request, response) => {
   materializeRecurringRules();
   return response.json({
     ...getToday(), categories: getCategories(), settings: getSettings(), learnings: getLearnings(),
-    averages: typicalAmounts(), overview: financialOverview(), contacts: listContacts(),
+    averages: typicalAmounts(), overview: financialOverview(), accounts: listAccounts(), contacts: listContacts(),
     obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(),
   });
 });
@@ -115,6 +115,9 @@ app.post('/api/transactions', (request, response, next) => {
 });
 app.get('/api/reports', (request, response) => response.json(report(['week', 'month', 'quarter'].includes(request.query.range) ? request.query.range : 'month')));
 app.get('/api/overview', (_request, response) => response.json(financialOverview()));
+app.get('/api/accounts', (_request, response) => response.json({ items: listAccounts() }));
+app.post('/api/accounts', (request, response, next) => { try { response.status(201).json({ item: saveAccount(request.body) }); } catch (error) { next(error); } });
+app.put('/api/accounts/:id', (request, response, next) => { try { response.json({ item: saveAccount({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.get('/api/transactions', (request, response) => response.json(listTransactions(request.query)));
 app.put('/api/transactions/:id', (request, response, next) => { try { const item = updateTransaction(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'تراکنش پیدا نشد.' }); } catch (error) { return next(error); } });
 app.delete('/api/transactions/:id', (request, response) => response.status(deleteTransaction(request.params.id) ? 204 : 404).end());
@@ -133,7 +136,7 @@ app.delete('/api/recurring/:id', (request, response) => response.status(deleteRe
 app.get('/api/invoices', (_request, response) => response.json({ items: listInvoices() }));
 app.get('/api/invoices/:id', (request, response) => { const item = getInvoice(request.params.id); return item ? response.json({ item }) : response.status(404).json({ message: 'فاکتور پیدا نشد.' }); });
 app.post('/api/invoices', (request, response, next) => { try { response.status(201).json({ item: createInvoice(request.body) }); } catch (error) { next(error); } });
-app.post('/api/invoices/:id/paid', (request, response) => { const item = markInvoicePaid(request.params.id); return item ? response.json({ item }) : response.status(404).json({ message: 'فاکتور پیدا نشد.' }); });
+app.post('/api/invoices/:id/paid', (request, response, next) => { try { const item = markInvoicePaid(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'فاکتور پیدا نشد.' }); } catch (error) { return next(error); } });
 app.delete('/api/invoices/:id', (request, response) => response.status(deleteInvoice(request.params.id) ? 204 : 409).end());
 app.get('/api/closings', (_request, response) => response.json({ items: listDailyClosings() }));
 app.post('/api/closings', (request, response, next) => { try { response.status(201).json({ item: closeDay(request.body) }); } catch (error) { next(error); } });
@@ -181,5 +184,14 @@ app.use((error, _request, response, _next) => {
   console.error(error);
   return response.status(error.status || 500).json({ code: error.code || 'SERVER_ERROR', message: error.status ? error.message : 'خطای داخلی سرور؛ دوباره تلاش کن.' });
 });
+
+function runRecurringJob() {
+  try { materializeRecurringRules(); }
+  catch (error) { console.error('Recurring materialization failed:', error); }
+}
+
+runRecurringJob();
+const recurringTimer = setInterval(runRecurringJob, 60_000);
+recurringTimer.unref();
 
 app.listen(port, '0.0.0.0', () => console.log(`HesabYar API listening on http://localhost:${port}`));

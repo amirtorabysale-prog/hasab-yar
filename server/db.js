@@ -16,6 +16,16 @@ db.exec(`
     type TEXT NOT NULL CHECK(type IN ('income','expense')),
     sort_order INTEGER NOT NULL DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    kind TEXT NOT NULL DEFAULT 'cash' CHECK(kind IN ('cash','bank','wallet','other')),
+    opening_balance INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
     client_id TEXT UNIQUE,
@@ -26,6 +36,7 @@ db.exec(`
     source TEXT NOT NULL DEFAULT 'text' CHECK(source IN ('voice','text','offline')),
     confidence REAL NOT NULL DEFAULT 1,
     needs_review INTEGER NOT NULL DEFAULT 0,
+    account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT,
     occurred_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -178,6 +189,7 @@ function ensureColumn(table, definition) {
 
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");
+ensureColumn('transactions', "account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT");
 ensureColumn('transactions', "note TEXT NOT NULL DEFAULT ''");
 ensureColumn('transactions', "status TEXT NOT NULL DEFAULT 'confirmed'");
 ensureColumn('transactions', 'due_at TEXT');
@@ -191,12 +203,23 @@ const categorySeed = [
 const insertCategory = db.prepare('INSERT OR IGNORE INTO categories (id,name,type,sort_order) VALUES (?,?,?,?)');
 for (const item of categorySeed) insertCategory.run(...item);
 
+db.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,opening_balance,sort_order)
+  VALUES ('cash','صندوق نقدی','cash',0,1)`).run();
+db.prepare("UPDATE transactions SET account_id='cash' WHERE account_id IS NULL OR account_id='' ").run();
+
 const defaults = {
   businessName: '', currency: 'تومان', timezone: 'Asia/Tehran', profileType: 'business',
   onboardingDone: 'false', openingBalance: '0', ownerName: '', lowBalanceThreshold: '2000000',
 };
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
 for (const [key, value] of Object.entries(defaults)) insertSetting.run(key, String(value));
+
+const openingMigrated = db.prepare("SELECT value FROM settings WHERE key='accountOpeningMigrated'").get();
+if (!openingMigrated) {
+  const legacyOpening = Number(db.prepare("SELECT value FROM settings WHERE key='openingBalance'").get()?.value || 0);
+  db.prepare("UPDATE accounts SET opening_balance=? WHERE id='cash'").run(Math.round(legacyOpening));
+  insertSetting.run('accountOpeningMigrated', 'true');
+}
 
 export function getSettings() {
   return Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map((row) => [row.key, row.value]));
@@ -205,36 +228,98 @@ export function getSettings() {
 export function saveSettings(values) {
   const allowed = ['businessName', 'currency', 'timezone', 'profileType', 'onboardingDone', 'openingBalance', 'ownerName', 'lowBalanceThreshold'];
   const statement = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
-  for (const key of allowed) if (values[key] != null) statement.run(key, String(values[key]).slice(0, 120));
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const key of allowed) if (values[key] != null) statement.run(key, String(values[key]).slice(0, 120));
+    if (values.openingBalance != null) {
+      const opening = Math.round(Number(values.openingBalance));
+      if (!Number.isSafeInteger(opening)) throw new Error('ماندهٔ ابتدای دوره معتبر نیست.');
+      db.prepare("UPDATE accounts SET opening_balance=?,updated_at=CURRENT_TIMESTAMP WHERE id='cash'").run(opening);
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return getSettings();
+}
+
+export function listAccounts() {
+  return db.prepare(`SELECT accounts.id,accounts.name,accounts.kind,accounts.opening_balance AS openingBalance,accounts.active,
+    accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' THEN
+      CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0) AS balance
+    FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
+    GROUP BY accounts.id ORDER BY accounts.active DESC,accounts.sort_order,accounts.name`).all();
+}
+
+export function saveAccount(values = {}) {
+  const id = String(values.id || randomUUID()).trim().slice(0, 80);
+  const name = String(values.name || '').trim().slice(0, 100);
+  const kind = ['cash', 'bank', 'wallet', 'other'].includes(values.kind) ? values.kind : 'other';
+  const openingBalance = Math.round(Number(values.openingBalance) || 0);
+  if (!name) throw new Error('نام حساب را وارد کن.');
+  if (!Number.isSafeInteger(openingBalance)) throw new Error('ماندهٔ ابتدای دوره معتبر نیست.');
+  db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active) VALUES (?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,opening_balance=excluded.opening_balance,
+      active=excluded.active,updated_at=CURRENT_TIMESTAMP`)
+    .run(id, name, kind, openingBalance, values.active === false ? 0 : 1);
+  if (id === 'cash') insertSetting.run('openingBalance', String(openingBalance));
+  audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance });
+  return listAccounts().find((item) => item.id === id);
 }
 
 export function getCategories() {
   return db.prepare('SELECT id,name,type FROM categories ORDER BY type DESC, sort_order, name').all();
 }
 
-function tehranDay(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+function currentTimeZone() {
+  const candidate = getSettings().timezone || 'Asia/Tehran';
+  try { new Intl.DateTimeFormat('en', { timeZone: candidate }).format(); return candidate; }
+  catch { return 'Asia/Tehran'; }
 }
 
-function dayBounds(day = tehranDay()) {
-  return { start: `${day}T00:00:00+03:30`, end: `${day}T23:59:59.999+03:30` };
+export function localDay(date = new Date(), timeZone = currentTimeZone()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+function addLocalDays(day, count) {
+  const [year, month, date] = day.split('-').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, date + count));
+  return result.toISOString().slice(0, 10);
+}
+
+function zonedMidnight(day, timeZone) {
+  const [year, month, date] = day.split('-').map(Number);
+  const target = Date.UTC(year, month - 1, date);
+  let guess = target;
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(guess)).filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+    const represented = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    guess -= represented - target;
+  }
+  return new Date(guess);
+}
+
+export function dayBounds(day = localDay(), timeZone = currentTimeZone()) {
+  const startDate = zonedMidnight(day, timeZone);
+  const nextDate = zonedMidnight(addLocalDays(day, 1), timeZone);
+  return { start: startDate.toISOString(), endExclusive: nextDate.toISOString(), end: new Date(nextDate.getTime() - 1).toISOString() };
 }
 
 export function getToday() {
-  const { start, end } = dayBounds();
+  const today = localDay();
+  const { start, endExclusive } = dayBounds(today);
   const transactions = db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.contact_id AS contactId,
     contacts.name AS contactName
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id
-    WHERE transactions.occurred_at BETWEEN ? AND ? AND transactions.status!='deleted'
-    ORDER BY transactions.occurred_at DESC`).all(start, end);
+    WHERE transactions.occurred_at>=? AND transactions.occurred_at<? AND transactions.status!='deleted'
+    ORDER BY transactions.occurred_at DESC`).all(start, endExclusive);
   const totals = summarize(transactions);
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const previousBounds = dayBounds(tehranDay(yesterday));
-  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE occurred_at BETWEEN ? AND ?").get(previousBounds.start, previousBounds.end).income;
+  const previousBounds = dayBounds(addLocalDays(today, -1));
+  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
   totals.comparison = previous > 0 ? Math.round(((totals.income - previous) / previous) * 100) : null;
   return { transactions, summary: totals };
 }
@@ -247,26 +332,45 @@ export function summarize(items) {
   return { income, expense, netCashFlow, profit: netCashFlow, comparison: null };
 }
 
-export function insertTransactions({ transcript, transactions }) {
+function resolveAccountId(item = {}) {
+  const requested = String(item.accountId || item.account || 'cash').trim().slice(0, 80);
+  const account = db.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(requested)
+    || db.prepare('SELECT id FROM accounts WHERE name=? AND active=1').get(requested);
+  if (!account) throw new Error('حساب مالی انتخاب‌شده معتبر یا فعال نیست.');
+  return account.id;
+}
+
+function insertTransactionRows({ transcript, transactions }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
-    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,occurred_at,contact_id,account,note,status,due_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const ids = [];
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    for (const item of transactions) {
-      const id = randomUUID();
-      const amount = Math.round(Number(item.amount));
-      if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw new Error('مبلغ معتبر نیست.');
-      if (!['income', 'expense'].includes(item.type)) throw new Error('نوع تراکنش معتبر نیست.');
-      const occurredAt = item.occurredAt || new Date().toISOString();
-      insert.run(id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80), String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1), item.needsReview ? 1 : 0, occurredAt, item.contactId || null, String(item.account || 'cash').slice(0, 40), String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt);
+  for (const item of transactions) {
+    const id = randomUUID();
+    const amount = Math.round(Number(item.amount));
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw new Error('مبلغ معتبر نیست.');
+    if (!['income', 'expense'].includes(item.type)) throw new Error('نوع تراکنش معتبر نیست.');
+    const occurredAt = item.occurredAt || new Date().toISOString();
+    const accountId = resolveAccountId(item);
+    const result = insert.run(id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80), String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1), item.needsReview ? 1 : 0, occurredAt, item.contactId || null, accountId, accountId, String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt);
+    if (result.changes) {
       ids.push(id);
       audit('create', 'transaction', id, { amount, type: item.type, category: item.category });
+    } else if (item.clientId) {
+      const existing = db.prepare('SELECT id FROM transactions WHERE client_id=?').get(item.clientId);
+      if (existing) ids.push(existing.id);
     }
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
   return ids;
+}
+
+export function insertTransactions(payload) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const ids = insertTransactionRows(payload);
+    db.exec('COMMIT');
+    return ids;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 export function getLearnings() {
@@ -292,37 +396,42 @@ export function updateLearning(id, values) {
 export function deleteLearning(id) { return db.prepare('DELETE FROM learnings WHERE id=?').run(id).changes > 0; }
 
 export function typicalAmounts() {
-  const rows = db.prepare("SELECT type, AVG(amount) AS average FROM (SELECT type,amount FROM transactions ORDER BY occurred_at DESC LIMIT 120) GROUP BY type").all();
+  const rows = db.prepare("SELECT type, AVG(amount) AS average FROM (SELECT type,amount FROM transactions WHERE status!='deleted' ORDER BY occurred_at DESC LIMIT 120) GROUP BY type").all();
   return Object.fromEntries(rows.map((row) => [row.type, Math.round(row.average)]));
 }
 
-export function report(range = 'month') {
+export function report(range = 'month', now = new Date()) {
   const days = range === 'week' ? 7 : range === 'quarter' ? 90 : 30;
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - (days - 1));
-  const start = dayBounds(tehranDay(startDate)).start;
-  const items = db.prepare('SELECT amount,type,category,occurred_at AS occurredAt FROM transactions WHERE occurred_at >= ? ORDER BY occurred_at').all(start);
+  const timeZone = currentTimeZone();
+  const today = localDay(now, timeZone);
+  const startDay = addLocalDays(today, -(days - 1));
+  const start = dayBounds(startDay, timeZone).start;
+  const endExclusive = dayBounds(addLocalDays(today, 1), timeZone).start;
+  const items = db.prepare("SELECT amount,type,category,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
   const summary = summarize(items);
   const bucketCount = range === 'quarter' ? 12 : range === 'month' ? 10 : 7;
   const bucketDays = Math.ceil(days / bucketCount);
   const points = [];
   for (let index = 0; index < bucketCount; index += 1) {
-    const from = new Date(startDate); from.setDate(from.getDate() + index * bucketDays);
-    const until = new Date(from); until.setDate(until.getDate() + bucketDays);
+    const fromDay = addLocalDays(startDay, index * bucketDays);
+    const untilDay = addLocalDays(startDay, Math.min(days, (index + 1) * bucketDays));
+    const from = new Date(dayBounds(fromDay, timeZone).start);
+    const until = new Date(dayBounds(untilDay, timeZone).start);
     const group = items.filter((item) => { const time = new Date(item.occurredAt); return time >= from && time < until; });
     const totals = summarize(group);
-    points.push({ label: new Intl.DateTimeFormat('fa-IR-u-ca-persian', { day: 'numeric', month: range === 'quarter' ? 'short' : undefined }).format(from), income: totals.income, expense: totals.expense });
+    points.push({ label: new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone, day: 'numeric', month: range === 'quarter' ? 'short' : undefined }).format(from), income: totals.income, expense: totals.expense });
   }
   const grouped = new Map();
   for (const item of items) {
     const key = `${item.type}:${item.category}`;
     grouped.set(key, { name: item.category, type: item.type, amount: (grouped.get(key)?.amount || 0) + Number(item.amount) });
   }
-  const maximum = Math.max(1, ...[...grouped.values()].map((item) => item.amount));
-  const categories = [...grouped.values()].sort((a, b) => b.amount - a.amount).map((item) => ({ ...item, share: Math.round(item.amount / maximum * 100) }));
+  const totalsByType = { income: Math.max(1, summary.income), expense: Math.max(1, summary.expense) };
+  const categories = [...grouped.values()].sort((a, b) => b.amount - a.amount)
+    .map((item) => ({ ...item, share: Math.round(item.amount / totalsByType[item.type] * 100) }));
   const biggestExpense = categories.find((item) => item.type === 'expense');
   const insight = biggestExpense ? `بیشترین هزینهٔ این بازه مربوط به «${biggestExpense.name}» و مبلغ آن ${new Intl.NumberFormat('fa-IR').format(biggestExpense.amount)} تومان بوده است.` : '';
-  return { summary, points, categories, insight };
+  return { basis: 'cash', basisLabel: 'مبنای دریافت و پرداخت', summary, points, categories, insight };
 }
 
 function audit(action, entityType, entityId, payload = {}) {
@@ -340,8 +449,9 @@ function transactionRow(id) {
   return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,
+    transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName,transactions.due_at AS dueAt
-    FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id
+    FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
     WHERE transactions.id=? AND transactions.status!='deleted'`).get(id) || null;
 }
 
@@ -364,8 +474,9 @@ export function listTransactions({ query = '', type = '', category = '', from = 
   const items = db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.needs_review AS needsReview,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,
+    transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName
-    FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id
+    FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
     WHERE ${where} ORDER BY transactions.occurred_at DESC LIMIT ? OFFSET ?`)
     .all(...values, safeLimit, (safePage - 1) * safeLimit);
   return { items, total, page: safePage, pages: Math.max(1, Math.ceil(total / safeLimit)) };
@@ -377,8 +488,9 @@ export function updateTransaction(id, values = {}) {
   const type = ['income', 'expense'].includes(values.type) ? values.type : current.type;
   const amount = values.amount == null ? current.amount : cleanAmount(values.amount);
   const occurredAt = values.occurredAt || current.occurredAt;
-  db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,contact_id=?,occurred_at=?,due_at=?,updated_at=? WHERE id=?`)
-    .run(amount, type, String(values.category || current.category).slice(0, 80), String(values.rawText ?? current.rawText).slice(0, 1000), String(values.note ?? current.note ?? '').slice(0, 500), String(values.account || current.account || 'cash').slice(0, 40), values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt, values.dueAt === undefined ? current.dueAt : (values.dueAt || null), new Date().toISOString(), id);
+  const accountId = values.accountId == null && values.account == null ? current.accountId : resolveAccountId(values);
+  db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,account_id=?,contact_id=?,occurred_at=?,due_at=?,updated_at=? WHERE id=?`)
+    .run(amount, type, String(values.category || current.category).slice(0, 80), String(values.rawText ?? current.rawText).slice(0, 1000), String(values.note ?? current.note ?? '').slice(0, 500), accountId, accountId, values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt, values.dueAt === undefined ? current.dueAt : (values.dueAt || null), new Date().toISOString(), id);
   audit('update', 'transaction', id, { before: current, after: values });
   return transactionRow(id);
 }
@@ -442,17 +554,23 @@ export function saveObligation(values = {}) {
   return listObligations({ status: 'all' }).find((item) => item.id === id);
 }
 
-export function settleObligation(id, { occurredAt, account = 'cash' } = {}) {
+export function settleObligation(id, { occurredAt, account = 'cash', accountId } = {}) {
   const item = db.prepare("SELECT * FROM obligations WHERE id=? AND status='open'").get(id);
   if (!item) return null;
-  const transactionId = insertTransactions({ transcript: `تسویه ${item.title}`, transactions: [{
-    amount: item.amount,
-    type: item.direction === 'receivable' ? 'income' : 'expense',
-    category: item.direction === 'receivable' ? 'سایر درآمدها' : 'سایر هزینه‌ها',
-    rawText: `تسویه ${item.title}`, source: 'text', contactId: item.contact_id, occurredAt, account,
-  }] })[0];
-  db.prepare("UPDATE obligations SET status='paid',paid_transaction_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(transactionId, id);
-  audit('settle', 'obligation', id, { transactionId });
+  let transactionId;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    [transactionId] = insertTransactionRows({ transcript: `تسویه ${item.title}`, transactions: [{
+      clientId: `obligation:${id}`, amount: item.amount,
+      type: item.direction === 'receivable' ? 'income' : 'expense',
+      category: item.direction === 'receivable' ? 'سایر درآمدها' : 'سایر هزینه‌ها',
+      rawText: `تسویه ${item.title}`, source: 'text', contactId: item.contact_id, occurredAt, account, accountId,
+    }] });
+    const updated = db.prepare("UPDATE obligations SET status='paid',paid_transaction_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='open'").run(transactionId, id);
+    if (!updated.changes) throw new Error('این طلب یا بدهی قبلاً تسویه شده است.');
+    audit('settle', 'obligation', id, { transactionId });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return { item: listObligations({ status: 'paid' }).find((row) => row.id === id), transaction: transactionRow(transactionId) };
 }
 
@@ -497,13 +615,22 @@ export function materializeRecurringRules(now = new Date()) {
   const due = db.prepare('SELECT * FROM recurring_rules WHERE active=1 AND next_due_at<=?').all(now.toISOString());
   let created = 0;
   for (const item of due) {
-    insertTransactions({ transcript: item.title, transactions: [{
-      clientId: `recurring:${item.id}:${item.next_due_at.slice(0, 10)}`, amount: item.amount, type: item.type,
-      category: item.category, rawText: item.title, note: 'ثبت خودکار دوره‌ای', source: 'text', occurredAt: item.next_due_at,
-    }] });
-    db.prepare('UPDATE recurring_rules SET next_due_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-      .run(nextMonthlyDate(item.day_of_month, new Date(item.next_due_at)), item.id);
-    created += 1;
+    let nextDue = item.next_due_at;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      while (nextDue <= now.toISOString()) {
+        const clientId = `recurring:${item.id}:${nextDue.slice(0, 10)}`;
+        const existed = db.prepare('SELECT id FROM transactions WHERE client_id=?').get(clientId);
+        insertTransactionRows({ transcript: item.title, transactions: [{
+          clientId, amount: item.amount, type: item.type, category: item.category,
+          rawText: item.title, note: 'ثبت خودکار دوره‌ای', source: 'text', occurredAt: nextDue,
+        }] });
+        if (!existed) created += 1;
+        nextDue = nextMonthlyDate(item.day_of_month, new Date(nextDue));
+      }
+      db.prepare('UPDATE recurring_rules SET next_due_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(nextDue, item.id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   return created;
 }
@@ -552,15 +679,20 @@ export function createInvoice(values = {}) {
   return getInvoice(id);
 }
 
-export function markInvoicePaid(id) {
+export function markInvoicePaid(id, { occurredAt, account = 'cash', accountId } = {}) {
   const invoice = getInvoice(id);
   if (!invoice || invoice.status === 'paid') return invoice;
-  insertTransactions({ transcript: `وصول فاکتور ${invoice.number}`, transactions: [{
-    clientId: `invoice:${id}`, amount: invoice.total, type: 'income', category: 'فروش', rawText: `وصول فاکتور ${invoice.number}`,
-    source: 'text', contactId: invoice.contactId,
-  }] });
-  db.prepare("UPDATE invoices SET status='paid',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
-  audit('paid', 'invoice', id, { total: invoice.total });
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    insertTransactionRows({ transcript: `وصول فاکتور ${invoice.number}`, transactions: [{
+      clientId: `invoice:${id}`, amount: invoice.total, type: 'income', category: 'فروش', rawText: `وصول فاکتور ${invoice.number}`,
+      source: 'text', contactId: invoice.contactId, occurredAt, account, accountId,
+    }] });
+    const updated = db.prepare("UPDATE invoices SET status='paid',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status!='paid'").run(id);
+    if (!updated.changes) throw new Error('این فاکتور قبلاً وصول شده است.');
+    audit('paid', 'invoice', id, { total: invoice.total });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return getInvoice(id);
 }
 
@@ -571,12 +703,17 @@ export function deleteInvoice(id) {
 }
 
 export function closeDay(values = {}) {
-  const day = String(values.day || tehranDay()).slice(0, 10);
+  const day = String(values.day || localDay()).slice(0, 10);
   const bounds = dayBounds(day);
-  const totals = db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
-    FROM transactions WHERE status!='deleted' AND account='cash' AND occurred_at BETWEEN ? AND ?`).get(bounds.start, bounds.end);
-  const opening = Number(getSettings().openingBalance || 0);
-  const expectedCash = opening + Number(totals.net || 0);
+  const previous = db.prepare('SELECT day,counted_cash AS countedCash FROM daily_closings WHERE day<? ORDER BY day DESC LIMIT 1').get(day);
+  const cashAccount = db.prepare("SELECT opening_balance AS openingBalance FROM accounts WHERE id='cash'").get();
+  const movementStart = previous ? dayBounds(addLocalDays(previous.day, 1)).start : null;
+  const totals = movementStart
+    ? db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
+      FROM transactions WHERE status!='deleted' AND account_id='cash' AND occurred_at>=? AND occurred_at<?`).get(movementStart, bounds.endExclusive)
+    : db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
+      FROM transactions WHERE status!='deleted' AND account_id='cash' AND occurred_at<?`).get(bounds.endExclusive);
+  const expectedCash = Number(previous?.countedCash ?? cashAccount?.openingBalance ?? 0) + Number(totals.net || 0);
   const countedCash = Math.max(0, Math.round(Number(values.countedCash) || 0));
   const difference = countedCash - expectedCash;
   const id = randomUUID();
@@ -653,9 +790,12 @@ export function financialOverview() {
     COALESCE(SUM(CASE WHEN direction='payable' AND status='open' THEN amount ELSE 0 END),0) AS payable,
     COUNT(CASE WHEN status='open' AND due_at IS NOT NULL AND due_at<? THEN 1 END) AS overdue
     FROM obligations`).get(new Date().toISOString());
-  const allTime = db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
-    FROM transactions WHERE status!='deleted'`).get();
-  const cash = Number(settings.openingBalance || 0) + Number(allTime.net || 0);
+  const liquid = db.prepare(`SELECT COALESCE(SUM(accounts.opening_balance + COALESCE((
+      SELECT SUM(CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END)
+      FROM transactions WHERE transactions.account_id=accounts.id AND transactions.status!='deleted'
+    ),0)),0) AS balance FROM accounts
+    WHERE accounts.active=1 AND accounts.kind IN ('cash','bank','wallet')`).get();
+  const cash = Number(liquid.balance || 0);
   const monthlyExpense = Number(month.summary.expense || 0);
   const runwayDays = monthlyExpense > 0 ? Math.max(0, Math.round((cash / monthlyExpense) * 30)) : null;
   const alerts = [];
@@ -664,7 +804,7 @@ export function financialOverview() {
   if (month.summary.expense > month.summary.income && month.summary.expense > 0) alerts.push({ level: 'warning', title: 'هزینهٔ این ماه از درآمد بیشتر شده است', action: 'reports' });
   return {
     cash, receivable: Number(obligations.receivable), payable: Number(obligations.payable), overdue: Number(obligations.overdue),
-    runwayDays, month: month.summary, alerts,
+    cashBasis: true, basisLabel: 'مبنای دریافت و پرداخت', accounts: listAccounts(), runwayDays, month: month.summary, alerts,
   };
 }
 
@@ -710,9 +850,9 @@ export function voiceStats() {
 
 export function exportSnapshot() {
   return {
-    version: 2, exportedAt: new Date().toISOString(), settings: getSettings(), categories: getCategories(),
+    version: 3, exportedAt: new Date().toISOString(), settings: getSettings(), categories: getCategories(), accounts: listAccounts(),
     transactions: db.prepare(`SELECT id,amount,type,category,raw_text AS rawText,source,occurred_at AS occurredAt,
-      note,account,contact_id AS contactId,due_at AS dueAt FROM transactions WHERE status!='deleted' ORDER BY occurred_at`).all(), contacts: listContacts(),
+      note,account,account_id AS accountId,contact_id AS contactId,due_at AS dueAt FROM transactions WHERE status!='deleted' ORDER BY occurred_at`).all(), contacts: listContacts(),
     obligations: listObligations({ status: 'all' }), recurring: listRecurringRules(), invoices: listInvoices(),
     dailyClosings: listDailyClosings(), receipts: listReceipts(), products: listProducts(), learnings: getLearnings(),
   };
