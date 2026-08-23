@@ -95,6 +95,18 @@ function categoryLedgerAccount(database, type, category) {
   return linkedLedgerAccount(database, type === 'income' ? 'income-category' : 'expense-category', clean, clean, type === 'income' ? 'income' : 'expense');
 }
 
+function counterpartyLedgerAccount(database, contactId, name, documentType) {
+  const cleanName = String(name || (documentType === 'purchase' ? 'تأمین‌کننده متفرقه' : 'مشتری متفرقه')).trim().slice(0, 100);
+  const key = String(contactId || cleanName).trim().slice(0, 120);
+  return linkedLedgerAccount(
+    database,
+    documentType === 'purchase' ? 'vendor-payable' : 'customer-receivable',
+    key,
+    documentType === 'purchase' ? `حساب پرداختنی — ${cleanName}` : `حساب دریافتنی — ${cleanName}`,
+    documentType === 'purchase' ? 'liability' : 'asset',
+  );
+}
+
 function validateLines(database, lines) {
   if (!Array.isArray(lines) || lines.length < 2 || lines.length > 100) throw accountingError('سند باید حداقل دو آرتیکل داشته باشد.');
   let debit = 0;
@@ -175,6 +187,63 @@ export function reverseTransactionJournal(database, transactionId, occurredAt, {
   });
 }
 
+export function postInvoiceJournal(database, invoice, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const amount = Math.round(Number(invoice.total));
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ فاکتور معتبر نیست.');
+  const occurredAt = invoice.issuedAt || invoice.issued_at || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+  const existing = database.prepare("SELECT id FROM journal_entries WHERE source_type='invoice' AND source_id=? AND entry_kind='normal'").get(invoice.id);
+  if (existing) return existing;
+  const documentType = invoice.documentType || invoice.document_type || 'sales';
+  const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, invoice.contactName || invoice.customerName || invoice.customer_name, documentType);
+  const category = categoryLedgerAccount(database, documentType === 'purchase' ? 'expense' : 'income', invoice.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش'));
+  const lines = documentType === 'purchase'
+    ? [{ accountId: category, debit: amount }, { accountId: counterparty, credit: amount }]
+    : [{ accountId: counterparty, debit: amount }, { accountId: category, credit: amount }];
+  return insertJournal(database, {
+    sourceType: 'invoice', sourceId: invoice.id, revision: nextRevision(database, 'invoice', invoice.id),
+    occurredAt, memo: `${documentType === 'purchase' ? 'صورتحساب خرید' : 'فاکتور فروش'} ${invoice.number}`,
+    createdBy, lines,
+  });
+}
+
+export function postInvoicePaymentJournal(database, invoice, payment, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const amount = Math.round(Number(payment.amount));
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ تسویه معتبر نیست.');
+  const occurredAt = payment.occurredAt || payment.occurred_at || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+  const existing = database.prepare("SELECT id FROM journal_entries WHERE source_type='invoice_payment' AND source_id=?").get(payment.id);
+  if (existing) return existing;
+  const documentType = invoice.documentType || invoice.document_type || 'sales';
+  const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, invoice.contactName || invoice.customerName || invoice.customer_name, documentType);
+  const cash = operationalLedgerAccount(database, payment.accountId || payment.account_id || 'cash');
+  const lines = documentType === 'purchase'
+    ? [{ accountId: counterparty, debit: amount }, { accountId: cash, credit: amount }]
+    : [{ accountId: cash, debit: amount }, { accountId: counterparty, credit: amount }];
+  return insertJournal(database, {
+    sourceType: 'invoice_payment', sourceId: payment.id, revision: 1, occurredAt,
+    memo: `${documentType === 'purchase' ? 'پرداخت' : 'وصول'} ${invoice.number}`,
+    createdBy, lines,
+  });
+}
+
+export function reverseInvoiceJournal(database, invoice, occurredAt, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const original = database.prepare("SELECT * FROM journal_entries WHERE source_type='invoice' AND source_id=? AND entry_kind='normal' ORDER BY revision DESC LIMIT 1").get(invoice.id);
+  if (!original) return null;
+  if (database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id)) return null;
+  const reversalAt = occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(reversalAt, timeZone));
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
+    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+  return insertJournal(database, {
+    sourceType: 'invoice', sourceId: invoice.id, revision: nextRevision(database, 'invoice', invoice.id), entryKind: 'reversal',
+    occurredAt: reversalAt, memo: `ابطال ${invoice.number}`, reversesEntryId: original.id, createdBy, lines,
+  });
+}
+
 export function syncOpeningBalanceJournal(database, operationalAccountId, { createdBy = null } = {}) {
   ensureAccountingSchema(database);
   const account = database.prepare('SELECT id,name,opening_balance AS openingBalance,created_at AS createdAt FROM accounts WHERE id=?').get(operationalAccountId);
@@ -205,7 +274,7 @@ export function migrateAccountingLedger(database, { createdBy = null } = {}) {
     if (!exists) syncOpeningBalanceJournal(database, account.id, { createdBy });
   }
   const transactions = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,account_id AS accountId,occurred_at AS occurredAt
-    FROM transactions WHERE status!='deleted' ORDER BY occurred_at,id`).all();
+    FROM transactions WHERE status NOT IN ('deleted','allocated') ORDER BY occurred_at,id`).all();
   for (const transaction of transactions) {
     const exists = database.prepare("SELECT 1 FROM journal_entries WHERE source_type='transaction' AND source_id=?").get(transaction.id);
     if (!exists) syncTransactionJournal(database, transaction, { createdBy });
@@ -232,7 +301,7 @@ export function trialBalance(database, through = '') {
     GROUP BY ledger_accounts.id ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all(...params)
     .map((row) => ({ ...row, debitBalance: Math.max(0, Number(row.debit) - Number(row.credit)), creditBalance: Math.max(0, Number(row.credit) - Number(row.debit)) }));
   const totals = rows.reduce((sum, row) => ({ debit: sum.debit + Number(row.debit), credit: sum.credit + Number(row.credit), debitBalance: sum.debitBalance + row.debitBalance, creditBalance: sum.creditBalance + row.creditBalance }), { debit: 0, credit: 0, debitBalance: 0, creditBalance: 0 });
-  return { unit: 'IRT', basis: 'double-entry-cash', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
+  return { unit: 'IRT', basis: 'double-entry-operational', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
 }
 
 export function listJournal(database, { page = 1, limit = 30 } = {}) {
