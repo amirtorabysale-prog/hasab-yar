@@ -18,6 +18,10 @@ import {
   applyInvoiceInventory, ensureInventorySchema, inventoryOverview as inventoryOverviewCore, migrateInventory,
   recordInventoryMovement, reverseInvoiceInventory,
 } from './inventory.js';
+import {
+  calculateInvoiceTax, ensureTaxSchema, listTaxRates as listTaxRatesCore, saveTaxRate as saveTaxRateCore,
+  taxReport as taxReportCore,
+} from './tax.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -285,6 +289,7 @@ ensureAccountingSchema(controlDb);
 ensureInvoiceSchema(controlDb);
 ensureReconciliationSchema(controlDb);
 ensureInventorySchema(controlDb);
+ensureTaxSchema(controlDb);
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -339,6 +344,7 @@ function workspaceDatabase(workspaceId) {
   ensureInvoiceSchema(database);
   ensureReconciliationSchema(database);
   ensureInventorySchema(database);
+  ensureTaxSchema(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   workspaceConnections.set(workspaceId, database);
@@ -928,7 +934,7 @@ function invoiceRows({ status = '', documentType = '' } = {}) {
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   return db.prepare(`SELECT invoices.id,invoices.number,invoices.contact_id AS contactId,invoices.customer_name AS customerName,
     invoices.document_type AS documentType,invoices.category,invoices.subtotal,invoices.discount,invoices.tax,invoices.total,
-    invoices.status,invoices.due_at AS dueAt,invoices.issued_at AS issuedAt,invoices.posted_at AS postedAt,invoices.note,
+    invoices.tax_calculation AS taxCalculation,invoices.status,invoices.due_at AS dueAt,invoices.issued_at AS issuedAt,invoices.posted_at AS postedAt,invoices.note,
     invoices.created_at AS createdAt,contacts.name AS contactName,COALESCE(SUM(invoice_payments.amount),0) AS paidAmount
     FROM invoices LEFT JOIN contacts ON contacts.id=invoices.contact_id
     LEFT JOIN invoice_payments ON invoice_payments.invoice_id=invoices.id ${where}
@@ -958,7 +964,8 @@ export function getInvoice(id) {
   const invoice = invoiceRows().find((item) => item.id === id);
   if (!invoice) return null;
   invoice.items = db.prepare(`SELECT id,title,quantity,unit_price AS unitPrice,total,product_id AS productId,
-    inventory_cost AS inventoryCost FROM invoice_items WHERE invoice_id=? ORDER BY rowid`).all(id);
+    inventory_cost AS inventoryCost,tax_rate_id AS taxRateId,tax_rate_bps AS taxRateBps,tax_treatment AS taxTreatment,
+    tax_base AS taxBase,tax_amount AS taxAmount FROM invoice_items WHERE invoice_id=? ORDER BY rowid`).all(id);
   invoice.payments = db.prepare(`SELECT invoice_payments.id,invoice_payments.amount,invoice_payments.account_id AS accountId,
     accounts.name AS accountName,invoice_payments.occurred_at AS occurredAt,invoice_payments.note,invoice_payments.created_at AS createdAt
     FROM invoice_payments JOIN accounts ON accounts.id=invoice_payments.account_id WHERE invoice_payments.invoice_id=?
@@ -974,19 +981,18 @@ export function createInvoice(values = {}) {
     const unitPrice = cleanAmount(item.unitPrice);
     const product = item.productId ? db.prepare('SELECT id,name,track_inventory AS trackInventory FROM products WHERE id=?').get(item.productId) : null;
     if (item.productId && (!product || !product.trackInventory)) throw Object.assign(new Error('کالای انتخاب‌شده پیدا نشد.'), { code: 'INVOICE_PRODUCT_MISSING', status: 404 });
-    return { title: String(item.title).trim().slice(0, 120), quantity, unitPrice, total: Math.round(quantity * unitPrice), productId: product?.id || null, inventoryCost: 0 };
+    return { title: String(item.title).trim().slice(0, 120), quantity, unitPrice, total: Math.round(quantity * unitPrice), productId: product?.id || null, taxRateId: item.taxRateId || null, inventoryCost: 0 };
   });
   const subtotal = normalized.reduce((sum, item) => sum + item.total, 0);
   const discount = Math.min(subtotal, Math.max(0, Math.round(Number(values.discount) || 0)));
-  const tax = Math.max(0, Math.round(Number(values.tax) || 0));
+  const taxResult = calculateInvoiceTax(db, normalized, discount, values.tax);
+  const tax = taxResult.tax;
   const total = subtotal - discount + tax;
   if (total <= 0) throw new Error('مبلغ نهایی سند باید بیشتر از صفر باشد.');
   const documentType = values.documentType === 'purchase' ? 'purchase' : 'sales';
-  let allocatedDiscount = 0;
-  normalized.forEach((item, index) => {
-    const lineDiscount = index === normalized.length - 1 ? discount - allocatedDiscount : Math.round(discount * (item.total / subtotal));
-    allocatedDiscount += lineDiscount;
-    if (documentType === 'purchase' && item.productId) item.inventoryCost = Math.max(0, item.total - lineDiscount);
+  const taxedItems = taxResult.items.map((item) => {
+    if (documentType === 'purchase' && item.productId) item.inventoryCost = item.taxBase;
+    return item;
   });
   const category = String(values.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش')).trim().slice(0, 80);
   const issueNow = values.issueNow === true || values.status === 'sent';
@@ -1001,12 +1007,14 @@ export function createInvoice(values = {}) {
   db.exec('BEGIN IMMEDIATE');
   try {
     db.prepare(`INSERT INTO invoices
-      (id,number,contact_id,customer_name,document_type,category,subtotal,discount,tax,total,status,due_at,issued_at,posted_at,note)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, number, contact?.id || null, counterpartyName, documentType, category, subtotal, discount, tax, total, issueNow ? 'sent' : 'draft', values.dueAt || null, issuedAt, issueNow ? issuedAt : null, String(values.note || '').slice(0, 500));
+      (id,number,contact_id,customer_name,document_type,category,subtotal,discount,tax,total,tax_calculation,status,due_at,issued_at,posted_at,note)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, number, contact?.id || null, counterpartyName, documentType, category, subtotal, discount, tax, total, taxResult.taxCalculation, issueNow ? 'sent' : 'draft', values.dueAt || null, issuedAt, issueNow ? issuedAt : null, String(values.note || '').slice(0, 500));
     const insert = db.prepare(`INSERT INTO invoice_items
-      (id,invoice_id,title,quantity,unit_price,total,product_id,inventory_cost) VALUES (?,?,?,?,?,?,?,?)`);
-    for (const item of normalized) insert.run(randomUUID(), id, item.title, item.quantity, item.unitPrice, item.total, item.productId, item.inventoryCost);
+      (id,invoice_id,title,quantity,unit_price,total,product_id,inventory_cost,tax_rate_id,tax_rate_bps,tax_treatment,tax_base,tax_amount)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    for (const item of taxedItems) insert.run(randomUUID(), id, item.title, item.quantity, item.unitPrice, item.total, item.productId, item.inventoryCost,
+      item.taxRateId, item.taxRateBps, item.taxTreatment, item.taxBase, item.taxAmount);
     if (issueNow) {
       const posted = getInvoice(id);
       applyInvoiceInventory(db, posted, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
@@ -1259,6 +1267,20 @@ export function inventoryOverview() {
   return inventoryOverviewCore(db);
 }
 
+export function listTaxRates() {
+  return listTaxRatesCore(db);
+}
+
+export function saveTaxRate(values = {}) {
+  const item = saveTaxRateCore(db, values);
+  audit(values.id ? 'update' : 'create', 'tax_rate', item.id, { name: item.name, rate: item.rate, treatment: item.treatment, active: item.active });
+  return item;
+}
+
+export function taxReport(filters = {}) {
+  return taxReportCore(db, filters);
+}
+
 export function financialOverview() {
   const month = report('month');
   const settings = getSettings();
@@ -1330,13 +1352,13 @@ export function voiceStats() {
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
-  'settings', 'voice_metrics', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'audit_log',
+  'settings', 'voice_metrics', 'tax_rates', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
   'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
-  'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics',
+  'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',
 ];
 
@@ -1367,6 +1389,7 @@ export function restoreFinancialSnapshot(snapshot) {
         db.prepare(`${command} INTO ${table} (${columns.join(',')}) VALUES (${placeholders})`).run(...columns.map((column) => row[column]));
       }
     }
+    ensureTaxSchema(db);
     const cash = db.prepare("SELECT id FROM accounts WHERE id='cash'").get();
     if (!cash) throw new Error('پشتیبان حساب صندوق اصلی را ندارد.');
     migrateAccountingLedger(db, { createdBy: currentWorkspace()?.userId });

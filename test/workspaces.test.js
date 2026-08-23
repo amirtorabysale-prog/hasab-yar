@@ -67,6 +67,9 @@ test('enforces the role matrix for reads, financial writes, settings and members
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/reconciliation/imports')), true);
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/reconciliation/imports/abc/close')), false);
   assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/reconciliation/imports/abc/close')), true);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/tax/rates')), false);
+  assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/tax/rates')), true);
+  assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/tax/report')), true);
 });
 
 test.after(() => {

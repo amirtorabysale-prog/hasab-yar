@@ -115,6 +115,14 @@ function cogsLedgerAccount(database, product) {
   return linkedLedgerAccount(database, 'cogs-product', product.id, `بهای تمام‌شده — ${String(product.name).slice(0, 100)}`, 'expense');
 }
 
+function outputTaxLedgerAccount(database) {
+  return linkedLedgerAccount(database, 'system', 'output-tax', 'مالیات و عوارض فروش پرداختنی', 'liability');
+}
+
+function inputTaxLedgerAccount(database) {
+  return linkedLedgerAccount(database, 'system', 'input-tax', 'اعتبار مالیات و عوارض خرید', 'asset');
+}
+
 function validateLines(database, lines) {
   if (!Array.isArray(lines) || lines.length < 2 || lines.length > 100) throw accountingError('سند باید حداقل دو آرتیکل داشته باشد.');
   let debit = 0;
@@ -206,6 +214,9 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
   const documentType = invoice.documentType || invoice.document_type || 'sales';
   const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, invoice.contactName || invoice.customerName || invoice.customer_name, documentType);
   const category = categoryLedgerAccount(database, documentType === 'purchase' ? 'expense' : 'income', invoice.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش'));
+  const tax = Math.max(0, Math.round(Number(invoice.tax) || 0));
+  const netAmount = amount - tax;
+  if (netAmount < 0) throw accountingError('مالیات فاکتور از مبلغ نهایی بیشتر است.', 'INVOICE_TAX_INVALID');
   let lines;
   if (documentType === 'purchase') {
     const inventoryLines = (invoice.items || []).filter((item) => item.productId && Number(item.inventoryCost) > 0).map((item) => {
@@ -214,10 +225,13 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
       return { accountId: inventoryLedgerAccount(database, product), debit: Number(item.inventoryCost), description: item.title };
     });
     const inventoryTotal = inventoryLines.reduce((sum, line) => sum + line.debit, 0);
-    const serviceAndTax = amount - inventoryTotal;
-    lines = [...inventoryLines, ...(serviceAndTax > 0 ? [{ accountId: category, debit: serviceAndTax }] : []), { accountId: counterparty, credit: amount }];
+    const serviceBase = netAmount - inventoryTotal;
+    if (serviceBase < 0) throw accountingError('ارزش موجودی ردیف‌های خرید از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_INVENTORY_VALUE_INVALID');
+    lines = [...inventoryLines, ...(serviceBase > 0 ? [{ accountId: category, debit: serviceBase }] : []),
+      ...(tax > 0 ? [{ accountId: inputTaxLedgerAccount(database), debit: tax }] : []), { accountId: counterparty, credit: amount }];
   } else {
-    lines = [{ accountId: counterparty, debit: amount }, { accountId: category, credit: amount }];
+    lines = [{ accountId: counterparty, debit: amount }, ...(netAmount > 0 ? [{ accountId: category, credit: netAmount }] : []),
+      ...(tax > 0 ? [{ accountId: outputTaxLedgerAccount(database), credit: tax }] : [])];
   }
   return insertJournal(database, {
     sourceType: 'invoice', sourceId: invoice.id, revision: nextRevision(database, 'invoice', invoice.id),

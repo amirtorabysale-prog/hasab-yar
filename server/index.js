@@ -8,9 +8,9 @@ import {
   deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings, inventoryOverview,
   getToday, insertTransactions, issueInvoice, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
-  importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
+  importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
   recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
-  saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
+  saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
 import { inferLearningKeyword, parseFinancialText } from './parser.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
@@ -226,6 +226,10 @@ app.post('/api/accounting/periods/:period/reopen', (request, response, next) => 
     return response.json({ item });
   } catch (error) { return next(error); }
 });
+app.get('/api/tax/rates', (_request, response) => response.json({ items: listTaxRates() }));
+app.post('/api/tax/rates', (request, response, next) => { try { response.status(201).json({ item: saveTaxRate(request.body) }); } catch (error) { next(error); } });
+app.put('/api/tax/rates/:id', (request, response, next) => { try { response.json({ item: saveTaxRate({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
+app.get('/api/tax/report', (request, response, next) => { try { response.json(taxReport(request.query)); } catch (error) { next(error); } });
 app.get('/api/accounts', (_request, response) => response.json({ items: listAccounts() }));
 app.post('/api/accounts', (request, response, next) => { try { response.status(201).json({ item: saveAccount(request.body) }); } catch (error) { next(error); } });
 app.put('/api/accounts/:id', (request, response, next) => { try { response.json({ item: saveAccount({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
