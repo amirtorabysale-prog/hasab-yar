@@ -23,6 +23,14 @@ function rememberCsrfToken(token) {
   } catch { /* storage can be unavailable in hardened browser modes */ }
 }
 
+function protectedHeaders(mutating = false, extra = {}) {
+  return {
+    ...(mutating && currentCsrfToken() ? { 'X-CSRF-Token': currentCsrfToken() } : {}),
+    ...(currentWorkspaceId() ? { 'X-Workspace-Id': currentWorkspaceId() } : {}),
+    ...extra,
+  };
+}
+
 async function request(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
@@ -110,6 +118,7 @@ export const api = {
   closeDay: (payload) => request('/api/closings', { method: 'POST', body: JSON.stringify(payload) }),
   receipts: () => request('/api/receipts'),
   saveReceipt: (image, note = '') => { const form = new FormData(); form.append('image', image); form.append('note', note); return request('/api/receipts', { method: 'POST', body: form }); },
+  deleteReceipt: (id) => request(`/api/receipts/${id}`, { method: 'DELETE' }),
   products: () => request('/api/products'),
   saveProduct: (payload) => request(payload.id ? `/api/products/${payload.id}` : '/api/products', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   adjustStock: (id, quantity, note = '') => request(`/api/products/${id}/stock`, { method: 'POST', body: JSON.stringify({ quantity, note }) }),
@@ -120,6 +129,37 @@ export const api = {
   updateLearning: (id, payload) => request(`/api/learnings/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteLearning: (id) => request(`/api/learnings/${id}`, { method: 'DELETE' }),
   settings: (payload) => request('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  backupStatus: () => request('/api/backups/status'),
+  createServerSnapshot: () => request('/api/backups/snapshot', { method: 'POST', body: '{}' }),
+  downloadBackup: async (passphrase) => {
+    const response = await fetch('/api/backups/export', {
+      method: 'POST', credentials: 'same-origin',
+      headers: protectedHeaders(true, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ passphrase }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(body.message || 'ساخت پشتیبان انجام نشد.'), { status: response.status, code: body.code });
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `hesab-yar-${new Date().toISOString().slice(0, 10)}.hybackup`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { fileName, bytes: blob.size };
+  },
+  previewBackup: (file, passphrase) => {
+    const form = new FormData(); form.append('backup', file); form.append('passphrase', passphrase);
+    return request('/api/backups/preview', { method: 'POST', body: form });
+  },
+  restoreBackup: (file, passphrase, confirmation) => {
+    const form = new FormData(); form.append('backup', file); form.append('passphrase', passphrase); form.append('confirmation', confirmation);
+    return request('/api/backups/restore', { method: 'POST', body: form });
+  },
 };
 
 export function queueTransactions(payload) {

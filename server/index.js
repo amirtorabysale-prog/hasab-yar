@@ -5,21 +5,26 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, createWorkspace, deleteContact,
-  deleteInvoice, deleteLearning, deleteObligation, deleteRecurringRule, deleteSession, deleteTransaction,
-  ensureAdmin, exportSnapshot, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
+  deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
+  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
   getToday, insertTransactions, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
   listReceipts, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, materializeRecurringRules, receiptImage, recordLoginFailure, recordVoiceMetric,
-  removeWorkspaceMember, report, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
+  removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
   saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
 import { inferLearningKeyword, parseFinancialText } from './parser.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
+import {
+  automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
+  openEncryptedBackup, restorePortableBackup, writeServerBackup,
+} from './backup.js';
 import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
+const backupUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
 const adminState = ensureAdmin();
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
@@ -98,7 +103,7 @@ app.use('/api', (request, response, next) => {
   if (!workspace) return response.status(403).json({ code: 'WORKSPACE_FORBIDDEN', message: 'به این دفتر دسترسی نداری.' });
   request.workspace = workspace;
   response.append('Set-Cookie', workspaceCookie(workspace.id));
-  return runInWorkspace(workspace.id, workspace, next);
+  return runInWorkspace(workspace.id, { ...workspace, userId: user.id }, next);
 });
 app.use('/api', (request, response, next) => {
   const path = request.path;
@@ -230,21 +235,53 @@ app.post('/api/receipts', upload.single('image'), (request, response, next) => {
     return response.status(201).json({ item, suggestion: first || null });
   } catch (error) { return next(error); }
 });
+app.delete('/api/receipts/:id', (request, response) => response.status(deleteReceipt(request.params.id) ? 204 : 404).end());
 app.get('/api/products', (_request, response) => response.json({ items: listProducts() }));
 app.post('/api/products', (request, response, next) => { try { response.status(201).json({ item: saveProduct(request.body) }); } catch (error) { next(error); } });
 app.put('/api/products/:id', (request, response, next) => { try { response.json({ item: saveProduct({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.post('/api/products/:id/stock', (request, response, next) => { try { const item = adjustStock(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'کالا پیدا نشد.' }); } catch (error) { return next(error); } });
 app.post('/api/ask', (request, response) => response.json(answerFinancialQuestion(request.body?.question)));
 app.get('/api/voice/stats', (_request, response) => response.json(voiceStats()));
-app.get('/api/export', (_request, response) => {
-  response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-backup-${new Date().toISOString().slice(0, 10)}.json"`);
-  return response.json(exportSnapshot());
+app.get('/api/backups/status', async (request, response, next) => {
+  try { return response.json(await automaticBackupStatus(request.workspace.id)); }
+  catch (error) { return next(error); }
+});
+app.post('/api/backups/export', (request, response, next) => {
+  try {
+    const encrypted = createPortableBackup(request.workspace, request.body?.passphrase);
+    response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-${request.workspace.id}-${new Date().toISOString().slice(0, 10)}.hybackup"`);
+    response.setHeader('Content-Type', 'application/octet-stream');
+    return response.send(encrypted);
+  } catch (error) { return next(error); }
+});
+app.post('/api/backups/preview', backupUpload.single('backup'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'BACKUP_MISSING', message: 'فایل پشتیبان را انتخاب کن.' });
+    return response.json({ summary: backupSummary(openEncryptedBackup(request.file.buffer, request.body?.passphrase)) });
+  } catch (error) { return next(error); }
+});
+app.post('/api/backups/restore', backupUpload.single('backup'), async (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'BACKUP_MISSING', message: 'فایل پشتیبان را انتخاب کن.' });
+    if (String(request.body?.confirmation || '').trim() !== 'بازیابی دفتر') return response.status(400).json({ code: 'RESTORE_CONFIRMATION_REQUIRED', message: 'برای تأیید، عبارت «بازیابی دفتر» را دقیق بنویس.' });
+    const result = await restorePortableBackup(request.file.buffer, request.body?.passphrase, request.workspace);
+    revokeWorkspaceSessions(request.workspace.id, request.user.id);
+    return response.json(result);
+  } catch (error) { return next(error); }
+});
+app.post('/api/backups/snapshot', async (request, response, next) => {
+  try {
+    if (!automaticBackupConfigured()) return response.status(503).json({ code: 'BACKUP_NOT_CONFIGURED', message: 'ابتدا BACKUP_ENCRYPTION_KEY را روی سرور تنظیم کن.' });
+    return response.status(201).json({ backup: await writeServerBackup(request.workspace, { reason: 'manual' }) });
+  } catch (error) { return next(error); }
 });
 app.get('/api/learnings', (_request, response) => response.json({ items: getLearnings() }));
 app.post('/api/learnings', (request, response, next) => { try { response.status(201).json({ item: saveLearning(request.body || {}) }); } catch (error) { next(error); } });
 app.put('/api/learnings/:id', (request, response, next) => { try { const item = updateLearning(request.params.id, request.body || {}); if (!item) return response.status(404).json({ message: 'یادگیری پیدا نشد.' }); return response.json({ item }); } catch (error) { return next(error); } });
 app.delete('/api/learnings/:id', (request, response) => response.status(deleteLearning(request.params.id) ? 204 : 404).end());
 app.patch('/api/settings', (request, response) => response.json({ settings: saveSettings(request.body || {}) }));
+
+app.use('/api', (_request, response) => response.status(404).json({ code: 'API_NOT_FOUND', message: 'مسیر درخواستی پیدا نشد.' }));
 
 const dist = resolve('dist');
 if (existsSync(dist)) {
@@ -253,7 +290,7 @@ if (existsSync(dist)) {
 }
 
 app.use((error, _request, response, _next) => {
-  if (error instanceof multer.MulterError) return response.status(400).json({ code: 'AUDIO_TOO_LARGE', message: 'فایل صدا بیش از حد بزرگ است.' });
+  if (error instanceof multer.MulterError) return response.status(400).json({ code: 'UPLOAD_TOO_LARGE', message: 'فایل انتخاب‌شده بیش از حد بزرگ است.' });
   console.error(error);
   return response.status(error.status || 500).json({ code: error.code || 'SERVER_ERROR', message: error.status ? error.message : 'خطای داخلی سرور؛ دوباره تلاش کن.' });
 });
@@ -268,5 +305,20 @@ function runRecurringJob() {
 runRecurringJob();
 const recurringTimer = setInterval(runRecurringJob, 60_000);
 recurringTimer.unref();
+
+async function runBackupJob() {
+  if (!automaticBackupConfigured()) return;
+  for (const workspace of allWorkspaces()) {
+    try {
+      const status = await automaticBackupStatus(workspace.id);
+      const stale = !status.lastBackup || Date.now() - new Date(status.lastBackup.createdAt).getTime() >= 20 * 60 * 60 * 1000;
+      if (stale) await runInWorkspace(workspace.id, { role: 'owner' }, () => writeServerBackup(workspace));
+    } catch (error) { console.error(`Backup failed for workspace ${workspace.id}:`, error); }
+  }
+}
+
+void runBackupJob();
+const backupTimer = setInterval(runBackupJob, 6 * 60 * 60 * 1000);
+backupTimer.unref();
 
 app.listen(port, '0.0.0.0', () => console.log(`HesabYar API listening on http://localhost:${port}`));
