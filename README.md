@@ -2,7 +2,7 @@
 
 PWA فارسی و موبایل‌اول برای ثبت دریافت و پرداخت با صدا یا متن. هر جمله ابتدا به تراکنش‌های ساخت‌یافته تبدیل می‌شود و فقط پس از بازبینی مبلغ، نوع و دسته توسط کاربر در پایگاه‌داده ثبت می‌شود.
 
-حساب‌یار در نسخه فعلی «دفتر مالی صوتی و دستیار مدیریت نقدینگی» با دفتر کل دوطرفه و چرخهٔ عملیاتی فاکتور است، نه نرم‌افزار حسابداری رسمی. خلاصه‌های روزانه همچنان بر پایه دریافت و پرداخت هستند و جایگزین صورت مالی، دفتر قانونی یا محاسبه سود تعهدی کامل نیستند. محدوده محصول در [docs/product-scope.md](docs/product-scope.md)، قواعد صحت مالی در [docs/accounting-integrity.md](docs/accounting-integrity.md)، هسته دفتر کل در [docs/double-entry-ledger.md](docs/double-entry-ledger.md)، چرخهٔ فاکتور در [docs/invoicing-and-receivables.md](docs/invoicing-and-receivables.md)، تنظیمات امنیتی در [docs/security-hardening.md](docs/security-hardening.md)، معماری دفترها و نقش‌ها در [docs/workspaces-and-roles.md](docs/workspaces-and-roles.md) و روش پشتیبان‌گیری در [docs/backup-and-recovery.md](docs/backup-and-recovery.md) ثبت شده است.
+حساب‌یار در نسخه فعلی «دفتر مالی صوتی و دستیار مدیریت نقدینگی» با دفتر کل دوطرفه، چرخهٔ عملیاتی فاکتور و تطبیق بانکی است، نه نرم‌افزار حسابداری رسمی. خلاصه‌های روزانه همچنان بر پایه دریافت و پرداخت هستند و جایگزین صورت مالی، دفتر قانونی یا محاسبه سود تعهدی کامل نیستند. محدوده محصول در [docs/product-scope.md](docs/product-scope.md)، قواعد صحت مالی در [docs/accounting-integrity.md](docs/accounting-integrity.md)، هسته دفتر کل در [docs/double-entry-ledger.md](docs/double-entry-ledger.md)، چرخهٔ فاکتور در [docs/invoicing-and-receivables.md](docs/invoicing-and-receivables.md)، تطبیق بانک در [docs/bank-reconciliation.md](docs/bank-reconciliation.md)، تنظیمات امنیتی در [docs/security-hardening.md](docs/security-hardening.md)، معماری دفترها و نقش‌ها در [docs/workspaces-and-roles.md](docs/workspaces-and-roles.md) و روش پشتیبان‌گیری در [docs/backup-and-recovery.md](docs/backup-and-recovery.md) ثبت شده است.
 
 ## قابلیت‌ها
 
@@ -20,6 +20,7 @@ PWA فارسی و موبایل‌اول برای ثبت دریافت و پردا
 - ثبت خودکار دوطرفه، تراز آزمایشی، اسناد معکوس و بستن دورهٔ ماهانه شمسی
 - اشخاص، طلب و بدهی، سررسید و تسویهٔ خودکار در دفتر
 - هزینه و درآمد دوره‌ای، فاکتور فروش/خرید، پیش‌نویس، صدور، دیرکرد و تسویهٔ مرحله‌ای
+- ورود CSV بانک، پیشنهاد تطبیق، ثبت اختلاف و کنترل ماندهٔ بانک با دفتر
 - بستن صندوق روزانه و محاسبه اختلاف موجودی
 - نگهداری خصوصی عکس رسید و استخراج مبلغ پیشنهادی از توضیح فارسی
 - موجودی سبک کالا با ورود/خروج و هشدار کمبود

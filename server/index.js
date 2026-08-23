@@ -4,11 +4,11 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, createWorkspace, deleteContact,
+  activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
-  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
+  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings,
   getToday, insertTransactions, issueInvoice, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
-  listReceipts, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
+  importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
   recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
   saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
@@ -29,6 +29,7 @@ const app = express();
 const port = Number(process.env.PORT || 4173);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 const backupUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
+const statementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 const adminState = ensureAdmin();
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
@@ -250,6 +251,20 @@ app.post('/api/invoices/:id/issue', (request, response, next) => { try { const i
 app.post('/api/invoices/:id/payments', (request, response, next) => { try { const item = recordInvoicePayment(request.params.id, request.body || {}); return item ? response.status(201).json({ item }) : response.status(404).json({ message: 'سند باز پیدا نشد.' }); } catch (error) { return next(error); } });
 app.post('/api/invoices/:id/paid', (request, response, next) => { try { const item = markInvoicePaid(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'فاکتور پیدا نشد.' }); } catch (error) { return next(error); } });
 app.delete('/api/invoices/:id', (request, response) => response.status(deleteInvoice(request.params.id) ? 204 : 409).end());
+app.get('/api/reconciliation/imports', (_request, response) => response.json({ items: listReconciliationImports() }));
+app.get('/api/reconciliation/imports/:id', (request, response) => { const item = getReconciliationImport(request.params.id); return item ? response.json({ item }) : response.status(404).json({ message: 'صورت‌حساب پیدا نشد.' }); });
+app.post('/api/reconciliation/imports', statementUpload.single('statement'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ message: 'فایل CSV صورت‌حساب را انتخاب کن.' });
+    if (!/\.csv$/i.test(request.file.originalname || '')) return response.status(400).json({ code: 'STATEMENT_FILE_TYPE', message: 'فقط فایل CSV پذیرفته می‌شود.' });
+    const item = importBankStatement({ buffer: request.file.buffer, fileName: request.file.originalname, accountId: request.body?.accountId });
+    return response.status(201).json({ item });
+  } catch (error) { return next(error); }
+});
+app.post('/api/reconciliation/lines/:id/match', (request, response, next) => { try { return response.json({ item: matchReconciliationLine(request.params.id, request.body?.transactionId) }); } catch (error) { return next(error); } });
+app.post('/api/reconciliation/lines/:id/create', (request, response, next) => { try { const item = createTransactionFromStatementLine(request.params.id, request.body || {}); return item ? response.status(201).json({ item }) : response.status(404).json({ message: 'ردیف باز پیدا نشد.' }); } catch (error) { return next(error); } });
+app.post('/api/reconciliation/lines/:id/ignore', (request, response, next) => { try { return response.json({ item: ignoreReconciliationLine(request.params.id, request.body?.reason) }); } catch (error) { return next(error); } });
+app.post('/api/reconciliation/imports/:id/close', (request, response, next) => { try { return response.json({ item: closeBankReconciliation(request.params.id) }); } catch (error) { return next(error); } });
 app.get('/api/closings', (_request, response) => response.json({ items: listDailyClosings() }));
 app.post('/api/closings', (request, response, next) => { try { response.status(201).json({ item: closeDay(request.body) }); } catch (error) { next(error); } });
 app.get('/api/receipts', (_request, response) => response.json({ items: listReceipts() }));

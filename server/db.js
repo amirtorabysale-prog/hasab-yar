@@ -9,6 +9,11 @@ import {
   postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
   syncOpeningBalanceJournal, syncTransactionJournal,
 } from './accounting.js';
+import {
+  closeReconciliation as closeReconciliationCore, ensureReconciliationSchema, getReconciliationImport as getReconciliationImportCore, getStatementLine,
+  ignoreStatementLine as ignoreStatementLineCore, importBankStatement as importBankStatementCore,
+  listReconciliationImports as listReconciliationImportsCore, matchStatementLine as matchStatementLineCore,
+} from './reconciliation.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -274,6 +279,7 @@ ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
 ensureAccountingSchema(controlDb);
 ensureInvoiceSchema(controlDb);
+ensureReconciliationSchema(controlDb);
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -325,6 +331,7 @@ function workspaceDatabase(workspaceId) {
   }
   ensureAccountingSchema(database);
   ensureInvoiceSchema(database);
+  ensureReconciliationSchema(database);
   migrateAccountingLedger(database);
   workspaceConnections.set(workspaceId, database);
   return database;
@@ -1057,6 +1064,72 @@ export function deleteInvoice(id) {
   return true;
 }
 
+export function importBankStatement(values = {}) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const item = importBankStatementCore(db, values, { createdBy: currentWorkspace()?.userId });
+    audit('import', 'bank_statement', item.id, { fileName: values.fileName, accountId: values.accountId, rows: item.rowCount });
+    db.exec('COMMIT');
+    return item;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export function listReconciliationImports() {
+  return listReconciliationImportsCore(db);
+}
+
+export function getReconciliationImport(id) {
+  return getReconciliationImportCore(db, id);
+}
+
+export function matchReconciliationLine(lineId, transactionId) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const item = matchStatementLineCore(db, lineId, transactionId, { resolvedBy: currentWorkspace()?.userId });
+    audit('match', 'bank_statement_line', lineId, { transactionId });
+    db.exec('COMMIT');
+    return item;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export function createTransactionFromStatementLine(lineId, values = {}) {
+  const line = getStatementLine(db, lineId);
+  if (!line || line.status !== 'unmatched' || line.import_status !== 'open') return null;
+  const category = String(values.category || (line.direction === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها')).trim().slice(0, 80);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const [transactionId] = insertTransactionRows({ transcript: line.description || 'ثبت از صورت‌حساب بانکی', transactions: [{
+      clientId: `statement-line:${line.id}`, amount: line.amount, type: line.direction, category,
+      rawText: line.description || `ردیف بانکی ${line.reference}`, note: `ثبت از تطبیق بانکی${line.reference ? ` · پیگیری ${line.reference}` : ''}`,
+      source: 'text', accountId: line.account_id, occurredAt: line.occurred_at,
+    }] });
+    const item = matchStatementLineCore(db, lineId, transactionId, { resolvedBy: currentWorkspace()?.userId, note: 'ساخت تراکنش از ردیف بانک' });
+    audit('create-transaction', 'bank_statement_line', lineId, { transactionId, category });
+    db.exec('COMMIT');
+    return item;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export function ignoreReconciliationLine(lineId, reason) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const item = ignoreStatementLineCore(db, lineId, reason, { resolvedBy: currentWorkspace()?.userId });
+    audit('ignore', 'bank_statement_line', lineId, { reason });
+    db.exec('COMMIT');
+    return item;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export function closeBankReconciliation(importId) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const item = closeReconciliationCore(db, importId, currentWorkspace()?.userId);
+    audit('close', 'bank_reconciliation', importId, { difference: item.difference });
+    db.exec('COMMIT');
+    return item;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
 export function closeDay(values = {}) {
   const day = String(values.day || localDay()).slice(0, 10);
   const bounds = dayBounds(day);
@@ -1212,13 +1285,13 @@ export function voiceStats() {
 }
 
 export const FINANCIAL_BACKUP_TABLES = [
-  'categories', 'accounts', 'contacts', 'transactions', 'obligations', 'recurring_rules', 'invoices',
+  'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'settings', 'voice_metrics', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'invoice_payments',
+  'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics',
   'accounts', 'categories', 'settings',

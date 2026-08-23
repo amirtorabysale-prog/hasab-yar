@@ -64,6 +64,9 @@ test('enforces the role matrix for reads, financial writes, settings and members
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/accounting/journal')), true);
   assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/accounting/periods/2026-08/lock')), false);
   assert.equal(roleAllows('owner', minimumRoleForRequest('POST', '/accounting/periods/2026-08/lock')), true);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/reconciliation/imports')), true);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/reconciliation/imports/abc/close')), false);
+  assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/reconciliation/imports/abc/close')), true);
 });
 
 test.after(() => {
