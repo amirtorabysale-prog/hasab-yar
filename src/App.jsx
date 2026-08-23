@@ -375,6 +375,7 @@ export default function App() {
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} />}
+          {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
           {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /></>}
         </div>
@@ -568,6 +569,72 @@ function ReportPage({ profileType = 'business' }) {
   </main>;
 }
 
+function currentPersianPeriod(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit' }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}`;
+}
+
+function AccountingPage({ access, notify }) {
+  const [trial, setTrial] = useState({ rows: [], totals: {}, balanced: true });
+  const [journal, setJournal] = useState({ items: [], total: 0 });
+  const [accounts, setAccounts] = useState([]);
+  const [periods, setPeriods] = useState([]);
+  const [currentPeriod, setCurrentPeriod] = useState(currentPersianPeriod());
+  const [busy, setBusy] = useState('');
+  const [draft, setDraft] = useState({ memo: '', amount: '', debitAccountId: '', creditAccountId: '' });
+  const role = access.workspace?.role || 'viewer';
+  const canWrite = ['owner', 'manager', 'accountant'].includes(role);
+  const isOwner = role === 'owner';
+  const period = currentPeriod;
+  const periodState = periods.find((item) => item.period === period);
+  const load = useCallback(async () => {
+    try {
+      const [nextTrial, nextJournal, nextAccounts, nextPeriods] = await Promise.all([
+        api.trialBalance(), api.journal({ limit: 30 }), api.accountingAccounts(), api.accountingPeriods(),
+      ]);
+      setTrial(nextTrial); setJournal(nextJournal); setAccounts(nextAccounts.items); setPeriods(nextPeriods.items); setCurrentPeriod(nextPeriods.currentPeriod || currentPersianPeriod());
+      setDraft((current) => ({ ...current, debitAccountId: current.debitAccountId || nextAccounts.items.find((item) => item.type === 'expense')?.id || '', creditAccountId: current.creditAccountId || nextAccounts.items.find((item) => item.type === 'asset')?.id || '' }));
+    } catch (error) { notify(error.message); }
+  }, [notify]);
+  useEffect(() => { load(); }, [load, access.workspace?.id]);
+  const saveAdjustment = async (event) => {
+    event.preventDefault();
+    const amount = Number(draft.amount);
+    if (!Number.isSafeInteger(amount) || amount <= 0) return notify('مبلغ سند اصلاحی معتبر نیست.');
+    if (draft.debitAccountId === draft.creditAccountId) return notify('حساب بدهکار و بستانکار باید متفاوت باشد.');
+    setBusy('journal');
+    try {
+      await api.createAdjustingJournal({ memo: draft.memo, lines: [{ accountId: draft.debitAccountId, debit: amount }, { accountId: draft.creditAccountId, credit: amount }] });
+      setDraft((current) => ({ ...current, memo: '', amount: '' }));
+      await load(); notify('سند اصلاحی متوازن ثبت شد.');
+    } catch (error) { notify(error.message); }
+    finally { setBusy(''); }
+  };
+  const lock = async () => {
+    if (!window.confirm(`دورهٔ ${toPersianDigits(period.replace('-', '/'))} بسته شود؟ بعد از بستن، ثبت‌ها و اصلاحات این ماه تغییر نمی‌کنند.`)) return;
+    setBusy('period');
+    try { await api.lockAccountingPeriod(period); await load(); notify('دوره مالی بسته شد.'); }
+    catch (error) { notify(error.message); }
+    finally { setBusy(''); }
+  };
+  const reopen = async () => {
+    const reason = window.prompt('دلیل بازگشایی را دقیق ثبت کن؛ این توضیح در سابقه حسابرسی می‌ماند.');
+    if (!reason) return;
+    setBusy('period');
+    try { await api.reopenAccountingPeriod(period, reason); await load(); notify('دوره با ثبت دلیل بازگشایی شد.'); }
+    catch (error) { notify(error.message); }
+    finally { setBusy(''); }
+  };
+  const typeLabels = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
+  return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[13px] font-bold text-accent">هسته حسابداری کسب‌وکار</p><h1 className="mt-1 text-xl font-extrabold">دفتر کل دوطرفه</h1><p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">هر دریافت یا پرداخت به سند متوازن بدهکار و بستانکار تبدیل می‌شود. این دفتر هنوز جایگزین دفاتر قانونی و محاسبات مالیاتی نیست.</p></div><div className={`rounded-lg border px-3 py-2 text-xs font-bold ${trial.balanced ? 'border-income/30 bg-income/5 text-income' : 'border-expense/30 bg-warn-bg text-expense'}`}><Check size={16} className="ml-1 inline" />{trial.balanced ? 'دفتر متوازن است' : 'عدم توازن نیازمند بررسی'}</div></div>
+    <section className="mt-5 rounded-[10px] border border-line bg-surface p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-extrabold">کنترل دوره جاری</h2><p className="mt-1 text-xs text-muted">ماه {toPersianDigits(period.replace('-', '/'))} هجری شمسی · {periodState?.status === 'locked' ? 'بسته' : 'باز'}</p></div>{isOwner && (periodState?.status === 'locked' ? <button disabled={busy} onClick={reopen} className="tap rounded-lg border border-expense px-4 text-sm font-bold text-expense"><RotateCcw size={17} className="ml-1 inline" />بازگشایی با دلیل</button> : <button disabled={busy} onClick={lock} className="tap rounded-lg bg-ink px-4 text-sm font-bold text-white">بستن دوره</button>)}</div>{!isOwner && <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs leading-6 text-muted">فقط مالک می‌تواند دوره را ببندد یا با ثبت دلیل باز کند.</p>}</section>
+    <section className="mt-5"><div className="flex items-end justify-between"><div><h2 className="font-extrabold">تراز آزمایشی</h2><p className="mt-1 text-xs text-muted">واحد تمام مبالغ: تومان</p></div><span className="text-xs text-muted">گردش بدهکار و بستانکار: {formatAmount(trial.totals.debit || 0)}</span></div><div className="mt-3 overflow-x-auto rounded-[10px] border border-line bg-surface"><table className="w-full min-w-[620px] text-sm"><thead className="bg-paper text-xs text-muted"><tr><th className="px-3 py-3 text-right">کد</th><th className="px-3 py-3 text-right">حساب</th><th className="px-3 py-3 text-right">ماهیت</th><th className="px-3 py-3 text-left">مانده بدهکار</th><th className="px-3 py-3 text-left">مانده بستانکار</th></tr></thead><tbody className="divide-y divide-line">{trial.rows.filter((row) => row.debitBalance || row.creditBalance).map((row) => <tr key={row.id}><td className="numbers px-3 py-3 text-muted">{toPersianDigits(row.code)}</td><td className="px-3 py-3 font-bold">{row.name}</td><td className="px-3 py-3 text-xs text-muted">{typeLabels[row.type]}</td><td className="numbers px-3 py-3 text-left">{row.debitBalance ? formatAmount(row.debitBalance) : '—'}</td><td className="numbers px-3 py-3 text-left">{row.creditBalance ? formatAmount(row.creditBalance) : '—'}</td></tr>)}</tbody><tfoot className="border-t-2 border-ink font-extrabold"><tr><td colSpan="3" className="px-3 py-3">جمع مانده‌ها</td><td className="numbers px-3 py-3 text-left">{formatAmount(trial.totals.debitBalance || 0)}</td><td className="numbers px-3 py-3 text-left">{formatAmount(trial.totals.creditBalance || 0)}</td></tr></tfoot></table></div></section>
+    {canWrite && <form onSubmit={saveAdjustment} className="mt-5 rounded-[10px] border border-line bg-surface p-4"><h2 className="font-extrabold">سند اصلاحی ساده</h2><p className="mt-1 text-xs leading-6 text-muted">این بخش برای حسابدار یا مدیر مالی است؛ مبلغ به‌صورت برابر در بدهکار و بستانکار ثبت می‌شود.</p><input required value={draft.memo} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} placeholder="شرح و دلیل اصلاح" className="tap mt-3 w-full rounded-lg border border-line px-3" /><div className="mt-2 grid gap-2 sm:grid-cols-3"><label className="text-xs text-muted">حساب بدهکار<select required value={draft.debitAccountId} onChange={(event) => setDraft({ ...draft, debitAccountId: event.target.value })} className="tap mt-1 w-full rounded-lg border border-line bg-surface px-2 text-ink">{accounts.map((account) => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label><label className="text-xs text-muted">حساب بستانکار<select required value={draft.creditAccountId} onChange={(event) => setDraft({ ...draft, creditAccountId: event.target.value })} className="tap mt-1 w-full rounded-lg border border-line bg-surface px-2 text-ink">{accounts.map((account) => <option key={account.id} value={account.id}>{account.code} — {account.name}</option>)}</select></label><label className="text-xs text-muted">مبلغ تومان<input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} className="tap numbers mt-1 w-full rounded-lg border border-line px-3 text-ink" /></label></div><button disabled={busy || periodState?.status === 'locked'} className="tap mt-3 w-full rounded-lg bg-accent font-bold text-white disabled:opacity-40">{periodState?.status === 'locked' ? 'دوره بسته است' : 'ثبت سند متوازن'}</button></form>}
+    <section className="mt-6"><div className="flex justify-between"><h2 className="font-extrabold">آخرین اسناد روزنامه</h2><span className="text-xs text-muted">{toPersianDigits(journal.total)} سند</span></div><div className="mt-3 divide-y divide-line border-y border-line">{journal.items.map((entry) => <article key={entry.id} className="py-3"><div className="flex justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-bold">{entry.memo || 'سند بدون شرح'}</p><p className="mt-1 text-xs text-muted">{entry.entryKind === 'reversal' ? 'سند معکوس' : entry.entryKind === 'adjustment' ? 'سند اصلاحی' : entry.entryKind === 'opening' ? 'مانده افتتاحیه' : 'ثبت خودکار'} · {new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(entry.occurredAt))}</p></div><span className="numbers shrink-0 text-xs text-muted">#{toPersianDigits(entry.revision)}</span></div><div className="mt-2 grid gap-1 text-xs text-muted">{entry.lines.map((line) => <div key={`${entry.id}-${line.accountId}-${line.debit}-${line.credit}`} className="flex justify-between gap-3"><span>{toPersianDigits(line.code)} · {line.name}</span><span className="numbers">{line.debit ? `بدهکار ${formatAmount(line.debit)}` : `بستانکار ${formatAmount(line.credit)}`}</span></div>)}</div></article>)}</div></section>
+  </main>;
+}
+
 function LearningPage({ categories, notify }) {
   const [items, setItems] = useState([]);
   const [draft, setDraft] = useState({ keyword: '', category: 'خوراک' });
@@ -748,6 +815,7 @@ function LoginPage({ onLogin, error }) {
 function DesktopNav({ screen, navigate, businessName, profileType = 'business' }) {
   const items = [
     ['today', 'امروز', Home], ['ledger', 'دفتر مالی', WalletCards], ['report', 'گزارش', BarChart3],
+    ...(profileType === 'business' ? [['accounting', 'حسابداری', BookOpenCheck]] : []),
     ['learning', 'یادگیری‌ها', BookOpenCheck], ['settings', 'تنظیمات', Settings],
   ];
   const profile = profileDefinition(profileType);
@@ -855,7 +923,20 @@ function BottomNav({ screen, navigate }) {
 
 function Drawer({ profileType = 'business', close, navigate }) {
   const profile = profileDefinition(profileType);
-  return <div className="fixed inset-0 z-[60] bg-ink/35 lg:hidden" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><aside className="sheet-in h-full w-[82%] max-w-[330px] bg-paper px-4 py-5 shadow-2xl"><div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">{profile.label} · دستیار نقدینگی</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div><div className="mt-8 space-y-2"><DrawerItem icon={Home} label="امروز" onClick={() => navigate('today')} /><DrawerItem icon={WalletCards} label="دفتر مالی" onClick={() => navigate('ledger')} /><DrawerItem icon={BarChart3} label="گزارش" onClick={() => navigate('report')} /><DrawerItem icon={BookOpenCheck} label="آنچه یاد گرفته‌ام" onClick={() => navigate('learning')} /><DrawerItem icon={Settings} label="تنظیمات" onClick={() => navigate('settings')} /></div><div className="absolute bottom-6 right-4 left-4 border-t border-line pt-4 text-xs leading-6 text-muted">هیچ مبلغی بدون تأیید تو ثبت نمی‌شود.</div></aside></div>;
+  return <div className="fixed inset-0 z-[60] bg-ink/35 lg:hidden" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <aside className="sheet-in h-full w-[82%] max-w-[330px] bg-paper px-4 py-5 shadow-2xl">
+      <div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">{profile.label} · دستیار نقدینگی</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div>
+      <div className="mt-8 space-y-2">
+        <DrawerItem icon={Home} label="امروز" onClick={() => navigate('today')} />
+        <DrawerItem icon={WalletCards} label="دفتر مالی" onClick={() => navigate('ledger')} />
+        <DrawerItem icon={BarChart3} label="گزارش" onClick={() => navigate('report')} />
+        {profileType === 'business' && <DrawerItem icon={BookOpenCheck} label="دفتر کل و حسابداری" onClick={() => navigate('accounting')} />}
+        <DrawerItem icon={BookOpenCheck} label="آنچه یاد گرفته‌ام" onClick={() => navigate('learning')} />
+        <DrawerItem icon={Settings} label="تنظیمات" onClick={() => navigate('settings')} />
+      </div>
+      <div className="absolute bottom-6 right-4 left-4 border-t border-line pt-4 text-xs leading-6 text-muted">هیچ مبلغی بدون تأیید تو ثبت نمی‌شود.</div>
+    </aside>
+  </div>;
 }
 
 function DrawerItem({ icon: Icon, label, onClick }) { return <button onClick={onClick} className="tap flex w-full items-center gap-3 rounded-lg px-3 text-right font-bold hover:bg-surface"><Icon size={20} className="text-muted" />{label}</button>; }

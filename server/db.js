@@ -4,6 +4,10 @@ import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
+import {
+  assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
+  reverseTransactionJournal, syncOpeningBalanceJournal, syncTransactionJournal,
+} from './accounting.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -236,6 +240,7 @@ ensureColumn('transactions', 'updated_at TEXT');
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
+ensureAccountingSchema(controlDb);
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -285,6 +290,8 @@ function workspaceDatabase(workspaceId) {
     for (const [key, value] of Object.entries(defaults)) settingInsert.run(key, String(value));
     settingInsert.run('accountOpeningMigrated', 'true');
   }
+  ensureAccountingSchema(database);
+  migrateAccountingLedger(database);
   workspaceConnections.set(workspaceId, database);
   return database;
 }
@@ -443,12 +450,20 @@ export function saveAccount(values = {}) {
   const openingBalance = Math.round(Number(values.openingBalance) || 0);
   if (!name) throw new Error('نام حساب را وارد کن.');
   if (!Number.isSafeInteger(openingBalance)) throw new Error('ماندهٔ ابتدای دوره معتبر نیست.');
-  db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active) VALUES (?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,opening_balance=excluded.opening_balance,
-      active=excluded.active,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, name, kind, openingBalance, values.active === false ? 0 : 1);
-  if (id === 'cash') insertSetting.run('openingBalance', String(openingBalance));
-  audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance });
+  const current = db.prepare('SELECT created_at AS createdAt,opening_balance AS openingBalance FROM accounts WHERE id=?').get(id);
+  if (current && Number(current.openingBalance) !== openingBalance) assertAccountingPeriodOpen(db, periodForDate(current.createdAt, currentTimeZone()));
+  if (!current && openingBalance !== 0) assertAccountingPeriodOpen(db, periodForDate(new Date(), currentTimeZone()));
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active) VALUES (?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,opening_balance=excluded.opening_balance,
+        active=excluded.active,updated_at=CURRENT_TIMESTAMP`)
+      .run(id, name, kind, openingBalance, values.active === false ? 0 : 1);
+    if (id === 'cash') insertSetting.run('openingBalance', String(openingBalance));
+    if (!current || Number(current.openingBalance) !== openingBalance) syncOpeningBalanceJournal(db, id, { createdBy: currentWorkspace()?.userId });
+    audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return listAccounts().find((item) => item.id === id);
 }
 
@@ -538,11 +553,13 @@ function insertTransactionRows({ transcript, transactions }) {
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw new Error('مبلغ معتبر نیست.');
     if (!['income', 'expense'].includes(item.type)) throw new Error('نوع تراکنش معتبر نیست.');
     const occurredAt = item.occurredAt || new Date().toISOString();
+    assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
     const result = insert.run(id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80), String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1), item.needsReview ? 1 : 0, occurredAt, item.contactId || null, accountId, accountId, String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt);
     if (result.changes) {
       ids.push(id);
       audit('create', 'transaction', id, { amount, type: item.type, category: item.category });
+      syncTransactionJournal(db, { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
     } else if (item.clientId) {
       const existing = db.prepare('SELECT id FROM transactions WHERE client_id=?').get(item.clientId);
       if (existing) ids.push(existing.id);
@@ -680,17 +697,33 @@ export function updateTransaction(id, values = {}) {
   const amount = values.amount == null ? current.amount : cleanAmount(values.amount);
   const occurredAt = values.occurredAt || current.occurredAt;
   const accountId = values.accountId == null && values.account == null ? current.accountId : resolveAccountId(values);
-  db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,account_id=?,contact_id=?,occurred_at=?,due_at=?,updated_at=? WHERE id=?`)
-    .run(amount, type, String(values.category || current.category).slice(0, 80), String(values.rawText ?? current.rawText).slice(0, 1000), String(values.note ?? current.note ?? '').slice(0, 500), accountId, accountId, values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt, values.dueAt === undefined ? current.dueAt : (values.dueAt || null), new Date().toISOString(), id);
-  audit('update', 'transaction', id, { before: current, after: values });
+  assertAccountingPeriodOpen(db, periodForDate(current.occurredAt, currentTimeZone()));
+  assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
+  const category = String(values.category || current.category).slice(0, 80);
+  const rawText = String(values.rawText ?? current.rawText).slice(0, 1000);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    reverseTransactionJournal(db, id, current.occurredAt, { createdBy: currentWorkspace()?.userId });
+    db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,account_id=?,contact_id=?,occurred_at=?,due_at=?,updated_at=? WHERE id=?`)
+      .run(amount, type, category, rawText, String(values.note ?? current.note ?? '').slice(0, 500), accountId, accountId, values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt, values.dueAt === undefined ? current.dueAt : (values.dueAt || null), new Date().toISOString(), id);
+    syncTransactionJournal(db, { id, amount, type, category, rawText, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
+    audit('update', 'transaction', id, { before: current, after: values });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return transactionRow(id);
 }
 
 export function deleteTransaction(id) {
   const current = transactionRow(id);
   if (!current) return false;
-  db.prepare("UPDATE transactions SET status='deleted',updated_at=? WHERE id=?").run(new Date().toISOString(), id);
-  audit('delete', 'transaction', id, current);
+  assertAccountingPeriodOpen(db, periodForDate(current.occurredAt, currentTimeZone()));
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    reverseTransactionJournal(db, id, current.occurredAt, { createdBy: currentWorkspace()?.userId, memo: 'سند معکوس حذف تراکنش' });
+    db.prepare("UPDATE transactions SET status='deleted',updated_at=? WHERE id=?").run(new Date().toISOString(), id);
+    audit('delete', 'transaction', id, current);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return true;
 }
 
@@ -1048,10 +1081,11 @@ export function voiceStats() {
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
-  'settings', 'voice_metrics', 'audit_log',
+  'settings', 'voice_metrics', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
+  'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics',
   'accounts', 'categories', 'settings',
@@ -1086,6 +1120,7 @@ export function restoreFinancialSnapshot(snapshot) {
     }
     const cash = db.prepare("SELECT id FROM accounts WHERE id='cash'").get();
     if (!cash) throw new Error('پشتیبان حساب صندوق اصلی را ندارد.');
+    migrateAccountingLedger(db, { createdBy: currentWorkspace()?.userId });
     db.prepare('INSERT INTO audit_log (id,action,entity_type,entity_id,payload) VALUES (?,?,?,?,?)')
       .run(randomUUID(), 'restore', 'workspace', currentWorkspace()?.id || 'primary', JSON.stringify({ restoredAt: new Date().toISOString() }));
     db.exec('COMMIT');

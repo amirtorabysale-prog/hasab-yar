@@ -4,12 +4,12 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, createWorkspace, deleteContact,
+  activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeDay, createInvoice, createSession, createWorkspace, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getSettings,
   getToday, insertTransactions, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
   listReceipts, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, materializeRecurringRules, receiptImage, recordLoginFailure, recordVoiceMetric,
-  removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
+  recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
   saveProduct, saveReceipt, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
 import { inferLearningKeyword, parseFinancialText } from './parser.js';
@@ -18,6 +18,10 @@ import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
   openEncryptedBackup, restorePortableBackup, writeServerBackup,
 } from './backup.js';
+import {
+  accountingPeriods, createAdjustingJournal, listJournal, listLedgerAccounts, lockAccountingPeriod,
+  periodForDate, reopenAccountingPeriod, trialBalance,
+} from './accounting.js';
 import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 
@@ -193,6 +197,34 @@ app.post('/api/transactions', (request, response, next) => {
 });
 app.get('/api/reports', (request, response) => response.json(report(['week', 'month', 'quarter'].includes(request.query.range) ? request.query.range : 'month')));
 app.get('/api/overview', (_request, response) => response.json(financialOverview()));
+app.get('/api/accounting/accounts', (_request, response) => response.json({ items: listLedgerAccounts(activeWorkspaceDatabase()) }));
+app.get('/api/accounting/trial-balance', (request, response, next) => {
+  try { return response.json(trialBalance(activeWorkspaceDatabase(), request.query.through)); }
+  catch (error) { return next(error); }
+});
+app.get('/api/accounting/journal', (request, response) => response.json(listJournal(activeWorkspaceDatabase(), request.query)));
+app.post('/api/accounting/journal', (request, response, next) => {
+  try {
+    const item = createAdjustingJournal(activeWorkspaceDatabase(), request.body || {}, { createdBy: request.user.id, timeZone: getSettings().timezone });
+    recordAudit('create', 'adjusting_journal', item.id, { memo: request.body?.memo });
+    return response.status(201).json({ item });
+  } catch (error) { return next(error); }
+});
+app.get('/api/accounting/periods', (_request, response) => response.json({ items: accountingPeriods(activeWorkspaceDatabase()), currentPeriod: periodForDate(new Date(), getSettings().timezone) }));
+app.post('/api/accounting/periods/:period/lock', (request, response, next) => {
+  try {
+    const item = lockAccountingPeriod(activeWorkspaceDatabase(), request.params.period, request.user.id);
+    recordAudit('lock', 'accounting_period', request.params.period, {});
+    return response.json({ item });
+  } catch (error) { return next(error); }
+});
+app.post('/api/accounting/periods/:period/reopen', (request, response, next) => {
+  try {
+    const item = reopenAccountingPeriod(activeWorkspaceDatabase(), request.params.period, request.user.id, request.body?.reason);
+    recordAudit('reopen', 'accounting_period', request.params.period, { reason: request.body?.reason });
+    return response.json({ item });
+  } catch (error) { return next(error); }
+});
 app.get('/api/accounts', (_request, response) => response.json({ items: listAccounts() }));
 app.post('/api/accounts', (request, response, next) => { try { response.status(201).json({ item: saveAccount(request.body) }); } catch (error) { next(error); } });
 app.put('/api/accounts/:id', (request, response, next) => { try { response.json({ item: saveAccount({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });

@@ -1,0 +1,285 @@
+import { randomUUID } from 'node:crypto';
+
+const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
+
+function accountingError(message, code = 'ACCOUNTING_INVALID', status = 400) {
+  return Object.assign(new Error(message), { code, status });
+}
+
+export function ensureAccountingSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ledger_accounts (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('asset','liability','equity','income','expense')),
+      normal_side TEXT NOT NULL CHECK(normal_side IN ('debit','credit')),
+      source_kind TEXT,
+      source_key TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_kind,source_key)
+    );
+    CREATE TABLE IF NOT EXISTS journal_entries (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1,
+      entry_kind TEXT NOT NULL DEFAULT 'normal' CHECK(entry_kind IN ('normal','reversal','adjustment','opening')),
+      occurred_at TEXT NOT NULL,
+      memo TEXT NOT NULL DEFAULT '',
+      reverses_entry_id TEXT REFERENCES journal_entries(id) ON DELETE RESTRICT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_type,source_id,revision)
+    );
+    CREATE INDEX IF NOT EXISTS idx_journal_entries_occurred ON journal_entries(occurred_at,id);
+    CREATE INDEX IF NOT EXISTS idx_journal_entries_source ON journal_entries(source_type,source_id,revision);
+    CREATE TABLE IF NOT EXISTS journal_lines (
+      id TEXT PRIMARY KEY,
+      entry_id TEXT NOT NULL REFERENCES journal_entries(id) ON DELETE RESTRICT,
+      account_id TEXT NOT NULL REFERENCES ledger_accounts(id) ON DELETE RESTRICT,
+      debit INTEGER NOT NULL DEFAULT 0 CHECK(debit>=0),
+      credit INTEGER NOT NULL DEFAULT 0 CHECK(credit>=0),
+      description TEXT NOT NULL DEFAULT '',
+      CHECK((debit>0 AND credit=0) OR (credit>0 AND debit=0))
+    );
+    CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines(entry_id);
+    CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_id);
+    CREATE TABLE IF NOT EXISTS accounting_periods (
+      period TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','locked')),
+      locked_by TEXT,
+      locked_at TEXT,
+      reopened_by TEXT,
+      reopened_at TEXT,
+      reopen_reason TEXT NOT NULL DEFAULT ''
+    );
+  `);
+  const seed = database.prepare(`INSERT OR IGNORE INTO ledger_accounts
+    (id,code,name,type,normal_side,source_kind,source_key) VALUES (?,?,?,?,?,?,?)`);
+  seed.run('ledger-opening-equity', '3000', 'سرمایه و ماندهٔ افتتاحیه', 'equity', 'credit', 'system', 'opening-equity');
+}
+
+function nextCode(database, type) {
+  const ranges = { asset: 1100, liability: 2100, equity: 3100, income: 4100, expense: 5100 };
+  const base = ranges[type] || 9100;
+  const rows = database.prepare('SELECT code FROM ledger_accounts WHERE CAST(code AS INTEGER)>=? AND CAST(code AS INTEGER)<?').all(base, base + 900);
+  const used = new Set(rows.map((row) => Number(row.code)));
+  for (let code = base; code < base + 900; code += 1) if (!used.has(code)) return String(code);
+  throw accountingError('شماره حساب آزاد پیدا نشد.', 'LEDGER_CODE_EXHAUSTED');
+}
+
+function linkedLedgerAccount(database, sourceKind, sourceKey, name, type) {
+  ensureAccountingSchema(database);
+  const existing = database.prepare('SELECT * FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(sourceKind, sourceKey);
+  if (existing) {
+    if (existing.name !== name) database.prepare('UPDATE ledger_accounts SET name=? WHERE id=?').run(name, existing.id);
+    return existing.id;
+  }
+  const id = randomUUID();
+  const normalSide = ['asset', 'expense'].includes(type) ? 'debit' : 'credit';
+  database.prepare(`INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key)
+    VALUES (?,?,?,?,?,?,?)`).run(id, nextCode(database, type), name, type, normalSide, sourceKind, sourceKey);
+  return id;
+}
+
+function operationalLedgerAccount(database, accountId) {
+  const account = database.prepare('SELECT id,name FROM accounts WHERE id=?').get(accountId);
+  if (!account) throw accountingError('حساب مالی تراکنش برای دفتر کل پیدا نشد.', 'LEDGER_ACCOUNT_MISSING');
+  return linkedLedgerAccount(database, 'operational-account', account.id, account.name, 'asset');
+}
+
+function categoryLedgerAccount(database, type, category) {
+  const clean = String(category || (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها')).trim().slice(0, 80);
+  return linkedLedgerAccount(database, type === 'income' ? 'income-category' : 'expense-category', clean, clean, type === 'income' ? 'income' : 'expense');
+}
+
+function validateLines(database, lines) {
+  if (!Array.isArray(lines) || lines.length < 2 || lines.length > 100) throw accountingError('سند باید حداقل دو آرتیکل داشته باشد.');
+  let debit = 0;
+  let credit = 0;
+  const normalized = lines.map((line) => {
+    const accountId = String(line.accountId || '').trim();
+    if (!database.prepare('SELECT 1 FROM ledger_accounts WHERE id=? AND active=1').get(accountId)) throw accountingError('یکی از حساب‌های دفتر کل معتبر یا فعال نیست.');
+    const lineDebit = Math.round(Number(line.debit) || 0);
+    const lineCredit = Math.round(Number(line.credit) || 0);
+    if (!Number.isSafeInteger(lineDebit) || !Number.isSafeInteger(lineCredit) || (lineDebit > 0) === (lineCredit > 0)) throw accountingError('هر آرتیکل باید فقط بدهکار یا فقط بستانکار و دارای مبلغ مثبت باشد.');
+    debit += lineDebit;
+    credit += lineCredit;
+    return { accountId, debit: lineDebit, credit: lineCredit, description: String(line.description || '').slice(0, 300) };
+  });
+  if (debit !== credit || debit <= 0) throw accountingError('جمع بدهکار و بستانکار سند برابر نیست.', 'JOURNAL_UNBALANCED');
+  return { lines: normalized, total: debit };
+}
+
+function nextRevision(database, sourceType, sourceId) {
+  return Number(database.prepare('SELECT COALESCE(MAX(revision),0) AS revision FROM journal_entries WHERE source_type=? AND source_id=?').get(sourceType, sourceId).revision) + 1;
+}
+
+function insertJournal(database, values) {
+  const validated = validateLines(database, values.lines);
+  const id = randomUUID();
+  database.prepare(`INSERT INTO journal_entries
+    (id,source_type,source_id,revision,entry_kind,occurred_at,memo,reverses_entry_id,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run(id, values.sourceType, values.sourceId, values.revision, values.entryKind || 'normal', values.occurredAt, String(values.memo || '').slice(0, 500), values.reversesEntryId || null, values.createdBy || null);
+  const insert = database.prepare('INSERT INTO journal_lines (id,entry_id,account_id,debit,credit,description) VALUES (?,?,?,?,?,?)');
+  for (const line of validated.lines) insert.run(randomUUID(), id, line.accountId, line.debit, line.credit, line.description);
+  return { id, total: validated.total };
+}
+
+export function periodForDate(occurredAt, timeZone = 'Asia/Tehran') {
+  const date = new Date(occurredAt);
+  if (Number.isNaN(date.getTime())) throw accountingError('تاریخ سند معتبر نیست.');
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA-u-ca-persian', { timeZone, year: 'numeric', month: '2-digit' }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}`;
+}
+
+export function assertAccountingPeriodOpen(database, period) {
+  ensureAccountingSchema(database);
+  const row = database.prepare('SELECT status FROM accounting_periods WHERE period=?').get(period);
+  if (row?.status === 'locked') throw accountingError(`دورهٔ ${period} بسته شده و قابل تغییر نیست.`, 'ACCOUNTING_PERIOD_LOCKED', 409);
+}
+
+export function syncTransactionJournal(database, transaction, { createdBy = null } = {}) {
+  ensureAccountingSchema(database);
+  const amount = Math.round(Number(transaction.amount));
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ سند تراکنش معتبر نیست.');
+  const cash = operationalLedgerAccount(database, transaction.accountId || transaction.account || 'cash');
+  const category = categoryLedgerAccount(database, transaction.type, transaction.category);
+  const lines = transaction.type === 'income'
+    ? [{ accountId: cash, debit: amount }, { accountId: category, credit: amount }]
+    : [{ accountId: category, debit: amount }, { accountId: cash, credit: amount }];
+  return insertJournal(database, {
+    sourceType: 'transaction', sourceId: transaction.id,
+    revision: nextRevision(database, 'transaction', transaction.id), entryKind: 'normal',
+    occurredAt: transaction.occurredAt || transaction.occurred_at,
+    memo: transaction.rawText || transaction.raw_text || transaction.category,
+    createdBy, lines,
+  });
+}
+
+export function reverseTransactionJournal(database, transactionId, occurredAt, { createdBy = null, memo = 'سند معکوس اصلاح' } = {}) {
+  ensureAccountingSchema(database);
+  const original = database.prepare(`SELECT * FROM journal_entries WHERE source_type='transaction' AND source_id=?
+    AND entry_kind='normal' ORDER BY revision DESC LIMIT 1`).get(transactionId);
+  if (!original) return null;
+  const alreadyReversed = database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id);
+  if (alreadyReversed) return null;
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
+    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+  return insertJournal(database, {
+    sourceType: 'transaction', sourceId: transactionId,
+    revision: nextRevision(database, 'transaction', transactionId), entryKind: 'reversal',
+    occurredAt, memo, reversesEntryId: original.id, createdBy, lines,
+  });
+}
+
+export function syncOpeningBalanceJournal(database, operationalAccountId, { createdBy = null } = {}) {
+  ensureAccountingSchema(database);
+  const account = database.prepare('SELECT id,name,opening_balance AS openingBalance,created_at AS createdAt FROM accounts WHERE id=?').get(operationalAccountId);
+  if (!account) return null;
+  const sourceId = account.id;
+  const prior = database.prepare(`SELECT * FROM journal_entries WHERE source_type='opening_balance' AND source_id=? AND entry_kind='opening' ORDER BY revision DESC LIMIT 1`).get(sourceId);
+  if (prior && !database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(prior.id)) {
+    const lines = database.prepare('SELECT account_id AS accountId,debit,credit FROM journal_lines WHERE entry_id=?').all(prior.id).map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit }));
+    insertJournal(database, { sourceType: 'opening_balance', sourceId, revision: nextRevision(database, 'opening_balance', sourceId), entryKind: 'reversal', occurredAt: prior.occurred_at, memo: `معکوس مانده افتتاحیه ${account.name}`, reversesEntryId: prior.id, createdBy, lines });
+  }
+  const amount = Math.abs(Math.round(Number(account.openingBalance) || 0));
+  if (!amount) return null;
+  const asset = operationalLedgerAccount(database, account.id);
+  const equity = 'ledger-opening-equity';
+  const positive = Number(account.openingBalance) > 0;
+  return insertJournal(database, {
+    sourceType: 'opening_balance', sourceId, revision: nextRevision(database, 'opening_balance', sourceId), entryKind: 'opening',
+    occurredAt: account.createdAt || new Date().toISOString(), memo: `مانده افتتاحیه ${account.name}`, createdBy,
+    lines: positive ? [{ accountId: asset, debit: amount }, { accountId: equity, credit: amount }] : [{ accountId: equity, debit: amount }, { accountId: asset, credit: amount }],
+  });
+}
+
+export function migrateAccountingLedger(database, { createdBy = null } = {}) {
+  ensureAccountingSchema(database);
+  const accounts = database.prepare('SELECT id FROM accounts').all();
+  for (const account of accounts) {
+    const exists = database.prepare("SELECT 1 FROM journal_entries WHERE source_type='opening_balance' AND source_id=?").get(account.id);
+    if (!exists) syncOpeningBalanceJournal(database, account.id, { createdBy });
+  }
+  const transactions = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,account_id AS accountId,occurred_at AS occurredAt
+    FROM transactions WHERE status!='deleted' ORDER BY occurred_at,id`).all();
+  for (const transaction of transactions) {
+    const exists = database.prepare("SELECT 1 FROM journal_entries WHERE source_type='transaction' AND source_id=?").get(transaction.id);
+    if (!exists) syncTransactionJournal(database, transaction, { createdBy });
+  }
+  return { accounts: accounts.length, transactions: transactions.length };
+}
+
+export function listLedgerAccounts(database) {
+  migrateAccountingLedger(database);
+  return database.prepare(`SELECT id,code,name,type,normal_side AS normalSide,active FROM ledger_accounts
+    ORDER BY CAST(code AS INTEGER),name`).all();
+}
+
+export function trialBalance(database, through = '') {
+  migrateAccountingLedger(database);
+  const cutoff = through ? new Date(through) : null;
+  if (cutoff && Number.isNaN(cutoff.getTime())) throw accountingError('تاریخ تراز معتبر نیست.');
+  const where = cutoff ? 'WHERE journal_entries.occurred_at<=?' : '';
+  const params = cutoff ? [cutoff.toISOString()] : [];
+  const rows = database.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,ledger_accounts.type,
+    COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit
+    FROM ledger_accounts LEFT JOIN journal_lines ON journal_lines.account_id=ledger_accounts.id
+    LEFT JOIN journal_entries ON journal_entries.id=journal_lines.entry_id ${where}
+    GROUP BY ledger_accounts.id ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all(...params)
+    .map((row) => ({ ...row, debitBalance: Math.max(0, Number(row.debit) - Number(row.credit)), creditBalance: Math.max(0, Number(row.credit) - Number(row.debit)) }));
+  const totals = rows.reduce((sum, row) => ({ debit: sum.debit + Number(row.debit), credit: sum.credit + Number(row.credit), debitBalance: sum.debitBalance + row.debitBalance, creditBalance: sum.creditBalance + row.creditBalance }), { debit: 0, credit: 0, debitBalance: 0, creditBalance: 0 });
+  return { unit: 'IRT', basis: 'double-entry-cash', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
+}
+
+export function listJournal(database, { page = 1, limit = 30 } = {}) {
+  migrateAccountingLedger(database);
+  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 30));
+  const safePage = Math.max(1, Number(page) || 1);
+  const total = database.prepare('SELECT COUNT(*) AS count FROM journal_entries').get().count;
+  const entries = database.prepare(`SELECT id,source_type AS sourceType,source_id AS sourceId,revision,entry_kind AS entryKind,
+    occurred_at AS occurredAt,memo,reverses_entry_id AS reversesEntryId,created_at AS createdAt
+    FROM journal_entries ORDER BY occurred_at DESC,created_at DESC LIMIT ? OFFSET ?`).all(safeLimit, (safePage - 1) * safeLimit);
+  const lines = database.prepare(`SELECT journal_lines.account_id AS accountId,ledger_accounts.code,ledger_accounts.name,
+    journal_lines.debit,journal_lines.credit,journal_lines.description FROM journal_lines
+    JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id WHERE journal_lines.entry_id=? ORDER BY journal_lines.rowid`);
+  return { items: entries.map((entry) => ({ ...entry, lines: lines.all(entry.id) })), total, page: safePage, pages: Math.max(1, Math.ceil(total / safeLimit)) };
+}
+
+export function createAdjustingJournal(database, values, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const occurredAt = values.occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+  const sourceId = randomUUID();
+  const result = insertJournal(database, { sourceType: 'adjustment', sourceId, revision: 1, entryKind: 'adjustment', occurredAt, memo: values.memo || 'سند اصلاحی', createdBy, lines: values.lines });
+  return listJournal(database, { limit: 1 }).items.find((item) => item.id === result.id) || { id: result.id };
+}
+
+export function accountingPeriods(database) {
+  ensureAccountingSchema(database);
+  return database.prepare(`SELECT period,status,locked_by AS lockedBy,locked_at AS lockedAt,reopened_by AS reopenedBy,
+    reopened_at AS reopenedAt,reopen_reason AS reopenReason FROM accounting_periods ORDER BY period DESC`).all();
+}
+
+export function lockAccountingPeriod(database, period, userId) {
+  ensureAccountingSchema(database);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(period))) throw accountingError('دوره باید به شکل YYYY-MM باشد.');
+  const balance = trialBalance(database);
+  if (!balance.balanced) throw accountingError('دفتر کل نامتوازن است و دوره قابل بستن نیست.', 'TRIAL_BALANCE_UNBALANCED', 409);
+  database.prepare(`INSERT INTO accounting_periods (period,status,locked_by,locked_at) VALUES (?,'locked',?,CURRENT_TIMESTAMP)
+    ON CONFLICT(period) DO UPDATE SET status='locked',locked_by=excluded.locked_by,locked_at=CURRENT_TIMESTAMP`).run(period, userId || null);
+  return accountingPeriods(database).find((item) => item.period === period);
+}
+
+export function reopenAccountingPeriod(database, period, userId, reason) {
+  ensureAccountingSchema(database);
+  const cleanReason = String(reason || '').trim().slice(0, 500);
+  if (cleanReason.length < 10) throw accountingError('دلیل بازگشایی را با حداقل ۱۰ نویسه ثبت کن.');
+  const result = database.prepare(`UPDATE accounting_periods SET status='open',reopened_by=?,reopened_at=CURRENT_TIMESTAMP,reopen_reason=?
+    WHERE period=? AND status='locked'`).run(userId || null, cleanReason, period);
+  if (!result.changes) throw accountingError('دورهٔ بسته‌شده پیدا نشد.', 'ACCOUNTING_PERIOD_NOT_LOCKED', 404);
+  return accountingPeriods(database).find((item) => item.period === period);
+}
