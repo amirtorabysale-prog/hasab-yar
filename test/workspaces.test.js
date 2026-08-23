@@ -57,7 +57,10 @@ test('enforces the role matrix for reads, financial writes, settings and members
   assert.equal(roleAllows('manager', minimumRoleForRequest('PATCH', '/settings')), true);
   assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/workspace/members')), false);
   assert.equal(roleAllows('owner', minimumRoleForRequest('POST', '/workspace/members')), true);
-  assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/export')), false);
+  assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/backups/status')), false);
+  assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/backups/export')), true);
+  assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/backups/restore')), false);
+  assert.equal(roleAllows('owner', minimumRoleForRequest('POST', '/backups/restore')), true);
 });
 
 test.after(() => {

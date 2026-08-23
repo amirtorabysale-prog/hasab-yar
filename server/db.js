@@ -295,7 +295,11 @@ export function runInWorkspace(workspaceId, member, callback) {
 
 export function currentWorkspace() {
   const context = workspaceContext.getStore();
-  return context ? { id: context.workspaceId, role: context.member?.role } : null;
+  return context ? { id: context.workspaceId, role: context.member?.role, userId: context.member?.userId } : null;
+}
+
+export function activeWorkspaceDatabase() {
+  return workspaceContext.getStore()?.database || controlDb;
 }
 
 export function listUserWorkspaces(userId) {
@@ -396,6 +400,12 @@ export function allWorkspaces() {
 export function closeWorkspaceDatabases() {
   for (const database of workspaceConnections.values()) database.close();
   workspaceConnections.clear();
+}
+
+export function revokeWorkspaceSessions(workspaceId, exceptUserId = '') {
+  const members = controlDb.prepare('SELECT user_id AS userId FROM workspace_members WHERE workspace_id=?').all(workspaceId);
+  const remove = controlDb.prepare('DELETE FROM sessions WHERE user_id=?');
+  for (const member of members) if (member.userId !== exceptUserId) remove.run(member.userId);
 }
 
 export function getSettings() {
@@ -614,6 +624,10 @@ export function report(range = 'month', now = new Date()) {
 function audit(action, entityType, entityId, payload = {}) {
   db.prepare('INSERT INTO audit_log (id,action,entity_type,entity_id,payload) VALUES (?,?,?,?,?)')
     .run(randomUUID(), action, entityType, entityId, JSON.stringify(payload));
+}
+
+export function recordAudit(action, entityType, entityId, payload = {}) {
+  audit(action, entityType, entityId, payload);
 }
 
 function cleanAmount(value) {
@@ -926,6 +940,12 @@ export function receiptImage(id) {
   return row ? { ...row, imageData: Buffer.from(row.imageData) } : null;
 }
 
+export function deleteReceipt(id) {
+  const result = db.prepare('DELETE FROM receipts WHERE id=?').run(id);
+  if (result.changes) audit('delete', 'receipt', id);
+  return result.changes > 0;
+}
+
 export function listProducts() {
   return db.prepare(`SELECT id,name,stock,unit,low_threshold AS lowThreshold,buy_price AS buyPrice,sale_price AS salePrice,
     CASE WHEN low_threshold>0 AND stock<=low_threshold THEN 1 ELSE 0 END AS isLow FROM products ORDER BY isLow DESC,name`).all();
@@ -1025,14 +1045,52 @@ export function voiceStats() {
   return { ...totals, providers };
 }
 
-export function exportSnapshot() {
+export const FINANCIAL_BACKUP_TABLES = [
+  'categories', 'accounts', 'contacts', 'transactions', 'obligations', 'recurring_rules', 'invoices',
+  'invoice_items', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
+  'settings', 'voice_metrics', 'audit_log',
+];
+
+const BACKUP_DELETE_ORDER = [
+  'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
+  'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics',
+  'accounts', 'categories', 'settings',
+];
+
+export function financialBackupSnapshot(workspace = currentWorkspace()) {
+  const tables = {};
+  for (const table of FINANCIAL_BACKUP_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
-    version: 3, exportedAt: new Date().toISOString(), settings: getSettings(), categories: getCategories(), accounts: listAccounts(),
-    transactions: db.prepare(`SELECT id,amount,type,category,raw_text AS rawText,source,occurred_at AS occurredAt,
-      note,account,account_id AS accountId,contact_id AS contactId,due_at AS dueAt FROM transactions WHERE status!='deleted' ORDER BY occurred_at`).all(), contacts: listContacts(),
-    obligations: listObligations({ status: 'all' }), recurring: listRecurringRules(), invoices: listInvoices(),
-    dailyClosings: listDailyClosings(), receipts: listReceipts(), products: listProducts(), learnings: getLearnings(),
+    format: 'hesab-yar-financial-data', version: 1, exportedAt: new Date().toISOString(),
+    workspace: { id: workspace?.id || 'primary' }, tables,
   };
+}
+
+export function restoreFinancialSnapshot(snapshot) {
+  if (!snapshot || snapshot.format !== 'hesab-yar-financial-data' || snapshot.version !== 1 || !snapshot.tables) throw new Error('ساختار پشتیبان معتبر نیست.');
+  db.exec('PRAGMA defer_foreign_keys = ON');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const table of BACKUP_DELETE_ORDER) db.prepare(`DELETE FROM ${table}`).run();
+    for (const table of FINANCIAL_BACKUP_TABLES) {
+      const rows = snapshot.tables[table];
+      if (!Array.isArray(rows)) throw new Error(`جدول ${table} در پشتیبان کامل نیست.`);
+      const validColumns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
+      for (const row of rows) {
+        const columns = Object.keys(row).filter((column) => validColumns.has(column));
+        if (!columns.length) continue;
+        const placeholders = columns.map(() => '?').join(',');
+        const command = table === 'audit_log' ? 'INSERT OR IGNORE' : 'INSERT';
+        db.prepare(`${command} INTO ${table} (${columns.join(',')}) VALUES (${placeholders})`).run(...columns.map((column) => row[column]));
+      }
+    }
+    const cash = db.prepare("SELECT id FROM accounts WHERE id='cash'").get();
+    if (!cash) throw new Error('پشتیبان حساب صندوق اصلی را ندارد.');
+    db.prepare('INSERT INTO audit_log (id,action,entity_type,entity_id,payload) VALUES (?,?,?,?,?)')
+      .run(randomUUID(), 'restore', 'workspace', currentWorkspace()?.id || 'primary', JSON.stringify({ restoredAt: new Date().toISOString() }));
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  return financialBackupSnapshot();
 }
 
 export function seedDemo() {
