@@ -32,8 +32,8 @@ export const PROFILE_DEFINITIONS = Object.freeze({
     description: 'برای مدیریت نقدینگی، مشتریان، فاکتور، انبار و بهای تمام‌شده',
     summaryLabels: Object.freeze({ income: 'فروش و دریافت امروز', expense: 'هزینه امروز', net: 'خالص جریان نقدی' }),
     ledgerTabs: Object.freeze(['transactions', 'obligations', 'invoices', 'reconciliation', 'recurring', 'inventory', 'accounting', 'tools']),
-    capabilities: Object.freeze(['ثبت صوتی و دستی', 'فروش و هزینه', 'مشتری و تأمین‌کننده', 'فاکتور فروش و خرید', 'تسویه مرحله‌ای', 'تطبیق بانکی', 'انبار دائمی و بهای تمام‌شده', 'دفتر کل دوطرفه', 'بستن صندوق']),
-    plannedCapabilities: Object.freeze(['مالیات و ارزش افزوده']),
+    capabilities: Object.freeze(['ثبت صوتی و دستی', 'فروش و هزینه', 'مشتری و تأمین‌کننده', 'فاکتور فروش و خرید', 'تسویه مرحله‌ای', 'تطبیق بانکی', 'انبار دائمی و بهای تمام‌شده', 'مالیات قابل‌تنظیم و گزارش دوره‌ای', 'دفتر کل دوطرفه', 'بستن صندوق']),
+    plannedCapabilities: Object.freeze(['انطباق رسمی و اتصال به سامانه مودیان', 'حقوق و دستمزد']),
   }),
 });
 
