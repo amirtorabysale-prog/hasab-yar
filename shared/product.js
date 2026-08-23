@@ -31,9 +31,9 @@ export const PROFILE_DEFINITIONS = Object.freeze({
     label: 'کسب‌وکار کوچک',
     description: 'برای مدیریت نقدینگی، مشتریان، سررسیدها، فاکتور و موجودی سبک',
     summaryLabels: Object.freeze({ income: 'فروش و دریافت امروز', expense: 'هزینه امروز', net: 'خالص جریان نقدی' }),
-    ledgerTabs: Object.freeze(['transactions', 'obligations', 'invoices', 'recurring', 'inventory', 'tools']),
-    capabilities: Object.freeze(['ثبت صوتی و دستی', 'فروش و هزینه', 'مشتری و تأمین‌کننده', 'فاکتور ساده', 'موجودی سبک', 'بستن صندوق']),
-    plannedCapabilities: Object.freeze(['حساب‌های بانکی', 'تطبیق', 'دسترسی حسابدار']),
+    ledgerTabs: Object.freeze(['transactions', 'obligations', 'invoices', 'recurring', 'inventory', 'accounting', 'tools']),
+    capabilities: Object.freeze(['ثبت صوتی و دستی', 'فروش و هزینه', 'مشتری و تأمین‌کننده', 'فاکتور ساده', 'موجودی سبک', 'دفتر کل دوطرفه', 'بستن صندوق']),
+    plannedCapabilities: Object.freeze(['تطبیق بانکی', 'مالیات و ارزش افزوده']),
   }),
 });
 

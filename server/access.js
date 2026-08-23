@@ -14,6 +14,7 @@ export function minimumRoleForRequest(method, path) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return normalizedPath.startsWith('/backups/') ? 'manager' : 'viewer';
   if (normalizedPath.startsWith('/auth/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
   if (normalizedPath.startsWith('/workspace/members')) return 'owner';
+  if (normalizedPath.startsWith('/accounting/periods/')) return 'owner';
   if (normalizedPath === '/backups/restore' || normalizedPath === '/backups/preview') return 'owner';
   if (normalizedPath.startsWith('/backups/')) return 'manager';
   if (normalizedPath === '/settings' || normalizedPath.startsWith('/accounts')) return 'manager';

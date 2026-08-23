@@ -41,6 +41,13 @@ test('rejects a wrong password and a structurally incomplete backup', () => {
   assert.throws(() => backup.validateFinancialBackup(valid), /accounts/);
 });
 
+test('keeps backups from before the ledger upgrade restorable', () => {
+  const legacy = database.runInWorkspace('primary', { role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
+  for (const table of ['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods']) delete legacy.tables[table];
+  assert.doesNotThrow(() => backup.validateFinancialBackup(legacy));
+  assert.deepEqual(legacy.tables.journal_entries, []);
+});
+
 test('restores atomically and writes a decrypt-tested checkpoint first', async () => {
   await database.runInWorkspace('primary', { role: 'owner' }, async () => {
     database.insertTransactions({ transcript: 'بعد از پشتیبان', transactions: [{ amount: 999_000, type: 'expense', category: 'مواد و کالا', rawText: 'بعد از پشتیبان' }] });
