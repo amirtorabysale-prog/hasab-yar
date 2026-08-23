@@ -32,7 +32,7 @@ export const PROFILE_DEFINITIONS = Object.freeze({
     description: 'برای مدیریت نقدینگی، مشتریان، سررسیدها، فاکتور و موجودی سبک',
     summaryLabels: Object.freeze({ income: 'فروش و دریافت امروز', expense: 'هزینه امروز', net: 'خالص جریان نقدی' }),
     ledgerTabs: Object.freeze(['transactions', 'obligations', 'invoices', 'recurring', 'inventory', 'accounting', 'tools']),
-    capabilities: Object.freeze(['ثبت صوتی و دستی', 'فروش و هزینه', 'مشتری و تأمین‌کننده', 'فاکتور ساده', 'موجودی سبک', 'دفتر کل دوطرفه', 'بستن صندوق']),
+    capabilities: Object.freeze(['ثبت صوتی و دستی', 'فروش و هزینه', 'مشتری و تأمین‌کننده', 'فاکتور فروش و خرید', 'تسویه مرحله‌ای', 'موجودی سبک', 'دفتر کل دوطرفه', 'بستن صندوق']),
     plannedCapabilities: Object.freeze(['تطبیق بانکی', 'مالیات و ارزش افزوده']),
   }),
 });

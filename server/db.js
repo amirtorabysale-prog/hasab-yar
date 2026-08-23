@@ -6,7 +6,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
-  reverseTransactionJournal, syncOpeningBalanceJournal, syncTransactionJournal,
+  postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
+  syncOpeningBalanceJournal, syncTransactionJournal,
 } from './accounting.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
@@ -230,6 +231,37 @@ function ensureColumn(table, definition) {
   }
 }
 
+function ensureColumnOn(database, table, definition) {
+  try { database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`); } catch (error) {
+    if (!/duplicate column name/i.test(error.message)) throw error;
+  }
+}
+
+function ensureInvoiceSchema(database) {
+  ensureColumnOn(database, 'invoices', "document_type TEXT NOT NULL DEFAULT 'sales' CHECK(document_type IN ('sales','purchase'))");
+  ensureColumnOn(database, 'invoices', "category TEXT NOT NULL DEFAULT 'فروش'");
+  ensureColumnOn(database, 'invoices', 'subtotal INTEGER NOT NULL DEFAULT 0');
+  ensureColumnOn(database, 'invoices', 'discount INTEGER NOT NULL DEFAULT 0');
+  ensureColumnOn(database, 'invoices', 'tax INTEGER NOT NULL DEFAULT 0');
+  ensureColumnOn(database, 'invoices', 'issued_at TEXT');
+  ensureColumnOn(database, 'invoices', 'posted_at TEXT');
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS invoice_payments (
+      id TEXT PRIMARY KEY,
+      invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE RESTRICT,
+      amount INTEGER NOT NULL CHECK(amount > 0),
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
+      occurred_at TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id,occurred_at);
+  `);
+  database.prepare('UPDATE invoices SET subtotal=total WHERE subtotal=0').run();
+}
+
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");
 ensureColumn('transactions', "account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT");
@@ -241,6 +273,7 @@ ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
 ensureAccountingSchema(controlDb);
+ensureInvoiceSchema(controlDb);
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -291,6 +324,7 @@ function workspaceDatabase(workspaceId) {
     settingInsert.run('accountOpeningMigrated', 'true');
   }
   ensureAccountingSchema(database);
+  ensureInvoiceSchema(database);
   migrateAccountingLedger(database);
   workspaceConnections.set(workspaceId, database);
   return database;
@@ -559,7 +593,7 @@ function insertTransactionRows({ transcript, transactions }) {
     if (result.changes) {
       ids.push(id);
       audit('create', 'transaction', id, { amount, type: item.type, category: item.category });
-      syncTransactionJournal(db, { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
+      if (!item.journalManaged) syncTransactionJournal(db, { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
     } else if (item.clientId) {
       const existing = db.prepare('SELECT id FROM transactions WHERE client_id=?').get(item.clientId);
       if (existing) ids.push(existing.id);
@@ -656,7 +690,7 @@ function cleanAmount(value) {
 function transactionRow(id) {
   return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
-    transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,
+    transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,transactions.status,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName,transactions.due_at AS dueAt
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -681,7 +715,7 @@ export function listTransactions({ query = '', type = '', category = '', from = 
   const total = db.prepare(`SELECT COUNT(*) AS count FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id WHERE ${where}`).get(...values).count;
   const items = db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.needs_review AS needsReview,
-    transactions.occurred_at AS occurredAt,transactions.note,transactions.account,
+    transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.status,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -693,6 +727,7 @@ export function listTransactions({ query = '', type = '', category = '', from = 
 export function updateTransaction(id, values = {}) {
   const current = transactionRow(id);
   if (!current) return null;
+  if (current.status === 'allocated') throw Object.assign(new Error('این جابه‌جایی پول از تسویهٔ یک سند ساخته شده و فقط از داخل همان سند قابل اصلاح است.'), { code: 'ALLOCATED_TRANSACTION_LOCKED', status: 409 });
   const type = ['income', 'expense'].includes(values.type) ? values.type : current.type;
   const amount = values.amount == null ? current.amount : cleanAmount(values.amount);
   const occurredAt = values.occurredAt || current.occurredAt;
@@ -716,6 +751,7 @@ export function updateTransaction(id, values = {}) {
 export function deleteTransaction(id) {
   const current = transactionRow(id);
   if (!current) return false;
+  if (current.status === 'allocated') throw Object.assign(new Error('تراکنش تخصیص‌یافته به سند را نمی‌توان جداگانه حذف کرد.'), { code: 'ALLOCATED_TRANSACTION_LOCKED', status: 409 });
   assertAccountingPeriodOpen(db, periodForDate(current.occurredAt, currentTimeZone()));
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -729,10 +765,14 @@ export function deleteTransaction(id) {
 
 export function listContacts() {
   return db.prepare(`SELECT contacts.id,contacts.name,contacts.kind,contacts.phone,contacts.note,
-    COALESCE(SUM(CASE WHEN obligations.status='open' AND obligations.direction='receivable' THEN obligations.amount WHEN obligations.status='open' AND obligations.direction='payable' THEN -obligations.amount ELSE 0 END),0) AS balance,
-    COUNT(CASE WHEN obligations.status='open' THEN 1 END) AS openCount
-    FROM contacts LEFT JOIN obligations ON obligations.contact_id=contacts.id
-    GROUP BY contacts.id ORDER BY contacts.updated_at DESC,contacts.name`).all();
+    COALESCE((SELECT SUM(CASE WHEN obligations.direction='receivable' THEN obligations.amount ELSE -obligations.amount END)
+      FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open'),0)
+    + COALESCE((SELECT SUM(CASE WHEN invoices.document_type='sales' THEN invoices.total-COALESCE((SELECT SUM(invoice_payments.amount) FROM invoice_payments WHERE invoice_payments.invoice_id=invoices.id),0)
+      ELSE -(invoices.total-COALESCE((SELECT SUM(invoice_payments.amount) FROM invoice_payments WHERE invoice_payments.invoice_id=invoices.id),0)) END)
+      FROM invoices WHERE invoices.contact_id=contacts.id AND invoices.status IN ('sent','paid')),0) AS balance,
+    (SELECT COUNT(*) FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open')
+    + (SELECT COUNT(*) FROM invoices WHERE invoices.contact_id=contacts.id AND invoices.status='sent') AS openCount
+    FROM contacts ORDER BY contacts.updated_at DESC,contacts.name`).all();
 }
 
 export function saveContact(values = {}) {
@@ -865,65 +905,156 @@ export function deleteRecurringRule(id) {
   return result.changes > 0;
 }
 
-export function listInvoices() {
+function invoiceRows({ status = '', documentType = '' } = {}) {
+  const clauses = [];
+  const params = [];
+  if (['draft', 'sent', 'paid', 'cancelled'].includes(status)) { clauses.push('invoices.status=?'); params.push(status); }
+  if (['sales', 'purchase'].includes(documentType)) { clauses.push('invoices.document_type=?'); params.push(documentType); }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   return db.prepare(`SELECT invoices.id,invoices.number,invoices.contact_id AS contactId,invoices.customer_name AS customerName,
-    invoices.total,invoices.status,invoices.due_at AS dueAt,invoices.note,invoices.created_at AS createdAt,
-    contacts.name AS contactName FROM invoices LEFT JOIN contacts ON contacts.id=invoices.contact_id
-    ORDER BY invoices.created_at DESC`).all();
+    invoices.document_type AS documentType,invoices.category,invoices.subtotal,invoices.discount,invoices.tax,invoices.total,
+    invoices.status,invoices.due_at AS dueAt,invoices.issued_at AS issuedAt,invoices.posted_at AS postedAt,invoices.note,
+    invoices.created_at AS createdAt,contacts.name AS contactName,COALESCE(SUM(invoice_payments.amount),0) AS paidAmount
+    FROM invoices LEFT JOIN contacts ON contacts.id=invoices.contact_id
+    LEFT JOIN invoice_payments ON invoice_payments.invoice_id=invoices.id ${where}
+    GROUP BY invoices.id ORDER BY invoices.created_at DESC`).all(...params).map((invoice) => {
+      const balanceDue = Math.max(0, Number(invoice.total) - Number(invoice.paidAmount));
+      const overdue = Boolean(invoice.dueAt && new Date(invoice.dueAt) < new Date() && balanceDue > 0 && invoice.status !== 'draft' && invoice.status !== 'cancelled');
+      const displayStatus = invoice.status === 'cancelled' ? 'cancelled' : invoice.status === 'draft' ? 'draft' : balanceDue === 0 ? 'paid' : Number(invoice.paidAmount) > 0 ? 'partial' : overdue ? 'overdue' : 'open';
+      return { ...invoice, balanceDue, overdue, displayStatus };
+    });
+}
+
+export function listInvoices(filters = {}) {
+  const items = invoiceRows(filters);
+  const open = items.filter((item) => !['draft', 'cancelled', 'paid'].includes(item.displayStatus));
+  return {
+    items,
+    summary: {
+      receivable: open.filter((item) => item.documentType === 'sales').reduce((sum, item) => sum + item.balanceDue, 0),
+      payable: open.filter((item) => item.documentType === 'purchase').reduce((sum, item) => sum + item.balanceDue, 0),
+      overdueReceivable: open.filter((item) => item.documentType === 'sales' && item.overdue).reduce((sum, item) => sum + item.balanceDue, 0),
+      overduePayable: open.filter((item) => item.documentType === 'purchase' && item.overdue).reduce((sum, item) => sum + item.balanceDue, 0),
+    },
+  };
 }
 
 export function getInvoice(id) {
-  const invoice = listInvoices().find((item) => item.id === id);
+  const invoice = invoiceRows().find((item) => item.id === id);
   if (!invoice) return null;
   invoice.items = db.prepare('SELECT id,title,quantity,unit_price AS unitPrice,total FROM invoice_items WHERE invoice_id=? ORDER BY rowid').all(id);
+  invoice.payments = db.prepare(`SELECT invoice_payments.id,invoice_payments.amount,invoice_payments.account_id AS accountId,
+    accounts.name AS accountName,invoice_payments.occurred_at AS occurredAt,invoice_payments.note,invoice_payments.created_at AS createdAt
+    FROM invoice_payments JOIN accounts ON accounts.id=invoice_payments.account_id WHERE invoice_payments.invoice_id=?
+    ORDER BY invoice_payments.occurred_at DESC`).all(id);
   return invoice;
 }
 
 export function createInvoice(values = {}) {
   const items = Array.isArray(values.items) ? values.items.filter((item) => String(item.title || '').trim()) : [];
-  if (!items.length) throw new Error('حداقل یک ردیف برای فاکتور لازم است.');
+  if (!items.length) throw new Error('حداقل یک ردیف برای سند لازم است.');
   const normalized = items.map((item) => {
     const quantity = Math.max(0.01, Number(item.quantity) || 1);
     const unitPrice = cleanAmount(item.unitPrice);
     return { title: String(item.title).trim().slice(0, 120), quantity, unitPrice, total: Math.round(quantity * unitPrice) };
   });
-  const total = normalized.reduce((sum, item) => sum + item.total, 0);
+  const subtotal = normalized.reduce((sum, item) => sum + item.total, 0);
+  const discount = Math.min(subtotal, Math.max(0, Math.round(Number(values.discount) || 0)));
+  const tax = Math.max(0, Math.round(Number(values.tax) || 0));
+  const total = subtotal - discount + tax;
+  if (total <= 0) throw new Error('مبلغ نهایی سند باید بیشتر از صفر باشد.');
+  const documentType = values.documentType === 'purchase' ? 'purchase' : 'sales';
+  const category = String(values.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش')).trim().slice(0, 80);
+  const issueNow = values.issueNow === true || values.status === 'sent';
+  const issuedAt = issueNow ? (values.issuedAt || new Date().toISOString()) : null;
+  if (issuedAt) assertAccountingPeriodOpen(db, periodForDate(issuedAt, currentTimeZone()));
   const id = randomUUID();
+  const year = new Intl.DateTimeFormat('en-u-ca-persian', { timeZone: currentTimeZone(), year: 'numeric' }).format(new Date());
   const count = db.prepare('SELECT COUNT(*) AS count FROM invoices').get().count + 1;
-  const number = `HY-${new Date().getFullYear()}-${String(count).padStart(4, '0')}`;
+  const number = `${documentType === 'purchase' ? 'KH' : 'FR'}-${year}-${String(count).padStart(4, '0')}`;
+  const contact = values.contactId ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(values.contactId) : null;
+  const counterpartyName = String(contact?.name || values.customerName || (documentType === 'purchase' ? 'تأمین‌کننده' : 'مشتری')).trim().slice(0, 100);
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('INSERT INTO invoices (id,number,contact_id,customer_name,total,status,due_at,note) VALUES (?,?,?,?,?,?,?,?)')
-      .run(id, number, values.contactId || null, String(values.customerName || 'مشتری').trim().slice(0, 100), total, values.status === 'sent' ? 'sent' : 'draft', values.dueAt || null, String(values.note || '').slice(0, 500));
+    db.prepare(`INSERT INTO invoices
+      (id,number,contact_id,customer_name,document_type,category,subtotal,discount,tax,total,status,due_at,issued_at,posted_at,note)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, number, contact?.id || null, counterpartyName, documentType, category, subtotal, discount, tax, total, issueNow ? 'sent' : 'draft', values.dueAt || null, issuedAt, issueNow ? issuedAt : null, String(values.note || '').slice(0, 500));
     const insert = db.prepare('INSERT INTO invoice_items (id,invoice_id,title,quantity,unit_price,total) VALUES (?,?,?,?,?,?)');
     for (const item of normalized) insert.run(randomUUID(), id, item.title, item.quantity, item.unitPrice, item.total);
-    audit('create', 'invoice', id, { number, total });
+    if (issueNow) postInvoiceJournal(db, getInvoice(id), { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    audit('create', 'invoice', id, { number, total, documentType, issueNow });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return getInvoice(id);
 }
 
-export function markInvoicePaid(id, { occurredAt, account = 'cash', accountId } = {}) {
+export function issueInvoice(id, { issuedAt } = {}) {
   const invoice = getInvoice(id);
-  if (!invoice || invoice.status === 'paid') return invoice;
+  if (!invoice) return null;
+  if (invoice.status !== 'draft') return invoice;
+  const occurredAt = issuedAt || new Date().toISOString();
+  assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
   db.exec('BEGIN IMMEDIATE');
   try {
-    insertTransactionRows({ transcript: `وصول فاکتور ${invoice.number}`, transactions: [{
-      clientId: `invoice:${id}`, amount: invoice.total, type: 'income', category: 'فروش', rawText: `وصول فاکتور ${invoice.number}`,
-      source: 'text', contactId: invoice.contactId, occurredAt, account, accountId,
-    }] });
-    const updated = db.prepare("UPDATE invoices SET status='paid',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status!='paid'").run(id);
-    if (!updated.changes) throw new Error('این فاکتور قبلاً وصول شده است.');
-    audit('paid', 'invoice', id, { total: invoice.total });
+    db.prepare("UPDATE invoices SET status='sent',issued_at=?,posted_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'").run(occurredAt, occurredAt, id);
+    const posted = getInvoice(id);
+    postInvoiceJournal(db, posted, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    audit('issue', 'invoice', id, { issuedAt: occurredAt });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return getInvoice(id);
+}
+
+export function recordInvoicePayment(id, { amount, occurredAt, account = 'cash', accountId, note = '' } = {}) {
+  let invoice = getInvoice(id);
+  if (!invoice || ['draft', 'cancelled'].includes(invoice.status)) return null;
+  const paymentAmount = cleanAmount(amount == null ? invoice.balanceDue : amount);
+  if (paymentAmount > invoice.balanceDue) throw Object.assign(new Error('مبلغ تسویه از ماندهٔ سند بیشتر است.'), { code: 'INVOICE_OVERPAYMENT', status: 409 });
+  const paymentAt = occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(db, periodForDate(paymentAt, currentTimeZone()));
+  const resolvedAccountId = resolveAccountId({ account, accountId });
+  const paymentId = randomUUID();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const [transactionId] = insertTransactionRows({ transcript: `${invoice.documentType === 'purchase' ? 'پرداخت' : 'وصول'} ${invoice.number}`, transactions: [{
+      clientId: `invoice-payment:${paymentId}`, amount: paymentAmount, type: invoice.documentType === 'purchase' ? 'expense' : 'income',
+      category: invoice.documentType === 'purchase' ? 'پرداخت حساب پرداختنی' : 'وصول حساب دریافتنی',
+      rawText: `${invoice.documentType === 'purchase' ? 'پرداخت' : 'وصول'} ${invoice.number}`, source: 'text', contactId: invoice.contactId,
+      occurredAt: paymentAt, accountId: resolvedAccountId, note, status: 'allocated', journalManaged: true,
+    }] });
+    db.prepare(`INSERT INTO invoice_payments (id,invoice_id,amount,account_id,transaction_id,occurred_at,note,created_by)
+      VALUES (?,?,?,?,?,?,?,?)`).run(paymentId, id, paymentAmount, resolvedAccountId, transactionId, paymentAt, String(note || '').slice(0, 500), currentWorkspace()?.userId || null);
+    postInvoicePaymentJournal(db, invoice, { id: paymentId, amount: paymentAmount, accountId: resolvedAccountId, occurredAt: paymentAt }, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    invoice = getInvoice(id);
+    if (invoice.balanceDue === 0) db.prepare("UPDATE invoices SET status='paid',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+    audit('payment', 'invoice', id, { paymentId, amount: paymentAmount, transactionId });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  return getInvoice(id);
+}
+
+export function markInvoicePaid(id, values = {}) {
+  let invoice = getInvoice(id);
+  if (!invoice || invoice.status === 'cancelled') return invoice;
+  if (invoice.status === 'paid') return invoice;
+  if (invoice.status === 'draft') invoice = issueInvoice(id, { issuedAt: values.occurredAt });
+  return recordInvoicePayment(id, { ...values, amount: invoice.balanceDue });
 }
 
 export function deleteInvoice(id) {
-  const result = db.prepare("UPDATE invoices SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status!='paid'").run(id);
-  if (result.changes) audit('cancel', 'invoice', id);
-  return result.changes > 0;
+  const invoice = getInvoice(id);
+  if (!invoice || invoice.status === 'cancelled' || invoice.paidAmount > 0) return false;
+  const occurredAt = new Date().toISOString();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (invoice.postedAt) reverseInvoiceJournal(db, invoice, occurredAt, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    const result = db.prepare("UPDATE invoices SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+    if (!result.changes) throw new Error('سند قابل ابطال نیست.');
+    audit('cancel', 'invoice', id, { reversal: Boolean(invoice.postedAt) });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  return true;
 }
 
 export function closeDay(values = {}) {
@@ -1015,6 +1146,7 @@ export function adjustStock(id, values = {}) {
 export function financialOverview() {
   const month = report('month');
   const settings = getSettings();
+  const invoiceSummary = listInvoices().summary;
   const obligations = db.prepare(`SELECT
     COALESCE(SUM(CASE WHEN direction='receivable' AND status='open' THEN amount ELSE 0 END),0) AS receivable,
     COALESCE(SUM(CASE WHEN direction='payable' AND status='open' THEN amount ELSE 0 END),0) AS payable,
@@ -1029,11 +1161,12 @@ export function financialOverview() {
   const monthlyExpense = Number(month.summary.expense || 0);
   const runwayDays = monthlyExpense > 0 ? Math.max(0, Math.round((cash / monthlyExpense) * 30)) : null;
   const alerts = [];
-  if (obligations.overdue) alerts.push({ level: 'danger', title: `${obligations.overdue} سررسید عقب‌افتاده داری`, action: 'obligations' });
+  const overdueInvoices = Number(invoiceSummary.overdueReceivable > 0) + Number(invoiceSummary.overduePayable > 0);
+  if (Number(obligations.overdue) + overdueInvoices) alerts.push({ level: 'danger', title: `${Number(obligations.overdue) + overdueInvoices} سررسید عقب‌افتاده داری`, action: 'obligations' });
   if (cash < Number(settings.lowBalanceThreshold || 2_000_000)) alerts.push({ level: 'warning', title: 'ماندهٔ برآوردی ثبت‌ها به حد هشدار رسیده است', action: 'reports' });
   if (month.summary.expense > month.summary.income && month.summary.expense > 0) alerts.push({ level: 'warning', title: 'هزینهٔ این ماه از درآمد بیشتر شده است', action: 'reports' });
   return {
-    cash, receivable: Number(obligations.receivable), payable: Number(obligations.payable), overdue: Number(obligations.overdue),
+    cash, receivable: Number(obligations.receivable) + Number(invoiceSummary.receivable), payable: Number(obligations.payable) + Number(invoiceSummary.payable), overdue: Number(obligations.overdue) + overdueInvoices,
     cashBasis: true, basisLabel: 'مبنای دریافت و پرداخت', accounts: listAccounts(), runwayDays, month: month.summary, alerts,
   };
 }
@@ -1080,12 +1213,12 @@ export function voiceStats() {
 
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'obligations', 'recurring_rules', 'invoices',
-  'invoice_items', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
+  'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'settings', 'voice_metrics', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts',
+  'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics',
   'accounts', 'categories', 'settings',
