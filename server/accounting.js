@@ -107,6 +107,14 @@ function counterpartyLedgerAccount(database, contactId, name, documentType) {
   );
 }
 
+function inventoryLedgerAccount(database, product) {
+  return linkedLedgerAccount(database, 'inventory-product', product.id, `موجودی کالا — ${String(product.name).slice(0, 100)}`, 'asset');
+}
+
+function cogsLedgerAccount(database, product) {
+  return linkedLedgerAccount(database, 'cogs-product', product.id, `بهای تمام‌شده — ${String(product.name).slice(0, 100)}`, 'expense');
+}
+
 function validateLines(database, lines) {
   if (!Array.isArray(lines) || lines.length < 2 || lines.length > 100) throw accountingError('سند باید حداقل دو آرتیکل داشته باشد.');
   let debit = 0;
@@ -198,13 +206,63 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
   const documentType = invoice.documentType || invoice.document_type || 'sales';
   const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, invoice.contactName || invoice.customerName || invoice.customer_name, documentType);
   const category = categoryLedgerAccount(database, documentType === 'purchase' ? 'expense' : 'income', invoice.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش'));
-  const lines = documentType === 'purchase'
-    ? [{ accountId: category, debit: amount }, { accountId: counterparty, credit: amount }]
-    : [{ accountId: counterparty, debit: amount }, { accountId: category, credit: amount }];
+  let lines;
+  if (documentType === 'purchase') {
+    const inventoryLines = (invoice.items || []).filter((item) => item.productId && Number(item.inventoryCost) > 0).map((item) => {
+      const product = database.prepare('SELECT id,name FROM products WHERE id=?').get(item.productId);
+      if (!product) throw accountingError('کالای متصل به صورتحساب خرید پیدا نشد.', 'INVOICE_PRODUCT_MISSING');
+      return { accountId: inventoryLedgerAccount(database, product), debit: Number(item.inventoryCost), description: item.title };
+    });
+    const inventoryTotal = inventoryLines.reduce((sum, line) => sum + line.debit, 0);
+    const serviceAndTax = amount - inventoryTotal;
+    lines = [...inventoryLines, ...(serviceAndTax > 0 ? [{ accountId: category, debit: serviceAndTax }] : []), { accountId: counterparty, credit: amount }];
+  } else {
+    lines = [{ accountId: counterparty, debit: amount }, { accountId: category, credit: amount }];
+  }
   return insertJournal(database, {
     sourceType: 'invoice', sourceId: invoice.id, revision: nextRevision(database, 'invoice', invoice.id),
     occurredAt, memo: `${documentType === 'purchase' ? 'صورتحساب خرید' : 'فاکتور فروش'} ${invoice.number}`,
     createdBy, lines,
+  });
+}
+
+export function postInventoryMovementJournal(database, movement, product, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const value = Math.abs(Math.round(Number(movement.valueDelta ?? movement.value_delta) || 0));
+  if (!value || movement.movementType === 'purchase' || movement.movement_type === 'purchase') return null;
+  const occurredAt = movement.occurredAt || movement.occurred_at || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+  const existing = database.prepare("SELECT id FROM journal_entries WHERE source_type='inventory_movement' AND source_id=?").get(movement.id);
+  if (existing) return existing;
+  const type = movement.movementType || movement.movement_type;
+  const inventory = inventoryLedgerAccount(database, product);
+  let lines;
+  if (type === 'opening') lines = [{ accountId: inventory, debit: value }, { accountId: 'ledger-opening-equity', credit: value }];
+  else if (type === 'sale') lines = [{ accountId: cogsLedgerAccount(database, product), debit: value }, { accountId: inventory, credit: value }];
+  else if (Number(movement.quantity) > 0) {
+    const gain = linkedLedgerAccount(database, 'system', 'inventory-gain', 'اضافی موجودی و تعدیلات', 'income');
+    lines = [{ accountId: inventory, debit: value }, { accountId: gain, credit: value }];
+  } else {
+    const shrinkage = linkedLedgerAccount(database, 'system', 'inventory-shrinkage', 'کسری و ضایعات موجودی', 'expense');
+    lines = [{ accountId: shrinkage, debit: value }, { accountId: inventory, credit: value }];
+  }
+  return insertJournal(database, {
+    sourceType: 'inventory_movement', sourceId: movement.id, revision: 1, occurredAt,
+    memo: movement.note || `${type === 'sale' ? 'بهای تمام‌شده' : 'اصلاح موجودی'} ${product.name}`,
+    createdBy, lines,
+  });
+}
+
+export function reverseInventoryMovementJournal(database, movementId, occurredAt, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  const original = database.prepare("SELECT * FROM journal_entries WHERE source_type='inventory_movement' AND source_id=? AND entry_kind='normal' ORDER BY revision DESC LIMIT 1").get(movementId);
+  if (!original || database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id)) return null;
+  const reversalAt = occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(reversalAt, timeZone));
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
+    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+  return insertJournal(database, {
+    sourceType: 'inventory_movement', sourceId: movementId, revision: nextRevision(database, 'inventory_movement', movementId), entryKind: 'reversal',
+    occurredAt: reversalAt, memo: 'معکوس گردش انبار', reversesEntryId: original.id, createdBy, lines,
   });
 }
 

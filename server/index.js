@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import {
   activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
-  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings,
+  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings, inventoryOverview,
   getToday, insertTransactions, issueInvoice, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
   importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
   recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
@@ -286,6 +286,7 @@ app.post('/api/receipts', upload.single('image'), (request, response, next) => {
 });
 app.delete('/api/receipts/:id', (request, response) => response.status(deleteReceipt(request.params.id) ? 204 : 404).end());
 app.get('/api/products', (_request, response) => response.json({ items: listProducts() }));
+app.get('/api/inventory/overview', (_request, response) => response.json(inventoryOverview()));
 app.post('/api/products', (request, response, next) => { try { response.status(201).json({ item: saveProduct(request.body) }); } catch (error) { next(error); } });
 app.put('/api/products/:id', (request, response, next) => { try { response.json({ item: saveProduct({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.post('/api/products/:id/stock', (request, response, next) => { try { const item = adjustStock(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'کالا پیدا نشد.' }); } catch (error) { return next(error); } });

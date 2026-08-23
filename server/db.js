@@ -14,6 +14,10 @@ import {
   ignoreStatementLine as ignoreStatementLineCore, importBankStatement as importBankStatementCore,
   listReconciliationImports as listReconciliationImportsCore, matchStatementLine as matchStatementLineCore,
 } from './reconciliation.js';
+import {
+  applyInvoiceInventory, ensureInventorySchema, inventoryOverview as inventoryOverviewCore, migrateInventory,
+  recordInventoryMovement, reverseInvoiceInventory,
+} from './inventory.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -280,6 +284,7 @@ ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
 ensureAccountingSchema(controlDb);
 ensureInvoiceSchema(controlDb);
 ensureReconciliationSchema(controlDb);
+ensureInventorySchema(controlDb);
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -305,6 +310,7 @@ if (!openingMigrated) {
   db.prepare("UPDATE accounts SET opening_balance=? WHERE id='cash'").run(Math.round(legacyOpening));
   insertSetting.run('accountOpeningMigrated', 'true');
 }
+migrateInventory(controlDb, { timeZone: defaults.timezone });
 
 function workspaceDatabase(workspaceId) {
   if (workspaceId === 'primary') return controlDb;
@@ -332,7 +338,9 @@ function workspaceDatabase(workspaceId) {
   ensureAccountingSchema(database);
   ensureInvoiceSchema(database);
   ensureReconciliationSchema(database);
+  ensureInventorySchema(database);
   migrateAccountingLedger(database);
+  migrateInventory(database, { timeZone: defaults.timezone });
   workspaceConnections.set(workspaceId, database);
   return database;
 }
@@ -949,7 +957,8 @@ export function listInvoices(filters = {}) {
 export function getInvoice(id) {
   const invoice = invoiceRows().find((item) => item.id === id);
   if (!invoice) return null;
-  invoice.items = db.prepare('SELECT id,title,quantity,unit_price AS unitPrice,total FROM invoice_items WHERE invoice_id=? ORDER BY rowid').all(id);
+  invoice.items = db.prepare(`SELECT id,title,quantity,unit_price AS unitPrice,total,product_id AS productId,
+    inventory_cost AS inventoryCost FROM invoice_items WHERE invoice_id=? ORDER BY rowid`).all(id);
   invoice.payments = db.prepare(`SELECT invoice_payments.id,invoice_payments.amount,invoice_payments.account_id AS accountId,
     accounts.name AS accountName,invoice_payments.occurred_at AS occurredAt,invoice_payments.note,invoice_payments.created_at AS createdAt
     FROM invoice_payments JOIN accounts ON accounts.id=invoice_payments.account_id WHERE invoice_payments.invoice_id=?
@@ -963,7 +972,9 @@ export function createInvoice(values = {}) {
   const normalized = items.map((item) => {
     const quantity = Math.max(0.01, Number(item.quantity) || 1);
     const unitPrice = cleanAmount(item.unitPrice);
-    return { title: String(item.title).trim().slice(0, 120), quantity, unitPrice, total: Math.round(quantity * unitPrice) };
+    const product = item.productId ? db.prepare('SELECT id,name,track_inventory AS trackInventory FROM products WHERE id=?').get(item.productId) : null;
+    if (item.productId && (!product || !product.trackInventory)) throw Object.assign(new Error('کالای انتخاب‌شده پیدا نشد.'), { code: 'INVOICE_PRODUCT_MISSING', status: 404 });
+    return { title: String(item.title).trim().slice(0, 120), quantity, unitPrice, total: Math.round(quantity * unitPrice), productId: product?.id || null, inventoryCost: 0 };
   });
   const subtotal = normalized.reduce((sum, item) => sum + item.total, 0);
   const discount = Math.min(subtotal, Math.max(0, Math.round(Number(values.discount) || 0)));
@@ -971,6 +982,12 @@ export function createInvoice(values = {}) {
   const total = subtotal - discount + tax;
   if (total <= 0) throw new Error('مبلغ نهایی سند باید بیشتر از صفر باشد.');
   const documentType = values.documentType === 'purchase' ? 'purchase' : 'sales';
+  let allocatedDiscount = 0;
+  normalized.forEach((item, index) => {
+    const lineDiscount = index === normalized.length - 1 ? discount - allocatedDiscount : Math.round(discount * (item.total / subtotal));
+    allocatedDiscount += lineDiscount;
+    if (documentType === 'purchase' && item.productId) item.inventoryCost = Math.max(0, item.total - lineDiscount);
+  });
   const category = String(values.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش')).trim().slice(0, 80);
   const issueNow = values.issueNow === true || values.status === 'sent';
   const issuedAt = issueNow ? (values.issuedAt || new Date().toISOString()) : null;
@@ -987,9 +1004,14 @@ export function createInvoice(values = {}) {
       (id,number,contact_id,customer_name,document_type,category,subtotal,discount,tax,total,status,due_at,issued_at,posted_at,note)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, number, contact?.id || null, counterpartyName, documentType, category, subtotal, discount, tax, total, issueNow ? 'sent' : 'draft', values.dueAt || null, issuedAt, issueNow ? issuedAt : null, String(values.note || '').slice(0, 500));
-    const insert = db.prepare('INSERT INTO invoice_items (id,invoice_id,title,quantity,unit_price,total) VALUES (?,?,?,?,?,?)');
-    for (const item of normalized) insert.run(randomUUID(), id, item.title, item.quantity, item.unitPrice, item.total);
-    if (issueNow) postInvoiceJournal(db, getInvoice(id), { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    const insert = db.prepare(`INSERT INTO invoice_items
+      (id,invoice_id,title,quantity,unit_price,total,product_id,inventory_cost) VALUES (?,?,?,?,?,?,?,?)`);
+    for (const item of normalized) insert.run(randomUUID(), id, item.title, item.quantity, item.unitPrice, item.total, item.productId, item.inventoryCost);
+    if (issueNow) {
+      const posted = getInvoice(id);
+      applyInvoiceInventory(db, posted, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+      postInvoiceJournal(db, posted, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    }
     audit('create', 'invoice', id, { number, total, documentType, issueNow });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -1006,6 +1028,7 @@ export function issueInvoice(id, { issuedAt } = {}) {
   try {
     db.prepare("UPDATE invoices SET status='sent',issued_at=?,posted_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='draft'").run(occurredAt, occurredAt, id);
     const posted = getInvoice(id);
+    applyInvoiceInventory(db, posted, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
     postInvoiceJournal(db, posted, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
     audit('issue', 'invoice', id, { issuedAt: occurredAt });
     db.exec('COMMIT');
@@ -1055,7 +1078,10 @@ export function deleteInvoice(id) {
   const occurredAt = new Date().toISOString();
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (invoice.postedAt) reverseInvoiceJournal(db, invoice, occurredAt, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    if (invoice.postedAt) {
+      reverseInvoiceInventory(db, invoice, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+      reverseInvoiceJournal(db, invoice, occurredAt, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    }
     const result = db.prepare("UPDATE invoices SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
     if (!result.changes) throw new Error('سند قابل ابطال نیست.');
     audit('cancel', 'invoice', id, { reversal: Boolean(invoice.postedAt) });
@@ -1184,36 +1210,53 @@ export function deleteReceipt(id) {
 }
 
 export function listProducts() {
-  return db.prepare(`SELECT id,name,stock,unit,low_threshold AS lowThreshold,buy_price AS buyPrice,sale_price AS salePrice,
-    CASE WHEN low_threshold>0 AND stock<=low_threshold THEN 1 ELSE 0 END AS isLow FROM products ORDER BY isLow DESC,name`).all();
+  return inventoryOverviewCore(db).products;
 }
 
 export function saveProduct(values = {}) {
   const name = String(values.name || '').trim().slice(0, 100);
   if (!name) throw new Error('نام کالا را وارد کن.');
   const id = values.id || randomUUID();
-  db.prepare(`INSERT INTO products (id,name,stock,unit,low_threshold,buy_price,sale_price) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name,unit=excluded.unit,low_threshold=excluded.low_threshold,
-      buy_price=excluded.buy_price,sale_price=excluded.sale_price,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, name, Math.max(0, Number(values.stock) || 0), String(values.unit || 'عدد').slice(0, 30), Math.max(0, Number(values.lowThreshold) || 0), Math.max(0, Math.round(Number(values.buyPrice) || 0)), Math.max(0, Math.round(Number(values.salePrice) || 0)));
-  audit(values.id ? 'update' : 'create', 'product', id, { name });
+  const openingStock = Math.max(0, Number(values.stock) || 0);
+  const buyPrice = Math.max(0, Math.round(Number(values.buyPrice) || 0));
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (values.id) {
+      const result = db.prepare(`UPDATE products SET name=?,unit=?,low_threshold=?,buy_price=?,sale_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(name, String(values.unit || 'عدد').slice(0, 30), Math.max(0, Number(values.lowThreshold) || 0), buyPrice, Math.max(0, Math.round(Number(values.salePrice) || 0)), id);
+      if (!result.changes) throw Object.assign(new Error('کالا پیدا نشد.'), { status: 404 });
+    } else {
+      db.prepare(`INSERT INTO products (id,name,stock,unit,low_threshold,buy_price,sale_price,average_cost,inventory_value)
+        VALUES (?,?,?,?,?,?,?,?,?)`).run(id, name, 0, String(values.unit || 'عدد').slice(0, 30), Math.max(0, Number(values.lowThreshold) || 0), buyPrice,
+        Math.max(0, Math.round(Number(values.salePrice) || 0)), 0, 0);
+      if (openingStock > 0) recordInventoryMovement(db, id, {
+        quantity: openingStock, unitCost: buyPrice, movementType: 'opening', sourceType: 'product_opening', sourceId: id,
+        note: 'موجودی ابتدای تعریف کالا',
+      }, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    }
+    audit(values.id ? 'update' : 'create', 'product', id, { name, openingStock: values.id ? undefined : openingStock });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
   return listProducts().find((item) => item.id === id);
 }
 
 export function adjustStock(id, values = {}) {
   const quantity = Number(values.quantity);
   if (!Number.isFinite(quantity) || quantity === 0) throw new Error('تغییر موجودی معتبر نیست.');
-  const current = db.prepare('SELECT * FROM products WHERE id=?').get(id);
-  if (!current) return null;
-  if (Number(current.stock) + quantity < 0) throw new Error('موجودی کالا نمی‌تواند منفی شود.');
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('UPDATE products SET stock=stock+?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(quantity, id);
-    db.prepare('INSERT INTO stock_movements (id,product_id,quantity,note) VALUES (?,?,?,?)').run(randomUUID(), id, quantity, String(values.note || '').slice(0, 300));
-    audit('adjust', 'product', id, { quantity });
+    const result = recordInventoryMovement(db, id, {
+      quantity, unitCost: values.unitCost, movementType: 'adjustment', sourceType: 'manual',
+      note: String(values.note || (quantity > 0 ? 'افزایش دستی موجودی' : 'کاهش دستی موجودی')).slice(0, 300),
+    }, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
+    audit('adjust', 'product', id, { quantity, valueDelta: result.movement.valueDelta });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return listProducts().find((item) => item.id === id);
+}
+
+export function inventoryOverview() {
+  return inventoryOverviewCore(db);
 }
 
 export function financialOverview() {
@@ -1327,6 +1370,7 @@ export function restoreFinancialSnapshot(snapshot) {
     const cash = db.prepare("SELECT id FROM accounts WHERE id='cash'").get();
     if (!cash) throw new Error('پشتیبان حساب صندوق اصلی را ندارد.');
     migrateAccountingLedger(db, { createdBy: currentWorkspace()?.userId });
+    migrateInventory(db, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
     db.prepare('INSERT INTO audit_log (id,action,entity_type,entity_id,payload) VALUES (?,?,?,?,?)')
       .run(randomUUID(), 'restore', 'workspace', currentWorkspace()?.id || 'primary', JSON.stringify({ restoredAt: new Date().toISOString() }));
     db.exec('COMMIT');
