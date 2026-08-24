@@ -24,6 +24,7 @@ import {
 } from './accounting.js';
 import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
 import { parseFinancialAudio } from './voice.js';
+import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -189,6 +190,17 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
     return next(error);
   }
 });
+app.post('/api/voice/realtime/session', express.text({ type: ['application/sdp', 'text/plain'], limit: '128kb' }), async (request, response, next) => {
+  try {
+    const answer = await createRealtimeTranscriptionCall({
+      sdp: request.body,
+      categories: getCategories(),
+      learnings: getLearnings(),
+      userId: request.user.id,
+    });
+    return response.type('application/sdp').send(answer);
+  } catch (error) { return next(error); }
+});
 app.post('/api/transactions', (request, response, next) => {
   try {
     const transactions = request.body?.transactions;
@@ -304,10 +316,10 @@ app.post('/api/products/:id/stock', (request, response, next) => { try { const i
 app.post('/api/ask', (request, response) => response.json(answerFinancialQuestion(request.body?.question)));
 app.post('/api/voice/metrics', (request, response) => {
   const provider = String(request.body?.provider || '');
-  if (!['browser-live'].includes(provider)) return response.status(400).json({ code: 'VOICE_METRIC_INVALID', message: 'مسیر تشخیص صدا معتبر نیست.' });
+  if (!['browser-live', 'openai-realtime'].includes(provider)) return response.status(400).json({ code: 'VOICE_METRIC_INVALID', message: 'مسیر تشخیص صدا معتبر نیست.' });
   recordVoiceMetric({
     provider,
-    model: 'web-speech-fa-IR',
+    model: provider === 'openai-realtime' ? (process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL || 'gpt-live-transcribe') : 'web-speech-fa-IR',
     latencyMs: Math.min(60_000, Math.max(0, Number(request.body?.latencyMs) || 0)),
     transactionCount: Math.min(20, Math.max(0, Number(request.body?.transactionCount) || 0)),
     needsReview: Boolean(request.body?.needsReview),
