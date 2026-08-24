@@ -175,7 +175,14 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
   try {
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
     const result = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
-    recordVoiceMetric({ provider: result.provider || result.engine, model: result.model, latencyMs: Date.now() - startedAt, transactionCount: result.transactions?.length, needsReview: result.transactions?.some((item) => item.needsReview) });
+    recordVoiceMetric({
+      provider: result.provider || result.engine,
+      model: result.model,
+      latencyMs: Date.now() - startedAt,
+      transactionCount: result.transactions?.length,
+      needsReview: result.transactions?.some((item) => item.needsReview),
+      errorCode: request.body?.fallbackReason,
+    });
     return response.json(result);
   } catch (error) {
     recordVoiceMetric({ provider: 'pipeline', latencyMs: Date.now() - startedAt, succeeded: false, errorCode: error.code });
@@ -295,6 +302,18 @@ app.post('/api/products', (request, response, next) => { try { response.status(2
 app.put('/api/products/:id', (request, response, next) => { try { response.json({ item: saveProduct({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.post('/api/products/:id/stock', (request, response, next) => { try { const item = adjustStock(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'کالا پیدا نشد.' }); } catch (error) { return next(error); } });
 app.post('/api/ask', (request, response) => response.json(answerFinancialQuestion(request.body?.question)));
+app.post('/api/voice/metrics', (request, response) => {
+  const provider = String(request.body?.provider || '');
+  if (!['browser-live'].includes(provider)) return response.status(400).json({ code: 'VOICE_METRIC_INVALID', message: 'مسیر تشخیص صدا معتبر نیست.' });
+  recordVoiceMetric({
+    provider,
+    model: 'web-speech-fa-IR',
+    latencyMs: Math.min(60_000, Math.max(0, Number(request.body?.latencyMs) || 0)),
+    transactionCount: Math.min(20, Math.max(0, Number(request.body?.transactionCount) || 0)),
+    needsReview: Boolean(request.body?.needsReview),
+  });
+  return response.status(204).end();
+});
 app.get('/api/voice/stats', (_request, response) => response.json(voiceStats()));
 app.get('/api/backups/status', async (request, response, next) => {
   try { return response.json(await automaticBackupStatus(request.workspace.id)); }

@@ -12,7 +12,7 @@ function extensionFor(mimeType) {
   })[mimeType] || 'wav';
 }
 
-export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], learnings = [], timeoutMs = 7_000 }) {
+export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], learnings = [], hint = '', timeoutMs = 7_000 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw providerFailure('کلید OpenAI روی سرور تنظیم نشده است.', 'OPENAI_UNAVAILABLE', 503);
   const normalizedMime = String(mimeType || '').split(';')[0].toLowerCase();
@@ -27,7 +27,12 @@ export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], 
   const vocabulary = [...categories.map((item) => item.name), ...learnings.map((item) => item.keyword), 'تومان', 'ریال', 'فروش', 'خرید', 'حقوق', 'اجاره']
     .map((item) => String(item).trim()).filter(Boolean).slice(0, 100);
   for (const keyword of vocabulary) form.append('keywords[]', keyword);
-  form.append('prompt', 'گفتار کوتاه فارسی درباره ثبت مالی را کلمه‌به‌کلمه پیاده کن. عددها، واحد تومان یا ریال، نام اشخاص و چند تراکنش در یک جمله را دقیق نگه دار؛ ترجمه یا خلاصه نکن.');
+  const browserHint = String(hint || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  const prompt = [
+    'گفتار کوتاه فارسی درباره ثبت مالی را کلمه‌به‌کلمه پیاده کن. عددها، واحد تومان یا ریال، نام اشخاص و چند تراکنش در یک جمله را دقیق نگه دار؛ ترجمه یا خلاصه نکن.',
+    browserHint ? `برداشت اولیهٔ مرورگر «${browserHint}» است؛ فقط سرنخ کم‌اعتماد است و در صورت اختلاف، خود صدا مرجع قطعی است.` : '',
+  ].filter(Boolean).join(' ');
+  form.append('prompt', prompt);
 
   let response;
   const startedAt = Date.now();

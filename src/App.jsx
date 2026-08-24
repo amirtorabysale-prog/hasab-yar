@@ -8,7 +8,8 @@ import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
 import { pendingAudio, removeOfflineAudio, saveOfflineAudio } from './lib/offlineAudio.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
-import { createWavRecorder } from './lib/wavRecorder.js';
+import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
+import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 
@@ -132,7 +133,7 @@ export default function App() {
     animationRef.current = requestAnimationFrame(animateWave);
   };
 
-  const processAudio = async (blob) => {
+  const processAudio = async (blob, fallbackReason = '') => {
     if (!online) {
       await saveOfflineAudio(blob);
       setRecordState('idle');
@@ -145,7 +146,11 @@ export default function App() {
     const timeout = window.setTimeout(() => controller.abort('timeout'), 10_000);
     const requestedAt = Date.now();
     try {
-      const result = await api.parseAudio(blob, { signal: controller.signal, hint: speechSnapshotRef.current.transcript });
+      const result = await api.parseAudio(blob, {
+        signal: controller.signal,
+        hint: speechSnapshotRef.current.transcript,
+        fallbackReason,
+      });
       if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.' });
       else setParseResult({ ...result, responseMs: Date.now() - requestedAt });
     } catch (error) {
@@ -181,18 +186,28 @@ export default function App() {
     const snapshot = speechSnapshotRef.current;
     const candidates = snapshot.candidates?.length ? snapshot.candidates : [{ transcript: snapshot.transcript, confidence: 0 }];
     const result = parseRecognitionCandidates(candidates, { learnings: data.learnings, averages: data.averages });
-    const transcriptIsFinal = Boolean(snapshot.finalTranscript || snapshot.ended || deadlineReached);
-    const fastResultIsReliable = transcriptIsFinal && result.transactions?.length
-      && (!online || result.transactions.every((item) => item.confidence >= 0.7));
-    if (fastResultIsReliable) {
+    const transcriptIsFinal = Boolean(snapshot.finalTranscript || snapshot.ended);
+    const decision = decideVoiceRoute(result, { online, transcriptFinal: transcriptIsFinal });
+    const canUseLocalReview = decision.route === 'local-review' && (transcriptIsFinal || deadlineReached);
+    if (decision.route === 'local' || canUseLocalReview) {
       fastFinalizeDoneRef.current = true;
       pendingAudioBlobRef.current = null;
       window.clearTimeout(finalizeTimerRef.current);
       setParseResult({
         ...result,
+        qualityScore: decision.score,
+        reviewReasons: decision.reasons,
         latencyMs: Date.now() - startedAtRef.current,
         responseMs: Date.now() - stoppedAtRef.current,
       });
+      if (online) {
+        api.recordVoiceMetric({
+          provider: 'browser-live',
+          latencyMs: Date.now() - stoppedAtRef.current,
+          transactionCount: result.transactions.length,
+          needsReview: decision.route === 'local-review' || result.transactions.some((item) => item.needsReview),
+        }).catch(() => {});
+      }
       setRecordState('idle');
       return true;
     }
@@ -200,7 +215,15 @@ export default function App() {
       fastFinalizeDoneRef.current = true;
       const blob = pendingAudioBlobRef.current;
       pendingAudioBlobRef.current = null;
-      processAudio(blob);
+      if (!online) {
+        saveOfflineAudio(blob).then(() => {
+          setRecordState('idle');
+          notify('صدا برای بررسی دقیق‌تر ذخیره شد و پس از اتصال آماده می‌شود.');
+        }).catch(() => {
+          setRecordState('idle');
+          setFailure({ transcript: snapshot.transcript, message: 'ذخیرهٔ آفلاین صدا انجام نشد؛ دوباره بگو یا دستی بنویس.' });
+        });
+      } else processAudio(blob, decision.reasons.join(','));
     }
     return false;
   };
@@ -226,9 +249,10 @@ export default function App() {
     if (!capture) return;
     setRecordState('finalizing');
     cleanupMedia();
-    if (!capture.durationMs || capture.blob.size <= 44) {
+    const captureQuality = assessAudioCapture(capture);
+    if (!captureQuality.valid) {
       setRecordState('idle');
-      setFailure({ transcript: '', message: 'هیچ صدایی ضبط نشد. دکمه را نگه دار، جمله را بگو و بعد دستت را بردار.' });
+      setFailure({ transcript: speechSnapshotRef.current.transcript, message: captureQuality.message });
       return;
     }
     finishWithFastResult(capture.blob);

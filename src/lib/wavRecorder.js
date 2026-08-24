@@ -1,5 +1,18 @@
 const TARGET_SAMPLE_RATE = 16_000;
 
+export function assessAudioCapture(capture, { minDurationMs = 320, minRms = 0.003 } = {}) {
+  if (!capture?.blob || capture.blob.size <= 44 || !capture.durationMs) {
+    return { valid: false, code: 'empty', message: 'هیچ صدایی ضبط نشد. دکمه را نگه دار، جمله را بگو و بعد دستت را بردار.' };
+  }
+  if (capture.durationMs < minDurationMs) {
+    return { valid: false, code: 'too-short', message: 'ضبط خیلی کوتاه بود. دکمه را تا پایان جمله نگه دار.' };
+  }
+  if (Number(capture.rms || 0) < minRms) {
+    return { valid: false, code: 'too-quiet', message: 'صدا خیلی کم بود یا سکوت ضبط شد. نزدیک‌تر به میکروفن دوباره بگو.' };
+  }
+  return { valid: true, code: 'ok', message: '' };
+}
+
 function mergeChunks(chunks) {
   const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const merged = new Float32Array(length);

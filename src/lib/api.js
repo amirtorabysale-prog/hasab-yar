@@ -84,13 +84,15 @@ export const api = {
   removeMember: (userId) => request(`/api/workspace/members/${userId}`, { method: 'DELETE' }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
-  parseAudio: (blob, { signal, hint } = {}) => {
+  parseAudio: (blob, { signal, hint, fallbackReason } = {}) => {
     const form = new FormData();
     const extension = blob.type === 'audio/wav' ? 'wav' : 'webm';
     form.append('audio', blob, `voice.${extension}`);
     if (hint) form.append('hint', String(hint).slice(0, 500));
+    if (fallbackReason) form.append('fallbackReason', String(fallbackReason).slice(0, 160));
     return request('/api/parse/audio', { method: 'POST', body: form, signal });
   },
+  recordVoiceMetric: (payload) => request('/api/voice/metrics', { method: 'POST', body: JSON.stringify(payload) }),
   saveTransactions: (payload) => request('/api/transactions', { method: 'POST', body: JSON.stringify(payload) }),
   transactions: (params = {}) => request(`/api/transactions?${new URLSearchParams(params)}`),
   updateTransaction: (id, payload) => request(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
