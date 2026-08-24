@@ -60,6 +60,27 @@ async function request(path, options = {}) {
   return body;
 }
 
+async function requestText(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    ...options,
+    headers: protectedHeaders(mutating, options.headers),
+  });
+  const text = await response.text();
+  if (response.status === 401) {
+    rememberCsrfToken('');
+    window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
+  }
+  if (!response.ok) {
+    let body = {};
+    try { body = JSON.parse(text); } catch { /* SDP endpoints may return plain text. */ }
+    throw Object.assign(new Error(body.message || 'خطا در اتصال تایپ زنده'), { status: response.status, code: body.code });
+  }
+  return text;
+}
+
 export const api = {
   activeWorkspaceId: currentWorkspaceId,
   selectWorkspace: (workspaceId) => {
@@ -92,6 +113,9 @@ export const api = {
     if (fallbackReason) form.append('fallbackReason', String(fallbackReason).slice(0, 160));
     return request('/api/parse/audio', { method: 'POST', body: form, signal });
   },
+  createRealtimeTranscription: (sdp, { signal } = {}) => requestText('/api/voice/realtime/session', {
+    method: 'POST', body: sdp, signal, headers: { 'Content-Type': 'application/sdp' },
+  }),
   recordVoiceMetric: (payload) => request('/api/voice/metrics', { method: 'POST', body: JSON.stringify(payload) }),
   saveTransactions: (payload) => request('/api/transactions', { method: 'POST', body: JSON.stringify(payload) }),
   transactions: (params = {}) => request(`/api/transactions?${new URLSearchParams(params)}`),

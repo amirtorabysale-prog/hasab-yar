@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
+import { createRealtimeTranscriber, realtimeSpeechSupported } from './lib/realtimeSpeech.js';
 import { pendingAudio, removeOfflineAudio, saveOfflineAudio } from './lib/offlineAudio.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
@@ -56,12 +57,13 @@ export default function App() {
   const holdingRef = useRef(false);
   const processingAbortRef = useRef(null);
   const recognitionRef = useRef(null);
-  const speechSnapshotRef = useRef({ transcript: '', candidates: [], error: null });
+  const realtimeSpeechRef = useRef(null);
+  const speechSnapshotRef = useRef({ transcript: '', candidates: [], error: null, source: '' });
   const maxRecordingTimerRef = useRef(null);
   const finalizeTimerRef = useRef(null);
   const pendingAudioBlobRef = useRef(null);
   const fastFinalizeDoneRef = useRef(false);
-  const fastVoiceAvailable = useMemo(() => liveSpeechSupported(), []);
+  const fastVoiceAvailable = useMemo(() => realtimeSpeechSupported() || liveSpeechSupported(), []);
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -118,6 +120,7 @@ export default function App() {
     window.clearTimeout(finalizeTimerRef.current);
     processingAbortRef.current?.abort('unmount');
     try { recognitionRef.current?.abort(); } catch { /* already stopped */ }
+    realtimeSpeechRef.current?.abort();
     wavRecorderRef.current?.dispose();
     audioContextRef.current?.close().catch(() => {});
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -143,7 +146,8 @@ export default function App() {
     setRecordState('processing');
     const controller = new AbortController();
     processingAbortRef.current = controller;
-    const timeout = window.setTimeout(() => controller.abort('timeout'), 10_000);
+    // مسیر فایل ممکن است بعد از شکست OpenAI به Gemini برسد؛ مهلت کلاینت باید از مجموع مهلت providerها کوتاه‌تر نباشد.
+    const timeout = window.setTimeout(() => controller.abort('timeout'), 22_000);
     const requestedAt = Date.now();
     try {
       const result = await api.parseAudio(blob, {
@@ -156,7 +160,7 @@ export default function App() {
     } catch (error) {
       if (controller.signal.aborted && controller.signal.reason !== 'timeout') notify('پردازش صدا لغو شد.');
       else if (controller.signal.aborted || error.code === 'VOICE_TIMEOUT') setFailure({ transcript: speechSnapshotRef.current.transcript, message: 'بررسی پشتیبان بیش از حد طول کشید. دوباره کوتاه‌تر بگو یا دستی بنویس.' });
-      else setFailure({ transcript: '', message: error.code === 'VOICE_UNAVAILABLE' ? 'پردازش صوت هنوز روی سرور فعال نشده است.' : error.message });
+      else setFailure({ transcript: speechSnapshotRef.current.transcript, message: error.code === 'VOICE_UNAVAILABLE' ? 'پردازش صوت هنوز روی سرور فعال نشده است.' : error.message });
     } finally {
       window.clearTimeout(timeout);
       if (processingAbortRef.current === controller) processingAbortRef.current = null;
@@ -195,6 +199,7 @@ export default function App() {
       window.clearTimeout(finalizeTimerRef.current);
       setParseResult({
         ...result,
+        engine: snapshot.source === 'openai-realtime' ? 'openai-realtime+deterministic-parser' : result.engine,
         qualityScore: decision.score,
         reviewReasons: decision.reasons,
         latencyMs: Date.now() - startedAtRef.current,
@@ -202,7 +207,7 @@ export default function App() {
       });
       if (online) {
         api.recordVoiceMetric({
-          provider: 'browser-live',
+          provider: snapshot.source === 'openai-realtime' ? 'openai-realtime' : 'browser-live',
           latencyMs: Date.now() - stoppedAtRef.current,
           transactionCount: result.transactions.length,
           needsReview: decision.route === 'local-review' || result.transactions.some((item) => item.needsReview),
@@ -228,7 +233,7 @@ export default function App() {
     return false;
   };
 
-  const finishWithFastResult = (blob) => {
+  const finishWithFastResult = (blob, { awaitingRealtime = false } = {}) => {
     setRecordState('finalizing');
     pendingAudioBlobRef.current = blob;
     fastFinalizeDoneRef.current = false;
@@ -236,7 +241,7 @@ export default function App() {
     if (tryFinishFastResult(false)) return;
     // اگر مرورگر حتی متن ناقص هم ندارد، مسیر WAV تقریباً فوری شروع می‌شود؛ فقط فرصت کوتاهی برای نتیجهٔ نهایی می‌دهیم.
     const hasUsefulLiveSignal = fastVoiceAvailable && speechSnapshotRef.current.transcript && !speechSnapshotRef.current.error;
-    finalizeTimerRef.current = window.setTimeout(() => tryFinishFastResult(true), hasUsefulLiveSignal ? 350 : 120);
+    finalizeTimerRef.current = window.setTimeout(() => tryFinishFastResult(true), awaitingRealtime ? 1_650 : hasUsefulLiveSignal ? 450 : 160);
   };
 
   const stopRecordingNow = () => {
@@ -244,6 +249,13 @@ export default function App() {
     cancelAnimationFrame(animationRef.current);
     if (!stoppedAtRef.current) stoppedAtRef.current = Date.now();
     try { recognitionRef.current?.stop(); } catch { /* recognition may have ended after silence */ }
+    recognitionRef.current = null;
+    const realtime = realtimeSpeechRef.current;
+    realtimeSpeechRef.current = null;
+    const realtimeFinal = realtime?.finish().catch((error) => {
+      if (!speechSnapshotRef.current.transcript) setLiveVoiceNote(liveSpeechErrorMessage(error.code));
+      return null;
+    });
     const capture = wavRecorderRef.current?.stop();
     wavRecorderRef.current = null;
     if (!capture) return;
@@ -255,7 +267,22 @@ export default function App() {
       setFailure({ transcript: speechSnapshotRef.current.transcript, message: captureQuality.message });
       return;
     }
-    finishWithFastResult(capture.blob);
+    finishWithFastResult(capture.blob, { awaitingRealtime: Boolean(realtimeFinal) });
+    realtimeFinal?.then((snapshot) => {
+      if (!snapshot?.transcript || fastFinalizeDoneRef.current) return;
+      const next = {
+        transcript: snapshot.transcript,
+        finalTranscript: snapshot.completed ? snapshot.transcript : '',
+        candidates: [{ transcript: snapshot.transcript, confidence: 0 }],
+        error: null,
+        ended: snapshot.completed,
+        source: 'openai-realtime',
+      };
+      speechSnapshotRef.current = next;
+      setLiveTranscript(next.transcript);
+      setLivePreview(parseFinancialText(next.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
+      tryFinishFastResult(false);
+    });
   };
 
   const startRecording = async () => {
@@ -266,7 +293,7 @@ export default function App() {
     setLivePreview([]);
     pendingAudioBlobRef.current = null;
     fastFinalizeDoneRef.current = false;
-    speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false };
+    speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: '' };
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       streamRef.current = stream;
@@ -285,28 +312,71 @@ export default function App() {
       stoppedAtRef.current = 0;
       setRecordState('recording');
       animateWave();
-      const recognizer = createPersianRecognizer({
-        phrases: [...data.categories.map((item) => item.name), ...data.learnings.map((item) => item.keyword)],
-        onUpdate: (snapshot) => {
-          speechSnapshotRef.current = { ...snapshot, error: null, ended: false };
-          setLiveTranscript(snapshot.transcript);
-          setLivePreview(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
-          tryFinishFastResult(false);
-        },
-        onError: (error) => {
-          speechSnapshotRef.current = { ...speechSnapshotRef.current, error };
-          setLiveVoiceNote(liveSpeechErrorMessage(error));
-        },
-        onEnd: () => {
-          speechSnapshotRef.current = { ...speechSnapshotRef.current, ended: true };
-          tryFinishFastResult(false);
-        },
-      });
-      recognitionRef.current = recognizer;
-      try { recognizer?.start(); } catch {
-        speechSnapshotRef.current.error = 'start-failed';
-        setLiveVoiceNote(liveSpeechErrorMessage('start-failed'));
-      }
+      const startBrowserRecognizer = () => {
+        if (recognitionRef.current || !liveSpeechSupported()) return;
+        const recognizer = createPersianRecognizer({
+          phrases: [...data.categories.map((item) => item.name), ...data.learnings.map((item) => item.keyword)],
+          onUpdate: (snapshot) => {
+            if (speechSnapshotRef.current.source === 'openai-realtime') return;
+            speechSnapshotRef.current = { ...snapshot, error: null, ended: false, source: 'browser-live' };
+            setLiveTranscript(snapshot.transcript);
+            setLivePreview(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
+            tryFinishFastResult(false);
+          },
+          onError: (error) => {
+            if (speechSnapshotRef.current.source === 'openai-realtime') return;
+            speechSnapshotRef.current = { ...speechSnapshotRef.current, error };
+            setLiveVoiceNote(liveSpeechErrorMessage(error));
+          },
+          onEnd: () => {
+            if (speechSnapshotRef.current.source === 'openai-realtime') return;
+            speechSnapshotRef.current = { ...speechSnapshotRef.current, ended: true };
+            tryFinishFastResult(false);
+          },
+        });
+        recognitionRef.current = recognizer;
+        try { recognizer?.start(); } catch {
+          speechSnapshotRef.current.error = 'start-failed';
+          setLiveVoiceNote(liveSpeechErrorMessage('start-failed'));
+        }
+      };
+      if (realtimeSpeechSupported()) {
+        try {
+          let realtime;
+          realtime = createRealtimeTranscriber({
+            stream,
+            createSession: api.createRealtimeTranscription,
+            onUpdate: (snapshot) => {
+              if (realtimeSpeechRef.current !== realtime) return;
+              const next = {
+                transcript: snapshot.transcript,
+                finalTranscript: snapshot.completed ? snapshot.transcript : '',
+                candidates: [{ transcript: snapshot.transcript, confidence: 0 }],
+                error: null,
+                ended: snapshot.completed,
+                source: 'openai-realtime',
+              };
+              speechSnapshotRef.current = next;
+              setLiveTranscript(next.transcript);
+              setLiveVoiceNote('');
+              setLivePreview(parseFinancialText(next.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
+              tryFinishFastResult(false);
+            },
+            onError: (error) => {
+              if (realtimeSpeechRef.current !== realtime) return;
+              setLiveVoiceNote(liveSpeechErrorMessage(error.code));
+            },
+          });
+          realtimeSpeechRef.current = realtime;
+          realtime.ready.catch(() => {
+            if (realtimeSpeechRef.current === realtime) {
+              realtimeSpeechRef.current = null;
+              realtime.abort();
+              startBrowserRecognizer();
+            }
+          });
+        } catch { startBrowserRecognizer(); }
+      } else startBrowserRecognizer();
       maxRecordingTimerRef.current = window.setTimeout(() => {
         holdingRef.current = false;
         stopRecordingNow();
