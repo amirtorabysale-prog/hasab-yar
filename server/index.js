@@ -377,7 +377,14 @@ if (existsSync(dist)) {
 app.use((error, _request, response, _next) => {
   if (error instanceof multer.MulterError) return response.status(400).json({ code: 'UPLOAD_TOO_LARGE', message: 'فایل انتخاب‌شده بیش از حد بزرگ است.' });
   console.error(error);
-  return response.status(error.status || 500).json({ code: error.code || 'SERVER_ERROR', message: error.status ? error.message : 'خطای داخلی سرور؛ دوباره تلاش کن.' });
+  if (error.retryAfterSeconds) response.setHeader('Retry-After', String(error.retryAfterSeconds));
+  return response.status(error.status || 500).json({
+    code: error.code || 'SERVER_ERROR',
+    message: error.status ? error.message : 'خطای داخلی سرور؛ دوباره تلاش کن.',
+    ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+    ...(error.provider ? { provider: error.provider } : {}),
+    ...(error.requiresAction ? { requiresAction: true } : {}),
+  });
 });
 
 function runRecurringJob() {

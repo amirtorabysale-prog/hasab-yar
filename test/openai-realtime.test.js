@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRealtimeTranscriptionSession, createRealtimeTranscriptionCall } from '../server/openaiRealtime.js';
+import { resetVoiceProviderState } from '../server/voiceProviderState.js';
 
 test('builds a Persian low-latency financial transcription session', () => {
   const session = buildRealtimeTranscriptionSession({
@@ -40,6 +41,54 @@ test('exchanges browser SDP through the authenticated realtime calls endpoint', 
     const session = JSON.parse(request.options.body.get('session'));
     assert.equal(session.audio.input.transcription.model, 'gpt-live-transcribe');
   } finally {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = originalKey;
+  }
+});
+
+test('stops repeated OpenAI calls after billing quota is exhausted', async () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.OPENAI_API_KEY;
+  let calls = 0;
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+  resetVoiceProviderState();
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { code: 'insufficient_quota', type: 'insufficient_quota' } }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const input = { sdp: 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n', userId: 'owner-123' };
+  try {
+    await assert.rejects(createRealtimeTranscriptionCall(input), (error) => (
+      error.code === 'VOICE_QUOTA' && error.requiresAction === true && error.retryAfterSeconds >= 1_700
+    ));
+    await assert.rejects(createRealtimeTranscriptionCall(input), (error) => error.code === 'VOICE_QUOTA');
+    assert.equal(calls, 1);
+  } finally {
+    resetVoiceProviderState();
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = originalKey;
+  }
+});
+
+test('honors Retry-After for a temporary realtime rate limit', async () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+  resetVoiceProviderState();
+  global.fetch = async () => new Response(JSON.stringify({ error: { code: 'rate_limit_exceeded' } }), {
+    status: 429,
+    headers: { 'Content-Type': 'application/json', 'Retry-After': '12' },
+  });
+  try {
+    await assert.rejects(
+      createRealtimeTranscriptionCall({ sdp: 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n' }),
+      (error) => error.code === 'VOICE_RATE_LIMIT' && error.retryAfterSeconds === 12 && !error.requiresAction,
+    );
+  } finally {
+    resetVoiceProviderState();
     global.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = originalKey;
   }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRealtimeTranscriber } from '../src/lib/realtimeSpeech.js';
+import { createRealtimeTranscriber, realtimeCooldown, realtimeSpeechAvailable, rememberRealtimeFailure } from '../src/lib/realtimeSpeech.js';
 
 class FakeChannel extends EventTarget {
   constructor() { super(); this.readyState = 'open'; this.sent = []; }
@@ -46,4 +46,28 @@ test('commits WebRTC microphone audio and returns the final Persian transcript',
     assert.equal(updates.at(-1).completed, true);
     assert.equal(updates.at(-1).transcript, 'دوازده میلیون تومان فروش');
   } finally { global.window = originalWindow; }
+});
+
+test('temporarily disables realtime in the browser after quota failure', () => {
+  const originalWindow = global.window;
+  const originalNavigator = global.navigator;
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  global.window = { RTCPeerConnection: FakePeer };
+  Object.defineProperty(global, 'navigator', { configurable: true, value: { mediaDevices: { getUserMedia() {} } } });
+  try {
+    assert.equal(realtimeSpeechAvailable(storage, 1_000), true);
+    const remembered = rememberRealtimeFailure({ code: 'VOICE_QUOTA', retryAfterSeconds: 120 }, storage, 1_000);
+    assert.equal(remembered.until, 121_000);
+    assert.equal(realtimeCooldown(storage, 1_001).code, 'VOICE_QUOTA');
+    assert.equal(realtimeSpeechAvailable(storage, 120_999), false);
+    assert.equal(realtimeSpeechAvailable(storage, 121_000), true);
+  } finally {
+    global.window = originalWindow;
+    Object.defineProperty(global, 'navigator', { configurable: true, value: originalNavigator });
+  }
 });
