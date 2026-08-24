@@ -32,3 +32,18 @@ test('compares recognition alternatives and forces review when amounts disagree'
   assert.deepEqual(result.transactions[0].alternatives, [200_000_000]);
   assert.equal(result.transactions[0].needsReview, true);
 });
+test('ignores quantities, dates and document identifiers around the real amount', () => {
+  assert.deepEqual(parseFinancialText('دو تا کالا را پانصد هزار تومان فروختم').transactions.map((item) => item.amount), [500_000]);
+  assert.deepEqual(parseFinancialText('روز ۱۵ اجاره پنج میلیون تومان پرداخت شد').transactions.map((item) => item.amount), [5_000_000]);
+  assert.deepEqual(parseFinancialText('شماره فاکتور ۱۲۳ بود و هزینه دو میلیون تومان شد').transactions.map((item) => item.amount), [2_000_000]);
+});
+test('does not prefer a noisier candidate merely because it contains more numbers', () => {
+  const result = parseRecognitionCandidates([
+    { transcript: 'پنج میلیون فروش داشتم', confidence: 0.91 },
+    { transcript: 'پنج میلیون فروش و دو میلیون هزینه داشتم', confidence: 0.2 },
+  ]);
+  assert.equal(result.transcript, 'پنج میلیون فروش داشتم');
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.candidateDisagreement, true);
+  assert.equal(result.transactions[0].reviewCode, 'candidate-count-disagreement');
+});

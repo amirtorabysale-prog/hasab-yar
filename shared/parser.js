@@ -85,6 +85,19 @@ function tokenize(text) {
 
 function isNumericWord(value) { return /^\d/.test(value) || NUMBER_WORDS.has(value); }
 
+const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن'];
+const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
+
+function isNonAmountSpan(text, span) {
+  const raw = text.slice(span.start, span.end);
+  // عددهای دارای مقیاس پولی، حتی اگر کنار واژه‌های دیگر باشند، مبلغ محسوب می‌شوند.
+  if (/هزار|میلیون|میلیارد/.test(raw)) return false;
+  const before = text.slice(Math.max(0, span.start - 18), span.start).trim();
+  const after = text.slice(span.end, Math.min(text.length, span.end + 18)).trim();
+  if (NON_AMOUNT_UNITS.some((unit) => after === unit || after.startsWith(`${unit} `))) return true;
+  return IDENTIFIER_PREFIXES.some((prefix) => before === prefix || before.endsWith(` ${prefix}`));
+}
+
 export function extractAmounts(input) {
   const text = normalizePersian(input);
   const tokens = tokenize(text);
@@ -112,7 +125,10 @@ export function extractAmounts(input) {
       break;
     }
     const amount = wordsToNumber(collected);
-    if (amount > 0) spans.push({ amount, start: token.start, end });
+    if (amount > 0) {
+      const span = { amount, start: token.start, end };
+      if (!isNonAmountSpan(text, span)) spans.push(span);
+    }
     index = cursor - 1;
   }
   return { text, spans };
@@ -177,26 +193,51 @@ export function parseRecognitionCandidates(candidates, options = {}) {
   if (!unique.length) return { transcript: '', transactions: [], engine: 'browser-live' };
   const parsed = unique.map((candidate) => {
     const result = parseFinancialText(candidate.transcript, { ...options, source: 'voice' });
-    const score = result.transactions.length * 250
-      + result.transactions.reduce((sum, item) => sum + item.confidence * 100, 0)
-      + candidate.speechConfidence * 30;
+    const averageParserConfidence = result.transactions.length
+      ? result.transactions.reduce((sum, item) => sum + item.confidence, 0) / result.transactions.length
+      : 0;
+    // تعداد بیشتر نباید یک برداشت کم‌اعتماد را برنده کند؛ این کار اعداد فرعی را به تراکنش جعلی تبدیل می‌کرد.
+    const score = (result.transactions.length ? 250 : 0)
+      + averageParserConfidence * 100
+      + candidate.speechConfidence * 120;
     return { ...candidate, result, score };
   }).sort((left, right) => right.score - left.score);
   const best = parsed[0];
   if (!best.result.transactions.length) return { ...best.result, engine: 'browser-live', speechConfidence: best.speechConfidence };
+  const candidateCountDisagreement = parsed.slice(1).some((candidate) => (
+    candidate.result.transactions.length > 0
+    && candidate.result.transactions.length !== best.result.transactions.length
+  ));
   const transactions = best.result.transactions.map((item, index) => {
     const alternatives = [...new Set(parsed.slice(1)
       .filter((candidate) => candidate.result.transactions.length === best.result.transactions.length)
       .map((candidate) => candidate.result.transactions[index]?.amount)
       .filter((amount) => Number.isFinite(amount) && amount > 0 && amount !== item.amount))].slice(0, 2);
-    if (!alternatives.length) return { ...item, speechConfidence: best.speechConfidence };
+    const typeDisagreement = parsed.slice(1).some((candidate) => {
+      if (candidate.result.transactions.length !== best.result.transactions.length) return false;
+      const alternative = candidate.result.transactions[index];
+      return alternative && (alternative.type !== item.type || alternative.category !== item.category);
+    });
+    if (!alternatives.length && !candidateCountDisagreement && !typeDisagreement) return { ...item, speechConfidence: best.speechConfidence };
+    const warning = alternatives.length
+      ? 'چند مبلغ متفاوت شنیده شد؛ مبلغ را با دقت بررسی کن.'
+      : candidateCountDisagreement
+        ? 'تعداد ثبت‌ها در برداشت‌های صدا یکسان نبود؛ همهٔ موارد را بررسی کن.'
+        : 'نوع یا دستهٔ تراکنش در برداشت‌های صدا یکسان نبود؛ لطفاً بررسی کن.';
     return {
       ...item,
       speechConfidence: best.speechConfidence,
       alternatives,
       needsReview: true,
-      warning: item.warning || 'چند مبلغ متفاوت شنیده شد؛ مبلغ را با دقت بررسی کن.',
+      reviewCode: alternatives.length ? 'candidate-amount-disagreement' : candidateCountDisagreement ? 'candidate-count-disagreement' : 'candidate-type-disagreement',
+      warning: item.warning ? `${item.warning} ${warning}` : warning,
     };
   });
-  return { ...best.result, transactions, engine: 'browser-live', speechConfidence: best.speechConfidence };
+  return {
+    ...best.result,
+    transactions,
+    engine: 'browser-live',
+    speechConfidence: best.speechConfidence,
+    candidateDisagreement: transactions.some((item) => item.reviewCode?.startsWith('candidate-')),
+  };
 }

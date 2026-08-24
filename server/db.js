@@ -1343,7 +1343,10 @@ export function recordVoiceMetric(values = {}) {
 export function voiceStats() {
   const totals = db.prepare(`SELECT COUNT(*) AS total,SUM(succeeded) AS succeeded,
     ROUND(AVG(CASE WHEN succeeded=1 THEN latency_ms END)) AS averageLatency,
-    SUM(needs_review) AS reviewed FROM voice_metrics`).get();
+    SUM(needs_review) AS reviewed,
+    SUM(CASE WHEN provider='browser-live' THEN 1 ELSE 0 END) AS fastPath,
+    ROUND(100.0*SUM(CASE WHEN provider='browser-live' THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS fastPathRate
+    FROM voice_metrics`).get();
   const providers = db.prepare(`SELECT provider,model,COUNT(*) AS count,ROUND(AVG(latency_ms)) AS averageLatency,
     ROUND(100.0*SUM(succeeded)/COUNT(*),1) AS successRate FROM voice_metrics GROUP BY provider,model ORDER BY count DESC`).all();
   return { ...totals, providers };

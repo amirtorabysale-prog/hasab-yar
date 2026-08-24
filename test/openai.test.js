@@ -15,7 +15,7 @@ test('sends Persian language and financial vocabulary to gpt-transcribe', async 
   };
   try {
     const result = await transcribeWithOpenAI({
-      buffer: Buffer.alloc(128), mimeType: 'audio/wav', categories: [{ name: 'فروش' }], learnings: [{ keyword: 'اسنپ‌فود' }],
+      buffer: Buffer.alloc(128), mimeType: 'audio/wav', categories: [{ name: 'فروش' }], learnings: [{ keyword: 'اسنپ‌فود' }], hint: 'دوازده میلیون فروش',
     });
     assert.equal(request.url, 'https://api.openai.com/v1/audio/transcriptions');
     assert.equal(request.authorization, 'Bearer test-openai-key');
@@ -23,6 +23,8 @@ test('sends Persian language and financial vocabulary to gpt-transcribe', async 
     assert.equal(request.body.get('languages[]'), 'fa');
     assert.ok(request.body.getAll('keywords[]').includes('تومان'));
     assert.ok(request.body.getAll('keywords[]').includes('اسنپ‌فود'));
+    assert.match(request.body.get('prompt'), /دوازده میلیون فروش/);
+    assert.match(request.body.get('prompt'), /خود صدا مرجع قطعی/);
     assert.equal(result.transcript, 'امروز دوازده میلیون تومان فروش داشتم');
     assert.equal(result.provider, 'openai');
   } finally {
