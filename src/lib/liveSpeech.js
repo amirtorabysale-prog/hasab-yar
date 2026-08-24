@@ -17,7 +17,8 @@ const SPEECH_ERROR_MESSAGES = {
   VOICE_REALTIME_CHANNEL: 'کانال تایپ زنده باز نشد؛ صدای کامل روی سرور بررسی می‌شود.',
   VOICE_REALTIME_CONFIG: 'تنظیم تایپ زنده روی سرور معتبر نیست؛ صدای کامل بررسی می‌شود.',
   VOICE_AUTH: 'تایپ زنده روی سرور مجوز ندارد؛ تنظیم کلید سرویس باید بررسی شود.',
-  VOICE_QUOTA: 'سهمیهٔ تایپ زنده موقتاً تمام شده؛ صدای کامل بررسی می‌شود.',
+  VOICE_QUOTA: 'اعتبار OpenAI تمام شده؛ فعلاً با تشخیص Chrome و فایل پشتیبان ادامه می‌دهیم.',
+  VOICE_RATE_LIMIT: 'تایپ زنده موقتاً محدود شده؛ تشخیص Chrome و فایل پشتیبان ادامه دارد.',
 };
 
 export function liveSpeechErrorMessage(code) {

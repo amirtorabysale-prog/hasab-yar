@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
-import { createRealtimeTranscriber, realtimeSpeechSupported } from './lib/realtimeSpeech.js';
+import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
 import { pendingAudio, removeOfflineAudio, saveOfflineAudio } from './lib/offlineAudio.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
@@ -63,7 +63,7 @@ export default function App() {
   const finalizeTimerRef = useRef(null);
   const pendingAudioBlobRef = useRef(null);
   const fastFinalizeDoneRef = useRef(false);
-  const fastVoiceAvailable = useMemo(() => realtimeSpeechSupported() || liveSpeechSupported(), []);
+  const fastVoiceAvailable = useMemo(() => realtimeSpeechAvailable() || liveSpeechSupported(), []);
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -340,7 +340,9 @@ export default function App() {
           setLiveVoiceNote(liveSpeechErrorMessage('start-failed'));
         }
       };
-      if (realtimeSpeechSupported()) {
+      // Chrome must start listening immediately. Realtime connects in parallel and takes over only after its first delta.
+      startBrowserRecognizer();
+      if (realtimeSpeechAvailable()) {
         try {
           let realtime;
           realtime = createRealtimeTranscriber({
@@ -364,19 +366,20 @@ export default function App() {
             },
             onError: (error) => {
               if (realtimeSpeechRef.current !== realtime) return;
+              rememberRealtimeFailure(error);
               setLiveVoiceNote(liveSpeechErrorMessage(error.code));
             },
           });
           realtimeSpeechRef.current = realtime;
-          realtime.ready.catch(() => {
+          realtime.ready.catch((error) => {
+            rememberRealtimeFailure(error);
             if (realtimeSpeechRef.current === realtime) {
               realtimeSpeechRef.current = null;
               realtime.abort();
-              startBrowserRecognizer();
             }
           });
-        } catch { startBrowserRecognizer(); }
-      } else startBrowserRecognizer();
+        } catch { /* Chrome recognition and the WAV fallback are already running. */ }
+      }
       maxRecordingTimerRef.current = window.setTimeout(() => {
         holdingRef.current = false;
         stopRecordingNow();

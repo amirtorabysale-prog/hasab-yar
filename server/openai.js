@@ -1,3 +1,5 @@
+import { assertOpenAIAvailable, markOpenAIRateLimit } from './voiceProviderState.js';
+
 const DEFAULT_MODEL = 'gpt-transcribe';
 const SUPPORTED_AUDIO_TYPES = new Set(['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/aiff', 'audio/aac', 'audio/ogg', 'audio/flac', 'audio/webm']);
 
@@ -15,6 +17,7 @@ function extensionFor(mimeType) {
 export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], learnings = [], hint = '', timeoutMs = 7_000 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw providerFailure('کلید OpenAI روی سرور تنظیم نشده است.', 'OPENAI_UNAVAILABLE', 503);
+  assertOpenAIAvailable('openai-file');
   const normalizedMime = String(mimeType || '').split(';')[0].toLowerCase();
   if (!SUPPORTED_AUDIO_TYPES.has(normalizedMime)) throw providerFailure('قالب صدا پشتیبانی نمی‌شود.', 'VOICE_AUDIO_FORMAT', 415);
   if (!buffer?.length || buffer.length < 64) throw providerFailure('فایل صوتی خالی است.', 'VOICE_EMPTY', 400);
@@ -47,7 +50,7 @@ export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error('OpenAI transcription failed', { status: response.status, code: body?.error?.code, type: body?.error?.type });
-    if (response.status === 429) throw providerFailure('سهمیهٔ سرویس صدا موقتاً تمام شده است.', 'VOICE_QUOTA', 503);
+    if (response.status === 429) throw markOpenAIRateLimit('openai-file', response, body);
     if ([401, 403].includes(response.status)) throw providerFailure('کلید OpenAI معتبر نیست یا مجوز لازم را ندارد.', 'VOICE_AUTH', 503);
     if (response.status === 400 && /model/i.test(String(body?.error?.message || ''))) throw providerFailure('مدل تشخیص صوت تنظیم‌شده در دسترس نیست.', 'VOICE_MODEL', 503);
     throw providerFailure('سرویس اصلی صدا پاسخ قابل استفاده نداد.', 'VOICE_PROVIDER_ERROR', 502);

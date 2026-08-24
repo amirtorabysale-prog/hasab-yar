@@ -3,7 +3,7 @@ import { parseAudioWithGemini } from './gemini.js';
 import { transcribeWithOpenAI } from './openai.js';
 
 function shouldFallback(error) {
-  return ['OPENAI_UNAVAILABLE', 'VOICE_TIMEOUT', 'VOICE_PROVIDER_ERROR', 'VOICE_QUOTA', 'VOICE_AUTH', 'VOICE_MODEL', 'VOICE_EMPTY_TRANSCRIPT'].includes(error?.code);
+  return ['OPENAI_UNAVAILABLE', 'VOICE_TIMEOUT', 'VOICE_PROVIDER_ERROR', 'VOICE_QUOTA', 'VOICE_RATE_LIMIT', 'VOICE_AUTH', 'VOICE_MODEL', 'VOICE_EMPTY_TRANSCRIPT'].includes(error?.code);
 }
 
 export async function parseFinancialAudio(context) {
@@ -34,7 +34,8 @@ export async function parseFinancialAudio(context) {
       } catch (error) { errors.push(error); }
     }
   }
-  const last = errors.at(-1) || Object.assign(new Error('هیچ سرویس صوتی فعالی پیدا نشد.'), { code: 'VOICE_UNAVAILABLE', status: 503 });
+  const actionable = errors.find((error) => ['VOICE_QUOTA', 'VOICE_RATE_LIMIT', 'VOICE_AUTH'].includes(error?.code));
+  const last = actionable || errors.at(-1) || Object.assign(new Error('هیچ سرویس صوتی فعالی پیدا نشد.'), { code: 'VOICE_UNAVAILABLE', status: 503 });
   if (errors.length > 1) last.fallbackErrors = errors.map((error) => error.code || 'UNKNOWN');
   throw last;
 }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { assertOpenAIAvailable, markOpenAIRateLimit } from './voiceProviderState.js';
 
 const DEFAULT_MODEL = 'gpt-live-transcribe';
 
@@ -36,6 +37,7 @@ export function buildRealtimeTranscriptionSession({ categories = [], learnings =
 export async function createRealtimeTranscriptionCall({ sdp, categories = [], learnings = [], userId = '', timeoutMs = 7_000 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw providerFailure('کلید OpenAI روی سرور تنظیم نشده است.', 'OPENAI_UNAVAILABLE', 503);
+  assertOpenAIAvailable('openai-realtime');
   const offer = String(sdp || '').trim();
   if (!offer.startsWith('v=0') || offer.length > 128_000) throw providerFailure('پیشنهاد اتصال صوتی معتبر نیست.', 'VOICE_REALTIME_SDP', 400);
 
@@ -62,7 +64,7 @@ export async function createRealtimeTranscriptionCall({ sdp, categories = [], le
     let body = {};
     try { body = JSON.parse(answer); } catch { /* OpenAI can return a plain-text gateway error. */ }
     console.error('OpenAI realtime transcription failed', { status: response.status, code: body?.error?.code, type: body?.error?.type });
-    if (response.status === 429) throw providerFailure('سهمیهٔ تایپ زنده موقتاً تمام شده است.', 'VOICE_QUOTA', 503);
+    if (response.status === 429) throw markOpenAIRateLimit('openai-realtime', response, body);
     if ([401, 403].includes(response.status)) throw providerFailure('کلید OpenAI معتبر نیست یا مجوز Realtime ندارد.', 'VOICE_AUTH', 503);
     if (response.status === 400) throw providerFailure('تنظیمات تایپ زنده معتبر نیست.', 'VOICE_REALTIME_CONFIG', 503);
     throw providerFailure('سرویس تایپ زنده پاسخ قابل استفاده نداد.', 'VOICE_REALTIME_PROVIDER', 502);

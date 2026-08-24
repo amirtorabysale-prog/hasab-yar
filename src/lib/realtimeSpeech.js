@@ -2,12 +2,53 @@ import { normalizePersian } from '../../shared/parser.js';
 
 const OPEN_TIMEOUT_MS = 6_000;
 const FINAL_TIMEOUT_MS = 1_500;
+const REALTIME_COOLDOWN_KEY = 'hesab-yar-realtime-cooldown';
+
+function availableStorage(storage) {
+  if (storage) return storage;
+  try { return typeof window !== 'undefined' ? window.localStorage : null; }
+  catch { return null; }
+}
+
+export function realtimeCooldown(storage, now = Date.now()) {
+  const target = availableStorage(storage);
+  if (!target) return null;
+  try {
+    const value = JSON.parse(target.getItem(REALTIME_COOLDOWN_KEY) || 'null');
+    if (!value?.until || value.until <= now) {
+      target.removeItem(REALTIME_COOLDOWN_KEY);
+      return null;
+    }
+    return value;
+  } catch { return null; }
+}
+
+export function rememberRealtimeFailure(error, storage, now = Date.now()) {
+  const durations = {
+    VOICE_QUOTA: 30 * 60,
+    VOICE_RATE_LIMIT: 60,
+    VOICE_AUTH: 10 * 60,
+    VOICE_REALTIME_CONFIG: 10 * 60,
+  };
+  const fallbackSeconds = durations[error?.code];
+  if (!fallbackSeconds) return null;
+  const requestedSeconds = Number(error?.retryAfterSeconds);
+  const retryAfterSeconds = Number.isFinite(requestedSeconds) && requestedSeconds > 0 ? Math.ceil(requestedSeconds) : fallbackSeconds;
+  const value = { code: error.code, until: now + retryAfterSeconds * 1000 };
+  const target = availableStorage(storage);
+  try { target?.setItem(REALTIME_COOLDOWN_KEY, JSON.stringify(value)); } catch { /* private mode */ }
+  return value;
+}
 
 export function realtimeSpeechSupported() {
   return typeof window !== 'undefined'
     && typeof window.RTCPeerConnection === 'function'
     && typeof navigator !== 'undefined'
     && Boolean(navigator.mediaDevices?.getUserMedia);
+}
+
+export function realtimeSpeechAvailable(storage, now = Date.now()) {
+  return realtimeSpeechSupported() && !realtimeCooldown(storage, now);
 }
 
 function waitForOpen(channel, timeoutMs = OPEN_TIMEOUT_MS) {

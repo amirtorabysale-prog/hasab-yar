@@ -76,7 +76,14 @@ async function requestText(path, options = {}) {
   if (!response.ok) {
     let body = {};
     try { body = JSON.parse(text); } catch { /* SDP endpoints may return plain text. */ }
-    throw Object.assign(new Error(body.message || 'خطا در اتصال تایپ زنده'), { status: response.status, code: body.code });
+    const retryAfterHeader = Number(response.headers.get('retry-after'));
+    throw Object.assign(new Error(body.message || 'خطا در اتصال تایپ زنده'), {
+      status: response.status,
+      code: body.code,
+      provider: body.provider,
+      requiresAction: Boolean(body.requiresAction),
+      retryAfterSeconds: Number(body.retryAfterSeconds) || (Number.isFinite(retryAfterHeader) ? retryAfterHeader : 0),
+    });
   }
   return text;
 }
