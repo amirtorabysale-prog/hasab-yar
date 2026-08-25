@@ -7,7 +7,7 @@ import {
   activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings, inventoryOverview,
-  getToday, insertTransactions, issueInvoice, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers,
+  getToday, insertTransactions, issueInvoice, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
   recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
   saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
@@ -164,7 +164,7 @@ app.get('/api/bootstrap', (request, response) => {
   return response.json({
     ...getToday(), categories: getCategories(), settings: getSettings(), learnings: getLearnings(),
     averages: typicalAmounts(), overview: financialOverview(), accounts: listAccounts(), contacts: listContacts(),
-    obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(), access: accessPayload(request.user, request.workspace.id),
+    obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(), closings: listDailyClosings(), closingPreview: previewDayClosing(), access: accessPayload(request.user, request.workspace.id),
   });
 });
 app.post('/api/parse/text', (request, response) => {
@@ -290,6 +290,7 @@ app.post('/api/reconciliation/lines/:id/create', (request, response, next) => { 
 app.post('/api/reconciliation/lines/:id/ignore', (request, response, next) => { try { return response.json({ item: ignoreReconciliationLine(request.params.id, request.body?.reason) }); } catch (error) { return next(error); } });
 app.post('/api/reconciliation/imports/:id/close', (request, response, next) => { try { return response.json({ item: closeBankReconciliation(request.params.id) }); } catch (error) { return next(error); } });
 app.get('/api/closings', (_request, response) => response.json({ items: listDailyClosings() }));
+app.get('/api/closings/preview', (request, response) => response.json({ item: previewDayClosing(request.query) }));
 app.post('/api/closings', (request, response, next) => { try { response.status(201).json({ item: closeDay(request.body) }); } catch (error) { next(error); } });
 app.get('/api/receipts', (_request, response) => response.json({ items: listReceipts() }));
 app.get('/api/receipts/:id/image', (request, response) => {
