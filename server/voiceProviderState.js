@@ -32,6 +32,53 @@ export function activeOpenAICooldown(scope, now = Date.now()) {
   return null;
 }
 
+function publicCooldown(scope, now) {
+  const cooldown = activeOpenAICooldown(scope, now);
+  if (!cooldown) return null;
+  return {
+    code: cooldown.code,
+    retryAfterSeconds: cooldown.retryAfterSeconds,
+    requiresAction: Boolean(cooldown.requiresAction),
+  };
+}
+
+export function voiceProviderStatus(env = process.env, now = Date.now()) {
+  const order = String(env.VOICE_PROVIDER_ORDER || 'openai,gemini')
+    .split(',')
+    .map((provider) => provider.trim().toLowerCase())
+    .filter((provider, index, values) => ['openai', 'gemini'].includes(provider) && values.indexOf(provider) === index);
+  const configured = {
+    openai: Boolean(env.OPENAI_API_KEY),
+    gemini: Boolean(env.GEMINI_API_KEY),
+  };
+  const realtimeCooldown = publicCooldown('openai-realtime', now);
+  const fileCooldown = publicCooldown('openai-file', now);
+  const fileProviders = order.map((provider) => {
+    const cooldown = provider === 'openai' ? fileCooldown : null;
+    return {
+      provider,
+      configured: configured[provider],
+      available: configured[provider] && !cooldown,
+      model: provider === 'openai'
+        ? (env.OPENAI_TRANSCRIBE_MODEL || 'gpt-transcribe')
+        : (env.GEMINI_MODEL || 'gemini-3.7-flash'),
+      cooldown,
+    };
+  });
+  return {
+    realtime: {
+      configured: configured.openai,
+      available: configured.openai && !realtimeCooldown,
+      model: env.OPENAI_REALTIME_TRANSCRIBE_MODEL || 'gpt-live-transcribe',
+      cooldown: realtimeCooldown,
+    },
+    file: {
+      available: fileProviders.some((provider) => provider.available),
+      providers: fileProviders,
+    },
+  };
+}
+
 export function assertOpenAIAvailable(scope, now = Date.now()) {
   const cooldown = activeOpenAICooldown(scope, now);
   if (cooldown) throw failureFromCooldown(cooldown, now);

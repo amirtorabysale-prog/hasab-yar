@@ -17,6 +17,7 @@ test('uses learned categorization', () => {
 });
 test('extracts a stable keyword from a corrected phrase', () => assert.equal(inferLearningKeyword('ششصد هزار تومان اسنپ‌فود دادم'), 'اسنپ فود'));
 test('parses colloquial omitted thousand scale', () => assert.equal(parseFinancialText('دو میلیون و پونصد حقوق دادم').transactions[0].amount, 2_500_000));
+test('parses colloquial omitted million and thousand scales', () => assert.equal(parseFinancialText('یه فروش یک و دویست داشتم').transactions[0].amount, 1_200_000));
 test('parses half after a large scale', () => assert.equal(parseFinancialText('یه میلیون و نیم اجاره دادم').transactions[0].amount, 1_500_000));
 test('parses decimal and thousands separators without multiplying digits', () => {
   assert.equal(parseFinancialText('۲.۵ میلیون فروش داشتم').transactions[0].amount, 2_500_000);

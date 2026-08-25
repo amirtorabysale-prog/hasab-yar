@@ -25,6 +25,7 @@ import {
 import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
+import { voiceProviderStatus } from './voiceProviderState.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -320,12 +321,15 @@ app.post('/api/voice/metrics', (request, response) => {
   recordVoiceMetric({
     provider,
     model: provider === 'openai-realtime' ? (process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL || 'gpt-live-transcribe') : 'web-speech-fa-IR',
+    durationMs: Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0)),
+    firstTranscriptMs: Math.min(60_000, Math.max(0, Number(request.body?.firstTranscriptMs) || 0)),
     latencyMs: Math.min(60_000, Math.max(0, Number(request.body?.latencyMs) || 0)),
     transactionCount: Math.min(20, Math.max(0, Number(request.body?.transactionCount) || 0)),
     needsReview: Boolean(request.body?.needsReview),
   });
   return response.status(204).end();
 });
+app.get('/api/voice/status', (_request, response) => response.json(voiceProviderStatus()));
 app.get('/api/voice/stats', (_request, response) => response.json(voiceStats()));
 app.get('/api/backups/status', async (request, response, next) => {
   try { return response.json(await automaticBackupStatus(request.workspace.id)); }

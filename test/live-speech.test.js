@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../src/lib/liveSpeech.js';
+import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../src/lib/liveSpeech.js';
 
 test('configures Persian live recognition and returns alternatives', () => {
   class FakeRecognition {
@@ -34,4 +34,11 @@ test('turns browser speech errors into useful Persian diagnostics', () => {
   assert.match(liveSpeechErrorMessage('network'), /سرور/);
   assert.match(liveSpeechErrorMessage('no-speech'), /صدای واضح/);
   assert.match(liveSpeechErrorMessage('unknown'), /تشخیص زنده/);
+});
+
+test('restarts Chrome recognition only after recoverable early endings', () => {
+  assert.equal(browserRecognitionCanRestart(''), true);
+  assert.equal(browserRecognitionCanRestart('no-speech'), true);
+  assert.equal(browserRecognitionCanRestart('network'), false);
+  assert.equal(browserRecognitionCanRestart('not-allowed'), false);
 });
