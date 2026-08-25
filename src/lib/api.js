@@ -62,6 +62,7 @@ async function request(path, options = {}) {
       status: response.status,
       code: body.code,
       provider: body.provider,
+      details: body.details,
       requiresAction: Boolean(body.requiresAction),
       retryAfterSeconds: Number(body.retryAfterSeconds) || (Number.isFinite(retryAfterHeader) ? retryAfterHeader : 0),
     });
@@ -135,7 +136,10 @@ export const api = {
   recordVoiceMetric: (payload) => request('/api/voice/metrics', { method: 'POST', body: JSON.stringify(payload) }),
   saveTransactions: (payload) => request('/api/transactions', { method: 'POST', body: JSON.stringify(payload) }),
   transactions: (params = {}) => request(`/api/transactions?${new URLSearchParams(params)}`),
+  latestTransaction: () => request('/api/transactions/latest'),
   updateTransaction: (id, payload) => request(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  correctTransaction: (id, command) => request(`/api/transactions/${id}/correct`, { method: 'POST', body: JSON.stringify({ command }) }),
+  redoTransaction: (id) => request(`/api/transactions/${id}/redo`, { method: 'POST', body: '{}' }),
   deleteTransaction: (id) => request(`/api/transactions/${id}`, { method: 'DELETE' }),
   report: (range) => request(`/api/reports?range=${range}`),
   overview: () => request('/api/overview'),

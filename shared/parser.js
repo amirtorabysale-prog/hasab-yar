@@ -1,3 +1,5 @@
+import { withReviewAssessment } from './review.js';
+
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
   '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
@@ -168,13 +170,33 @@ function classify(context, learnings = []) {
   const hasExpense = containsAny(normalizedContext, EXPENSE_WORDS);
   let type = hasIncome && !hasExpense ? 'income' : 'expense';
   let confidence = hasIncome !== hasExpense ? 0.93 : 0.58;
+  let typeReason = hasIncome !== hasExpense
+    ? `نوع از واژهٔ ${hasIncome ? 'درآمدی' : 'هزینه‌ای'} متن تشخیص داده شد.`
+    : 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.';
   let category = learned?.category;
-  if (learned) confidence = Math.max(confidence, 0.96);
-  if (!category) category = CATEGORY_RULES.find(([, words]) => containsAny(normalizedContext, words))?.[0];
+  let categoryConfidence = 0.56;
+  let categoryReason = 'دستهٔ مشخصی در متن پیدا نشد؛ دستهٔ عمومی پیشنهاد شد.';
+  if (learned) {
+    confidence = Math.max(confidence, 0.96);
+    categoryConfidence = 0.98;
+    categoryReason = `بر اساس نگاشت تأییدشدهٔ «${learned.keyword}» انتخاب شد.`;
+  }
+  if (!category) {
+    const categoryRule = CATEGORY_RULES.find(([, words]) => containsAny(normalizedContext, words));
+    category = categoryRule?.[0];
+    if (categoryRule) {
+      categoryConfidence = 0.92;
+      categoryReason = `واژهٔ مرتبط با «${categoryRule[0]}» در متن پیدا شد.`;
+    }
+  }
   if (!category) category = type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها';
   const incomeCategories = new Set(['فروش', 'خدمات', 'پروژه و دستمزد', 'سایر درآمدها']);
-  if (incomeCategories.has(category)) type = 'income';
-  return { type, category, confidence };
+  if (incomeCategories.has(category) && type !== 'income') {
+    type = 'income';
+    typeReason = `نوع با دستهٔ «${category}» هماهنگ شد.`;
+    confidence = Math.max(confidence, categoryConfidence);
+  }
+  return { type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason };
 }
 
 export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text' } = {}) {
@@ -197,9 +219,25 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const average = Number(averages[classified.type] || 0);
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
-    return {
+    const reviewReasons = [];
+    if (unusual) reviewReasons.push('مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.');
+    if (colloquialThousands) reviewReasons.push('واحد هزار از گفتار محاوره‌ای برداشت شده است.');
+    if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
+    const transaction = {
       amount, type: classified.type, category: classified.category, rawText: context || text,
       confidence: classified.confidence, needsReview: unusual || ambiguous || colloquialThousands, source,
+      confidenceDetails: {
+        amount: {
+          score: colloquialThousands ? 0.66 : source === 'voice' ? 0.93 : 0.98,
+          reason: colloquialThousands
+            ? 'مبلغ با قاعدهٔ گفتار محاوره‌ای به هزار تومان تبدیل شد.'
+            : source === 'voice' ? 'مبلغ از نتیجهٔ تشخیص گفتار استخراج شد.' : 'مبلغ مستقیم از متن استخراج شد.',
+        },
+        type: { score: classified.typeConfidence, reason: classified.typeReason },
+        category: { score: classified.categoryConfidence, reason: classified.categoryReason },
+        account: { score: 0.82, reason: 'حساب پیش‌فرض دفتر انتخاب می‌شود؛ قبل از ثبت قابل تغییر است.' },
+      },
+      reviewReasons,
       warning: unusual
         ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟'
         : colloquialThousands
@@ -207,6 +245,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
           : ambiguous ? 'نوع این تراکنش با اطمینان کم تشخیص داده شد؛ لطفاً بررسی کن.' : null,
       alternatives: colloquialThousands ? [span.amount] : [],
     };
+    return withReviewAssessment(transaction);
   });
   return { transcript: text, transactions };
 }
@@ -252,14 +291,27 @@ export function parseRecognitionCandidates(candidates, options = {}) {
       : candidateCountDisagreement
         ? 'تعداد ثبت‌ها در برداشت‌های صدا یکسان نبود؛ همهٔ موارد را بررسی کن.'
         : 'نوع یا دستهٔ تراکنش در برداشت‌های صدا یکسان نبود؛ لطفاً بررسی کن.';
-    return {
+    const fieldChanges = {};
+    if (alternatives.length || candidateCountDisagreement) fieldChanges.amount = {
+      ...item.confidenceDetails?.amount,
+      score: Math.min(item.confidenceDetails?.amount?.score ?? 0.93, 0.56),
+      reason: alternatives.length ? 'موتور گفتار چند مبلغ متفاوت پیشنهاد کرد.' : 'برداشت‌های گفتار دربارهٔ تعداد مبلغ‌ها یکسان نبودند.',
+    };
+    if (typeDisagreement) {
+      fieldChanges.type = { ...item.confidenceDetails?.type, score: 0.56, reason: 'برداشت‌های گفتار دربارهٔ نوع تراکنش یکسان نبودند.' };
+      fieldChanges.category = { ...item.confidenceDetails?.category, score: 0.56, reason: 'برداشت‌های گفتار دربارهٔ دسته یکسان نبودند.' };
+    }
+    return withReviewAssessment({
       ...item,
       speechConfidence: best.speechConfidence,
       alternatives,
       needsReview: true,
+      confidence: undefined,
+      confidenceDetails: { ...item.confidenceDetails, ...fieldChanges },
+      reviewReasons: [...(item.reviewReasons || []), warning],
       reviewCode: alternatives.length ? 'candidate-amount-disagreement' : candidateCountDisagreement ? 'candidate-count-disagreement' : 'candidate-type-disagreement',
       warning: item.warning ? `${item.warning} ${warning}` : warning,
-    };
+    });
   });
   return {
     ...best.result,

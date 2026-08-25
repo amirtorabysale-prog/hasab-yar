@@ -7,12 +7,13 @@ import {
   activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings, inventoryOverview,
-  getToday, insertTransactions, issueInvoice, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
+  correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
   recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
-  saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
+  redoTransaction, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
-import { inferLearningKeyword, parseFinancialText } from './parser.js';
+import { parseFinancialText } from './parser.js';
+import { previewCorrection } from '../shared/correction.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
@@ -206,13 +207,11 @@ app.post('/api/transactions', (request, response, next) => {
   try {
     const transactions = request.body?.transactions;
     if (!Array.isArray(transactions) || !transactions.length || transactions.length > 20) return response.status(400).json({ message: 'حداقل یک تراکنش معتبر لازم است.' });
-    const ids = insertTransactions({ transcript: request.body.transcript, transactions });
-    for (const item of transactions) {
-      if (item.originalCategory && item.originalCategory !== item.category) {
-        const keyword = inferLearningKeyword(item.rawText || request.body.transcript);
-        if (keyword.length >= 2) saveLearning({ keyword, category: item.category });
-      }
+    if (!request.body?.allowDuplicates) {
+      const duplicates = findPotentialDuplicates(transactions);
+      if (duplicates.length) throw Object.assign(new Error('یک ثبت بسیار مشابه در چند دقیقهٔ اخیر پیدا شد.'), { code: 'POSSIBLE_DUPLICATE', status: 409, details: { duplicates } });
     }
+    const ids = insertTransactions({ transcript: request.body.transcript, transactions });
     return response.status(201).json({ ids, ...getToday() });
   } catch (error) { return next(error); }
 });
@@ -254,8 +253,21 @@ app.get('/api/accounts', (_request, response) => response.json({ items: listAcco
 app.post('/api/accounts', (request, response, next) => { try { response.status(201).json({ item: saveAccount(request.body) }); } catch (error) { next(error); } });
 app.put('/api/accounts/:id', (request, response, next) => { try { response.json({ item: saveAccount({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.get('/api/transactions', (request, response) => response.json(listTransactions(request.query)));
+app.get('/api/transactions/latest', (_request, response) => response.json({ item: latestTransaction() }));
 app.put('/api/transactions/:id', (request, response, next) => { try { const item = updateTransaction(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'تراکنش پیدا نشد.' }); } catch (error) { return next(error); } });
-app.delete('/api/transactions/:id', (request, response) => response.status(deleteTransaction(request.params.id) ? 204 : 404).end());
+app.post('/api/transactions/:id/correct', (request, response, next) => {
+  try {
+    const current = getTransaction(request.params.id);
+    if (!current) return response.status(404).json({ code: 'TRANSACTION_NOT_FOUND', message: 'تراکنش پیدا نشد.' });
+    const command = String(request.body?.command || '').trim().slice(0, 500);
+    const interpretation = previewCorrection(command, current, { learnings: getLearnings(), accounts: listAccounts(), categories: getCategories() });
+    if (!interpretation.canApply) return response.status(400).json({ code: 'CORRECTION_NOT_UNDERSTOOD', message: interpretation.explanation });
+    const item = correctLatestTransaction(request.params.id, command, interpretation.changes);
+    return response.json({ item, interpretation });
+  } catch (error) { return next(error); }
+});
+app.post('/api/transactions/:id/redo', (request, response, next) => { try { return response.status(201).json({ item: redoTransaction(request.params.id) }); } catch (error) { return next(error); } });
+app.delete('/api/transactions/:id', (request, response, next) => { try { return response.status(deleteTransaction(request.params.id) ? 204 : 404).end(); } catch (error) { return next(error); } });
 app.get('/api/contacts', (_request, response) => response.json({ items: listContacts() }));
 app.post('/api/contacts', (request, response, next) => { try { response.status(201).json({ item: saveContact(request.body) }); } catch (error) { next(error); } });
 app.put('/api/contacts/:id', (request, response, next) => { try { response.json({ item: saveContact({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
@@ -389,6 +401,7 @@ app.use((error, _request, response, _next) => {
     ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
     ...(error.provider ? { provider: error.provider } : {}),
     ...(error.requiresAction ? { requiresAction: true } : {}),
+    ...(error.details ? { details: error.details } : {}),
   });
 });
 
