@@ -5,12 +5,14 @@ import {
   Search, Settings, Sparkles, Trash2, Users, WalletCards, WifiOff, X,
 } from 'lucide-react';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
-import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
+import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
 import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
 import { pendingAudio, removeOfflineAudio, saveOfflineAudio } from './lib/offlineAudio.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
 import { decideVoiceRoute } from './lib/voiceDecision.js';
+import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
+import { describeVoiceAvailability, pointerReleaseAction, voicePathLabel } from './lib/voiceStatus.js';
 import { parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 
@@ -43,6 +45,8 @@ export default function App() {
   const [parseResult, setParseResult] = useState(null);
   const [failure, setFailure] = useState(null);
   const [recordState, setRecordState] = useState('idle');
+  const [voicePath, setVoicePath] = useState('ready');
+  const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [liveVoiceNote, setLiveVoiceNote] = useState('');
   const [livePreview, setLivePreview] = useState([]);
@@ -59,20 +63,31 @@ export default function App() {
   const recognitionRef = useRef(null);
   const realtimeSpeechRef = useRef(null);
   const speechSnapshotRef = useRef({ transcript: '', candidates: [], error: null, source: '' });
+  const browserSpeechSnapshotRef = useRef({ transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'browser-live' });
+  const realtimeSpeechSnapshotRef = useRef({ transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'openai-realtime' });
+  const firstTranscriptMsRef = useRef(0);
   const maxRecordingTimerRef = useRef(null);
   const finalizeTimerRef = useRef(null);
   const pendingAudioBlobRef = useRef(null);
   const fastFinalizeDoneRef = useRef(false);
-  const fastVoiceAvailable = useMemo(() => realtimeSpeechAvailable() || liveSpeechSupported(), []);
+  const fastVoiceAvailable = realtimeSpeechAvailable() || liveSpeechSupported();
 
   const notify = useCallback((message) => {
     setToast(message);
     window.setTimeout(() => setToast(''), 3200);
   }, []);
 
+  const refreshVoiceSystemStatus = useCallback(async () => {
+    try {
+      const status = await api.voiceStatus();
+      setVoiceSystemStatus(status);
+      return status;
+    } catch { return null; }
+  }, []);
+
   const load = useCallback(async () => {
     try {
-      const bootstrap = await api.bootstrap();
+      const [bootstrap] = await Promise.all([api.bootstrap(), refreshVoiceSystemStatus()]);
       setData({ ...bootstrap, learnings: bootstrap.learnings || [], averages: bootstrap.averages || {} });
       if (bootstrap.access) setAccess(bootstrap.access);
     } catch (error) {
@@ -80,7 +95,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [notify]);
+  }, [notify, refreshVoiceSystemStatus]);
 
   useEffect(() => {
     const requireAuth = () => { localStorage.removeItem('hesab-yar-authenticated'); setAuthenticated(false); };
@@ -138,12 +153,14 @@ export default function App() {
 
   const processAudio = async (blob, fallbackReason = '') => {
     if (!online) {
+      setVoicePath('offline');
       await saveOfflineAudio(blob);
       setRecordState('idle');
       notify('ضبط ذخیره شد و با وصل‌شدن اینترنت ارسال می‌شود.');
       return;
     }
     setRecordState('processing');
+    setVoicePath('server-file');
     const controller = new AbortController();
     processingAbortRef.current = controller;
     // مسیر فایل ممکن است بعد از شکست OpenAI به Gemini برسد؛ مهلت کلاینت باید از مجموع مهلت providerها کوتاه‌تر نباشد.
@@ -164,7 +181,9 @@ export default function App() {
     } finally {
       window.clearTimeout(timeout);
       if (processingAbortRef.current === controller) processingAbortRef.current = null;
+      refreshVoiceSystemStatus();
       setRecordState('idle');
+      setVoicePath('ready');
     }
   };
 
@@ -172,6 +191,7 @@ export default function App() {
     processingAbortRef.current?.abort('user');
     processingAbortRef.current = null;
     setRecordState('idle');
+    setVoicePath('ready');
   };
 
   const cleanupMedia = () => {
@@ -208,12 +228,15 @@ export default function App() {
       if (online) {
         api.recordVoiceMetric({
           provider: snapshot.source === 'openai-realtime' ? 'openai-realtime' : 'browser-live',
+          durationMs: Math.max(0, stoppedAtRef.current - startedAtRef.current),
+          firstTranscriptMs: firstTranscriptMsRef.current,
           latencyMs: Date.now() - stoppedAtRef.current,
           transactionCount: result.transactions.length,
           needsReview: decision.route === 'local-review' || result.transactions.some((item) => item.needsReview),
         }).catch(() => {});
       }
       setRecordState('idle');
+      setVoicePath('ready');
       return true;
     }
     if (deadlineReached) {
@@ -221,6 +244,7 @@ export default function App() {
       const blob = pendingAudioBlobRef.current;
       pendingAudioBlobRef.current = null;
       if (!online) {
+        setVoicePath('offline');
         saveOfflineAudio(blob).then(() => {
           setRecordState('idle');
           notify('صدا برای بررسی دقیق‌تر ذخیره شد و پس از اتصال آماده می‌شود.');
@@ -233,8 +257,19 @@ export default function App() {
     return false;
   };
 
+  const publishSpeechSnapshot = (snapshot) => {
+    speechSnapshotRef.current = snapshot;
+    if (!firstTranscriptMsRef.current && snapshot.transcript && startedAtRef.current) {
+      firstTranscriptMsRef.current = Date.now() - startedAtRef.current;
+    }
+    setLiveTranscript(snapshot.transcript);
+    setLivePreview(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
+    tryFinishFastResult(false);
+  };
+
   const finishWithFastResult = (blob, { awaitingRealtime = false } = {}) => {
     setRecordState('finalizing');
+    setVoicePath('finalizing');
     pendingAudioBlobRef.current = blob;
     fastFinalizeDoneRef.current = false;
     window.clearTimeout(finalizeTimerRef.current);
@@ -253,23 +288,36 @@ export default function App() {
     const realtime = realtimeSpeechRef.current;
     realtimeSpeechRef.current = null;
     const realtimeFinal = realtime?.finish().catch((error) => {
-      if (!speechSnapshotRef.current.transcript) setLiveVoiceNote(liveSpeechErrorMessage(error.code));
+      rememberRealtimeFailure(error);
+      const fallbackSnapshot = selectVoiceSnapshot({ browser: browserSpeechSnapshotRef.current, realtime: realtimeSpeechSnapshotRef.current, realtimeFailed: true });
+      if (fallbackSnapshot.transcript) {
+        publishSpeechSnapshot(fallbackSnapshot);
+        setVoicePath('browser-live');
+      }
+      setLiveVoiceNote(liveSpeechErrorMessage(error.code));
+      refreshVoiceSystemStatus();
       return null;
     });
     const capture = wavRecorderRef.current?.stop();
     wavRecorderRef.current = null;
     if (!capture) return;
     setRecordState('finalizing');
+    setVoicePath('finalizing');
     cleanupMedia();
     const captureQuality = assessAudioCapture(capture);
     if (!captureQuality.valid) {
       setRecordState('idle');
+      setVoicePath('ready');
       setFailure({ transcript: speechSnapshotRef.current.transcript, message: captureQuality.message });
       return;
     }
     finishWithFastResult(capture.blob, { awaitingRealtime: Boolean(realtimeFinal) });
     realtimeFinal?.then((snapshot) => {
       if (!snapshot?.transcript || fastFinalizeDoneRef.current) return;
+      if (!snapshot.completed && browserSpeechSnapshotRef.current.transcript) {
+        publishSpeechSnapshot(browserSpeechSnapshotRef.current);
+        return;
+      }
       const next = {
         transcript: snapshot.transcript,
         finalTranscript: snapshot.completed ? snapshot.transcript : '',
@@ -278,22 +326,24 @@ export default function App() {
         ended: snapshot.completed,
         source: 'openai-realtime',
       };
-      speechSnapshotRef.current = next;
-      setLiveTranscript(next.transcript);
-      setLivePreview(parseFinancialText(next.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
-      tryFinishFastResult(false);
+      realtimeSpeechSnapshotRef.current = next;
+      publishSpeechSnapshot(next);
     });
   };
 
   const startRecording = async () => {
     if (recordState !== 'idle') return;
     setRecordState('requesting');
+    setVoicePath('requesting');
     setLiveTranscript('');
     setLiveVoiceNote('');
     setLivePreview([]);
     pendingAudioBlobRef.current = null;
     fastFinalizeDoneRef.current = false;
+    firstTranscriptMsRef.current = 0;
     speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: '' };
+    browserSpeechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'browser-live' };
+    realtimeSpeechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'openai-realtime' };
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       streamRef.current = stream;
@@ -311,32 +361,53 @@ export default function App() {
       startedAtRef.current = Date.now();
       stoppedAtRef.current = 0;
       setRecordState('recording');
+      setVoicePath('capturing');
       animateWave();
+      let browserError = '';
       const startBrowserRecognizer = () => {
         if (recognitionRef.current || !liveSpeechSupported()) return;
         const recognizer = createPersianRecognizer({
           phrases: [...data.categories.map((item) => item.name), ...data.learnings.map((item) => item.keyword)],
           onUpdate: (snapshot) => {
-            if (speechSnapshotRef.current.source === 'openai-realtime') return;
-            speechSnapshotRef.current = { ...snapshot, error: null, ended: false, source: 'browser-live' };
-            setLiveTranscript(snapshot.transcript);
-            setLivePreview(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
-            tryFinishFastResult(false);
+            browserError = '';
+            const next = { ...snapshot, error: null, ended: false, source: 'browser-live' };
+            browserSpeechSnapshotRef.current = next;
+            if (speechSnapshotRef.current.source !== 'openai-realtime' || realtimeSpeechSnapshotRef.current.error) {
+              publishSpeechSnapshot(next);
+              setVoicePath('browser-live');
+              if (!realtimeSpeechSnapshotRef.current.error) setLiveVoiceNote('');
+            }
           },
           onError: (error) => {
-            if (speechSnapshotRef.current.source === 'openai-realtime') return;
-            speechSnapshotRef.current = { ...speechSnapshotRef.current, error };
-            setLiveVoiceNote(liveSpeechErrorMessage(error));
+            browserError = error;
+            browserSpeechSnapshotRef.current = { ...browserSpeechSnapshotRef.current, error };
+            if (speechSnapshotRef.current.source !== 'openai-realtime') {
+              speechSnapshotRef.current = { ...browserSpeechSnapshotRef.current };
+              setLiveVoiceNote(liveSpeechErrorMessage(error));
+            }
           },
           onEnd: () => {
-            if (speechSnapshotRef.current.source === 'openai-realtime') return;
-            speechSnapshotRef.current = { ...speechSnapshotRef.current, ended: true };
-            tryFinishFastResult(false);
+            if (recognitionRef.current === recognizer) recognitionRef.current = null;
+            const restartable = browserRecognitionCanRestart(browserError);
+            if (holdingRef.current && wavRecorderRef.current && restartable) {
+              window.setTimeout(() => {
+                if (holdingRef.current && wavRecorderRef.current && !recognitionRef.current) startBrowserRecognizer();
+              }, 90);
+              return;
+            }
+            const next = { ...browserSpeechSnapshotRef.current, ended: true };
+            browserSpeechSnapshotRef.current = next;
+            if (speechSnapshotRef.current.source !== 'openai-realtime') publishSpeechSnapshot(next);
           },
         });
         recognitionRef.current = recognizer;
-        try { recognizer?.start(); } catch {
-          speechSnapshotRef.current.error = 'start-failed';
+        try {
+          recognizer?.start();
+          if (speechSnapshotRef.current.source !== 'openai-realtime') setVoicePath('browser-live');
+        } catch {
+          recognitionRef.current = null;
+          browserError = 'start-failed';
+          browserSpeechSnapshotRef.current = { ...browserSpeechSnapshotRef.current, error: browserError };
           setLiveVoiceNote(liveSpeechErrorMessage('start-failed'));
         }
       };
@@ -344,6 +415,7 @@ export default function App() {
       startBrowserRecognizer();
       if (realtimeSpeechAvailable()) {
         try {
+          setVoicePath('realtime-connecting');
           let realtime;
           realtime = createRealtimeTranscriber({
             stream,
@@ -358,16 +430,21 @@ export default function App() {
                 ended: snapshot.completed,
                 source: 'openai-realtime',
               };
-              speechSnapshotRef.current = next;
-              setLiveTranscript(next.transcript);
+              realtimeSpeechSnapshotRef.current = next;
+              publishSpeechSnapshot(next);
               setLiveVoiceNote('');
-              setLivePreview(parseFinancialText(next.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
-              tryFinishFastResult(false);
+              setVoicePath('realtime-live');
             },
             onError: (error) => {
               if (realtimeSpeechRef.current !== realtime) return;
               rememberRealtimeFailure(error);
+              realtimeSpeechSnapshotRef.current = { ...realtimeSpeechSnapshotRef.current, error };
+              const fallbackSnapshot = selectVoiceSnapshot({ browser: browserSpeechSnapshotRef.current, realtime: realtimeSpeechSnapshotRef.current, realtimeFailed: true });
+              speechSnapshotRef.current = fallbackSnapshot;
+              if (fallbackSnapshot.transcript) publishSpeechSnapshot(fallbackSnapshot);
+              setVoicePath(liveSpeechSupported() ? 'browser-live' : 'capturing');
               setLiveVoiceNote(liveSpeechErrorMessage(error.code));
+              refreshVoiceSystemStatus();
             },
           });
           realtimeSpeechRef.current = realtime;
@@ -378,7 +455,9 @@ export default function App() {
               realtime.abort();
             }
           });
-        } catch { /* Chrome recognition and the WAV fallback are already running. */ }
+        } catch {
+          setVoicePath(liveSpeechSupported() ? 'browser-live' : 'capturing');
+        }
       }
       maxRecordingTimerRef.current = window.setTimeout(() => {
         holdingRef.current = false;
@@ -390,6 +469,7 @@ export default function App() {
     } catch (error) {
       cleanupMedia();
       setRecordState('idle');
+      setVoicePath('ready');
       setFailure({ permission: true, message: error.name === 'NotAllowedError' ? 'اجازهٔ میکروفن خاموش است.' : 'میکروفن در دسترس نیست.' });
     }
   };
@@ -467,7 +547,8 @@ export default function App() {
               data={data} loading={loading} manualText={manualText} setManualText={setManualText}
               parseManual={parseManual} recordState={recordState}
               stopRecording={stopRecording} cancelProcessing={cancelProcessing} beginRecording={() => { holdingRef.current = true; startRecording(); }}
-              levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
+              levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable}
+              voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
             />
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} />}
@@ -494,7 +575,7 @@ export default function App() {
   );
 }
 
-function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, openDrawer, readOnly = false }) {
+function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false }) {
   return (
     <main className="mx-auto w-full max-w-[760px]">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line/80 bg-paper/95 px-4 py-3 backdrop-blur-sm">
@@ -519,7 +600,7 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
           </div>
         </form>
 
-        <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} disabled={readOnly} />
+        <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} disabled={readOnly} />
       </div>
     </main>
   );
@@ -558,43 +639,66 @@ function TransactionList({ items, loading }) {
   ))}</div>;
 }
 
-function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, disabled = false }) {
+function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath = 'ready', voiceSystemStatus, disabled = false }) {
   const recording = state === 'recording';
   const processing = state === 'processing';
   const requesting = state === 'requesting';
   const finalizing = state === 'finalizing';
+  const pointerRef = useRef({ action: '', startedAt: 0 });
+  const availability = voiceSystemStatus
+    ? describeVoiceAvailability(voiceSystemStatus, { browserSupported: liveSpeechSupported() })
+    : [{ tone: 'neutral', label: 'در حال بررسی مسیرهای صدا…' }];
   const press = (event) => {
     if (disabled || processing || finalizing || requesting) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
+    if (recording) {
+      pointerRef.current = { action: 'stopped', startedAt: Date.now() };
+      stop();
+      return;
+    }
+    pointerRef.current = { action: 'started', startedAt: Date.now() };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     start();
   };
   const release = (event) => {
     event?.preventDefault?.();
+    const gesture = pointerRef.current;
+    pointerRef.current = { action: '', startedAt: 0 };
     if (event?.currentTarget?.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    stop();
+    if (gesture.action === 'started' && pointerReleaseAction(Date.now() - gesture.startedAt) === 'stop') stop();
+  };
+  const cancelPointer = (event) => {
+    event?.preventDefault?.();
+    const started = pointerRef.current.action === 'started';
+    pointerRef.current = { action: '', startedAt: 0 };
+    if (started) stop();
   };
   const keyDown = (event) => {
     if (disabled || ![' ', 'Enter'].includes(event.key) || event.repeat || processing || finalizing || requesting) return;
     event.preventDefault();
-    start();
+    if (event.key === 'Enter' && recording) stop();
+    else start();
   };
   const keyUp = (event) => {
-    if (![' ', 'Enter'].includes(event.key)) return;
+    if (event.key !== ' ') return;
     event.preventDefault();
     stop();
   };
   return (
     <section className="voice-dock flex flex-col items-center py-2">
+      <div className="mb-2 flex max-w-full flex-wrap items-center justify-center gap-1.5 text-[11px]">
+        <span className={`rounded-full border px-2.5 py-1 font-bold ${['browser-live', 'realtime-live'].includes(voicePath) ? 'border-income/40 bg-income/10 text-income' : 'border-line bg-surface text-muted'}`}>{voicePathLabel(voicePath)}</span>
+        {!recording && !requesting && !finalizing && !processing && availability.map((item) => <span key={item.label} className={`rounded-full border px-2.5 py-1 ${item.tone === 'good' ? 'border-income/30 text-income' : item.tone === 'warn' ? 'border-accent/40 text-accent' : 'border-line text-muted'}`}>{item.label}</span>)}
+      </div>
       {(recording || finalizing) && liveTranscript && <div aria-live="polite" className="mb-3 w-full rounded-[10px] border border-line bg-surface px-3 py-3 text-right"><p className="truncate text-sm text-muted">شنیدم: «{liveTranscript}»</p>{livePreview.length > 0 && <p className="numbers mt-2 text-lg font-extrabold text-ink">{livePreview.map((item) => formatAmount(item.amount)).join(' + ')} <span className="font-normal text-[12px] text-muted">تومان</span></p>}</div>}
-      {(recording || finalizing) && liveVoiceNote && !liveTranscript && <p role="status" className="mb-3 rounded-lg bg-warn-bg px-3 py-2 text-center text-[13px] leading-6 text-expense">{liveVoiceNote}</p>}
-      <p className="mb-3 text-center text-[13px] text-muted">{disabled ? 'ضبط برای نقش فقط مشاهده غیرفعال است' : recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دستت را برداری تمام می‌شود' : 'در حال ضبط — دستت را برداری تمام می‌شود') : processing ? 'صدای ضبط‌شده در حال تبدیل به متن است…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'دکمه را نگه دار؛ میکروفن در حال فعال‌شدن است…' : 'دکمه را نگه دار و بگو؛ برای پایان دستت را بردار'}</p>
+      {(recording || finalizing) && liveVoiceNote && <p role="status" className="mb-3 rounded-lg bg-warn-bg px-3 py-2 text-center text-[13px] leading-6 text-expense">{liveVoiceNote}</p>}
+      <p className="mb-3 text-center text-[13px] text-muted">{disabled ? 'ضبط برای نقش فقط مشاهده غیرفعال است' : recording ? (fastVoiceAvailable ? 'در حال ضبط زنده — دوباره لمس کن یا اگر نگه داشته‌ای، رها کن' : 'در حال ضبط — دوباره لمس کن تا تمام شود') : processing ? 'صدای ضبط‌شده در حال تبدیل به متن است…' : finalizing ? 'در حال نهایی‌کردن عدد…' : requesting ? 'میکروفن در حال فعال‌شدن است…' : 'یک‌بار لمس کن و صحبت کن؛ یا نگه دار و برای پایان رها کن'}</p>
       <button
-        type="button" aria-pressed={recording} aria-label={processing ? 'لغو پردازش' : recording ? 'در حال ضبط؛ برای پایان دستت را بردار' : 'برای ضبط نگه دار'} disabled={disabled || finalizing}
+        type="button" aria-pressed={recording} aria-label={processing ? 'لغو پردازش' : recording ? 'پایان ضبط' : 'شروع ضبط صوتی'} disabled={disabled || finalizing}
         onClick={processing ? cancel : undefined}
-        onPointerDown={press} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={stop}
-        onKeyDown={keyDown} onKeyUp={keyUp} onBlur={stop}
+        onPointerDown={press} onPointerUp={release} onPointerCancel={cancelPointer}
+        onKeyDown={keyDown} onKeyUp={keyUp}
         onContextMenu={(event) => event.preventDefault()} onDragStart={(event) => event.preventDefault()}
         className={`relative grid touch-none select-none place-items-center rounded-full text-white shadow-paper transition-all disabled:opacity-70 ${recording ? 'record-pulse h-20 w-20 bg-expense' : processing ? 'h-[72px] w-[72px] bg-expense' : 'h-[72px] w-[72px] bg-accent'}`}
       >
@@ -816,7 +920,7 @@ function SettingsPage({ initial, accounts = [], notify, refresh, onLogout, canMa
     <section className="mt-5 border-y border-line py-4">
       <h2 className="font-extrabold">دقت صوت و حریم خصوصی</h2>
       <p className="mt-2 text-sm leading-7 text-muted">تشخیص اصلی با مدل تخصصی گفتار فارسی انجام می‌شود و مبلغ با قواعد قطعی استخراج می‌شود. اگر سرویس اصلی در دسترس نباشد، مسیر پشتیبان فعال می‌شود. کلیدها فقط روی سرور می‌مانند.</p>
-      {stats && <div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.total || 0)}</b><span className="text-[11px] text-muted">پردازش</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageLatency || 0)}</b><span className="text-[11px] text-muted">میلی‌ثانیه</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.reviewed || 0)}</b><span className="text-[11px] text-muted">نیاز به اصلاح</span></div></div>}
+      {stats && <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4"><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.total || 0)}</b><span className="text-[11px] text-muted">پردازش</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageFirstTranscript || 0)}</b><span className="text-[11px] text-muted">اولین متن؛ ms</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageLatency || 0)}</b><span className="text-[11px] text-muted">نتیجه؛ ms</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.reviewed || 0)}</b><span className="text-[11px] text-muted">نیاز به اصلاح</span></div></div>}
     </section>
     <section className="mt-5 rounded-[10px] border border-line bg-surface p-4"><h2 className="font-extrabold">محدوده محصول</h2><p className="mt-2 text-[13px] leading-6 text-muted">{PRODUCT_POSITIONING.accountingDisclaimer}</p></section>
     <button onClick={onLogout} className="tap mt-5 w-full rounded-lg border border-expense/40 bg-surface font-bold text-expense">خروج از حساب</button>

@@ -4,6 +4,10 @@ export function liveSpeechSupported() {
   return typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 }
 
+export function browserRecognitionCanRestart(errorCode = '') {
+  return !errorCode || errorCode === 'no-speech' || errorCode === 'aborted';
+}
+
 const SPEECH_ERROR_MESSAGES = {
   'no-speech': 'تشخیص زنده صدای واضحی نشنید؛ فایل صوتی روی سرور بررسی می‌شود.',
   network: 'سرویس زندهٔ مرورگر در دسترس نیست؛ فایل صوتی روی سرور بررسی می‌شود.',

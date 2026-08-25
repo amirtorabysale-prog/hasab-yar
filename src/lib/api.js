@@ -56,7 +56,16 @@ async function request(path, options = {}) {
     window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
   }
   if (response.status === 403 && body.code === 'CSRF_INVALID') rememberCsrfToken('');
-  if (!response.ok) throw Object.assign(new Error(body.message || 'خطا در ارتباط با سرور'), { status: response.status, code: body.code });
+  if (!response.ok) {
+    const retryAfterHeader = Number(response.headers.get('retry-after'));
+    throw Object.assign(new Error(body.message || 'خطا در ارتباط با سرور'), {
+      status: response.status,
+      code: body.code,
+      provider: body.provider,
+      requiresAction: Boolean(body.requiresAction),
+      retryAfterSeconds: Number(body.retryAfterSeconds) || (Number.isFinite(retryAfterHeader) ? retryAfterHeader : 0),
+    });
+  }
   return body;
 }
 
@@ -177,6 +186,7 @@ export const api = {
   adjustStock: (id, quantity, note = '', unitCost = null) => request(`/api/products/${id}/stock`, { method: 'POST', body: JSON.stringify({ quantity, note, unitCost }) }),
   ask: (question) => request('/api/ask', { method: 'POST', body: JSON.stringify({ question }) }),
   voiceStats: () => request('/api/voice/stats'),
+  voiceStatus: () => request('/api/voice/status'),
   learnings: () => request('/api/learnings'),
   saveLearning: (payload) => request('/api/learnings', { method: 'POST', body: JSON.stringify(payload) }),
   updateLearning: (id, payload) => request(`/api/learnings/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

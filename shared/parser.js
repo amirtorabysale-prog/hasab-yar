@@ -13,7 +13,7 @@ const VALUES = {
 const FRACTIONS = { نیم: 0.5, نصف: 0.5 };
 const SCALES = { هزار: 1_000, هزارتا: 1_000, میلیون: 1_000_000, میلیارد: 1_000_000_000 };
 const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS), ...Object.keys(SCALES)]);
-const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'دخل', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد'];
+const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'دخل', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد'];
 const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
 const CATEGORY_RULES = [
   ['فروش', ['فروش', 'فروختم']],
@@ -54,11 +54,22 @@ function parseNumericToken(token) {
 }
 
 export function wordsToNumber(tokens) {
+  const normalizedTokens = tokens.map(normalizePersian).filter(Boolean);
+  const shorthandSeparator = normalizedTokens.lastIndexOf('و');
+  const hasExplicitScale = normalizedTokens.some((token) => SCALES[token] || FRACTIONS[token] != null);
+  if (!hasExplicitScale && shorthandSeparator > 0 && shorthandSeparator < normalizedTokens.length - 1) {
+    const leading = wordsToNumber(normalizedTokens.slice(0, shorthandSeparator));
+    const trailing = wordsToNumber(normalizedTokens.slice(shorthandSeparator + 1));
+    // در گفتار مالی «یک و دویست» یا «دوازده و پونصد» به‌ترتیب
+    // ۱٫۲ و ۱۲٫۵ میلیون تومان است. شرط‌ها مانع تبدیل «صد و بیست» می‌شوند.
+    if (leading > 0 && leading < 100 && trailing >= 100 && trailing < 1_000) {
+      return Math.round(leading * 1_000_000 + trailing * 1_000);
+    }
+  }
   let total = 0;
   let current = 0;
   let lastLargeScale = 0;
-  for (const rawToken of tokens) {
-    const token = normalizePersian(rawToken);
+  for (const token of normalizedTokens) {
     if (!token || token === 'و') continue;
     const numeric = parseNumericToken(token);
     if (numeric != null) current += numeric;
@@ -126,12 +137,20 @@ export function extractAmounts(input) {
     }
     const amount = wordsToNumber(collected);
     if (amount > 0) {
-      const span = { amount, start: token.start, end };
+      const span = { amount, start: token.start, end, raw: text.slice(token.start, end) };
       if (!isNonAmountSpan(text, span)) spans.push(span);
     }
     index = cursor - 1;
   }
-  return { text, spans };
+  const financialNouns = /فروش|خرید|هزینه|پرداخت|دریافت|واریز|تراکنش/;
+  const filteredSpans = spans.filter((span, index) => {
+    const next = spans[index + 1];
+    if (!next || span.amount >= 100) return true;
+    const between = text.slice(span.end, next.start);
+    // «یه فروش یک و دویست»؛ «یه» شمارندهٔ رویداد است، نه یک تومان.
+    return !financialNouns.test(between);
+  });
+  return { text, spans: filteredSpans };
 }
 
 export function inferLearningKeyword(input) {
@@ -169,15 +188,24 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const context = containsAny(afterAmount, signalWords) ? afterAmount : `${beforeAmount} ${afterAmount}`.trim();
     const classified = classify(context, learnings);
     let amount = span.amount;
+    const colloquialThousands = source === 'voice'
+      && amount >= 100 && amount < 1_000
+      && !/\d|هزار|میلیون|میلیارد/.test(span.raw)
+      && /تومان|تومن/.test(context);
+    if (colloquialThousands) amount *= 1_000;
     if (context.includes('ریال') && !containsAny(context, ['تومان', 'تومن'])) amount = Math.round(amount / 10);
     const average = Number(averages[classified.type] || 0);
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
     return {
       amount, type: classified.type, category: classified.category, rawText: context || text,
-      confidence: classified.confidence, needsReview: unusual || ambiguous, source,
-      warning: unusual ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟' : ambiguous ? 'نوع این تراکنش با اطمینان کم تشخیص داده شد؛ لطفاً بررسی کن.' : null,
-      alternatives: [],
+      confidence: classified.confidence, needsReview: unusual || ambiguous || colloquialThousands, source,
+      warning: unusual
+        ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟'
+        : colloquialThousands
+          ? `«${span.raw} تومان» به‌صورت محاوره‌ای ${new Intl.NumberFormat('fa-IR').format(amount)} تومان برداشت شد؛ مبلغ را بررسی کن.`
+          : ambiguous ? 'نوع این تراکنش با اطمینان کم تشخیص داده شد؛ لطفاً بررسی کن.' : null,
+      alternatives: colloquialThousands ? [span.amount] : [],
     };
   });
   return { transcript: text, transactions };

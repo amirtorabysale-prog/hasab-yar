@@ -204,6 +204,7 @@ db.exec(`
     provider TEXT NOT NULL,
     model TEXT NOT NULL DEFAULT '',
     duration_ms INTEGER NOT NULL DEFAULT 0,
+    first_transcript_ms INTEGER NOT NULL DEFAULT 0,
     latency_ms INTEGER NOT NULL DEFAULT 0,
     transaction_count INTEGER NOT NULL DEFAULT 0,
     needs_review INTEGER NOT NULL DEFAULT 0,
@@ -250,6 +251,10 @@ function ensureColumnOn(database, table, definition) {
   }
 }
 
+function ensureVoiceMetricSchema(database) {
+  ensureColumnOn(database, 'voice_metrics', 'first_transcript_ms INTEGER NOT NULL DEFAULT 0');
+}
+
 function ensureInvoiceSchema(database) {
   ensureColumnOn(database, 'invoices', "document_type TEXT NOT NULL DEFAULT 'sales' CHECK(document_type IN ('sales','purchase'))");
   ensureColumnOn(database, 'invoices', "category TEXT NOT NULL DEFAULT 'فروش'");
@@ -285,6 +290,7 @@ ensureColumn('transactions', 'updated_at TEXT');
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
+ensureVoiceMetricSchema(controlDb);
 ensureAccountingSchema(controlDb);
 ensureInvoiceSchema(controlDb);
 ensureReconciliationSchema(controlDb);
@@ -341,6 +347,7 @@ function workspaceDatabase(workspaceId) {
     settingInsert.run('accountOpeningMigrated', 'true');
   }
   ensureAccountingSchema(database);
+  ensureVoiceMetricSchema(database);
   ensureInvoiceSchema(database);
   ensureReconciliationSchema(database);
   ensureInventorySchema(database);
@@ -1336,16 +1343,17 @@ export function answerFinancialQuestion(question = '') {
 }
 
 export function recordVoiceMetric(values = {}) {
-  db.prepare(`INSERT INTO voice_metrics (id,provider,model,duration_ms,latency_ms,transaction_count,needs_review,succeeded,error_code)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(randomUUID(), String(values.provider || 'unknown').slice(0, 40), String(values.model || '').slice(0, 100), Math.max(0, Number(values.durationMs) || 0), Math.max(0, Number(values.latencyMs) || 0), Math.max(0, Number(values.transactionCount) || 0), values.needsReview ? 1 : 0, values.succeeded === false ? 0 : 1, String(values.errorCode || '').slice(0, 80));
+  db.prepare(`INSERT INTO voice_metrics (id,provider,model,duration_ms,first_transcript_ms,latency_ms,transaction_count,needs_review,succeeded,error_code)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(), String(values.provider || 'unknown').slice(0, 40), String(values.model || '').slice(0, 100), Math.max(0, Number(values.durationMs) || 0), Math.max(0, Number(values.firstTranscriptMs) || 0), Math.max(0, Number(values.latencyMs) || 0), Math.max(0, Number(values.transactionCount) || 0), values.needsReview ? 1 : 0, values.succeeded === false ? 0 : 1, String(values.errorCode || '').slice(0, 80));
 }
 
 export function voiceStats() {
   const totals = db.prepare(`SELECT COUNT(*) AS total,SUM(succeeded) AS succeeded,
     ROUND(AVG(CASE WHEN succeeded=1 THEN latency_ms END)) AS averageLatency,
+    ROUND(AVG(CASE WHEN first_transcript_ms>0 THEN first_transcript_ms END)) AS averageFirstTranscript,
     SUM(needs_review) AS reviewed,
-    SUM(CASE WHEN provider='browser-live' THEN 1 ELSE 0 END) AS fastPath,
-    ROUND(100.0*SUM(CASE WHEN provider='browser-live' THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS fastPathRate
+    SUM(CASE WHEN provider IN ('browser-live','openai-realtime') THEN 1 ELSE 0 END) AS fastPath,
+    ROUND(100.0*SUM(CASE WHEN provider IN ('browser-live','openai-realtime') THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS fastPathRate
     FROM voice_metrics`).get();
   const providers = db.prepare(`SELECT provider,model,COUNT(*) AS count,ROUND(AVG(latency_ms)) AS averageLatency,
     ROUND(100.0*SUM(succeeded)/COUNT(*),1) AS successRate FROM voice_metrics GROUP BY provider,model ORDER BY count DESC`).all();
