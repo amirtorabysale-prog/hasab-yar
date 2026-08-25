@@ -1171,7 +1171,7 @@ export function closeBankReconciliation(importId) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-export function closeDay(values = {}) {
+export function previewDayClosing(values = {}) {
   const day = String(values.day || localDay()).slice(0, 10);
   const bounds = dayBounds(day);
   const previous = db.prepare('SELECT day,counted_cash AS countedCash FROM daily_closings WHERE day<? ORDER BY day DESC LIMIT 1').get(day);
@@ -1183,6 +1183,12 @@ export function closeDay(values = {}) {
     : db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
       FROM transactions WHERE status!='deleted' AND account_id='cash' AND occurred_at<?`).get(bounds.endExclusive);
   const expectedCash = Number(previous?.countedCash ?? cashAccount?.openingBalance ?? 0) + Number(totals.net || 0);
+  return { day, expectedCash, previousDay: previous?.day || null, previousCountedCash: previous?.countedCash ?? null };
+}
+
+export function closeDay(values = {}) {
+  const preview = previewDayClosing(values);
+  const { day, expectedCash } = preview;
   const countedCash = Math.max(0, Math.round(Number(values.countedCash) || 0));
   const difference = countedCash - expectedCash;
   const id = randomUUID();

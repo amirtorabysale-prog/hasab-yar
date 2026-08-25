@@ -45,7 +45,10 @@ test('daily closing carries the previous counted cash instead of reusing opening
   core.insertTransactions({ transcript: 'روز اول', transactions: [
     { amount: 500_000, type: 'income', category: 'فروش', occurredAt: '2026-08-22T10:00:00.000Z' },
   ] });
+  const preview = core.previewDayClosing({ day: '2026-08-22' });
+  assert.equal(core.listDailyClosings().length, 0);
   const first = core.closeDay({ day: '2026-08-22', countedCash: 1_500_000 });
+  assert.equal(preview.expectedCash, first.expectedCash);
   assert.equal(first.expectedCash, 1_100_000);
 
   core.saveSettings({ openingBalance: 9_000_000 });

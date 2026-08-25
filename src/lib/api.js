@@ -176,6 +176,7 @@ export const api = {
   ignoreReconciliationLine: (id, reason) => request(`/api/reconciliation/lines/${id}/ignore`, { method: 'POST', body: JSON.stringify({ reason }) }),
   closeReconciliation: (id) => request(`/api/reconciliation/imports/${id}/close`, { method: 'POST', body: '{}' }),
   closings: () => request('/api/closings'),
+  closingPreview: (day = '') => request(`/api/closings/preview${day ? `?day=${encodeURIComponent(day)}` : ''}`),
   closeDay: (payload) => request('/api/closings', { method: 'POST', body: JSON.stringify(payload) }),
   receipts: () => request('/api/receipts'),
   saveReceipt: (image, note = '') => { const form = new FormData(); form.append('image', image); form.append('note', note); return request('/api/receipts', { method: 'POST', body: form }); },
