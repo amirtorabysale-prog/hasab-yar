@@ -22,6 +22,7 @@ import {
   calculateInvoiceTax, ensureTaxSchema, listTaxRates as listTaxRatesCore, saveTaxRate as saveTaxRateCore,
   taxReport as taxReportCore,
 } from './tax.js';
+import { normalizePersian } from '../shared/parser.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -68,6 +69,10 @@ db.exec(`
     source TEXT NOT NULL DEFAULT 'text' CHECK(source IN ('voice','text','offline')),
     confidence REAL NOT NULL DEFAULT 1,
     needs_review INTEGER NOT NULL DEFAULT 0,
+    confidence_details TEXT NOT NULL DEFAULT '{}',
+    review_reasons TEXT NOT NULL DEFAULT '[]',
+    review_state TEXT NOT NULL DEFAULT 'ready',
+    restored_from TEXT,
     account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT,
     occurred_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -255,6 +260,14 @@ function ensureVoiceMetricSchema(database) {
   ensureColumnOn(database, 'voice_metrics', 'first_transcript_ms INTEGER NOT NULL DEFAULT 0');
 }
 
+function ensureTransactionReviewSchema(database) {
+  ensureColumnOn(database, 'transactions', "confidence_details TEXT NOT NULL DEFAULT '{}'");
+  ensureColumnOn(database, 'transactions', "review_reasons TEXT NOT NULL DEFAULT '[]'");
+  ensureColumnOn(database, 'transactions', "review_state TEXT NOT NULL DEFAULT 'ready'");
+  ensureColumnOn(database, 'transactions', 'restored_from TEXT');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_transactions_restored_from ON transactions(restored_from)');
+}
+
 function ensureInvoiceSchema(database) {
   ensureColumnOn(database, 'invoices', "document_type TEXT NOT NULL DEFAULT 'sales' CHECK(document_type IN ('sales','purchase'))");
   ensureColumnOn(database, 'invoices', "category TEXT NOT NULL DEFAULT 'فروش'");
@@ -290,6 +303,7 @@ ensureColumn('transactions', 'updated_at TEXT');
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
+ensureTransactionReviewSchema(controlDb);
 ensureVoiceMetricSchema(controlDb);
 ensureAccountingSchema(controlDb);
 ensureInvoiceSchema(controlDb);
@@ -347,6 +361,7 @@ function workspaceDatabase(workspaceId) {
     settingInsert.run('accountOpeningMigrated', 'true');
   }
   ensureAccountingSchema(database);
+  ensureTransactionReviewSchema(database);
   ensureVoiceMetricSchema(database);
   ensureInvoiceSchema(database);
   ensureReconciliationSchema(database);
@@ -576,11 +591,13 @@ export function getToday() {
   const { start, endExclusive } = dayBounds(today);
   const transactions = db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
-    transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.contact_id AS contactId,
-    contacts.name AS contactName
-    FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id
+    transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
+    transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
+    transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.account_id AS accountId,
+    accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
+    FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
     WHERE transactions.occurred_at>=? AND transactions.occurred_at<? AND transactions.status!='deleted'
-    ORDER BY transactions.occurred_at DESC`).all(start, endExclusive);
+    ORDER BY transactions.occurred_at DESC,transactions.created_at DESC`).all(start, endExclusive).map(hydrateTransaction);
   const totals = summarize(transactions);
   const previousBounds = dayBounds(addLocalDays(today, -1));
   const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
@@ -604,10 +621,19 @@ function resolveAccountId(item = {}) {
   return account.id;
 }
 
+function normalizeReviewState(value, fallback = 'ready') {
+  return ['ready', 'review', 'unintelligible', 'reviewed', 'duplicate-confirmed'].includes(value) ? value : fallback;
+}
+
+function jsonText(value, fallback) {
+  try { return JSON.stringify(value ?? fallback); }
+  catch { return JSON.stringify(fallback); }
+}
+
 function insertTransactionRows({ transcript, transactions }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
-    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const ids = [];
   for (const item of transactions) {
     const id = randomUUID();
@@ -617,7 +643,14 @@ function insertTransactionRows({ transcript, transactions }) {
     const occurredAt = item.occurredAt || new Date().toISOString();
     assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
-    const result = insert.run(id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80), String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1), item.needsReview ? 1 : 0, occurredAt, item.contactId || null, accountId, accountId, String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt);
+    const reviewState = normalizeReviewState(item.reviewState, item.needsReview ? 'review' : 'ready');
+    const result = insert.run(
+      id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80),
+      String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1),
+      item.needsReview ? 1 : 0, jsonText(item.confidenceDetails, {}), jsonText(item.reviewReasons, []), reviewState,
+      item.restoredFrom || null, occurredAt, item.contactId || null, accountId, accountId,
+      String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt,
+    );
     if (result.changes) {
       ids.push(id);
       audit('create', 'transaction', id, { amount, type: item.type, category: item.category });
@@ -633,10 +666,51 @@ function insertTransactionRows({ transcript, transactions }) {
 export function insertTransactions(payload) {
   db.exec('BEGIN IMMEDIATE');
   try {
-    const ids = insertTransactionRows(payload);
+    // Public transaction writes may describe review metadata, but cannot forge an
+    // internal restore link, allocation status or bypass the accounting journal.
+    const transactions = (payload.transactions || []).map((item) => ({
+      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false,
+    }));
+    const ids = insertTransactionRows({ ...payload, transactions });
     db.exec('COMMIT');
     return ids;
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+function similarityTerms(value) {
+  return new Set(normalizePersian(value).toLowerCase().replace(/[^0-9آ-ی\s]/g, ' ').split(/\s+/).filter((term) => term.length > 1));
+}
+
+function textSimilarity(left, right) {
+  const leftTerms = similarityTerms(left);
+  const rightTerms = similarityTerms(right);
+  if (!leftTerms.size || !rightTerms.size) return 0;
+  const overlap = [...leftTerms].filter((term) => rightTerms.has(term)).length;
+  return overlap / (leftTerms.size + rightTerms.size - overlap);
+}
+
+export function findPotentialDuplicates(transactions = [], { windowMinutes = 5 } = {}) {
+  const duplicates = [];
+  for (const [inputIndex, item] of transactions.entries()) {
+    if (item.clientId && db.prepare('SELECT 1 FROM transactions WHERE client_id=?').get(item.clientId)) continue;
+    const amount = Math.round(Number(item.amount));
+    if (!Number.isSafeInteger(amount) || !['income', 'expense'].includes(item.type)) continue;
+    const occurredAt = item.occurredAt || new Date().toISOString();
+    const accountId = resolveAccountId(item);
+    const incomingText = String(item.rawText || '');
+    const candidates = db.prepare(`SELECT id,amount,type,category,raw_text AS rawText,occurred_at AS occurredAt,
+      account_id AS accountId FROM transactions
+      WHERE status!='deleted' AND amount=? AND type=? AND account_id=?
+        AND ABS((julianday(occurred_at)-julianday(?))*1440)<=?
+      ORDER BY occurred_at DESC LIMIT 8`).all(amount, item.type, accountId, occurredAt, Math.max(1, Number(windowMinutes) || 5));
+    for (const candidate of candidates) {
+      const similarity = textSimilarity(`${incomingText} ${item.category || ''}`, `${candidate.rawText} ${candidate.category || ''}`);
+      if (similarity < 0.42) continue;
+      duplicates.push({ inputIndex, ...candidate, similarity: Math.round(similarity * 100) });
+      break;
+    }
+  }
+  return duplicates;
 }
 
 export function getLearnings() {
@@ -715,14 +789,49 @@ function cleanAmount(value) {
   return amount;
 }
 
-function transactionRow(id) {
-  return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
+function parseStoredJson(value, fallback) {
+  if (value && typeof value === 'object') return value;
+  try { return JSON.parse(value || '') ?? fallback; }
+  catch { return fallback; }
+}
+
+function hydrateTransaction(item) {
+  if (!item) return null;
+  return {
+    ...item,
+    needsReview: Boolean(item.needsReview),
+    confidenceDetails: parseStoredJson(item.confidenceDetails, {}),
+    reviewReasons: parseStoredJson(item.reviewReasons, []),
+  };
+}
+
+function transactionQuery(includeDeleted = false) {
+  return `SELECT transactions.id,transactions.client_id AS clientId,transactions.amount,transactions.type,transactions.category,
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
+    transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
+    transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
     transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,transactions.status,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName,transactions.due_at AS dueAt
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
-    WHERE transactions.id=? AND transactions.status!='deleted'`).get(id) || null;
+    WHERE transactions.id=?${includeDeleted ? '' : " AND transactions.status!='deleted'"}`;
+}
+
+function transactionRow(id) {
+  return hydrateTransaction(db.prepare(transactionQuery(false)).get(id));
+}
+
+function transactionAnyRow(id) {
+  return hydrateTransaction(db.prepare(transactionQuery(true)).get(id));
+}
+
+export function getTransaction(id) {
+  return transactionRow(id);
+}
+
+export function latestTransaction() {
+  const row = db.prepare(`SELECT id FROM transactions WHERE status!='deleted' ORDER BY created_at DESC,rowid DESC LIMIT 1`).get();
+  return row ? transactionRow(row.id) : null;
 }
 
 export function listTransactions({ query = '', type = '', category = '', from = '', to = '', page = 1, limit = 30 } = {}) {
@@ -742,13 +851,15 @@ export function listTransactions({ query = '', type = '', category = '', from = 
   const where = clauses.join(' AND ');
   const total = db.prepare(`SELECT COUNT(*) AS count FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id WHERE ${where}`).get(...values).count;
   const items = db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
-    transactions.raw_text AS rawText,transactions.source,transactions.needs_review AS needsReview,
+    transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
+    transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
+    transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.status,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
     WHERE ${where} ORDER BY transactions.occurred_at DESC LIMIT ? OFFSET ?`)
-    .all(...values, safeLimit, (safePage - 1) * safeLimit);
+    .all(...values, safeLimit, (safePage - 1) * safeLimit).map(hydrateTransaction);
   return { items, total, page: safePage, pages: Math.max(1, Math.ceil(total / safeLimit)) };
 }
 
@@ -764,16 +875,43 @@ export function updateTransaction(id, values = {}) {
   assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
   const category = String(values.category || current.category).slice(0, 80);
   const rawText = String(values.rawText ?? current.rawText).slice(0, 1000);
+  const changedByUser = ['amount', 'type', 'category', 'accountId', 'account'].some((field) => values[field] !== undefined);
+  const needsReview = values.needsReview === undefined ? (changedByUser ? false : current.needsReview) : Boolean(values.needsReview);
+  const confidence = Number(values.confidence ?? current.confidence ?? 1);
+  const confidenceDetails = values.confidenceDetails ?? current.confidenceDetails ?? {};
+  const reviewReasons = values.reviewReasons ?? current.reviewReasons ?? [];
+  const reviewState = normalizeReviewState(values.reviewState, changedByUser ? 'reviewed' : current.reviewState);
   db.exec('BEGIN IMMEDIATE');
   try {
     reverseTransactionJournal(db, id, current.occurredAt, { createdBy: currentWorkspace()?.userId });
-    db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,account_id=?,contact_id=?,occurred_at=?,due_at=?,updated_at=? WHERE id=?`)
-      .run(amount, type, category, rawText, String(values.note ?? current.note ?? '').slice(0, 500), accountId, accountId, values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt, values.dueAt === undefined ? current.dueAt : (values.dueAt || null), new Date().toISOString(), id);
+    db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,account_id=?,contact_id=?,occurred_at=?,due_at=?,
+      confidence=?,needs_review=?,confidence_details=?,review_reasons=?,review_state=?,updated_at=? WHERE id=?`)
+      .run(amount, type, category, rawText, String(values.note ?? current.note ?? '').slice(0, 500), accountId, accountId,
+        values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt,
+        values.dueAt === undefined ? current.dueAt : (values.dueAt || null), confidence, needsReview ? 1 : 0,
+        jsonText(confidenceDetails, {}), jsonText(reviewReasons, []), reviewState, new Date().toISOString(), id);
     syncTransactionJournal(db, { id, amount, type, category, rawText, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
     audit('update', 'transaction', id, { before: current, after: values });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return transactionRow(id);
+}
+
+export function correctLatestTransaction(targetId, command, changes = {}) {
+  const latest = latestTransaction();
+  if (!latest) throw Object.assign(new Error('هنوز ثبتی برای اصلاح وجود ندارد.'), { code: 'LATEST_TRANSACTION_MISSING', status: 404 });
+  if (!targetId || latest.id !== targetId) throw Object.assign(new Error('در این فاصله ثبت تازه‌ای اضافه شده؛ اصلاح را دوباره بررسی کن.'), { code: 'LATEST_TRANSACTION_CHANGED', status: 409 });
+  const allowed = Object.fromEntries(Object.entries(changes).filter(([key]) => ['amount', 'type', 'category', 'accountId'].includes(key)));
+  if (!Object.keys(allowed).length) throw Object.assign(new Error('تغییر قابل‌اعمالی در فرمان پیدا نشد.'), { code: 'CORRECTION_EMPTY', status: 400 });
+  const item = updateTransaction(targetId, {
+    ...allowed,
+    rawText: `${latest.rawText}\nاصلاح گفتاری: ${String(command || '').trim()}`,
+    needsReview: false,
+    reviewState: 'reviewed',
+    reviewReasons: [...(latest.reviewReasons || []), `اصلاح با فرمان کاربر: ${String(command || '').trim()}`],
+  });
+  audit('conversation_correction', 'transaction', targetId, { command: String(command || '').slice(0, 500), changes: allowed });
+  return item;
 }
 
 export function deleteTransaction(id) {
@@ -789,6 +927,26 @@ export function deleteTransaction(id) {
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return true;
+}
+
+export function redoTransaction(id) {
+  const current = transactionAnyRow(id);
+  if (!current || current.status !== 'deleted') throw Object.assign(new Error('ثبت حذف‌شده برای بازیابی پیدا نشد.'), { code: 'REDO_SOURCE_MISSING', status: 404 });
+  const alreadyRestored = db.prepare("SELECT id FROM transactions WHERE restored_from=? AND status!='deleted' ORDER BY created_at DESC LIMIT 1").get(id);
+  if (alreadyRestored) throw Object.assign(new Error('این ثبت قبلاً بازیابی شده است.'), { code: 'TRANSACTION_ALREADY_RESTORED', status: 409, details: { id: alreadyRestored.id } });
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const [restoredId] = insertTransactionRows({ transcript: current.rawText, transactions: [{
+      amount: current.amount, type: current.type, category: current.category, rawText: current.rawText,
+      source: current.source, confidence: current.confidence, confidenceDetails: current.confidenceDetails,
+      reviewReasons: [...(current.reviewReasons || []), 'ثبت حذف‌شده با درخواست کاربر دوباره ایجاد شد.'],
+      reviewState: 'reviewed', needsReview: false, accountId: current.accountId, contactId: current.contactId,
+      note: current.note, dueAt: current.dueAt, occurredAt: current.occurredAt, restoredFrom: id,
+    }] });
+    audit('redo', 'transaction', restoredId, { restoredFrom: id });
+    db.exec('COMMIT');
+    return transactionRow(restoredId);
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 export function listContacts() {

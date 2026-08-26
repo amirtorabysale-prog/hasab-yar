@@ -1,4 +1,5 @@
 import { parseFinancialText } from './parser.js';
+import { withReviewAssessment } from '../shared/review.js';
 
 const DEFAULT_MODEL = 'gemini-3.7-flash';
 const SUPPORTED_AUDIO_TYPES = new Set(['audio/wav', 'audio/mp3', 'audio/mpeg', 'audio/aiff', 'audio/aac', 'audio/ogg', 'audio/flac']);
@@ -139,19 +140,32 @@ ${browserHint ? `برداشت ناقص مرورگر فقط برای سرنخ ا�
     parsed.transactions = deterministic.transactions.map((item, index) => {
       const aiAmount = Number(aiTransactions[index]?.amount || 0);
       if (!aiAmount || aiAmount === item.amount) return item;
-      return {
+      return withReviewAssessment({
         ...item,
         alternatives: [Math.round(aiAmount)],
         needsReview: true,
+        confidence: undefined,
+        confidenceDetails: { ...item.confidenceDetails, amount: { score: 0.52, reason: 'تحلیل متن و تحلیل مستقیم صدا دو مبلغ متفاوت پیشنهاد کردند.' } },
+        reviewReasons: [...(item.reviewReasons || []), 'متن و تحلیل صوت دربارهٔ مبلغ اختلاف دارند.'],
         warning: item.warning || 'متن و تحلیل پشتیبان دو مبلغ متفاوت ساختند؛ مبلغ را با دقت بررسی کن.',
-      };
+      });
     });
     return { ...parsed, engine: 'gemini-audio-wav', model };
   }
   parsed.transactions = aiTransactions.map((item) => {
     const average = averages[item.type] || 0;
     const unusual = average > 0 && item.amount >= average * 5;
-    return { ...item, amount: Math.round(item.amount), rawText: parsed.transcript, source: 'voice', needsReview: unusual || item.confidence < 0.78, warning: unusual ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟' : item.confidence < 0.78 ? 'عدد یا نوع تراکنش با اطمینان کم شنیده شد؛ لطفاً بررسی کن.' : null };
+    return withReviewAssessment({
+      ...item, amount: Math.round(item.amount), rawText: parsed.transcript, source: 'voice', needsReview: unusual || item.confidence < 0.78,
+      confidenceDetails: {
+        amount: { score: item.confidence || 0.7, reason: 'مبلغ مستقیماً از تحلیل فایل صوتی استخراج شد.' },
+        type: { score: item.confidence || 0.7, reason: 'نوع مستقیماً از تحلیل فایل صوتی پیشنهاد شد.' },
+        category: { score: item.confidence || 0.7, reason: 'دسته مستقیماً از تحلیل فایل صوتی پیشنهاد شد.' },
+        account: { score: 0.82, reason: 'حساب پیش‌فرض دفتر انتخاب می‌شود؛ قبل از ثبت قابل تغییر است.' },
+      },
+      reviewReasons: unusual ? ['مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.'] : item.confidence < 0.78 ? ['تحلیل مستقیم صوت اطمینان کافی ندارد.'] : [],
+      warning: unusual ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟' : item.confidence < 0.78 ? 'عدد یا نوع تراکنش با اطمینان کم شنیده شد؛ لطفاً بررسی کن.' : null,
+    });
   });
   return { ...parsed, engine: 'gemini-audio-wav', model };
 }

@@ -14,6 +14,40 @@ test('supports searchable transactions with safe update and soft delete', () => 
   assert.equal(core.listTransactions().total, 0);
 });
 
+test('persists explainable review metadata and detects a recent duplicate', () => {
+  const payload = { transcript: 'هشتصد و هشتاد هزار هزینه غذا', transactions: [{
+    amount: 880_000, type: 'expense', category: 'خوراک', rawText: 'هشتصد و هشتاد هزار هزینه غذا',
+    confidence: 0.91, confidenceDetails: { amount: { score: 0.98, reason: 'مبلغ از متن خوانده شد.' } },
+    reviewReasons: ['تست توضیح'], reviewState: 'review', needsReview: true,
+  }] };
+  const [id] = core.insertTransactions(payload);
+  const stored = core.getTransaction(id);
+  assert.equal(stored.reviewState, 'review');
+  assert.equal(stored.confidenceDetails.amount.score, 0.98);
+  assert.deepEqual(stored.reviewReasons, ['تست توضیح']);
+  const duplicates = core.findPotentialDuplicates(payload.transactions);
+  assert.equal(duplicates[0].id, id);
+  assert.ok(duplicates[0].similarity >= 90);
+});
+
+test('binds conversational correction to the current latest transaction', () => {
+  const [id] = core.insertTransactions({ transcript: 'هزینه پیک', transactions: [{ amount: 700_000, type: 'expense', category: 'حمل‌ونقل', rawText: 'هزینه پیک' }] });
+  assert.equal(core.correctLatestTransaction(id, 'نه، هفتصد و پنجاه هزار بود', { amount: 750_000 }).amount, 750_000);
+  const [newerId] = core.insertTransactions({ transcript: 'ثبت جدید', transactions: [{ amount: 25_000, type: 'expense', category: 'سایر هزینه‌ها', rawText: 'ثبت جدید' }] });
+  assert.throws(() => core.correctLatestTransaction(id, 'نه، هشتصد هزار بود', { amount: 800_000 }), (error) => error.code === 'LATEST_TRANSACTION_CHANGED');
+  assert.equal(core.getTransaction(newerId).amount, 25_000);
+});
+
+test('redo creates a new audited transaction instead of undeleting history', () => {
+  const [id] = core.insertTransactions({ transcript: 'ثبت قابل بازگشت', transactions: [{ amount: 330_000, type: 'income', category: 'خدمات', rawText: 'ثبت قابل بازگشت' }] });
+  assert.equal(core.deleteTransaction(id), true);
+  const restored = core.redoTransaction(id);
+  assert.notEqual(restored.id, id);
+  assert.equal(restored.restoredFrom, id);
+  assert.equal(restored.amount, 330_000);
+  assert.throws(() => core.redoTransaction(id), (error) => error.code === 'TRANSACTION_ALREADY_RESTORED');
+});
+
 test('settles receivables into a linked income transaction', () => {
   const contact = core.saveContact({ name: 'حسن مشتری' });
   const debt = core.saveObligation({ title: 'باقی‌مانده فاکتور', amount: 2_000_000, direction: 'receivable', contactId: contact.id });

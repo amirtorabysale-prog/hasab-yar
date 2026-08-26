@@ -14,7 +14,9 @@ import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
 import { describeVoiceAvailability, pointerReleaseAction, voicePathLabel } from './lib/voiceStatus.js';
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from './lib/todayExperience.js';
-import { parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
+import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
+import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
+import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 
 const EMPTY_SUMMARY = { income: 0, expense: 0, netCashFlow: 0, profit: 0, comparison: null };
@@ -48,7 +50,12 @@ export default function App() {
   const [pendingAudioCount, setPendingAudioCount] = useState(0);
   const [closeDayOpen, setCloseDayOpen] = useState(false);
   const [undoSave, setUndoSave] = useState(null);
+  const [redoSave, setRedoSave] = useState(null);
   const [undoing, setUndoing] = useState(false);
+  const [correctionDraft, setCorrectionDraft] = useState(null);
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null);
+  const [learningSuggestion, setLearningSuggestion] = useState(null);
+  const [selectedDecision, setSelectedDecision] = useState(null);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [recordState, setRecordState] = useState('idle');
   const [voicePath, setVoicePath] = useState('ready');
@@ -149,6 +156,12 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [undoSave]);
 
+  useEffect(() => {
+    if (!redoSave) return undefined;
+    const timer = window.setTimeout(() => setRedoSave(null), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [redoSave]);
+
   useEffect(() => () => {
     cancelAnimationFrame(animationRef.current);
     window.clearTimeout(maxRecordingTimerRef.current);
@@ -170,6 +183,26 @@ export default function App() {
     setLevels(Array.from({ length: 7 }, (_, index) => 10 + Math.round((values[index * step] / 255) * 34)));
     animationRef.current = requestAnimationFrame(animateWave);
   };
+
+  const openCorrection = useCallback(async (command) => {
+    if (!online) {
+      setFailure({ transcript: command, message: 'اصلاح آخرین ثبت برای اطمینان از انتخاب رکورد درست، به اتصال اینترنت نیاز دارد.' });
+      return;
+    }
+    try {
+      const result = await api.latestTransaction();
+      if (!result.item) {
+        setFailure({ transcript: command, message: 'هنوز تراکنشی وجود ندارد که اصلاحش کنم.' });
+        return;
+      }
+      const preview = previewCorrection(command, result.item, { learnings: data.learnings, accounts: data.accounts, categories: data.categories });
+      if (!preview.canApply) {
+        setFailure({ transcript: command, message: `${preview.explanation} مثلاً بگو «نه، هفتصد و پنجاه هزار بود» یا «بزن هزینه پیک».` });
+        return;
+      }
+      setCorrectionDraft({ command, current: result.item, preview });
+    } catch (error) { notify(error.message); }
+  }, [data.accounts, data.categories, data.learnings, notify, online]);
 
   const processAudio = async (blob, fallbackReason = '') => {
     if (!online) {
@@ -193,7 +226,8 @@ export default function App() {
         hint: speechSnapshotRef.current.transcript,
         fallbackReason,
       });
-      if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.' });
+      if (isCorrectionCommand(result.transcript)) await openCorrection(result.transcript);
+      else if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.' });
       else setParseResult({ ...result, responseMs: Date.now() - requestedAt });
     } catch (error) {
       if (controller.signal.aborted && controller.signal.reason !== 'timeout') notify('پردازش صدا لغو شد.');
@@ -238,14 +272,16 @@ export default function App() {
       fastFinalizeDoneRef.current = true;
       pendingAudioBlobRef.current = null;
       window.clearTimeout(finalizeTimerRef.current);
-      setParseResult({
+      const reviewedResult = {
         ...result,
         engine: snapshot.source === 'openai-realtime' ? 'openai-realtime+deterministic-parser' : result.engine,
         qualityScore: decision.score,
         reviewReasons: decision.reasons,
         latencyMs: Date.now() - startedAtRef.current,
         responseMs: Date.now() - stoppedAtRef.current,
-      });
+      };
+      if (isCorrectionCommand(result.transcript)) void openCorrection(result.transcript);
+      else setParseResult(reviewedResult);
       if (online) {
         api.recordVoiceMetric({
           provider: snapshot.source === 'openai-realtime' ? 'openai-realtime' : 'browser-live',
@@ -502,26 +538,62 @@ export default function App() {
     stopRecordingNow();
   };
 
-  const parseManual = (event) => {
+  const parseManual = async (event) => {
     event?.preventDefault();
     const text = manualText.trim();
     if (!text) return;
+    if (isCorrectionCommand(text)) {
+      setManualText('');
+      await openCorrection(text);
+      return;
+    }
     const result = parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' });
     if (!result.transactions?.length) setFailure({ transcript: text });
     else { setParseResult({ ...result, engine: 'local-text', latencyMs: 0 }); setManualText(''); }
   };
 
+  const queueLearningSuggestion = (transactions, transcript) => {
+    const corrected = transactions.find((item) => item.originalCategory && item.originalCategory !== item.category);
+    if (!corrected) return;
+    const keyword = inferLearningKeyword(corrected.rawText || transcript);
+    if (keyword.length >= 2) setLearningSuggestion({ keyword, category: corrected.category });
+  };
+
+  const persistConfirmed = async (payload, transactions, allowDuplicates = false) => {
+    const result = await api.saveTransactions({ ...payload, allowDuplicates });
+    setUndoSave({ ids: result.ids || [], count: transactions.length });
+    setRedoSave(null);
+    setDuplicatePrompt(null);
+    setParseResult(null);
+    queueLearningSuggestion(transactions, payload.transcript);
+    await load();
+  };
+
   const saveConfirmed = async (transactions) => {
     const payload = { transcript: parseResult.transcript, transactions };
     try {
-      if (!online) { queueTransactions(payload); notify('ثبت شد؛ بعد از اتصال همگام می‌شود.'); }
-      else {
-        const result = await api.saveTransactions(payload);
-        setUndoSave({ ids: result.ids || [], count: transactions.length });
+      if (!online) {
+        queueTransactions(payload);
+        setParseResult(null);
+        notify('ثبت شد؛ بعد از اتصال همگام می‌شود.');
+        await load();
+      } else {
+        await persistConfirmed(payload, transactions);
       }
-      setParseResult(null);
-      await load();
-    } catch (error) { notify(error.message); }
+    } catch (error) {
+      if (error.code === 'POSSIBLE_DUPLICATE') setDuplicatePrompt({ payload, transactions, duplicates: error.details?.duplicates || [] });
+      else notify(error.message);
+    }
+  };
+
+  const confirmDuplicate = async () => {
+    if (!duplicatePrompt) return;
+    const transactions = duplicatePrompt.transactions.map((item) => ({
+      ...item, needsReview: false, reviewState: 'duplicate-confirmed',
+      reviewReasons: [...(item.reviewReasons || []), 'شباهت با ثبت اخیر به کاربر نمایش داده شد و ثبت جداگانه تأیید شد.'],
+    }));
+    try { await persistConfirmed({ ...duplicatePrompt.payload, transactions }, transactions, true); }
+    catch (error) { notify(error.message); }
   };
 
   const undoLastSave = async () => {
@@ -532,9 +604,51 @@ export default function App() {
     try {
       for (const id of snapshot.ids) await api.deleteTransaction(id);
       await load();
+      setRedoSave(snapshot);
       notify(snapshot.ids.length > 1 ? 'ثبت‌های اخیر با سند معکوس برگردانده شدند.' : 'ثبت اخیر با سند معکوس برگردانده شد.');
     } catch (error) { notify(error.message); }
     finally { setUndoing(false); }
+  };
+
+  const redoLastUndo = async () => {
+    const snapshot = redoSave;
+    if (!snapshot?.ids?.length || undoing) return;
+    setUndoing(true);
+    setRedoSave(null);
+    try {
+      const restored = [];
+      for (const id of snapshot.ids) restored.push((await api.redoTransaction(id)).item.id);
+      setUndoSave({ ids: restored, count: restored.length });
+      await load();
+      notify(restored.length > 1 ? 'ثبت‌ها با سند تازه دوباره ایجاد شدند.' : 'ثبت با سند تازه دوباره ایجاد شد.');
+    } catch (error) { notify(error.message); }
+    finally { setUndoing(false); }
+  };
+
+  const applyCorrection = async () => {
+    if (!correctionDraft) return;
+    try {
+      const result = await api.correctTransaction(correctionDraft.current.id, correctionDraft.command);
+      const categoryChanged = result.interpretation?.changedFields?.includes('category');
+      if (categoryChanged) {
+        const keyword = inferLearningKeyword(correctionDraft.command);
+        if (keyword.length >= 2) setLearningSuggestion({ keyword, category: result.item.category });
+      }
+      setCorrectionDraft(null);
+      await load();
+      notify('آخرین ثبت با سند معکوس اصلاح شد.');
+    } catch (error) {
+      if (error.code === 'LATEST_TRANSACTION_CHANGED') setCorrectionDraft(null);
+      notify(error.message);
+    }
+  };
+
+  const acceptLearning = async () => {
+    const suggestion = learningSuggestion;
+    setLearningSuggestion(null);
+    if (!suggestion) return;
+    try { await api.saveLearning(suggestion); await load(); notify('این نگاشت با تأیید تو یاد گرفته شد.'); }
+    catch (error) { notify(error.message); }
   };
 
   const navigate = (target) => { setScreen(target); setDrawer(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -588,7 +702,7 @@ export default function App() {
               levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable}
               voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
-              navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)}
+              navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision}
             />
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} />}
@@ -609,15 +723,20 @@ export default function App() {
         />
       )}
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}
+      {correctionDraft && <CorrectionSheet draft={correctionDraft} accounts={data.accounts} close={() => setCorrectionDraft(null)} confirm={applyCorrection} />}
+      {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
+      {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
+      {selectedDecision && <DecisionDetailsSheet item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
       {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} ثبت ذخیره شد.` : 'تراکنش ثبت شد.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
+      {redoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><RotateCcw size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{redoSave.count > 1 ? 'ثبت‌ها برگردانده شدند.' : 'ثبت برگردانده شد.'}</span><button disabled={undoing} onClick={redoLastUndo} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">دوباره انجام بده</button></div>}
       {toast && <div role="status" className="fixed bottom-28 left-1/2 z-[80] w-[calc(100%-32px)] max-w-[430px] -translate-x-1/2 rounded-lg bg-ink px-4 py-3 text-center text-sm text-white shadow-paper">{toast}</div>}
       {data.settings.onboardingDone === 'false' && <Onboarding initial={data.settings} onDone={async (values) => { const result = await api.settings({ ...values, onboardingDone: 'true' }); setData((current) => ({ ...current, settings: result.settings })); }} />}
     </div>
   );
 }
 
-function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing }) {
+function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction }) {
   const profileType = data.settings.profileType || 'business';
   const examples = todayExamples(profileType);
   const composerState = todayComposerState({ recordState, manualText, reviewing, savedRecently });
@@ -680,7 +799,7 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
 
         <section>
           <div className="mb-2 flex items-center justify-between"><h2 className="text-[17px] font-extrabold">ثبت‌های امروز</h2><span className="text-[13px] text-muted">{toPersianDigits(data.transactions.length)} مورد</span></div>
-          <TransactionList items={data.transactions} loading={loading} examples={examples} onExample={chooseExample} />
+          <TransactionList items={data.transactions} loading={loading} examples={examples} onExample={chooseExample} onSelect={onSelectTransaction} />
         </section>
       </div>
     </main>
@@ -709,15 +828,21 @@ function SummaryCard({ summary, loading, profileType = 'business', context = 'to
   );
 }
 
-function TransactionList({ items, loading, examples = [], onExample }) {
+function TransactionList({ items, loading, examples = [], onExample, onSelect }) {
   if (loading) return <div className="space-y-2">{[1, 2, 3].map((x) => <div key={x} className="h-16 animate-pulse rounded-lg bg-line/45" />)}</div>;
   if (!items.length) return <div className="rounded-[12px] border border-dashed border-line bg-surface/55 px-4 py-6 text-center"><div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-warn-bg text-accent"><ReceiptText size={21} /></div><p className="mt-3 text-[15px] font-extrabold">اولین ثبت امروز را بساز</p><p className="mt-1 text-[12px] leading-6 text-muted">لازم نیست فرم حسابداری بلد باشی؛ یکی از جمله‌ها را انتخاب کن و مبلغش را تغییر بده.</p><div className="mt-3 flex flex-wrap justify-center gap-2">{examples.map((example) => <button key={example} onClick={() => onExample?.(example)} className="min-h-9 rounded-full border border-line bg-surface px-3 text-[11px] font-bold">{example}</button>)}</div></div>;
-  return <div className="border-y border-line bg-surface/50">{items.map((item) => (
-    <article key={item.id} className="flex min-h-[76px] items-center justify-between gap-4 border-b border-line px-1 py-3 last:border-b-0">
-      <div className="min-w-0"><div className="flex items-center gap-2"><p className={`numbers text-lg font-bold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)}</p>{item.needsReview && <span className="rounded-full bg-warn-bg px-2 py-0.5 text-[9px] font-extrabold text-expense">بازبینی</span>}</div><p className="mt-1 truncate text-[13px] text-muted">{item.rawText}</p></div>
+  return <div className="border-y border-line bg-surface/50">{items.map((item) => {
+    const status = item.needsReview || item.reviewState === 'review'
+      ? { label: 'نیازمند بررسی', classes: 'bg-warn-bg text-expense' }
+      : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState)
+        ? { label: 'بررسی‌شده', classes: 'bg-accent/10 text-accent' }
+        : { label: 'آماده', classes: 'bg-income/10 text-income' };
+    return (
+    <button type="button" key={item.id} onClick={() => onSelect?.(item)} className="flex min-h-[76px] w-full items-center justify-between gap-4 border-b border-line px-1 py-3 text-right last:border-b-0">
+      <div className="min-w-0"><div className="flex items-center gap-2"><p className={`numbers text-lg font-bold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)}</p><span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${status.classes}`}>{status.label}</span></div><p className="mt-1 truncate text-[13px] text-muted">{item.rawText}</p></div>
       <div className="shrink-0 text-left"><span className="inline-block rounded-md border border-line bg-surface px-2 py-1 text-[12px]">{item.category}</span><p className="mt-1 text-[12px] text-muted">{clock(item.occurredAt)}</p></div>
-    </article>
-  ))}</div>;
+    </button>
+  ); })}</div>;
 }
 
 function CloseDaySheet({ data, close, onComplete }) {
@@ -827,45 +952,114 @@ function ConfirmationSheet({ result, categories, accounts = [], onCancel, onConf
   const [items, setItems] = useState(() => result.transactions.map((item) => ({ ...item, accountId: item.accountId || defaultAccountId, originalCategory: item.category })));
   const [index, setIndex] = useState(0);
   const [editAmount, setEditAmount] = useState(false);
+  const initialSummary = reviewBatchSummary(result);
+  const [detailsOpen, setDetailsOpen] = useState(() => initialSummary.review > 0 || initialSummary.unintelligible > 0);
   const item = items[index];
+  const assessment = assessTransactionReview(item);
+  const summary = reviewBatchSummary({ transactions: items });
   const allowedCategories = categories.filter((category) => category.type === item.type);
   const patch = (changes) => setItems((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...changes } : entry));
-  const finish = () => index < items.length - 1 ? setIndex(index + 1) : onConfirm(items);
+  const patchFields = (fields, changes) => patch({
+    ...changes, _changed: true,
+    confidenceDetails: { ...item.confidenceDetails, ...Object.fromEntries(fields.map((field) => [field, { score: 1, reason: 'کاربر این مقدار را در صفحهٔ تأیید انتخاب کرد.' }])) },
+  });
+  const patchField = (field, changes) => patchFields([field], changes);
+  const confirmedItems = () => items.map((entry) => {
+    const nextAssessment = assessTransactionReview(entry);
+    const { _changed, ...clean } = entry;
+    const reviewed = Boolean(_changed) || nextAssessment.state !== 'ready';
+    return {
+      ...clean, needsReview: false, confidence: nextAssessment.overallScore, confidenceDetails: nextAssessment.fields,
+      reviewState: reviewed ? 'reviewed' : 'ready',
+      reviewReasons: reviewed ? [...(entry.reviewReasons || []), 'کاربر جزئیات این برداشت را پیش از ثبت تأیید کرد.'] : (entry.reviewReasons || []),
+    };
+  });
+  const finish = () => index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
+  const statusCards = [
+    ['ready', 'آماده ثبت', summary.ready, 'border-income/30 bg-income/5 text-income'],
+    ['review', 'نیازمند بررسی', summary.review, 'border-accent/35 bg-warn-bg text-accent'],
+    ['unintelligible', 'نامفهوم', summary.unintelligible, 'border-expense/30 bg-expense/5 text-expense'],
+  ];
+  const quickConfirm = summary.ready === summary.total && summary.total > 0 && !detailsOpen;
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-ink/35 px-0 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <section role="dialog" aria-modal="true" aria-label="تأیید تراکنش" className="sheet-in max-h-[94vh] w-full max-w-[640px] overflow-y-auto rounded-t-2xl bg-paper px-4 pb-[calc(env(safe-area-inset-bottom)+20px)] pt-3 shadow-2xl">
         <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
         {items.length > 1 && <div className="mb-3 flex items-center justify-between text-[13px] text-muted"><span>تراکنش {toPersianDigits(index + 1)} از {toPersianDigits(items.length)}</span><div className="flex gap-1">{items.map((_, dot) => <span key={dot} className={`h-1.5 w-6 rounded-full ${dot === index ? 'bg-accent' : 'bg-line'}`} />)}</div></div>}
+        <div className="mb-3 grid grid-cols-3 gap-2" aria-label="وضعیت برداشت‌ها">{statusCards.map(([key, label, count, classes]) => <div key={key} className={`rounded-lg border px-2 py-2 text-center ${classes}`}><b className="numbers block text-base">{toPersianDigits(count)}</b><span className="mt-0.5 block text-[10px] font-bold">{label}</span></div>)}</div>
         <blockquote className="rounded-lg border border-line bg-surface/65 px-3 py-3 text-[14px] leading-7 text-muted">«{result.transcript}»</blockquote>
         {Number.isFinite(result.responseMs) && <p className="mt-2 text-center text-[12px] font-medium text-income">{result.engine === 'browser-live' ? 'تشخیص زنده' : 'تشخیص از صدای اصلی'}؛ نتیجه در {toPersianDigits((Math.max(1, result.responseMs) / 1000).toFixed(1))} ثانیه آماده شد</p>}
 
+        {quickConfirm ? <div className="mt-5"><div className="divide-y divide-line rounded-[10px] border border-line bg-surface px-3">{items.map((entry) => <div key={`${entry.amount}-${entry.rawText}`} className="flex items-center justify-between gap-3 py-3"><div><b className={`numbers text-lg ${entry.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(entry)}</b><p className="mt-1 text-xs text-muted">{entry.category}</p></div><span className="rounded-full bg-income/10 px-2 py-1 text-[10px] font-bold text-income">آماده ثبت</span></div>)}</div><button onClick={() => onConfirm(confirmedItems())} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white"><Check size={19} />تأیید سریع همه</button><button onClick={() => setDetailsOpen(true)} className="tap mt-2 w-full text-sm font-bold text-muted">دیدن جزئیات و دلیل تصمیم</button></div> : <>
+        <div className={`mt-4 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-bold ${assessment.state === 'ready' ? 'border-income/30 bg-income/5 text-income' : assessment.state === 'review' ? 'border-accent/40 bg-warn-bg text-accent' : 'border-expense/30 bg-expense/5 text-expense'}`}><span>{assessment.state === 'ready' ? 'آماده ثبت' : assessment.state === 'review' ? 'این مورد را بررسی کن' : 'این مورد نامفهوم است'}</span><span className="numbers">اطمینان {toPersianDigits(assessment.percent)}٪</span></div>
         <button onClick={() => setEditAmount(true)} className="my-4 w-full rounded-[10px] border border-transparent py-3 text-center hover:border-line">
           {editAmount ? (
-            <input autoFocus inputMode="numeric" value={item.amount} onChange={(event) => patch({ amount: Number(event.target.value.replace(/\D/g, '')) })} onBlur={() => setEditAmount(false)} onKeyDown={(event) => { if (event.key === 'Enter') setEditAmount(false); }} className="numbers mx-auto block w-full bg-transparent text-center text-4xl font-extrabold tracking-[-.02em] outline-none" />
+            <input autoFocus inputMode="numeric" value={item.amount} onChange={(event) => patchField('amount', { amount: Number(event.target.value.replace(/\D/g, '')) })} onBlur={() => setEditAmount(false)} onKeyDown={(event) => { if (event.key === 'Enter') setEditAmount(false); }} className="numbers mx-auto block w-full bg-transparent text-center text-4xl font-extrabold tracking-[-.02em] outline-none" />
           ) : <div className="flex items-center justify-center gap-2"><span className="numbers text-4xl font-extrabold tracking-[-.02em]">{formatAmount(item.amount)}</span><Pencil size={16} className="text-muted" /></div>}
           <span className="mt-1 block text-[13px] text-muted">تومان</span>
         </button>
 
         <div className="space-y-2">
-          <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patch({ type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-white' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patch({ type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-white' : 'border-line bg-surface'}`}>هزینه</button></div></div>
-          <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patch({ category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>
-          <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || defaultAccountId} onChange={(event) => patch({ accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+          <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-white' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-white' : 'border-line bg-surface'}`}>هزینه</button></div></div>
+          <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>
+          <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || defaultAccountId} onChange={(event) => patchField('account', { accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
         </div>
+
+        <ConfidencePanel assessment={assessment} />
 
         {item.warning && <div className="mt-4 flex gap-3 rounded-lg border-r-4 border-accent bg-warn-bg px-3 py-3 text-[14px] leading-6"><CircleAlert className="mt-0.5 shrink-0 text-accent" size={20} /><span>{item.warning}</span></div>}
-        {!!item.alternatives?.length && <div className="mt-4"><p className="mb-2 text-[13px] text-muted">شاید منظورت این بود:</p><div className="flex flex-wrap gap-2">{item.alternatives.map((amount) => <button key={amount} onClick={() => patch({ amount })} className="tap numbers rounded-lg border border-line bg-surface px-4 font-bold">{formatAmount(amount)}</button>)}</div></div>}
+        {!!item.alternatives?.length && <div className="mt-4"><p className="mb-2 text-[13px] text-muted">شاید منظورت این بود:</p><div className="flex flex-wrap gap-2">{item.alternatives.map((amount) => <button key={amount} onClick={() => patchField('amount', { amount })} className="tap numbers rounded-lg border border-line bg-surface px-4 font-bold">{formatAmount(amount)}</button>)}</div></div>}
 
         <div className="mt-5 grid grid-cols-[minmax(0,7fr)_minmax(90px,3fr)] gap-2">
-          <button onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white"><Check size={19} />{index < items.length - 1 ? 'بعدی' : 'ثبت شد'}</button>
+          <button disabled={assessment.state === 'unintelligible'} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ثبت'}</button>
           <button onClick={onCancel} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
         </div>
+        </>}
       </section>
     </div>
   );
 }
 
+function ConfidencePanel({ assessment }) {
+  return <section className="mt-4 rounded-[10px] border border-line bg-surface p-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold">چرا این تصمیم؟</h3><span className="numbers text-xs text-muted">اطمینان کلی {toPersianDigits(assessment.percent)}٪</span></div><div className="mt-3 space-y-2">{Object.entries(assessment.fields).map(([field, detail]) => <div key={field} className="rounded-lg bg-paper px-3 py-2"><div className="flex items-center justify-between gap-2"><b className="text-xs">{REVIEW_FIELD_LABELS[field]}</b><span className={`numbers text-xs font-bold ${detail.score >= 0.82 ? 'text-income' : detail.score >= 0.7 ? 'text-accent' : 'text-expense'}`}>{toPersianDigits(Math.round(detail.score * 100))}٪</span></div><p className="mt-1 text-[11px] leading-5 text-muted">{detail.reason}</p></div>)}</div>{assessment.reasons.length > 0 && <div className="mt-3 border-t border-line pt-2">{assessment.reasons.map((reason) => <p key={reason} className="mt-1 text-[11px] leading-5 text-expense">• {reason}</p>)}</div>}</section>;
+}
+
+function CorrectionSheet({ draft, accounts, close, confirm }) {
+  const [busy, setBusy] = useState(false);
+  const { current, preview } = draft;
+  const valueFor = (field, source) => {
+    if (field === 'amount') return `${formatAmount(source.amount)} تومان`;
+    if (field === 'type') return source.type === 'income' ? 'درآمد' : 'هزینه';
+    if (field === 'account') return source.accountName || accounts.find((account) => account.id === source.accountId)?.name || 'حساب پیش‌فرض';
+    return source.category;
+  };
+  const next = { ...current, ...preview.changes };
+  const submit = async () => { setBusy(true); await confirm(); setBusy(false); };
+  return <div className="fixed inset-0 z-[76] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]"><section role="dialog" aria-modal="true" aria-label="تأیید اصلاح آخرین ثبت" className="sheet-in w-full max-w-[620px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">اصلاح مکالمه‌ای امن</span><h2 className="mt-3 text-xl font-extrabold">همین آخرین ثبت اصلاح شود؟</h2><blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.command}»</blockquote><div className="mt-4 divide-y divide-line rounded-[10px] border border-line bg-surface px-3">{preview.changedFields.map((field) => <div key={field} className="py-3"><p className="text-xs font-bold text-muted">{REVIEW_FIELD_LABELS[field]}</p><div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm"><span className="truncate text-muted line-through">{valueFor(field, current)}</span><ChevronLeft size={17} className="text-accent" /><b className="truncate">{valueFor(field, next)}</b></div></div>)}</div><p className="mt-3 text-xs leading-6 text-muted">اصلاح فقط وقتی انجام می‌شود که این رکورد هنوز آخرین ثبت باشد؛ سند قبلی پاک نمی‌شود و با سند معکوس در تاریخچه می‌ماند.</p><div className="mt-5 grid grid-cols-[2fr_1fr] gap-2"><button disabled={busy} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال اصلاح…' : 'تأیید اصلاح'}</button><button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button></div></section></div>;
+}
+
+function DuplicateSheet({ prompt, close, confirm }) {
+  const [busy, setBusy] = useState(false);
+  const duplicate = prompt.duplicates[0];
+  const incoming = prompt.transactions[duplicate?.inputIndex || 0];
+  const submit = async () => { setBusy(true); await confirm(); setBusy(false); };
+  return <div className="fixed inset-0 z-[78] flex items-end justify-center bg-ink/45 backdrop-blur-[2px]"><section role="dialog" aria-modal="true" aria-label="هشدار ثبت تکراری" className="sheet-in w-full max-w-[620px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><span className="rounded-full bg-warn-bg px-2 py-1 text-[10px] font-extrabold text-expense">نیازمند بررسی</span><h2 className="mt-3 text-xl font-extrabold">شاید این ثبت تکراری باشد</h2><p className="mt-2 text-sm leading-7 text-muted">مبلغ، حساب، زمان و متن با یک ثبت چند دقیقهٔ اخیر شباهت زیادی دارد. هیچ موردی خودکار ذخیره نمی‌شود.</p><div className="mt-4 grid grid-cols-2 gap-2"><div className="rounded-[10px] border border-line bg-surface p-3"><span className="text-[10px] font-bold text-muted">ثبت تازه</span><b className="numbers mt-2 block text-lg">{formatAmount(incoming?.amount || 0)}</b><p className="mt-1 truncate text-xs text-muted">{incoming?.rawText}</p></div><div className="rounded-[10px] border border-accent/30 bg-warn-bg p-3"><span className="text-[10px] font-bold text-muted">ثبت موجود · شباهت {toPersianDigits(duplicate?.similarity || 0)}٪</span><b className="numbers mt-2 block text-lg">{formatAmount(duplicate?.amount || 0)}</b><p className="mt-1 truncate text-xs text-muted">{duplicate?.rawText}</p></div></div><div className="mt-5 grid grid-cols-[2fr_1fr] gap-2"><button disabled={busy} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال ثبت…' : 'بله، جداگانه ثبت کن'}</button><button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button></div></section></div>;
+}
+
+function LearningSuggestionSheet({ suggestion, close, confirm }) {
+  const [busy, setBusy] = useState(false);
+  const submit = async () => { setBusy(true); await confirm(); setBusy(false); };
+  return <div className="fixed inset-0 z-[79] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]"><section role="dialog" aria-modal="true" aria-label="پیشنهاد یادگیری" className="sheet-in w-full max-w-[540px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><Sparkles className="text-accent" size={26} /><h2 className="mt-3 text-xl font-extrabold">این اصلاح را یاد بگیرم؟</h2><p className="mt-2 text-sm leading-7 text-muted">از این به بعد عبارت «<b className="text-ink">{suggestion.keyword}</b>» را در دستهٔ «<b className="text-ink">{suggestion.category}</b>» پیشنهاد می‌دهم. هر وقت بخواهی از صفحهٔ یادگیری قابل حذف است.</p><div className="mt-5 grid grid-cols-2 gap-2"><button disabled={busy} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال ذخیره…' : 'بله، یاد بگیر'}</button><button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">نه، فقط همین بار</button></div></section></div>;
+}
+
+function DecisionDetailsSheet({ item, close }) {
+  const assessment = assessTransactionReview(item);
+  const state = item.needsReview || item.reviewState === 'review' ? 'نیازمند بررسی' : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState) ? 'بررسی‌شده توسط کاربر' : 'آماده ثبت';
+  return <div className="fixed inset-0 z-[75] flex items-end justify-center bg-ink/35 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section role="dialog" aria-modal="true" aria-label="دلیل تصمیم تراکنش" className="sheet-in max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-surface px-2 py-1 text-[10px] font-extrabold text-accent">{state}</span><h2 className={`numbers mt-3 text-2xl font-extrabold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)} تومان</h2><p className="mt-1 text-sm text-muted">{item.category} · {item.accountName || 'حساب پیش‌فرض'}</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div><blockquote className="mt-4 rounded-lg border border-line bg-surface px-3 py-3 text-sm leading-7 text-muted">«{item.rawText}»</blockquote><ConfidencePanel assessment={assessment} />{item.restoredFrom && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-muted">این ثبت در پاسخ به «دوباره انجام بده» به‌صورت یک سند تازه ساخته شده است.</p>}<button onClick={close} className="tap mt-4 w-full rounded-lg border border-line bg-surface font-bold">بستن</button></section></div>;
+}
+
 function FailureSheet({ failure, close, retry, manual }) {
-  return <div className="fixed inset-0 z-[70] flex items-end justify-center bg-ink/35 backdrop-blur-[2px]"><section role="dialog" className="sheet-in w-full max-w-[640px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)]"><div className="mx-auto mb-5 h-1 w-11 rounded-full bg-line" />{failure.transcript && <blockquote className="mb-4 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{failure.transcript}»</blockquote>}<CircleAlert className="mb-3 text-accent" size={27} /><h2 className="text-xl font-extrabold">{failure.permission ? 'اجازهٔ میکروفن فعال نیست' : 'مبلغی پیدا نکردم'}</h2><p className="mt-2 text-[15px] leading-7 text-muted">{failure.message || 'جمله را دوباره بگو یا مبلغ را دستی بنویس. هیچ تراکنشی بدون تأیید تو ثبت نمی‌شود.'}</p>{failure.permission && <ol className="mt-3 list-decimal space-y-1 pr-5 text-sm leading-7"><li>روی علامت قفل کنار آدرس سایت بزن.</li><li>دسترسی «میکروفن» را روی مجاز بگذار.</li><li>صفحه را دوباره باز کن.</li></ol>}<div className="mt-5 grid grid-cols-2 gap-2"><button onClick={retry} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent font-bold text-white"><RotateCcw size={18} />دوباره بگو</button><button onClick={manual} className="tap rounded-lg border border-line bg-surface font-bold">دستی بنویس</button></div><button onClick={close} className="tap mt-2 w-full text-sm text-muted">بستن</button></section></div>;
+  return <div className="fixed inset-0 z-[70] flex items-end justify-center bg-ink/35 backdrop-blur-[2px]"><section role="dialog" className="sheet-in w-full max-w-[640px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)]"><div className="mx-auto mb-5 h-1 w-11 rounded-full bg-line" />{failure.transcript && <blockquote className="mb-4 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{failure.transcript}»</blockquote>}<span className="rounded-full bg-expense/10 px-2 py-1 text-[10px] font-extrabold text-expense">نامفهوم</span><CircleAlert className="mb-3 mt-3 text-expense" size={27} /><h2 className="text-xl font-extrabold">{failure.permission ? 'اجازهٔ میکروفن فعال نیست' : 'مبلغی پیدا نکردم'}</h2><p className="mt-2 text-[15px] leading-7 text-muted">{failure.message || 'جمله را دوباره بگو یا مبلغ را دستی بنویس. هیچ تراکنشی بدون تأیید تو ثبت نمی‌شود.'}</p>{failure.permission && <ol className="mt-3 list-decimal space-y-1 pr-5 text-sm leading-7"><li>روی علامت قفل کنار آدرس سایت بزن.</li><li>دسترسی «میکروفن» را روی مجاز بگذار.</li><li>صفحه را دوباره باز کن.</li></ol>}<div className="mt-5 grid grid-cols-2 gap-2"><button onClick={retry} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent font-bold text-white"><RotateCcw size={18} />دوباره بگو</button><button onClick={manual} className="tap rounded-lg border border-line bg-surface font-bold">دستی بنویس</button></div><button onClick={close} className="tap mt-2 w-full text-sm text-muted">بستن</button></section></div>;
 }
 
 function ReportPage({ profileType = 'business' }) {
@@ -997,7 +1191,7 @@ function LearningPage({ categories, notify }) {
   const save = async () => { if (!draft.keyword.trim()) return; await api.saveLearning(draft); setDraft({ ...draft, keyword: '' }); notify('یادگیری تازه ذخیره شد.'); load(); };
   const update = async (item, category) => { await api.updateLearning(item.id, { keyword: item.keyword, category }); load(); };
   const remove = async (id) => { await api.deleteLearning(id); notify('این یادگیری حذف شد.'); load(); };
-  return <main className="px-4 py-5"><h1 className="text-xl font-extrabold">آنچه یاد گرفته‌ام</h1><p className="mt-2 text-sm leading-7 text-muted">هر بار دسته‌ای را اصلاح می‌کنی، اینجا یاد می‌گیرم. می‌توانی نگاشت‌ها را هم خودت اضافه یا پاک کنی.</p><div className="mt-5 flex gap-2 rounded-[10px] border border-line bg-surface p-2"><input value={draft.keyword} onChange={(event) => setDraft({ ...draft, keyword: event.target.value })} placeholder="مثلاً اسنپ‌فود" className="tap min-w-0 flex-1 px-2 outline-none" /><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="tap max-w-32 rounded-lg border border-line px-2">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={save} className="tap grid place-items-center rounded-lg bg-accent text-white" aria-label="افزودن"><Plus size={21} /></button></div><div className="mt-5 divide-y divide-line border-y border-line">{items.length ? items.map((item) => <div key={item.id} className="flex min-h-[64px] items-center gap-2"><span className="min-w-0 flex-1 truncate font-bold">{item.keyword}</span><ChevronLeft size={17} className="text-muted" /><select value={item.category} onChange={(event) => update(item, event.target.value)} className="tap max-w-36 bg-transparent text-sm text-muted outline-none">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={() => remove(item.id)} className="tap grid place-items-center text-expense" aria-label={`حذف ${item.keyword}`}><Trash2 size={18} /></button></div>) : <p className="py-10 text-center text-sm text-muted">هنوز چیزی از اصلاح‌ها یاد نگرفته‌ام.</p>}</div></main>;
+  return <main className="px-4 py-5"><h1 className="text-xl font-extrabold">آنچه یاد گرفته‌ام</h1><p className="mt-2 text-sm leading-7 text-muted">فقط نگاشت‌هایی اینجا می‌مانند که خودت صریحاً تأیید کرده‌ای یا دستی ساخته‌ای. هر مورد را هر زمان بخواهی می‌توانی تغییر بدهی یا پاک کنی.</p><div className="mt-5 flex gap-2 rounded-[10px] border border-line bg-surface p-2"><input value={draft.keyword} onChange={(event) => setDraft({ ...draft, keyword: event.target.value })} placeholder="مثلاً اسنپ‌فود" className="tap min-w-0 flex-1 px-2 outline-none" /><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="tap max-w-32 rounded-lg border border-line px-2">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={save} className="tap grid place-items-center rounded-lg bg-accent text-white" aria-label="افزودن"><Plus size={21} /></button></div><div className="mt-5 divide-y divide-line border-y border-line">{items.length ? items.map((item) => <div key={item.id} className="flex min-h-[64px] items-center gap-2"><span className="min-w-0 flex-1 truncate font-bold">{item.keyword}</span><ChevronLeft size={17} className="text-muted" /><select value={item.category} onChange={(event) => update(item, event.target.value)} className="tap max-w-36 bg-transparent text-sm text-muted outline-none">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={() => remove(item.id)} className="tap grid place-items-center text-expense" aria-label={`حذف ${item.keyword}`}><Trash2 size={18} /></button></div>) : <p className="py-10 text-center text-sm text-muted">هنوز نگاشت تأییدشده‌ای ندارم.</p>}</div></main>;
 }
 
 function SettingsPage({ initial, accounts = [], notify, refresh, onLogout, canManage = false }) {
