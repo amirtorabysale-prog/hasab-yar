@@ -4,13 +4,13 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
+  activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
-  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
+  ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
-  importBankStatement, ignoreReconciliationLine, listAutomationRules, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
-  recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
-  confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateReceipt, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
+  importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
+  recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
+  confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
@@ -28,6 +28,7 @@ import { parseFinancialAudio } from './voice.js';
 import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
 import { voiceProviderStatus } from './voiceProviderState.js';
 import { extractReceiptData, receiptOcrConfigured } from './receiptOcr.js';
+import { audioDurationMs } from './collaboration.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -55,10 +56,16 @@ function accessPayload(user, requestedWorkspaceId = '') {
   const workspaces = listUserWorkspaces(user.id);
   const workspace = workspaceForUser(user.id, requestedWorkspaceId) || workspaces[0] || null;
   return {
-    user: { id: user.id, username: user.username, displayName: user.displayName || user.username, mustChangePassword: Boolean(user.mustChangePassword) },
+    user: { id: user.id, username: user.username, displayName: user.displayName || user.username, mustChangePassword: Boolean(user.mustChangePassword), isSystemAdmin: user.username === String(process.env.ADMIN_USERNAME || 'admin').trim().toLowerCase() },
     workspaces,
     workspace,
   };
+}
+
+function requireSystemAdmin(request, response) {
+  if (request.user?.username === String(process.env.ADMIN_USERNAME || 'admin').trim().toLowerCase()) return true;
+  response.status(403).json({ code: 'SYSTEM_ADMIN_REQUIRED', message: 'این بخش فقط برای مدیر پایلوت حساب‌یار در دسترس است.' });
+  return false;
 }
 
 function requireRank(request, response, minimum) {
@@ -176,33 +183,46 @@ app.post('/api/parse/text', (request, response) => {
 });
 app.post('/api/parse/audio', upload.single('audio'), async (request, response, next) => {
   const startedAt = Date.now();
+  let usageId = null;
+  let durationMs = 0;
   try {
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
+    durationMs = audioDurationMs(request.file.buffer, request.file.mimetype) || Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0));
+    usageId = beginProviderUsage('server_voice', 'pipeline');
     const result = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
     recordVoiceMetric({
       provider: result.provider || result.engine,
       model: result.model,
+      durationMs,
       latencyMs: Date.now() - startedAt,
       transactionCount: result.transactions?.length,
       needsReview: result.transactions?.some((item) => item.needsReview),
       errorCode: request.body?.fallbackReason,
     });
+    finishProviderUsage(usageId, { provider: result.provider || result.engine, durationMs });
     return response.json(result);
   } catch (error) {
-    recordVoiceMetric({ provider: 'pipeline', latencyMs: Date.now() - startedAt, succeeded: false, errorCode: error.code });
+    if (usageId) finishProviderUsage(usageId, { provider: error.provider || 'pipeline', durationMs, succeeded: false, errorCode: error.code });
+    if (!['PLAN_QUOTA_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED'].includes(error.code)) recordVoiceMetric({ provider: 'pipeline', durationMs, latencyMs: Date.now() - startedAt, succeeded: false, errorCode: error.code });
     return next(error);
   }
 });
 app.post('/api/voice/realtime/session', express.text({ type: ['application/sdp', 'text/plain'], limit: '128kb' }), async (request, response, next) => {
+  let usageId = null;
   try {
+    usageId = beginProviderUsage('realtime_session', 'openai');
     const answer = await createRealtimeTranscriptionCall({
       sdp: request.body,
       categories: getCategories(),
       learnings: getLearnings(),
       userId: request.user.id,
     });
+    finishProviderUsage(usageId, { provider: 'openai' });
     return response.type('application/sdp').send(answer);
-  } catch (error) { return next(error); }
+  } catch (error) {
+    if (usageId) finishProviderUsage(usageId, { provider: 'openai', succeeded: false, errorCode: error.code });
+    return next(error);
+  }
 });
 app.post('/api/transactions', (request, response, next) => {
   try {
@@ -326,8 +346,15 @@ app.post('/api/receipts', upload.single('image'), async (request, response, next
     const noteSuggestion = parsed.transactions[0] || null;
     let extraction = null;
     let warning = null;
-    try { extraction = await extractReceiptData({ buffer: request.file.buffer, mimeType: request.file.mimetype, note, categories: getCategories() }); }
-    catch (error) { warning = { code: error.code || 'RECEIPT_OCR_FAILED', message: error.message }; }
+    let usageId = null;
+    try {
+      if (receiptOcrConfigured()) usageId = beginProviderUsage('receipt_ocr', 'openai');
+      extraction = await extractReceiptData({ buffer: request.file.buffer, mimeType: request.file.mimetype, note, categories: getCategories() });
+      if (usageId) finishProviderUsage(usageId, { provider: extraction.provider || 'openai' });
+    } catch (error) {
+      if (usageId) finishProviderUsage(usageId, { provider: error.provider || 'openai', succeeded: false, errorCode: error.code });
+      warning = { code: error.code || 'RECEIPT_OCR_FAILED', message: error.message };
+    }
     const reviewReasons = [...(extraction?.reviewReasons || [])];
     if (extraction?.amount && noteSuggestion?.amount && extraction.amount !== noteSuggestion.amount) reviewReasons.push('مبلغ تصویر و توضیح کاربر یکسان نیست؛ مبلغ تصویر پیشنهاد شده و باید کنترل شود.');
     if (!extraction && noteSuggestion) reviewReasons.push('مبلغ فقط از توضیح کاربر استخراج شده و با تصویر کنترل نشده است.');
@@ -358,6 +385,73 @@ app.post('/api/products', (request, response, next) => { try { response.status(2
 app.put('/api/products/:id', (request, response, next) => { try { response.json({ item: saveProduct({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.post('/api/products/:id/stock', (request, response, next) => { try { const item = adjustStock(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'کالا پیدا نشد.' }); } catch (error) { return next(error); } });
 app.post('/api/ask', (request, response) => response.json(answerFinancialQuestion(request.body?.question)));
+app.get('/api/commercial/status', (request, response) => response.json(commercialStatus(request.workspace.id)));
+app.post('/api/commercial/admin/workspaces/:workspaceId', (request, response, next) => {
+  try {
+    if (!requireSystemAdmin(request, response)) return undefined;
+    const workspace = allWorkspaces().find((item) => item.id === request.params.workspaceId);
+    if (!workspace) return response.status(404).json({ message: 'دفتر پیدا نشد.' });
+    const item = updateWorkspaceCommercialPlan(workspace.id, request.body || {}, request.user.id);
+    return response.json({ item });
+  } catch (error) { return next(error); }
+});
+app.get('/api/collaboration/overview', (request, response) => {
+  const packageData = monthlyAccountantPackage(request.query.month);
+  return response.json({
+    package: {
+      generatedAt: packageData.generatedAt, scope: packageData.scope, summary: packageData.summary,
+      checklist: packageData.checklist, manifest: packageData.manifest, disclaimer: packageData.disclaimer,
+    },
+    requests: listCollaborationRequests({ status: request.query.status }),
+    commercial: commercialStatus(request.workspace.id),
+    pilot: pilotWorkspaceDashboard(),
+  });
+});
+app.get('/api/collaboration/monthly-package', (request, response) => response.json(monthlyAccountantPackage(request.query.month)));
+app.get('/api/collaboration/monthly-package/download', (request, response) => {
+  const packageData = monthlyAccountantPackage(request.query.month);
+  response.setHeader('Content-Type', 'application/json; charset=utf-8');
+  response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-accountant-${request.workspace.id}-${packageData.scope.month}.json"`);
+  return response.send(JSON.stringify(packageData, null, 2));
+});
+app.post('/api/collaboration/requests', (request, response, next) => {
+  try { return response.status(201).json({ item: createCollaborationRequest(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.post('/api/collaboration/requests/:id/answer', (request, response, next) => {
+  try {
+    const item = answerCollaborationRequest(request.params.id, request.body?.answer);
+    return item ? response.json({ item }) : response.status(404).json({ message: 'درخواست باز پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
+app.post('/api/collaboration/requests/:id/resolve', (request, response, next) => {
+  try {
+    const item = resolveCollaborationRequest(request.params.id);
+    return item ? response.json({ item }) : response.status(409).json({ message: 'درخواست باید ابتدا پاسخ داده شود.' });
+  } catch (error) { return next(error); }
+});
+app.post('/api/pilot/checkins', (request, response, next) => {
+  try { return response.status(201).json({ item: savePilotCheckin(request.body || {}), dashboard: pilotWorkspaceDashboard() }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/pilot/portfolio', (request, response) => {
+  if (!requireSystemAdmin(request, response)) return undefined;
+  return response.json(pilotPortfolio());
+});
+app.get('/api/operations/overview', async (request, response, next) => {
+  try {
+    const backup = await automaticBackupStatus(request.workspace.id);
+    const commercial = commercialStatus(request.workspace.id);
+    const signals = workspaceOperationalSignals();
+    const ageHours = backup.lastBackup ? (Date.now() - new Date(backup.lastBackup.createdAt).getTime()) / 3_600_000 : null;
+    return response.json({
+      ...signals,
+      backup: { ...backup, ageHours: ageHours == null ? null : Math.round(ageHours), healthy: Boolean(backup.configured && ageHours != null && ageHours <= 30) },
+      budget: commercial.provider,
+      runbook: 'docs/phase-6-pilot-and-operations.md',
+    });
+  } catch (error) { return next(error); }
+});
 app.post('/api/voice/metrics', (request, response) => {
   const provider = String(request.body?.provider || '');
   if (!['browser-live', 'openai-realtime'].includes(provider)) return response.status(400).json({ code: 'VOICE_METRIC_INVALID', message: 'مسیر تشخیص صدا معتبر نیست.' });
@@ -370,6 +464,7 @@ app.post('/api/voice/metrics', (request, response) => {
     transactionCount: Math.min(20, Math.max(0, Number(request.body?.transactionCount) || 0)),
     needsReview: Boolean(request.body?.needsReview),
   });
+  if (provider === 'openai-realtime') recordRealtimeProviderDuration(Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0)));
   return response.status(204).end();
 });
 app.get('/api/voice/status', (_request, response) => response.json(voiceProviderStatus()));

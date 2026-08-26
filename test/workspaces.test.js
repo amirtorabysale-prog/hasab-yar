@@ -71,6 +71,13 @@ test('enforces the role matrix for reads, financial writes, settings and members
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/tax/rates')), false);
   assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/tax/rates')), true);
   assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/tax/report')), true);
+  assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/collaboration/overview')), false);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('GET', '/collaboration/monthly-package')), true);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/collaboration/requests/abc/answer')), false);
+  assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/collaboration/requests/abc/answer')), true);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/collaboration/requests/abc/resolve')), true);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('GET', '/pilot/portfolio')), false);
+  assert.equal(roleAllows('manager', minimumRoleForRequest('GET', '/operations/overview')), true);
 });
 
 test.after(() => {

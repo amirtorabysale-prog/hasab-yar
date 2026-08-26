@@ -27,6 +27,10 @@ import {
   FINANCIAL_DISCLAIMER, FINANCIAL_UNIT, buildRunway, detectExpenseGrowth, exactWindow, financialScope,
   findUnusualTransaction, invoiceSource, isGuardedAdviceQuestion, obligationSource, prioritizeAlerts, transactionSource,
 } from './financialIntelligence.js';
+import {
+  PLAN_CATALOG, billingMonth, estimateProviderCostMicrousd, fourWeekWindows, monthlyPackageChecklist,
+  normalizePlanId, pilotRetentionSummary, quotaError, usageQuotaSnapshot,
+} from './collaboration.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -346,6 +350,69 @@ function ensureFinancialAlertSchema(database) {
   `);
 }
 
+function ensureCollaborationSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS collaboration_requests (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('general','transaction','receipt','closing','reconciliation','obligation')),
+      entity_id TEXT,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL DEFAULT '',
+      priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','urgent')),
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','answered','resolved')),
+      requested_by TEXT,
+      answered_by TEXT,
+      resolved_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      answered_at TEXT,
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_collaboration_requests_status ON collaboration_requests(status,priority,created_at);
+    CREATE TABLE IF NOT EXISTS pilot_checkins (
+      id TEXT PRIMARY KEY,
+      week_start TEXT NOT NULL,
+      respondent_type TEXT NOT NULL CHECK(respondent_type IN ('owner','accountant')),
+      saved_minutes INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      friction TEXT NOT NULL DEFAULT '',
+      dropout_reason TEXT NOT NULL DEFAULT '',
+      willingness_to_pay TEXT NOT NULL DEFAULT 'unknown' CHECK(willingness_to_pay IN ('yes','maybe','no','unknown')),
+      plan_interest TEXT NOT NULL DEFAULT 'none' CHECK(plan_interest IN ('free','professional','accountant','none')),
+      note TEXT NOT NULL DEFAULT '',
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(week_start,respondent_type)
+    );
+    CREATE TABLE IF NOT EXISTS provider_usage (
+      id TEXT PRIMARY KEY,
+      capability TEXT NOT NULL CHECK(capability IN ('server_voice','realtime_session','realtime_duration','receipt_ocr')),
+      provider TEXT NOT NULL DEFAULT 'unknown',
+      status TEXT NOT NULL DEFAULT 'started' CHECK(status IN ('started','succeeded','failed')),
+      request_count INTEGER NOT NULL DEFAULT 1,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_microusd INTEGER,
+      error_code TEXT NOT NULL DEFAULT '',
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_usage_month ON provider_usage(created_at,capability,status);
+  `);
+}
+
+function ensureCommercialSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_plans (
+      workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL DEFAULT 'free' CHECK(plan_id IN ('free','professional','accountant')),
+      provider_budget_microusd INTEGER NOT NULL DEFAULT 0,
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");
 ensureColumn('transactions', "account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT");
@@ -363,6 +430,8 @@ ensureInvoiceSchema(controlDb);
 ensureReconciliationSchema(controlDb);
 ensureReceiptAutomationSchema(controlDb);
 ensureFinancialAlertSchema(controlDb);
+ensureCollaborationSchema(controlDb);
+ensureCommercialSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
 
@@ -422,6 +491,7 @@ function workspaceDatabase(workspaceId) {
   ensureReconciliationSchema(database);
   ensureReceiptAutomationSchema(database);
   ensureFinancialAlertSchema(database);
+  ensureCollaborationSchema(database);
   ensureInventorySchema(database);
   ensureTaxSchema(database);
   migrateAccountingLedger(database);
@@ -469,6 +539,8 @@ export function createWorkspace(userId, values = {}) {
   try {
     controlDb.prepare('INSERT INTO workspaces (id,name,profile_type,created_by) VALUES (?,?,?,?)').run(id, name, profileType, userId);
     controlDb.prepare("INSERT INTO workspace_members (workspace_id,user_id,role) VALUES (?,?, 'owner')").run(id, userId);
+    controlDb.prepare('INSERT INTO workspace_plans (workspace_id,plan_id,updated_by) VALUES (?,?,?)')
+      .run(id, normalizePlanId(process.env.DEFAULT_WORKSPACE_PLAN), userId);
     controlDb.exec('COMMIT');
   } catch (error) { controlDb.exec('ROLLBACK'); throw error; }
   const database = workspaceDatabase(id);
@@ -496,6 +568,13 @@ export function addWorkspaceMember(workspaceId, values = {}) {
   const role = assertWorkspaceRole(values.role || 'viewer');
   if (!/^[a-z0-9._-]{3,80}$/i.test(username)) throw new Error('نام کاربری باید حداقل سه نویسه و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.');
   let user = controlDb.prepare('SELECT id,username FROM users WHERE username=?').get(username);
+  const existingMembership = user && controlDb.prepare('SELECT 1 FROM workspace_members WHERE workspace_id=? AND user_id=?').get(workspaceId, user.id);
+  if (!existingMembership) {
+    const plan = workspacePlanRecord(workspaceId);
+    const memberCount = Number(controlDb.prepare('SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=?').get(workspaceId).count || 0);
+    const memberQuota = usageQuotaSnapshot(plan.planId, { members: memberCount }).find((item) => item.id === 'members');
+    if (memberQuota.exhausted) throw quotaError(memberQuota);
+  }
   controlDb.exec('BEGIN IMMEDIATE');
   try {
     if (!user) {
@@ -535,7 +614,111 @@ export function removeWorkspaceMember(workspaceId, userId) {
 }
 
 export function allWorkspaces() {
-  return controlDb.prepare('SELECT id,name,profile_type AS profileType FROM workspaces ORDER BY created_at').all();
+  return controlDb.prepare('SELECT id,name,profile_type AS profileType,created_at AS createdAt FROM workspaces ORDER BY created_at').all();
+}
+
+function workspacePlanRecord(workspaceId) {
+  const id = String(workspaceId || 'primary');
+  controlDb.prepare('INSERT OR IGNORE INTO workspace_plans (workspace_id,plan_id) VALUES (?,?)')
+    .run(id, normalizePlanId(process.env.DEFAULT_WORKSPACE_PLAN));
+  const row = controlDb.prepare(`SELECT workspace_id AS workspaceId,plan_id AS planId,
+    provider_budget_microusd AS providerBudgetMicrousd,updated_at AS updatedAt
+    FROM workspace_plans WHERE workspace_id=?`).get(id);
+  return { ...row, planId: normalizePlanId(row?.planId) };
+}
+
+export function updateWorkspaceCommercialPlan(workspaceId, values = {}, updatedBy = '') {
+  const planId = normalizePlanId(values.planId);
+  const budgetUsd = Number(values.providerBudgetUsd);
+  if (!Number.isFinite(budgetUsd) || budgetUsd < 0 || budgetUsd > 1_000_000) throw new Error('سقف بودجهٔ provider معتبر نیست.');
+  const providerBudgetMicrousd = Math.round(budgetUsd * 1_000_000);
+  controlDb.prepare(`INSERT INTO workspace_plans (workspace_id,plan_id,provider_budget_microusd,updated_by)
+    VALUES (?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET plan_id=excluded.plan_id,
+    provider_budget_microusd=excluded.provider_budget_microusd,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`)
+    .run(workspaceId, planId, providerBudgetMicrousd, updatedBy || null);
+  return workspacePlanRecord(workspaceId);
+}
+
+export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primary', now = new Date()) {
+  const planRecord = workspacePlanRecord(workspaceId);
+  const range = billingMonth('', now);
+  const usageRows = db.prepare(`SELECT capability,provider,status,SUM(request_count) AS requests,SUM(duration_ms) AS durationMs,
+    SUM(COALESCE(estimated_cost_microusd,0)) AS estimatedCostMicrousd,
+    SUM(CASE WHEN status='succeeded' AND capability!='realtime_session' AND estimated_cost_microusd IS NULL THEN 1 ELSE 0 END) AS unpriced
+    FROM provider_usage WHERE created_at>=datetime(?) AND created_at<datetime(?) GROUP BY capability,provider,status
+    ORDER BY capability,provider,status`).all(range.from, range.toExclusive);
+  const smartVoiceRequests = usageRows.filter((item) => item.status !== 'failed' && ['server_voice', 'realtime_session'].includes(item.capability))
+    .reduce((sum, item) => sum + Number(item.requests || 0), 0);
+  const receiptOcrPages = usageRows.filter((item) => item.status !== 'failed' && item.capability === 'receipt_ocr')
+    .reduce((sum, item) => sum + Number(item.requests || 0), 0);
+  const members = Number(controlDb.prepare('SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=?').get(workspaceId)?.count || 0);
+  const transactionEntries = Number(db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted' AND created_at>=datetime(?) AND created_at<datetime(?)").get(range.from, range.toExclusive)?.count || 0);
+  const estimatedCostMicrousd = usageRows.reduce((sum, item) => sum + Number(item.estimatedCostMicrousd || 0), 0);
+  const unpricedEvents = usageRows.reduce((sum, item) => sum + Number(item.unpriced || 0), 0);
+  const budgetMicrousd = Number(planRecord.providerBudgetMicrousd || 0);
+  const usage = { smartVoiceRequests, receiptOcrPages, members, transactionEntries };
+  return {
+    month: range.month,
+    plan: PLAN_CATALOG[planRecord.planId],
+    catalog: Object.values(PLAN_CATALOG),
+    usage,
+    quotas: usageQuotaSnapshot(planRecord.planId, usage),
+    provider: {
+      rows: usageRows,
+      estimatedCostMicrousd,
+      estimatedCostUsd: estimatedCostMicrousd / 1_000_000,
+      pricingComplete: unpricedEvents === 0,
+      unpricedEvents,
+      budgetMicrousd,
+      budgetUsd: budgetMicrousd / 1_000_000,
+      budgetPercent: budgetMicrousd ? Math.min(100, Math.round((estimatedCostMicrousd / budgetMicrousd) * 100)) : null,
+      overBudget: budgetMicrousd > 0 && estimatedCostMicrousd >= budgetMicrousd,
+    },
+    coreEntryAlwaysAvailable: true,
+    coreEntryMessage: 'ثبت دستی و تایپ رایگان Chrome با پایان سهمیهٔ سرویس‌های هوشمند قطع نمی‌شود.',
+  };
+}
+
+function quotaItemForCapability(status, capability) {
+  const id = capability === 'receipt_ocr' ? 'receiptOcrPages' : 'smartVoiceRequests';
+  return status.quotas.find((item) => item.id === id);
+}
+
+export function beginProviderUsage(capability, provider = 'unknown') {
+  if (!['server_voice', 'realtime_session', 'receipt_ocr'].includes(capability)) throw new Error('قابلیت provider معتبر نیست.');
+  const status = commercialStatus();
+  const quota = quotaItemForCapability(status, capability);
+  if (quota?.exhausted) throw quotaError(quota);
+  if (status.provider.overBudget) throw Object.assign(new Error('سقف بودجهٔ ماهانهٔ سرویس‌های هوشمند رسیده است؛ تایپ Chrome و ثبت دستی همچنان فعال است.'), {
+    status: 402, code: 'PROVIDER_BUDGET_EXCEEDED', details: { provider: status.provider },
+  });
+  const id = randomUUID();
+  db.prepare(`INSERT INTO provider_usage (id,capability,provider,status,request_count,created_by)
+    VALUES (?,?,?,'started',1,?)`).run(id, capability, String(provider || 'unknown').slice(0, 40), currentWorkspace()?.userId || null);
+  return id;
+}
+
+export function finishProviderUsage(id, values = {}) {
+  const current = db.prepare('SELECT id,capability,provider FROM provider_usage WHERE id=?').get(id);
+  if (!current) return null;
+  const provider = String(values.provider || current.provider || 'unknown').slice(0, 40);
+  const status = values.succeeded === false ? 'failed' : 'succeeded';
+  const durationMs = Math.max(0, Math.round(Number(values.durationMs) || 0));
+  const estimatedCostMicrousd = status === 'failed' ? 0 : estimateProviderCostMicrousd({ capability: current.capability, provider, durationMs, requestCount: 1 });
+  db.prepare(`UPDATE provider_usage SET provider=?,status=?,duration_ms=?,estimated_cost_microusd=?,error_code=?,completed_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run(provider, status, durationMs, estimatedCostMicrousd, String(values.errorCode || '').slice(0, 80), id);
+  return db.prepare('SELECT * FROM provider_usage WHERE id=?').get(id);
+}
+
+export function recordRealtimeProviderDuration(durationMs) {
+  const normalized = Math.max(0, Math.round(Number(durationMs) || 0));
+  if (!normalized) return null;
+  const id = randomUUID();
+  const estimatedCostMicrousd = estimateProviderCostMicrousd({ capability: 'realtime_duration', provider: 'openai', durationMs: normalized, requestCount: 0 });
+  db.prepare(`INSERT INTO provider_usage (id,capability,provider,status,request_count,duration_ms,estimated_cost_microusd,created_by,completed_at)
+    VALUES (?, 'realtime_duration','openai','succeeded',0,?,?,?,CURRENT_TIMESTAMP)`)
+    .run(id, normalized, estimatedCostMicrousd, currentWorkspace()?.userId || null);
+  return id;
 }
 
 export function closeWorkspaceDatabases() {
@@ -842,6 +1025,248 @@ function audit(action, entityType, entityId, payload = {}) {
 
 export function recordAudit(action, entityType, entityId, payload = {}) {
   audit(action, entityType, entityId, payload);
+}
+
+function userIdentity(userId) {
+  if (!userId) return null;
+  const user = controlDb.prepare('SELECT id,username,display_name AS displayName FROM users WHERE id=?').get(userId);
+  return user ? { ...user, label: user.displayName || user.username } : { id: userId, username: '', displayName: '', label: 'کاربر حذف‌شده' };
+}
+
+function hydrateCollaborationRequest(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    requestedBy: userIdentity(row.requestedBy),
+    answeredBy: userIdentity(row.answeredBy),
+    resolvedBy: userIdentity(row.resolvedBy),
+  };
+}
+
+export function listCollaborationRequests({ status = '' } = {}) {
+  const normalizedStatus = ['open', 'answered', 'resolved'].includes(status) ? status : '';
+  const rows = normalizedStatus
+    ? db.prepare(`SELECT id,entity_type AS entityType,entity_id AS entityId,question,answer,priority,status,
+        requested_by AS requestedBy,answered_by AS answeredBy,resolved_by AS resolvedBy,
+        created_at AS createdAt,answered_at AS answeredAt,resolved_at AS resolvedAt
+        FROM collaboration_requests WHERE status=? ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,created_at DESC`).all(normalizedStatus)
+    : db.prepare(`SELECT id,entity_type AS entityType,entity_id AS entityId,question,answer,priority,status,
+        requested_by AS requestedBy,answered_by AS answeredBy,resolved_by AS resolvedBy,
+        created_at AS createdAt,answered_at AS answeredAt,resolved_at AS resolvedAt
+        FROM collaboration_requests ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END,
+        CASE priority WHEN 'urgent' THEN 0 ELSE 1 END,created_at DESC LIMIT 200`).all();
+  return rows.map(hydrateCollaborationRequest);
+}
+
+function collaborationEntityExists(entityType, entityId) {
+  if (entityType === 'general') return true;
+  const tables = {
+    transaction: 'transactions', receipt: 'receipts', closing: 'daily_closings',
+    reconciliation: 'bank_statement_imports', obligation: 'obligations',
+  };
+  const table = tables[entityType];
+  return Boolean(table && entityId && db.prepare(`SELECT 1 FROM ${table} WHERE id=?`).get(entityId));
+}
+
+export function createCollaborationRequest(values = {}) {
+  const entityType = ['general', 'transaction', 'receipt', 'closing', 'reconciliation', 'obligation'].includes(values.entityType) ? values.entityType : 'general';
+  const entityId = entityType === 'general' ? null : String(values.entityId || '').trim().slice(0, 80);
+  const question = String(values.question || '').trim().slice(0, 1200);
+  const priority = values.priority === 'urgent' ? 'urgent' : 'normal';
+  if (question.length < 5) throw new Error('درخواست توضیح باید حداقل پنج نویسه باشد.');
+  if (!collaborationEntityExists(entityType, entityId)) throw Object.assign(new Error('منبع درخواست در همین دفتر پیدا نشد.'), { status: 404, code: 'COLLABORATION_ENTITY_NOT_FOUND' });
+  const id = randomUUID();
+  db.prepare(`INSERT INTO collaboration_requests (id,entity_type,entity_id,question,priority,requested_by)
+    VALUES (?,?,?,?,?,?)`).run(id, entityType, entityId, question, priority, currentWorkspace()?.userId || null);
+  audit('request-explanation', 'collaboration_request', id, { entityType, entityId, priority });
+  return listCollaborationRequests().find((item) => item.id === id);
+}
+
+export function answerCollaborationRequest(id, answer) {
+  const text = String(answer || '').trim().slice(0, 2000);
+  if (text.length < 2) throw new Error('پاسخ را کامل وارد کن.');
+  const result = db.prepare(`UPDATE collaboration_requests SET answer=?,status='answered',answered_by=?,answered_at=CURRENT_TIMESTAMP,
+    resolved_by=NULL,resolved_at=NULL WHERE id=? AND status IN ('open','answered')`)
+    .run(text, currentWorkspace()?.userId || null, id);
+  if (!result.changes) return null;
+  audit('answer', 'collaboration_request', id, {});
+  return listCollaborationRequests().find((item) => item.id === id);
+}
+
+export function resolveCollaborationRequest(id) {
+  const result = db.prepare(`UPDATE collaboration_requests SET status='resolved',resolved_by=?,resolved_at=CURRENT_TIMESTAMP
+    WHERE id=? AND status='answered'`).run(currentWorkspace()?.userId || null, id);
+  if (!result.changes) return null;
+  audit('resolve', 'collaboration_request', id, {});
+  return listCollaborationRequests().find((item) => item.id === id);
+}
+
+function monthWindowForWorkspace(month = '', now = new Date()) {
+  const timeZone = currentTimeZone();
+  const requested = normalizePersian(month);
+  const currentPersianPeriod = periodForDate(now, timeZone);
+  const token = /^\d{4}-(0[1-9]|1[0-2])$/.test(requested) ? requested : currentPersianPeriod;
+  const [year, monthNumber] = token.split('-').map(Number);
+  if (year < 1700) {
+    let firstDay = null;
+    let nextDay = null;
+    let matched = false;
+    // Persian year 1405 starts in Gregorian 2026. Beginning at January of
+    // year + 621 keeps the whole requested Persian year inside this scan.
+    const searchStart = new Date(Date.UTC(year + 621, 0, 1, 12));
+    for (let offset = 0; offset < 500; offset += 1) {
+      const candidate = new Date(searchStart.getTime() + offset * 86_400_000);
+      const candidatePeriod = periodForDate(candidate, timeZone);
+      if (candidatePeriod === token && !matched) {
+        matched = true;
+        firstDay = localDay(candidate, timeZone);
+      } else if (matched && candidatePeriod !== token) {
+        nextDay = localDay(candidate, timeZone);
+        break;
+      }
+    }
+    if (!firstDay || !nextDay) throw new Error('دورهٔ شمسی انتخاب‌شده قابل محاسبه نیست.');
+    const start = zonedMidnight(firstDay, timeZone);
+    const endExclusive = zonedMidnight(nextDay, timeZone);
+    return {
+      month: token, period: token, periodType: 'persian', from: start.toISOString(), toExclusive: endExclusive.toISOString(),
+      to: new Date(endExclusive.getTime() - 1).toISOString(), timeZone,
+    };
+  }
+  const nextYear = monthNumber === 12 ? year + 1 : year;
+  const nextMonth = monthNumber === 12 ? 1 : monthNumber + 1;
+  const start = zonedMidnight(`${token}-01`, timeZone);
+  const endExclusive = zonedMidnight(`${nextYear}-${String(nextMonth).padStart(2, '0')}-01`, timeZone);
+  return { month: token, period: token, periodType: 'gregorian', from: start.toISOString(), toExclusive: endExclusive.toISOString(), to: new Date(endExclusive.getTime() - 1).toISOString(), timeZone };
+}
+
+function packageTransactions(range) {
+  return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,transactions.raw_text AS rawText,
+    transactions.source,transactions.review_state AS reviewState,transactions.occurred_at AS occurredAt,
+    transactions.account_id AS accountId,accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName,
+    transactions.note FROM transactions LEFT JOIN accounts ON accounts.id=transactions.account_id
+    LEFT JOIN contacts ON contacts.id=transactions.contact_id
+    WHERE transactions.status!='deleted' AND transactions.occurred_at>=? AND transactions.occurred_at<?
+    ORDER BY transactions.occurred_at`).all(range.from, range.toExclusive);
+}
+
+export function monthlyAccountantPackage(month = '', now = new Date()) {
+  const range = monthWindowForWorkspace(month, now);
+  const workspace = currentWorkspace();
+  const workspaceMeta = controlDb.prepare('SELECT id,name,profile_type AS profileType FROM workspaces WHERE id=?').get(workspace?.id || 'primary');
+  const transactions = packageTransactions(range);
+  const incompleteReceipts = db.prepare(`${receiptSelect("WHERE receipts.status NOT IN ('linked','ignored')")} ORDER BY receipts.created_at`).all().map(hydrateReceipt);
+  const rangeStartDay = localDay(new Date(range.from), range.timeZone);
+  const rangeEndDay = localDay(new Date(range.toExclusive), range.timeZone);
+  const closings = db.prepare(`SELECT id,day,expected_cash AS expectedCash,counted_cash AS countedCash,difference,note,created_at AS createdAt
+    FROM daily_closings WHERE day>=? AND day<? ORDER BY day`).all(rangeStartDay, rangeEndDay);
+  const closingDiscrepancies = closings.filter((item) => Number(item.difference) !== 0 && !String(item.note || '').trim());
+  const reconciliationIssues = db.prepare(`SELECT bank_statement_imports.id,bank_statement_imports.file_name AS fileName,
+    bank_statement_imports.period_start AS periodStart,bank_statement_imports.period_end AS periodEnd,bank_statement_imports.status,
+    bank_statement_imports.created_at AS createdAt,COUNT(CASE WHEN bank_statement_lines.status='unmatched' THEN 1 END) AS unmatchedCount,
+    COALESCE(SUM(CASE WHEN bank_statement_lines.status='unmatched' THEN bank_statement_lines.amount ELSE 0 END),0) AS unmatchedAmount
+    FROM bank_statement_imports LEFT JOIN bank_statement_lines ON bank_statement_lines.import_id=bank_statement_imports.id
+    GROUP BY bank_statement_imports.id HAVING bank_statement_imports.status='open' OR unmatchedCount>0
+    ORDER BY bank_statement_imports.created_at`).all();
+  const obligations = listObligations({ status: 'open' });
+  const auditLog = db.prepare(`SELECT id,action,entity_type AS entityType,entity_id AS entityId,payload,created_at AS createdAt
+    FROM audit_log WHERE created_at>=datetime(?) AND created_at<datetime(?) ORDER BY created_at`).all(range.from, range.toExclusive)
+    .map((item) => ({ ...item, payload: parseStoredJson(item.payload, {}) }));
+  const openRequests = [...listCollaborationRequests({ status: 'open' }), ...listCollaborationRequests({ status: 'answered' })];
+  const sections = { transactions, incompleteReceipts, closings, closingDiscrepancies, reconciliationIssues, obligations, auditLog, openRequests };
+  const checklist = monthlyPackageChecklist(sections);
+  const summary = {
+    transactionCount: transactions.length,
+    income: transactions.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount), 0),
+    expense: transactions.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount), 0),
+    incompleteReceipts: incompleteReceipts.length,
+    unexplainedClosingDiscrepancies: closingDiscrepancies.length,
+    reconciliationIssues: reconciliationIssues.length,
+    openObligations: obligations.length,
+    unansweredRequests: openRequests.filter((item) => item.status === 'open').length,
+  };
+  const payload = {
+    format: 'hesab-yar-accountant-package', version: 1, generatedAt: now.toISOString(),
+    workspace: workspaceMeta, scope: range, basis: 'cash', unit: 'تومان', summary, checklist, sections,
+    disclaimer: 'این بسته برای تحویل و کنترل حسابدار است؛ جایگزین دفاتر قانونی، اظهارنامه یا فایل انتقال نرم‌افزار حسابداری رسمی نیست.',
+  };
+  const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  return { ...payload, manifest: { algorithm: 'sha256', digest, sourceIdsComplete: true, receiptImagesIncluded: false } };
+}
+
+export function savePilotCheckin(values = {}) {
+  const weekStart = String(values.weekStart || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || Number.isNaN(new Date(`${weekStart}T00:00:00Z`).getTime())) throw new Error('تاریخ شروع هفته معتبر نیست.');
+  const respondentType = values.respondentType === 'accountant' ? 'accountant' : 'owner';
+  const savedMinutes = Math.min(10_000, Math.max(0, Math.round(Number(values.savedMinutes) || 0)));
+  const errorCount = Math.min(10_000, Math.max(0, Math.round(Number(values.errorCount) || 0)));
+  const willingnessToPay = ['yes', 'maybe', 'no', 'unknown'].includes(values.willingnessToPay) ? values.willingnessToPay : 'unknown';
+  const planInterest = ['free', 'professional', 'accountant', 'none'].includes(values.planInterest) ? values.planInterest : 'none';
+  const id = randomUUID();
+  db.prepare(`INSERT INTO pilot_checkins (id,week_start,respondent_type,saved_minutes,error_count,friction,dropout_reason,
+    willingness_to_pay,plan_interest,note,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(week_start,respondent_type) DO UPDATE SET saved_minutes=excluded.saved_minutes,error_count=excluded.error_count,
+    friction=excluded.friction,dropout_reason=excluded.dropout_reason,willingness_to_pay=excluded.willingness_to_pay,
+    plan_interest=excluded.plan_interest,note=excluded.note,created_by=excluded.created_by,updated_at=CURRENT_TIMESTAMP`)
+    .run(id, weekStart, respondentType, savedMinutes, errorCount, String(values.friction || '').trim().slice(0, 1000),
+      String(values.dropoutReason || '').trim().slice(0, 1000), willingnessToPay, planInterest,
+      String(values.note || '').trim().slice(0, 1200), currentWorkspace()?.userId || null);
+  audit('pilot-checkin', 'workspace', currentWorkspace()?.id || 'primary', { weekStart, respondentType, willingnessToPay, planInterest });
+  return listPilotCheckins().find((item) => item.weekStart === weekStart && item.respondentType === respondentType);
+}
+
+export function listPilotCheckins() {
+  return db.prepare(`SELECT id,week_start AS weekStart,respondent_type AS respondentType,saved_minutes AS savedMinutes,
+    error_count AS errorCount,friction,dropout_reason AS dropoutReason,willingness_to_pay AS willingnessToPay,
+    plan_interest AS planInterest,note,created_by AS createdBy,created_at AS createdAt,updated_at AS updatedAt
+    FROM pilot_checkins ORDER BY week_start DESC,respondent_type LIMIT 52`).all()
+    .map((item) => ({ ...item, createdBy: userIdentity(item.createdBy) }));
+}
+
+export function pilotWorkspaceDashboard(now = new Date(), workspaceMeta = null) {
+  const workspace = workspaceMeta || controlDb.prepare('SELECT id,name,created_at AS createdAt FROM workspaces WHERE id=?').get(currentWorkspace()?.id || 'primary');
+  const weeks = fourWeekWindows(now).map((window) => {
+    const transactions = Number(db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted' AND created_at>=datetime(?) AND created_at<datetime(?)").get(window.from, window.toExclusive).count || 0);
+    const receipts = Number(db.prepare('SELECT COUNT(*) AS count FROM receipts WHERE created_at>=datetime(?) AND created_at<datetime(?)').get(window.from, window.toExclusive).count || 0);
+    const voice = Number(db.prepare('SELECT COUNT(*) AS count FROM voice_metrics WHERE created_at>=datetime(?) AND created_at<datetime(?)').get(window.from, window.toExclusive).count || 0);
+    return { ...window, transactions, receipts, voice, activity: transactions + receipts + voice, active: transactions + receipts + voice > 0 };
+  });
+  const checkins = listPilotCheckins();
+  const latestCheckin = checkins[0] || null;
+  const ageDays = workspace?.createdAt ? Math.floor((now.getTime() - new Date(`${workspace.createdAt.replace(' ', 'T')}Z`).getTime()) / 86_400_000) : 0;
+  return {
+    workspace,
+    weeks,
+    activeWeeks: weeks.filter((item) => item.active).length,
+    eligibleForWeekFour: ageDays >= 21,
+    weekFourActive: ageDays >= 21 ? Boolean(weeks.at(-1)?.active) : false,
+    willingnessToPay: latestCheckin?.willingnessToPay || 'unknown',
+    savedMinutes: checkins.reduce((sum, item) => sum + Number(item.savedMinutes || 0), 0),
+    reportedErrors: checkins.reduce((sum, item) => sum + Number(item.errorCount || 0), 0),
+    latestFriction: latestCheckin?.friction || '',
+    latestDropoutReason: latestCheckin?.dropoutReason || '',
+    checkins,
+  };
+}
+
+export function pilotPortfolio(now = new Date()) {
+  const workspaces = allWorkspaces().map((workspace) => runInWorkspace(workspace.id, { role: 'owner' }, () => ({
+    ...pilotWorkspaceDashboard(now, workspace), commercial: commercialStatus(workspace.id, now),
+  })));
+  return { generatedAt: now.toISOString(), summary: pilotRetentionSummary(workspaces), workspaces };
+}
+
+export function workspaceOperationalSignals() {
+  const quickCheck = db.prepare('PRAGMA quick_check').get();
+  const lastRestore = db.prepare("SELECT created_at AS createdAt FROM audit_log WHERE action='restore' ORDER BY created_at DESC LIMIT 1").get();
+  const lastActivity = db.prepare('SELECT MAX(created_at) AS createdAt FROM audit_log').get();
+  const unresolvedRequests = Number(db.prepare("SELECT COUNT(*) AS count FROM collaboration_requests WHERE status!='resolved'").get().count || 0);
+  return {
+    database: { ok: Object.values(quickCheck || {}).includes('ok'), result: Object.values(quickCheck || {})[0] || 'unknown' },
+    lastRestoreAt: lastRestore?.createdAt || null,
+    lastActivityAt: lastActivity?.createdAt || null,
+    unresolvedRequests,
+  };
 }
 
 function cleanAmount(value) {
@@ -1994,11 +2419,12 @@ export function voiceStats() {
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
-  'automation_rules', 'settings', 'voice_metrics', 'tax_rates', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback', 'audit_log',
+  'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
+  'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
+  'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',
