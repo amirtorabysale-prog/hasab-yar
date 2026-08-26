@@ -5,12 +5,12 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerFinancialQuestion, authenticateUser, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
-  deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
-  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReconciliationImport, getSettings, inventoryOverview,
+  deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
+  ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
-  importBankStatement, ignoreReconciliationLine, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
+  importBankStatement, ignoreReconciliationLine, listAutomationRules, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
   recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
-  redoTransaction, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
+  confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateReceipt, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
@@ -27,6 +27,7 @@ import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, 
 import { parseFinancialAudio } from './voice.js';
 import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
 import { voiceProviderStatus } from './voiceProviderState.js';
+import { extractReceiptData, receiptOcrConfigured } from './receiptOcr.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -304,7 +305,11 @@ app.post('/api/reconciliation/imports/:id/close', (request, response, next) => {
 app.get('/api/closings', (_request, response) => response.json({ items: listDailyClosings() }));
 app.get('/api/closings/preview', (request, response) => response.json({ item: previewDayClosing(request.query) }));
 app.post('/api/closings', (request, response, next) => { try { response.status(201).json({ item: closeDay(request.body) }); } catch (error) { next(error); } });
-app.get('/api/receipts', (_request, response) => response.json({ items: listReceipts() }));
+app.get('/api/receipts', (request, response) => response.json({ items: listReceipts({ status: request.query.status }), ocrConfigured: receiptOcrConfigured() }));
+app.get('/api/receipts/:id', (request, response) => {
+  const item = getReceipt(request.params.id);
+  return item ? response.json({ item, candidates: receiptCandidates(item.id) }) : response.status(404).json({ message: 'رسید پیدا نشد.' });
+});
 app.get('/api/receipts/:id/image', (request, response) => {
   const image = receiptImage(request.params.id);
   if (!image) return response.status(404).end();
@@ -312,16 +317,40 @@ app.get('/api/receipts/:id/image', (request, response) => {
   response.setHeader('Cache-Control', 'private, max-age=3600');
   return response.send(image.imageData);
 });
-app.post('/api/receipts', upload.single('image'), (request, response, next) => {
+app.post('/api/receipts', upload.single('image'), async (request, response, next) => {
   try {
     if (!request.file || !['image/jpeg', 'image/png', 'image/webp'].includes(request.file.mimetype)) return response.status(400).json({ message: 'یک تصویر JPG، PNG یا WebP انتخاب کن.' });
-    const parsed = parseFinancialText(String(request.body.note || ''), { learnings: getLearnings(), averages: typicalAmounts(), source: 'text' });
-    const first = parsed.transactions[0];
-    const item = saveReceipt({ buffer: request.file.buffer, fileName: request.file.originalname, mimeType: request.file.mimetype, note: request.body.note, amount: first?.amount, type: first?.type, category: first?.category });
-    return response.status(201).json({ item, suggestion: first || null });
+    const note = String(request.body.note || '');
+    const parsed = parseFinancialText(note, { learnings: getLearnings(), averages: typicalAmounts(), source: 'text' });
+    const noteSuggestion = parsed.transactions[0] || null;
+    let extraction = null;
+    let warning = null;
+    try { extraction = await extractReceiptData({ buffer: request.file.buffer, mimeType: request.file.mimetype, note, categories: getCategories() }); }
+    catch (error) { warning = { code: error.code || 'RECEIPT_OCR_FAILED', message: error.message }; }
+    const reviewReasons = [...(extraction?.reviewReasons || [])];
+    if (extraction?.amount && noteSuggestion?.amount && extraction.amount !== noteSuggestion.amount) reviewReasons.push('مبلغ تصویر و توضیح کاربر یکسان نیست؛ مبلغ تصویر پیشنهاد شده و باید کنترل شود.');
+    if (!extraction && noteSuggestion) reviewReasons.push('مبلغ فقط از توضیح کاربر استخراج شده و با تصویر کنترل نشده است.');
+    const amount = extraction?.amount || noteSuggestion?.amount || null;
+    const type = noteSuggestion?.type || extraction?.type || null;
+    const category = noteSuggestion?.category || extraction?.category || null;
+    const accountId = String(request.body.accountId || noteSuggestion?.accountId || 'cash');
+    const status = extraction?.status === 'ready' && amount && type && category ? 'ready' : extraction ? 'review' : warning ? 'failed' : 'review';
+    const item = saveReceipt({
+      buffer: request.file.buffer, fileName: request.file.originalname, mimeType: request.file.mimetype, note, amount, type, category, accountId,
+      merchant: extraction?.merchant, occurredAt: extraction?.occurredAt, paymentMethod: extraction?.paymentMethod,
+      reference: extraction?.reference, status, ocrProvider: extraction?.provider || (noteSuggestion ? 'note-parser' : ''),
+      ocrModel: extraction?.model || '', ocrConfidence: extraction?.confidence || 0, fieldConfidence: extraction?.fieldConfidence || {},
+      ocrText: extraction?.rawText || '', reviewReasons,
+    });
+    return response.status(201).json({ item, suggestion: extraction || noteSuggestion, warning, candidates: receiptCandidates(item.id) });
   } catch (error) { return next(error); }
 });
+app.put('/api/receipts/:id', (request, response, next) => { try { const item = updateReceipt(request.params.id, request.body || {}); return item ? response.json({ item, candidates: receiptCandidates(item.id) }) : response.status(404).json({ message: 'رسید باز پیدا نشد.' }); } catch (error) { return next(error); } });
+app.post('/api/receipts/:id/confirm', (request, response, next) => { try { const item = confirmReceipt(request.params.id, request.body || {}); return item ? response.json({ item }) : response.status(404).json({ message: 'رسید باز پیدا نشد.' }); } catch (error) { return next(error); } });
 app.delete('/api/receipts/:id', (request, response) => response.status(deleteReceipt(request.params.id) ? 204 : 404).end());
+app.get('/api/automation-rules', (request, response) => response.json({ items: listAutomationRules(request.query.source) }));
+app.post('/api/automation-rules', (request, response, next) => { try { return response.status(201).json({ item: saveAutomationRule(request.body || {}) }); } catch (error) { return next(error); } });
+app.delete('/api/automation-rules/:id', (request, response) => response.status(deleteAutomationRule(request.params.id) ? 204 : 404).end());
 app.get('/api/products', (_request, response) => response.json({ items: listProducts() }));
 app.get('/api/inventory/overview', (_request, response) => response.json(inventoryOverview()));
 app.post('/api/products', (request, response, next) => { try { response.status(201).json({ item: saveProduct(request.body) }); } catch (error) { next(error); } });
