@@ -11,6 +11,12 @@ export function roleAllows(role, minimum) {
 export function minimumRoleForRequest(method, path) {
   const normalizedMethod = String(method || 'GET').toUpperCase();
   const normalizedPath = String(path || '');
+  if (normalizedPath.startsWith('/collaboration/requests/') && normalizedPath.endsWith('/answer')) return 'manager';
+  if (normalizedPath.startsWith('/collaboration/')) return 'accountant';
+  if (normalizedPath.startsWith('/pilot/')) return 'manager';
+  if (normalizedPath.startsWith('/operations/')) return 'manager';
+  if (normalizedPath.startsWith('/commercial/admin/')) return 'owner';
+  if (normalizedPath === '/commercial/status') return 'viewer';
   if (['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return normalizedPath.startsWith('/backups/') ? 'manager' : 'viewer';
   if (normalizedPath.startsWith('/auth/') || normalizedPath.startsWith('/alerts/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
   if (normalizedPath.startsWith('/workspace/members')) return 'owner';

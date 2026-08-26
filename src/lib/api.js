@@ -197,6 +197,34 @@ export const api = {
   saveProduct: (payload) => request(payload.id ? `/api/products/${payload.id}` : '/api/products', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   adjustStock: (id, quantity, note = '', unitCost = null) => request(`/api/products/${id}/stock`, { method: 'POST', body: JSON.stringify({ quantity, note, unitCost }) }),
   ask: (question) => request('/api/ask', { method: 'POST', body: JSON.stringify({ question }) }),
+  commercialStatus: () => request('/api/commercial/status'),
+  updateWorkspacePlan: (workspaceId, payload) => request(`/api/commercial/admin/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'POST', body: JSON.stringify(payload) }),
+  collaborationOverview: (month = '') => request(`/api/collaboration/overview${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+  monthlyAccountantPackage: (month = '') => request(`/api/collaboration/monthly-package${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+  createCollaborationRequest: (payload) => request('/api/collaboration/requests', { method: 'POST', body: JSON.stringify(payload) }),
+  answerCollaborationRequest: (id, answer) => request(`/api/collaboration/requests/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify({ answer }) }),
+  resolveCollaborationRequest: (id) => request(`/api/collaboration/requests/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: '{}' }),
+  savePilotCheckin: (payload) => request('/api/pilot/checkins', { method: 'POST', body: JSON.stringify(payload) }),
+  pilotPortfolio: () => request('/api/pilot/portfolio'),
+  operationsOverview: () => request('/api/operations/overview'),
+  downloadMonthlyAccountantPackage: async (month = '') => {
+    const path = `/api/collaboration/monthly-package/download${month ? `?month=${encodeURIComponent(month)}` : ''}`;
+    const response = await fetch(path, { credentials: 'same-origin', headers: protectedHeaders(false) });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(body.message || 'ساخت بستهٔ پایان ماه انجام نشد.'), { status: response.status, code: body.code });
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `hesab-yar-accountant-${month || new Date().toISOString().slice(0, 7)}.json`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { fileName, bytes: blob.size };
+  },
   voiceStats: () => request('/api/voice/stats'),
   voiceStatus: () => request('/api/voice/status'),
   learnings: () => request('/api/learnings'),
