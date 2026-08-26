@@ -9,7 +9,7 @@ const FORMAT = 'hesab-yar-encrypted-backup';
 const AAD = Buffer.from('hesab-yar-backup:v1', 'utf8');
 const MAX_BACKUP_BYTES = 30 * 1024 * 1024;
 const MAX_BACKUP_ROWS = 500_000;
-const OPTIONAL_ACCOUNTING_TABLES = new Set(['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins']);
+const OPTIONAL_ACCOUNTING_TABLES = new Set(['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches']);
 
 function backupError(message, code = 'BACKUP_INVALID') {
   return Object.assign(new Error(message), { status: 400, code });

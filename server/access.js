@@ -13,6 +13,7 @@ export function minimumRoleForRequest(method, path) {
   const normalizedPath = String(path || '');
   if (normalizedPath.startsWith('/collaboration/requests/') && normalizedPath.endsWith('/answer')) return 'manager';
   if (normalizedPath.startsWith('/collaboration/')) return 'accountant';
+  if (normalizedPath.startsWith('/accountant-transfer/')) return 'accountant';
   if (normalizedPath.startsWith('/pilot/')) return 'manager';
   if (normalizedPath.startsWith('/operations/')) return 'manager';
   if (normalizedPath.startsWith('/commercial/admin/')) return 'owner';

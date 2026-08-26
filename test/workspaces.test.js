@@ -76,6 +76,8 @@ test('enforces the role matrix for reads, financial writes, settings and members
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/collaboration/requests/abc/answer')), false);
   assert.equal(roleAllows('manager', minimumRoleForRequest('POST', '/collaboration/requests/abc/answer')), true);
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/collaboration/requests/abc/resolve')), true);
+  assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/accountant-transfer/overview')), false);
+  assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/accountant-transfer/batches')), true);
   assert.equal(roleAllows('accountant', minimumRoleForRequest('GET', '/pilot/portfolio')), false);
   assert.equal(roleAllows('manager', minimumRoleForRequest('GET', '/operations/overview')), true);
 });

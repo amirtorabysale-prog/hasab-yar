@@ -31,6 +31,10 @@ import {
   PLAN_CATALOG, billingMonth, estimateProviderCostMicrousd, fourWeekWindows, monthlyPackageChecklist,
   normalizePlanId, pilotRetentionSummary, quotaError, usageQuotaSnapshot,
 } from './collaboration.js';
+import {
+  ACCOUNTING_TRANSFER_TARGETS, accountingTransferReadiness, buildAccountingTransferCsv,
+  normalizeAccountingTransferTarget,
+} from './accountingTransfer.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -413,6 +417,50 @@ function ensureCommercialSchema(database) {
   `);
 }
 
+function ensureAccountingTransferSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS accounting_transfer_settings (
+      target_system TEXT PRIMARY KEY CHECK(target_system IN ('generic-csv','parsian-review-csv')),
+      template_name TEXT NOT NULL DEFAULT '',
+      template_verified INTEGER NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS accounting_transfer_mappings (
+      target_system TEXT NOT NULL CHECK(target_system IN ('generic-csv','parsian-review-csv')),
+      ledger_account_id TEXT NOT NULL REFERENCES ledger_accounts(id) ON DELETE CASCADE,
+      target_code TEXT NOT NULL,
+      target_name TEXT NOT NULL DEFAULT '',
+      updated_by TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (target_system,ledger_account_id)
+    );
+    CREATE TABLE IF NOT EXISTS accounting_transfer_batches (
+      id TEXT PRIMARY KEY,
+      period TEXT NOT NULL,
+      target_system TEXT NOT NULL CHECK(target_system IN ('generic-csv','parsian-review-csv')),
+      file_name TEXT NOT NULL,
+      row_count INTEGER NOT NULL,
+      entry_count INTEGER NOT NULL,
+      debit_total INTEGER NOT NULL,
+      credit_total INTEGER NOT NULL,
+      digest TEXT NOT NULL,
+      readiness_snapshot TEXT NOT NULL,
+      file_data BLOB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'generated' CHECK(status IN ('generated','delivered','accepted','rejected')),
+      status_note TEXT NOT NULL DEFAULT '',
+      generated_by TEXT,
+      reviewed_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(period,target_system,digest)
+    );
+    CREATE INDEX IF NOT EXISTS idx_accounting_transfer_batches_period
+      ON accounting_transfer_batches(period,target_system,created_at);
+  `);
+}
+
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");
 ensureColumn('transactions', "account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT");
@@ -432,6 +480,7 @@ ensureReceiptAutomationSchema(controlDb);
 ensureFinancialAlertSchema(controlDb);
 ensureCollaborationSchema(controlDb);
 ensureCommercialSchema(controlDb);
+ensureAccountingTransferSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
 
@@ -492,6 +541,7 @@ function workspaceDatabase(workspaceId) {
   ensureReceiptAutomationSchema(database);
   ensureFinancialAlertSchema(database);
   ensureCollaborationSchema(database);
+  ensureAccountingTransferSchema(database);
   ensureInventorySchema(database);
   ensureTaxSchema(database);
   migrateAccountingLedger(database);
@@ -1192,6 +1242,165 @@ export function monthlyAccountantPackage(month = '', now = new Date()) {
   };
   const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   return { ...payload, manifest: { algorithm: 'sha256', digest, sourceIdsComplete: true, receiptImagesIncluded: false } };
+}
+
+function accountingTransferSettings(targetSystem = 'generic-csv') {
+  const target = normalizeAccountingTransferTarget(targetSystem);
+  const row = db.prepare(`SELECT target_system AS targetSystem,template_name AS templateName,
+    template_verified AS templateVerified,note,updated_at AS updatedAt
+    FROM accounting_transfer_settings WHERE target_system=?`).get(target);
+  return row ? { ...row, templateVerified: Boolean(row.templateVerified) } : {
+    targetSystem: target, templateName: '', templateVerified: false, note: '', updatedAt: null,
+  };
+}
+
+function accountingTransferMappings(targetSystem = 'generic-csv') {
+  const target = normalizeAccountingTransferTarget(targetSystem);
+  return db.prepare(`SELECT accounting_transfer_mappings.target_system AS targetSystem,
+    accounting_transfer_mappings.ledger_account_id AS ledgerAccountId,ledger_accounts.code AS sourceCode,
+    ledger_accounts.name AS sourceName,accounting_transfer_mappings.target_code AS targetCode,
+    accounting_transfer_mappings.target_name AS targetName,accounting_transfer_mappings.updated_at AS updatedAt
+    FROM accounting_transfer_mappings JOIN ledger_accounts ON ledger_accounts.id=accounting_transfer_mappings.ledger_account_id
+    WHERE accounting_transfer_mappings.target_system=? ORDER BY ledger_accounts.code`).all(target);
+}
+
+function accountingTransferJournalRows(range) {
+  return db.prepare(`SELECT journal_entries.id AS entryId,journal_entries.occurred_at AS occurredAt,
+    journal_entries.memo,journal_entries.entry_kind AS entryKind,journal_entries.source_type AS sourceType,
+    journal_entries.source_id AS sourceId,journal_entries.revision,journal_lines.account_id AS accountId,
+    ledger_accounts.code AS accountCode,ledger_accounts.name AS accountName,journal_lines.debit,journal_lines.credit,
+    journal_lines.description AS lineDescription
+    FROM journal_entries JOIN journal_lines ON journal_lines.entry_id=journal_entries.id
+    JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+    WHERE journal_entries.occurred_at>=? AND journal_entries.occurred_at<?
+    ORDER BY journal_entries.occurred_at,journal_entries.created_at,journal_entries.id,journal_lines.rowid`).all(range.from, range.toExclusive);
+}
+
+function accountingTransferState(month = '', targetSystem = 'generic-csv', now = new Date()) {
+  const target = normalizeAccountingTransferTarget(targetSystem);
+  const packageData = monthlyAccountantPackage(month, now);
+  const settings = accountingTransferSettings(target);
+  const mappings = accountingTransferMappings(target);
+  const journalRows = accountingTransferJournalRows(packageData.scope);
+  const readiness = accountingTransferReadiness({ packageData, journalRows, settings, mappings });
+  return { packageData, settings, mappings, journalRows, readiness };
+}
+
+function hydrateAccountingTransferBatch(row, includeFile = false) {
+  if (!row) return null;
+  const item = {
+    id: row.id, period: row.period, targetSystem: row.targetSystem, fileName: row.fileName,
+    rowCount: Number(row.rowCount), entryCount: Number(row.entryCount), debitTotal: Number(row.debitTotal),
+    creditTotal: Number(row.creditTotal), digest: row.digest, status: row.status, statusNote: row.statusNote,
+    generatedBy: userIdentity(row.generatedBy), reviewedBy: userIdentity(row.reviewedBy),
+    createdAt: row.createdAt, updatedAt: row.updatedAt,
+  };
+  if (includeFile) item.fileData = Buffer.from(row.fileData || []);
+  return item;
+}
+
+const accountingTransferBatchColumns = `id,period,target_system AS targetSystem,file_name AS fileName,
+  row_count AS rowCount,entry_count AS entryCount,debit_total AS debitTotal,credit_total AS creditTotal,digest,status,
+  status_note AS statusNote,generated_by AS generatedBy,reviewed_by AS reviewedBy,created_at AS createdAt,
+  updated_at AS updatedAt`;
+const accountingTransferBatchSelect = `SELECT ${accountingTransferBatchColumns} FROM accounting_transfer_batches`;
+const accountingTransferBatchFileSelect = `SELECT ${accountingTransferBatchColumns},file_data AS fileData FROM accounting_transfer_batches`;
+
+export function listAccountingTransferBatches({ period = '', targetSystem = '', limit = 50 } = {}) {
+  const clauses = [];
+  const params = [];
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(String(period || ''))) { clauses.push('period=?'); params.push(period); }
+  if (targetSystem) { clauses.push('target_system=?'); params.push(normalizeAccountingTransferTarget(targetSystem)); }
+  params.push(Math.min(200, Math.max(1, Number(limit) || 50)));
+  return db.prepare(`${accountingTransferBatchSelect}${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}
+    ORDER BY created_at DESC LIMIT ?`).all(...params).map((row) => hydrateAccountingTransferBatch(row));
+}
+
+export function accountingTransferOverview(month = '', targetSystem = 'generic-csv', now = new Date()) {
+  const state = accountingTransferState(month, targetSystem, now);
+  return {
+    generatedAt: now.toISOString(), scope: state.packageData.scope, settings: state.settings,
+    targets: ACCOUNTING_TRANSFER_TARGETS, readiness: state.readiness,
+    batches: listAccountingTransferBatches({ period: state.packageData.scope.period, targetSystem: state.settings.targetSystem }),
+  };
+}
+
+export function saveAccountingTransferSettings(values = {}) {
+  const targetSystem = normalizeAccountingTransferTarget(values.targetSystem);
+  const templateName = String(values.templateName || '').trim().slice(0, 160);
+  const templateVerified = Boolean(values.templateVerified);
+  const note = String(values.note || '').trim().slice(0, 800);
+  if (targetSystem === 'parsian-review-csv' && templateVerified && templateName.length < 3) {
+    throw new Error('برای تأیید نگاشت پارسیان، نام یا نسخهٔ قالب کنترل‌شده را وارد کن.');
+  }
+  db.prepare(`INSERT INTO accounting_transfer_settings (target_system,template_name,template_verified,note,updated_by)
+    VALUES (?,?,?,?,?) ON CONFLICT(target_system) DO UPDATE SET template_name=excluded.template_name,
+    template_verified=excluded.template_verified,note=excluded.note,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`)
+    .run(targetSystem, templateName, templateVerified ? 1 : 0, note, currentWorkspace()?.userId || null);
+  audit('update-transfer-settings', 'accounting_transfer_settings', targetSystem, { templateName, templateVerified });
+  return accountingTransferSettings(targetSystem);
+}
+
+export function saveAccountingTransferMapping(values = {}) {
+  const targetSystem = normalizeAccountingTransferTarget(values.targetSystem);
+  const ledgerAccountId = String(values.ledgerAccountId || '').trim();
+  const targetCode = String(values.targetCode || '').trim().slice(0, 80);
+  const targetName = String(values.targetName || '').trim().slice(0, 160);
+  const account = db.prepare('SELECT id,code,name FROM ledger_accounts WHERE id=?').get(ledgerAccountId);
+  if (!account) throw Object.assign(new Error('حساب دفتر کل در این دفتر پیدا نشد.'), { status: 404, code: 'TRANSFER_ACCOUNT_NOT_FOUND' });
+  if (!targetCode) throw new Error('کد حساب مقصد را وارد کن.');
+  db.prepare(`INSERT INTO accounting_transfer_mappings (target_system,ledger_account_id,target_code,target_name,updated_by)
+    VALUES (?,?,?,?,?) ON CONFLICT(target_system,ledger_account_id) DO UPDATE SET target_code=excluded.target_code,
+    target_name=excluded.target_name,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`)
+    .run(targetSystem, ledgerAccountId, targetCode, targetName, currentWorkspace()?.userId || null);
+  audit('map-transfer-account', 'ledger_account', ledgerAccountId, { targetSystem, targetCode, targetName });
+  return accountingTransferMappings(targetSystem).find((item) => item.ledgerAccountId === ledgerAccountId);
+}
+
+export function createAccountingTransferBatch(values = {}, now = new Date()) {
+  const targetSystem = normalizeAccountingTransferTarget(values.targetSystem);
+  const state = accountingTransferState(values.month, targetSystem, now);
+  if (!state.readiness.ready) throw Object.assign(new Error('خروجی هنوز آماده نیست؛ موارد کنترل‌نشده را برطرف کن.'), {
+    status: 409, code: 'ACCOUNTING_TRANSFER_NOT_READY', details: { readiness: state.readiness },
+  });
+  const fileData = buildAccountingTransferCsv({
+    period: state.packageData.scope.period, journalRows: state.journalRows, settings: state.settings,
+    mappings: state.mappings, timeZone: state.packageData.scope.timeZone,
+  });
+  const digest = createHash('sha256').update(fileData).digest('hex');
+  const existing = db.prepare(`${accountingTransferBatchSelect} WHERE period=? AND target_system=? AND digest=?`)
+    .get(state.packageData.scope.period, targetSystem, digest);
+  if (existing) return hydrateAccountingTransferBatch(existing);
+  const id = randomUUID();
+  const workspaceId = String(currentWorkspace()?.id || 'primary').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'primary';
+  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}.csv`;
+  db.prepare(`INSERT INTO accounting_transfer_batches (id,period,target_system,file_name,row_count,entry_count,debit_total,
+    credit_total,digest,readiness_snapshot,file_data,generated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, state.packageData.scope.period, targetSystem, fileName, state.readiness.rowCount, state.readiness.entryCount,
+      state.readiness.debitTotal, state.readiness.creditTotal, digest, JSON.stringify(state.readiness), fileData,
+      currentWorkspace()?.userId || null);
+  audit('generate-transfer-batch', 'accounting_transfer_batch', id, {
+    period: state.packageData.scope.period, targetSystem, digest, rowCount: state.readiness.rowCount,
+  });
+  return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchSelect} WHERE id=?`).get(id));
+}
+
+export function accountingTransferBatchFile(id) {
+  return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchFileSelect} WHERE id=?`).get(id), true);
+}
+
+export function updateAccountingTransferBatchStatus(id, values = {}) {
+  const status = ['delivered', 'accepted', 'rejected'].includes(values.status) ? values.status : '';
+  const note = String(values.note || '').trim().slice(0, 1200);
+  if (!status) throw new Error('وضعیت تحویل معتبر نیست.');
+  if (status === 'rejected' && note.length < 5) throw new Error('دلیل رد خروجی را کامل وارد کن.');
+  const current = db.prepare('SELECT id,status FROM accounting_transfer_batches WHERE id=?').get(id);
+  if (!current) return null;
+  if (['accepted', 'rejected'].includes(current.status) && status !== current.status) throw Object.assign(new Error('خروجی نهایی‌شده قابل بازگرداندن نیست؛ پس از اصلاح داده یک بستهٔ جدید بساز.'), { status: 409, code: 'TRANSFER_BATCH_FINAL' });
+  db.prepare(`UPDATE accounting_transfer_batches SET status=?,status_note=?,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run(status, note, currentWorkspace()?.userId || null, id);
+  audit('update-transfer-status', 'accounting_transfer_batch', id, { status, note });
+  return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchSelect} WHERE id=?`).get(id));
 }
 
 export function savePilotCheckin(values = {}) {
@@ -2420,10 +2629,12 @@ export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
-  'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback', 'audit_log',
+  'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
+  'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
+  'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',

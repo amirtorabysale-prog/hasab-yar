@@ -47,7 +47,7 @@ test('rejects a wrong password and a structurally incomplete backup', () => {
 
 test('keeps backups from before the ledger upgrade restorable', () => {
   const legacy = database.runInWorkspace('primary', { role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
-  for (const table of ['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins']) delete legacy.tables[table];
+  for (const table of ['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches']) delete legacy.tables[table];
   assert.doesNotThrow(() => backup.validateFinancialBackup(legacy));
   assert.deepEqual(legacy.tables.journal_entries, []);
 });
