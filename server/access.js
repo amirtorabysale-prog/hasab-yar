@@ -12,7 +12,7 @@ export function minimumRoleForRequest(method, path) {
   const normalizedMethod = String(method || 'GET').toUpperCase();
   const normalizedPath = String(path || '');
   if (['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return normalizedPath.startsWith('/backups/') ? 'manager' : 'viewer';
-  if (normalizedPath.startsWith('/auth/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
+  if (normalizedPath.startsWith('/auth/') || normalizedPath.startsWith('/alerts/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
   if (normalizedPath.startsWith('/workspace/members')) return 'owner';
   if (normalizedPath.startsWith('/accounting/periods/')) return 'owner';
   if (normalizedPath.startsWith('/reconciliation/imports/') && normalizedPath.endsWith('/close')) return 'manager';

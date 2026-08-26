@@ -51,6 +51,7 @@ test('creates members with forced password change and protects the last owner', 
 
 test('enforces the role matrix for reads, financial writes, settings and members', () => {
   assert.equal(roleAllows('viewer', minimumRoleForRequest('GET', '/reports')), true);
+  assert.equal(roleAllows('viewer', minimumRoleForRequest('POST', '/alerts/expense-growth/snooze')), true);
   assert.equal(roleAllows('viewer', minimumRoleForRequest('POST', '/transactions')), false);
   assert.equal(roleAllows('accountant', minimumRoleForRequest('POST', '/transactions')), true);
   assert.equal(roleAllows('accountant', minimumRoleForRequest('PATCH', '/settings')), false);

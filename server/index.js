@@ -9,7 +9,7 @@ import {
   ensureAdmin, financialOverview, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordVoiceMetric,
-  recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation,
+  recordAudit, removeWorkspaceMember, report, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateReceipt, updateTransaction, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
@@ -218,6 +218,7 @@ app.post('/api/transactions', (request, response, next) => {
 });
 app.get('/api/reports', (request, response) => response.json(report(['week', 'month', 'quarter'].includes(request.query.range) ? request.query.range : 'month')));
 app.get('/api/overview', (_request, response) => response.json(financialOverview()));
+app.post('/api/alerts/:id/snooze', (request, response, next) => { try { return response.json({ item: snoozeFinancialAlert(request.params.id, request.body || {}) }); } catch (error) { return next(error); } });
 app.get('/api/accounting/accounts', (_request, response) => response.json({ items: listLedgerAccounts(activeWorkspaceDatabase()) }));
 app.get('/api/accounting/trial-balance', (request, response, next) => {
   try { return response.json(trialBalance(activeWorkspaceDatabase(), request.query.through)); }
