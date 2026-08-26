@@ -23,6 +23,10 @@ import {
   taxReport as taxReportCore,
 } from './tax.js';
 import { normalizePersian } from '../shared/parser.js';
+import {
+  FINANCIAL_DISCLAIMER, FINANCIAL_UNIT, buildRunway, detectExpenseGrowth, exactWindow, financialScope,
+  findUnusualTransaction, invoiceSource, isGuardedAdviceQuestion, obligationSource, prioritizeAlerts, transactionSource,
+} from './financialIntelligence.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -328,6 +332,20 @@ function ensureReceiptAutomationSchema(database) {
   `);
 }
 
+function ensureFinancialAlertSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS financial_alert_feedback (
+      id TEXT PRIMARY KEY,
+      alert_id TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('snooze')),
+      snoozed_until TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_financial_alert_feedback_active ON financial_alert_feedback(alert_id,snoozed_until);
+  `);
+}
+
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");
 ensureColumn('transactions', "account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT");
@@ -344,6 +362,7 @@ ensureAccountingSchema(controlDb);
 ensureInvoiceSchema(controlDb);
 ensureReconciliationSchema(controlDb);
 ensureReceiptAutomationSchema(controlDb);
+ensureFinancialAlertSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
 
@@ -360,7 +379,7 @@ db.prepare("UPDATE transactions SET account_id='cash' WHERE account_id IS NULL O
 
 const defaults = {
   businessName: '', currency: 'تومان', timezone: 'Asia/Tehran', profileType: 'business',
-  onboardingDone: 'false', openingBalance: '0', ownerName: '', lowBalanceThreshold: '2000000',
+  onboardingDone: 'false', openingBalance: '0', ownerName: '', lowBalanceThreshold: '2000000', alertSensitivity: 'balanced',
 };
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
 for (const [key, value] of Object.entries(defaults)) insertSetting.run(key, String(value));
@@ -402,6 +421,7 @@ function workspaceDatabase(workspaceId) {
   ensureInvoiceSchema(database);
   ensureReconciliationSchema(database);
   ensureReceiptAutomationSchema(database);
+  ensureFinancialAlertSchema(database);
   ensureInventorySchema(database);
   ensureTaxSchema(database);
   migrateAccountingLedger(database);
@@ -534,11 +554,14 @@ export function getSettings() {
 }
 
 export function saveSettings(values) {
-  const allowed = ['businessName', 'currency', 'timezone', 'profileType', 'onboardingDone', 'openingBalance', 'ownerName', 'lowBalanceThreshold'];
+  const allowed = ['businessName', 'currency', 'timezone', 'profileType', 'onboardingDone', 'openingBalance', 'ownerName', 'lowBalanceThreshold', 'alertSensitivity'];
   const statement = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
   db.exec('BEGIN IMMEDIATE');
   try {
-    for (const key of allowed) if (values[key] != null) statement.run(key, String(values[key]).slice(0, 120));
+    for (const key of allowed) if (values[key] != null) {
+      const value = key === 'alertSensitivity' && !['low', 'balanced', 'high'].includes(values[key]) ? 'balanced' : values[key];
+      statement.run(key, String(value).slice(0, 120));
+    }
     if (values.openingBalance != null) {
       const opening = Math.round(Number(values.openingBalance));
       if (!Number.isSafeInteger(opening)) throw new Error('ماندهٔ ابتدای دوره معتبر نیست.');
@@ -551,6 +574,7 @@ export function saveSettings(values) {
 
 export function listAccounts() {
   return db.prepare(`SELECT accounts.id,accounts.name,accounts.kind,accounts.opening_balance AS openingBalance,accounts.active,
+    accounts.created_at AS createdAt,
     accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' THEN
       CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
@@ -1674,58 +1698,279 @@ export function taxReport(filters = {}) {
   return taxReportCore(db, filters);
 }
 
-export function financialOverview() {
-  const month = report('month');
-  const settings = getSettings();
-  const invoiceSummary = listInvoices().summary;
-  const obligations = db.prepare(`SELECT
-    COALESCE(SUM(CASE WHEN direction='receivable' AND status='open' THEN amount ELSE 0 END),0) AS receivable,
-    COALESCE(SUM(CASE WHEN direction='payable' AND status='open' THEN amount ELSE 0 END),0) AS payable,
-    COUNT(CASE WHEN status='open' AND due_at IS NOT NULL AND due_at<? THEN 1 END) AS overdue
-    FROM obligations`).get(new Date().toISOString());
-  const liquid = db.prepare(`SELECT COALESCE(SUM(accounts.opening_balance + COALESCE((
-      SELECT SUM(CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END)
-      FROM transactions WHERE transactions.account_id=accounts.id AND transactions.status!='deleted'
-    ),0)),0) AS balance FROM accounts
-    WHERE accounts.active=1 AND accounts.kind IN ('cash','bank','wallet')`).get();
-  const cash = Number(liquid.balance || 0);
-  const monthlyExpense = Number(month.summary.expense || 0);
-  const runwayDays = monthlyExpense > 0 ? Math.max(0, Math.round((cash / monthlyExpense) * 30)) : null;
-  const alerts = [];
-  const overdueInvoices = Number(invoiceSummary.overdueReceivable > 0) + Number(invoiceSummary.overduePayable > 0);
-  if (Number(obligations.overdue) + overdueInvoices) alerts.push({ level: 'danger', title: `${Number(obligations.overdue) + overdueInvoices} سررسید عقب‌افتاده داری`, action: 'obligations' });
-  if (cash < Number(settings.lowBalanceThreshold || 2_000_000)) alerts.push({ level: 'warning', title: 'ماندهٔ برآوردی ثبت‌ها به حد هشدار رسیده است', action: 'reports' });
-  if (month.summary.expense > month.summary.income && month.summary.expense > 0) alerts.push({ level: 'warning', title: 'هزینهٔ این ماه از درآمد بیشتر شده است', action: 'reports' });
+function financialTransactionRows(window, filters = {}) {
+  const clauses = ["transactions.status!='deleted'", 'transactions.occurred_at>=?', 'transactions.occurred_at<?'];
+  const values = [window.from, window.to];
+  if (filters.type) { clauses.push('transactions.type=?'); values.push(filters.type); }
+  if (filters.category) { clauses.push('transactions.category=?'); values.push(filters.category); }
+  if (filters.contactId) { clauses.push('transactions.contact_id=?'); values.push(filters.contactId); }
+  return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
+    transactions.raw_text AS rawText,transactions.occurred_at AS occurredAt,transactions.account_id AS accountId,
+    accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
+    FROM transactions LEFT JOIN accounts ON accounts.id=transactions.account_id
+    LEFT JOIN contacts ON contacts.id=transactions.contact_id
+    WHERE ${clauses.join(' AND ')} ORDER BY transactions.occurred_at DESC`).all(...values);
+}
+
+function accountSources(accounts) {
+  return accounts.filter((item) => item.active && ['cash', 'bank', 'wallet'].includes(item.kind)).map((item) => ({
+    kind: 'account', id: item.id, label: item.name, amount: Number(item.balance || 0), openingBalance: Number(item.openingBalance || 0), createdAt: item.createdAt || null,
+  }));
+}
+
+function money(value) {
+  return new Intl.NumberFormat('fa-IR').format(Math.round(Number(value) || 0));
+}
+
+function sourceScope(sources, now, label = 'از اولین سند باز تا اکنون') {
+  const dated = sources.map((item) => item.occurredAt || item.dueAt || item.createdAt).filter(Boolean).sort();
+  return { from: dated[0] || null, to: now.toISOString(), days: null, label, basis: 'cash', basisLabel: 'مبنای دریافت و پرداخت', unit: FINANCIAL_UNIT };
+}
+
+function financialAnswer({ question, intent, answer, result = null, scope = null, sources = [], calculation = '', now = new Date(), disclaimer = FINANCIAL_DISCLAIMER }) {
   return {
-    cash, receivable: Number(obligations.receivable) + Number(invoiceSummary.receivable), payable: Number(obligations.payable) + Number(invoiceSummary.payable), overdue: Number(obligations.overdue) + overdueInvoices,
-    cashBasis: true, basisLabel: 'مبنای دریافت و پرداخت', accounts: listAccounts(), runwayDays, month: month.summary, alerts,
+    question, intent, answer, result, scope, sources, evidence: sources,
+    provenance: { sourceCount: sources.length, calculation, complete: true },
+    unit: result ? FINANCIAL_UNIT : null,
+    disclaimer, generatedAt: now.toISOString(), deterministic: true,
   };
 }
 
-export function answerFinancialQuestion(question = '') {
-  const normalized = String(question).trim();
-  const overview = financialOverview();
-  const month = report('month');
-  let answer;
-  let evidence = [];
-  if (/بده|طلب|گرفتن|دادن/.test(normalized)) {
-    answer = `در حال حاضر ${new Intl.NumberFormat('fa-IR').format(overview.receivable)} تومان طلب باز و ${new Intl.NumberFormat('fa-IR').format(overview.payable)} تومان بدهی باز داری.`;
-    evidence = listObligations({ status: 'open' }).slice(0, 5);
-  } else if (/هزینه|خرج/.test(normalized)) {
-    const top = month.categories.find((item) => item.type === 'expense');
-    answer = top ? `بیشترین هزینهٔ ۳۰ روز اخیر «${top.name}» با ${new Intl.NumberFormat('fa-IR').format(top.amount)} تومان بوده است.` : 'در ۳۰ روز اخیر هنوز هزینه‌ای ثبت نشده است.';
-    evidence = month.categories.filter((item) => item.type === 'expense').slice(0, 5);
-  } else if (/درآمد|فروش/.test(normalized)) {
-    answer = `در ۳۰ روز اخیر ${new Intl.NumberFormat('fa-IR').format(month.summary.income)} تومان درآمد ثبت کرده‌ای.`;
-    evidence = month.points;
-  } else if (/سود|وضع|چطور/.test(normalized)) {
-    answer = `خالص دریافت و پرداخت ۳۰ روز اخیر ${new Intl.NumberFormat('fa-IR').format(month.summary.netCashFlow)} تومان و ماندهٔ برآوردی ثبت‌ها ${new Intl.NumberFormat('fa-IR').format(overview.cash)} تومان است. این عدد سود حسابداری نیست.`;
-    evidence = [month.summary];
-  } else {
-    answer = `ماندهٔ برآوردی ثبت‌ها ${new Intl.NumberFormat('fa-IR').format(overview.cash)} تومان است. می‌توانی دربارهٔ فروش، هزینه، خالص دریافت و پرداخت، طلب یا بدهی بپرسی.`;
-    evidence = [overview.month];
+function snoozedFinancialAlertIds(now = new Date()) {
+  const userId = currentWorkspace()?.userId || null;
+  const rows = userId
+    ? db.prepare("SELECT DISTINCT alert_id AS alertId FROM financial_alert_feedback WHERE action='snooze' AND snoozed_until>? AND created_by=?").all(now.toISOString(), userId)
+    : db.prepare("SELECT DISTINCT alert_id AS alertId FROM financial_alert_feedback WHERE action='snooze' AND snoozed_until>? AND created_by IS NULL").all(now.toISOString());
+  return new Set(rows.map((item) => item.alertId));
+}
+
+export function snoozeFinancialAlert(alertId, { hours = 24 } = {}) {
+  const normalizedId = String(alertId || '').trim().slice(0, 120);
+  if (!/^[a-z0-9-]+$/i.test(normalizedId)) throw new Error('شناسهٔ هشدار معتبر نیست.');
+  const safeHours = Math.min(168, Math.max(1, Math.round(Number(hours) || 24)));
+  const snoozedUntil = new Date(Date.now() + safeHours * 60 * 60 * 1000).toISOString();
+  const id = randomUUID();
+  db.prepare("INSERT INTO financial_alert_feedback (id,alert_id,action,snoozed_until,created_by) VALUES (?,?, 'snooze',?,?)")
+    .run(id, normalizedId, snoozedUntil, currentWorkspace()?.userId || null);
+  audit('snooze', 'financial_alert', normalizedId, { hours: safeHours, snoozedUntil });
+  return { id, alertId: normalizedId, action: 'snooze', snoozedUntil };
+}
+
+export function financialOverview(now = new Date()) {
+  const settings = getSettings();
+  const accounts = listAccounts();
+  const liquidAccounts = accounts.filter((item) => item.active && ['cash', 'bank', 'wallet'].includes(item.kind));
+  const cash = liquidAccounts.reduce((sum, item) => sum + Number(item.balance || 0), 0);
+  const monthWindow = exactWindow(now, 30);
+  const monthScope = financialScope(monthWindow, '۳۰ روز اخیر');
+  const monthRows = financialTransactionRows(monthWindow);
+  const month = summarize(monthRows);
+  const expenseRows = monthRows.filter((item) => item.type === 'expense');
+  const invoices = listInvoices().items;
+  const openInvoices = invoices.filter((item) => !['draft', 'cancelled', 'paid'].includes(item.displayStatus) && Number(item.balanceDue) > 0);
+  const openObligations = listObligations({ status: 'open' });
+  const receivable = openObligations.filter((item) => item.direction === 'receivable').reduce((sum, item) => sum + Number(item.amount), 0)
+    + openInvoices.filter((item) => item.documentType === 'sales').reduce((sum, item) => sum + Number(item.balanceDue), 0);
+  const payable = openObligations.filter((item) => item.direction === 'payable').reduce((sum, item) => sum + Number(item.amount), 0)
+    + openInvoices.filter((item) => item.documentType === 'purchase').reduce((sum, item) => sum + Number(item.balanceDue), 0);
+  const overdueObligations = openObligations.filter((item) => item.dueAt && new Date(item.dueAt) < now);
+  const overdueInvoices = openInvoices.filter((item) => item.dueAt && new Date(item.dueAt) < now);
+  const overdueItems = [...overdueObligations.map(obligationSource), ...overdueInvoices.map(invoiceSource)];
+  const overdueReceivables = overdueItems.filter((item) => item.direction === 'receivable');
+  const runway = buildRunway({ cash, expenseTotal: month.expense, lookbackDays: 30, scope: monthScope, sources: expenseRows.map(transactionSource) });
+  const alerts = [];
+
+  if (overdueReceivables.length) {
+    const total = overdueReceivables.reduce((sum, item) => sum + item.amount, 0);
+    alerts.push({
+      id: 'overdue-receivable', type: 'overdue-receivable', level: 'danger', priority: 100,
+      title: `${overdueReceivables.length} طلب سررسیدشده داری`, detail: `${money(total)} تومان وصول عقب‌افتاده است.`,
+      value: total, unit: FINANCIAL_UNIT, scope: sourceScope(overdueReceivables, now), sources: overdueReceivables,
+      action: { screen: 'ledger', tab: 'obligations', label: 'پیگیری طلب‌ها' },
+    });
+  } else if (overdueItems.length) {
+    const total = overdueItems.reduce((sum, item) => sum + item.amount, 0);
+    alerts.push({
+      id: 'overdue-payable', type: 'overdue-payable', level: 'danger', priority: 95,
+      title: `${overdueItems.length} بدهی سررسیدشده داری`, detail: `${money(total)} تومان پرداخت عقب‌افتاده است.`,
+      value: total, unit: FINANCIAL_UNIT, scope: sourceScope(overdueItems, now), sources: overdueItems,
+      action: { screen: 'ledger', tab: 'obligations', label: 'بررسی بدهی‌ها' },
+    });
   }
-  return { question: normalized, answer, evidence, generatedAt: new Date().toISOString(), deterministic: true };
+
+  const historyWindow = exactWindow(now, 90);
+  const historyRows = financialTransactionRows(historyWindow);
+  const anomaly = findUnusualTransaction(historyRows, settings.alertSensitivity, exactWindow(now, 7).from);
+  if (anomaly) {
+    const sources = [transactionSource(anomaly.current), ...anomaly.baseline.map((item) => transactionSource(item, 'baseline'))];
+    alerts.push({
+      id: `unusual-${anomaly.current.id}`, type: 'unusual-amount', level: 'warning', priority: 80,
+      title: 'یک مبلغ غیرعادی ثبت شده',
+      detail: `${money(anomaly.current.amount)} تومان در «${anomaly.current.category}»؛ ${anomaly.ratio} برابر میانهٔ ${anomaly.baseline.length} ثبت مشابه.`,
+      value: Number(anomaly.current.amount), unit: FINANCIAL_UNIT, scope: financialScope(historyWindow, 'خط مبنای ۹۰ روزه'), sources,
+      action: { screen: 'ledger', tab: 'transactions', entityId: anomaly.current.id, label: 'بازبینی ثبت' },
+    });
+  }
+
+  const currentWeekWindow = exactWindow(now, 7);
+  const previousWeekWindow = exactWindow(now, 7, 7);
+  const currentWeekExpenses = financialTransactionRows(currentWeekWindow, { type: 'expense' });
+  const previousWeekExpenses = financialTransactionRows(previousWeekWindow, { type: 'expense' });
+  const growth = detectExpenseGrowth(currentWeekExpenses, previousWeekExpenses, settings.alertSensitivity);
+  if (growth) {
+    const sources = [...currentWeekExpenses.map(transactionSource), ...previousWeekExpenses.map((item) => transactionSource(item, 'previous'))];
+    alerts.push({
+      id: 'expense-growth', type: 'expense-growth', level: 'warning', priority: 70,
+      title: `هزینهٔ هفت روز اخیر ${growth.percent}٪ رشد کرده`, detail: `${money(growth.delta)} تومان بیشتر از هفت روز قبل خرج شده است.`,
+      value: growth.current, unit: FINANCIAL_UNIT,
+      scope: { ...financialScope(currentWeekWindow, 'هفت روز اخیر در مقایسه با هفت روز قبل'), comparisonFrom: previousWeekWindow.from, comparisonTo: previousWeekWindow.to },
+      sources, action: { screen: 'report', label: 'دیدن گزارش', target: 'expenses' },
+    });
+  }
+
+  if (cash < Number(settings.lowBalanceThreshold || 2_000_000)) {
+    alerts.push({
+      id: 'low-cash', type: 'low-cash', level: 'warning', priority: 60,
+      title: 'ماندهٔ نقدی به حد هشدار رسیده', detail: `${money(cash)} تومان مانده در برابر حد ${money(settings.lowBalanceThreshold || 2_000_000)} تومان.`,
+      value: cash, unit: FINANCIAL_UNIT, scope: sourceScope(accountSources(liquidAccounts), now, 'ماندهٔ حساب‌های نقدی تا اکنون'), sources: accountSources(liquidAccounts),
+      action: { screen: 'report', label: 'بررسی نقدینگی', target: 'runway' },
+    });
+  }
+
+  const baseRunway = runway.scenarios.find((item) => item.id === 'base')?.days ?? null;
+  if (baseRunway != null && baseRunway <= 14) {
+    alerts.push({
+      id: 'short-runway', type: 'short-runway', level: baseRunway <= 7 ? 'danger' : 'warning', priority: 65,
+      title: `دوام نقدینگی پایه حدود ${baseRunway} روز است`, detail: 'این سناریو درآمد آینده را فرض نمی‌کند و از میانگین هزینهٔ ۳۰ روز اخیر ساخته شده است.',
+      value: baseRunway, unit: 'روز', scope: monthScope, sources: runway.sources,
+      action: { screen: 'report', label: 'دیدن سناریوها', target: 'runway' },
+    });
+  }
+
+  const snoozedIds = snoozedFinancialAlertIds(now);
+  const visibleAlerts = alerts.filter((item) => !snoozedIds.has(item.id)).sort((left, right) => Number(right.priority || 0) - Number(left.priority || 0));
+  return {
+    cash, receivable, payable, overdue: overdueItems.length,
+    cashBasis: true, basisLabel: 'مبنای دریافت و پرداخت', unit: FINANCIAL_UNIT, accounts,
+    runway, runwayDays: baseRunway, month, monthScope, alerts: visibleAlerts, priorityAlert: prioritizeAlerts(visibleAlerts),
+    alertSensitivity: settings.alertSensitivity || 'balanced', disclaimer: FINANCIAL_DISCLAIMER,
+  };
+}
+
+export function answerFinancialQuestion(question = '', { now = new Date() } = {}) {
+  const original = String(question || '').trim().slice(0, 500);
+  const normalized = normalizePersian(original).toLowerCase();
+  if (isGuardedAdviceQuestion(normalized)) {
+    return financialAnswer({
+      question: original, intent: 'guarded-advice',
+      answer: 'می‌توانم ارقام ثبت‌شده را با منبع نشان بدهم، اما دربارهٔ مالیات یا موضوع حقوقی حکم قطعی نمی‌دهم. برای تصمیم رسمی، گزارش را با حسابدار یا مشاور حقوقی بررسی کن.',
+      now, disclaimer: 'این پاسخ توصیهٔ مالیاتی یا حقوقی نیست و هیچ عددی خارج از دفتر محاسبه نشده است.',
+    });
+  }
+
+  const currentWindow = exactWindow(now, 30);
+  const scope = financialScope(currentWindow, '۳۰ روز اخیر');
+  const rows = financialTransactionRows(currentWindow);
+  const overview = financialOverview(now);
+  const contacts = listContacts();
+  const matchedContact = contacts.find((item) => normalized.includes(normalizePersian(item.name).toLowerCase()));
+  const categories = getCategories().sort((left, right) => right.name.length - left.name.length);
+  const matchedCategory = categories.find((item) => normalized.includes(normalizePersian(item.name).toLowerCase()));
+
+  if (/آخرین.*(پرداخت|خرج|هزینه)|آخرین پرداخت/.test(normalized)) {
+    const item = db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
+      transactions.raw_text AS rawText,transactions.occurred_at AS occurredAt,accounts.name AS accountName
+      FROM transactions LEFT JOIN accounts ON accounts.id=transactions.account_id
+      WHERE transactions.status!='deleted' AND transactions.type='expense' ORDER BY transactions.occurred_at DESC LIMIT 1`).get();
+    const sources = item ? [transactionSource(item)] : [];
+    const first = db.prepare("SELECT MIN(occurred_at) AS occurredAt FROM transactions WHERE status!='deleted'").get();
+    const range = { ...sourceScope(sources, now, 'از اولین ثبت تا اکنون'), from: first.occurredAt || null };
+    return financialAnswer({ question: original, intent: 'latest-payment',
+      answer: item ? `آخرین پرداخت ${money(item.amount)} تومان برای «${item.category}» بوده است.` : 'هنوز پرداختی در دفتر ثبت نشده است.',
+      result: { value: Number(item?.amount || 0), label: 'آخرین پرداخت', unit: FINANCIAL_UNIT }, scope: range, sources,
+      calculation: 'آخرین تراکنش هزینه بر اساس زمان ثبت', now });
+  }
+
+  if (matchedContact && /مانده|طلب|بده|حساب/.test(normalized)) {
+    const obligations = listObligations({ status: 'open' }).filter((item) => item.contactId === matchedContact.id);
+    const invoices = listInvoices().items.filter((item) => item.contactId === matchedContact.id && !['draft', 'cancelled', 'paid'].includes(item.displayStatus) && item.balanceDue > 0);
+    const sources = [...obligations.map(obligationSource), ...invoices.map(invoiceSource)];
+    const value = sources.reduce((sum, item) => sum + (item.direction === 'receivable' ? item.amount : -item.amount), 0);
+    const direction = value > 0 ? `${money(value)} تومان از او طلب داری` : value < 0 ? `${money(Math.abs(value))} تومان به او بدهکاری` : 'ماندهٔ بازی با او ثبت نشده است';
+    return financialAnswer({ question: original, intent: 'contact-balance', answer: `ماندهٔ «${matchedContact.name}»: ${direction}.`,
+      result: { value, label: `ماندهٔ ${matchedContact.name}`, unit: FINANCIAL_UNIT }, scope: sourceScope(sources, now), sources,
+      calculation: 'طلب‌های باز منهای بدهی‌های باز شخص؛ شامل ماندهٔ فاکتورهای صادرشده', now });
+  }
+
+  if (matchedCategory) {
+    const selected = rows.filter((item) => item.category === matchedCategory.name && item.type === matchedCategory.type);
+    const value = selected.reduce((sum, item) => sum + Number(item.amount), 0);
+    const sources = selected.map(transactionSource);
+    return financialAnswer({ question: original, intent: 'category-total',
+      answer: `جمع «${matchedCategory.name}» در ۳۰ روز اخیر ${money(value)} تومان از ${sources.length} ثبت است.`,
+      result: { value, label: matchedCategory.name, unit: FINANCIAL_UNIT, type: matchedCategory.type }, scope, sources,
+      calculation: `جمع مبلغ تراکنش‌های دستهٔ ${matchedCategory.name}`, now });
+  }
+
+  if (/مقایسه|بازه قبل|ماه قبل|نسبت/.test(normalized)) {
+    const previousWindow = exactWindow(now, 30, 30);
+    const previousRows = financialTransactionRows(previousWindow);
+    const type = /هزینه|خرج/.test(normalized) ? 'expense' : /درآمد|فروش/.test(normalized) ? 'income' : '';
+    const sum = (items) => items.filter((item) => !type || item.type === type).reduce((total, item) => total + (type ? Number(item.amount) : item.type === 'income' ? Number(item.amount) : -Number(item.amount)), 0);
+    const current = sum(rows);
+    const previous = sum(previousRows);
+    const changePercent = previous !== 0 ? Math.round(((current - previous) / Math.abs(previous)) * 100) : null;
+    const label = type === 'expense' ? 'هزینه' : type === 'income' ? 'درآمد' : 'خالص دریافت و پرداخت';
+    const sources = [...rows.filter((item) => !type || item.type === type).map(transactionSource), ...previousRows.filter((item) => !type || item.type === type).map((item) => transactionSource(item, 'previous'))];
+    const comparisonText = changePercent == null ? 'برای درصد تغییر، بازهٔ قبل دادهٔ کافی ندارد' : `${Math.abs(changePercent)}٪ ${changePercent >= 0 ? 'بیشتر' : 'کمتر'} از بازهٔ قبل`;
+    return financialAnswer({ question: original, intent: 'range-comparison', answer: `${label} ۳۰ روز اخیر ${money(current)} تومان است؛ ${comparisonText}.`,
+      result: { value: current, previousValue: previous, changePercent, label, unit: FINANCIAL_UNIT },
+      scope: { ...scope, comparisonFrom: previousWindow.from, comparisonTo: previousWindow.to }, sources,
+      calculation: `جمع ${label} در دو بازهٔ ۳۰ روزهٔ پشت‌سرهم`, now });
+  }
+
+  if (/بده|طلب|گرفتن|دادن/.test(normalized)) {
+    const obligations = listObligations({ status: 'open' });
+    const invoices = listInvoices().items.filter((item) => !['draft', 'cancelled', 'paid'].includes(item.displayStatus) && item.balanceDue > 0);
+    const sources = [...obligations.map(obligationSource), ...invoices.map(invoiceSource)];
+    return financialAnswer({ question: original, intent: 'open-balances',
+      answer: `در حال حاضر ${money(overview.receivable)} تومان طلب باز و ${money(overview.payable)} تومان بدهی باز داری.`,
+      result: { value: overview.receivable - overview.payable, receivable: overview.receivable, payable: overview.payable, label: 'خالص مطالبات باز', unit: FINANCIAL_UNIT },
+      scope: sourceScope(sources, now), sources, calculation: 'جمع طلب‌های باز و فاکتورهای فروش منهای بدهی‌های باز و فاکتورهای خرید', now });
+  }
+
+  if (/هزینه|خرج/.test(normalized)) {
+    const expenseRows = rows.filter((item) => item.type === 'expense');
+    const value = expenseRows.reduce((sum, item) => sum + Number(item.amount), 0);
+    const byCategory = new Map();
+    for (const item of expenseRows) byCategory.set(item.category, (byCategory.get(item.category) || 0) + Number(item.amount));
+    const top = [...byCategory.entries()].sort((left, right) => right[1] - left[1])[0];
+    const answer = /بیشترین/.test(normalized) && top ? `بیشترین هزینهٔ ۳۰ روز اخیر «${top[0]}» با ${money(top[1])} تومان بوده است.` : `جمع هزینهٔ ۳۰ روز اخیر ${money(value)} تومان از ${expenseRows.length} ثبت است.`;
+    const answerSources = /بیشترین/.test(normalized) && top ? expenseRows.filter((item) => item.category === top[0]) : expenseRows;
+    return financialAnswer({ question: original, intent: /بیشترین/.test(normalized) ? 'top-expense' : 'expense-total', answer,
+      result: { value: /بیشترین/.test(normalized) && top ? top[1] : value, label: /بیشترین/.test(normalized) ? top?.[0] || 'بیشترین هزینه' : 'هزینه', unit: FINANCIAL_UNIT },
+      scope, sources: answerSources.map(transactionSource), calculation: /بیشترین/.test(normalized) ? 'جمع هزینه‌ها به تفکیک دسته و انتخاب بیشترین' : 'جمع تراکنش‌های هزینه', now });
+  }
+
+  if (/درآمد|فروش/.test(normalized)) {
+    const incomeRows = rows.filter((item) => item.type === 'income');
+    const value = incomeRows.reduce((sum, item) => sum + Number(item.amount), 0);
+    return financialAnswer({ question: original, intent: 'income-total', answer: `در ۳۰ روز اخیر ${money(value)} تومان درآمد از ${incomeRows.length} ثبت داشته‌ای.`,
+      result: { value, label: 'درآمد', unit: FINANCIAL_UNIT }, scope, sources: incomeRows.map(transactionSource), calculation: 'جمع تراکنش‌های درآمد', now });
+  }
+
+  const net = rows.reduce((sum, item) => sum + (item.type === 'income' ? Number(item.amount) : -Number(item.amount)), 0);
+  if (/سود|وضع|چطور/.test(normalized)) {
+    return financialAnswer({ question: original, intent: 'range-net-cash-flow',
+      answer: `خالص دریافت و پرداخت ۳۰ روز اخیر ${money(net)} تومان است؛ این عدد سود حسابداری نیست.`,
+      result: { value: net, label: 'خالص دریافت و پرداخت', unit: FINANCIAL_UNIT }, scope,
+      sources: rows.map(transactionSource), calculation: 'جمع دریافت‌ها منهای جمع پرداخت‌های ۳۰ روز اخیر', now });
+  }
+  return financialAnswer({ question: original, intent: 'cash-position',
+    answer: `ماندهٔ نقدی برآوردی ${money(overview.cash)} تومان است. می‌توانی دربارهٔ آخرین پرداخت، جمع یک دسته، ماندهٔ یک شخص یا مقایسهٔ دو بازه بپرسی.`,
+    result: { value: overview.cash, netCashFlow: net, label: 'ماندهٔ نقدی برآوردی', unit: FINANCIAL_UNIT },
+    scope: sourceScope(accountSources(overview.accounts), now, 'ماندهٔ حساب‌های نقدی تا اکنون'),
+    sources: accountSources(overview.accounts), calculation: 'جمع ماندهٔ صندوق، بانک و کیف پول فعال؛ ماندهٔ افتتاحیه به‌علاوهٔ دریافت‌ها منهای پرداخت‌ها', now });
 }
 
 export function recordVoiceMetric(values = {}) {
@@ -1749,11 +1994,11 @@ export function voiceStats() {
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
-  'automation_rules', 'settings', 'voice_metrics', 'tax_rates', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'audit_log',
+  'automation_rules', 'settings', 'voice_metrics', 'tax_rates', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
+  'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',

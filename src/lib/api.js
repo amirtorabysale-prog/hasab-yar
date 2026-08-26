@@ -143,6 +143,7 @@ export const api = {
   deleteTransaction: (id) => request(`/api/transactions/${id}`, { method: 'DELETE' }),
   report: (range) => request(`/api/reports?range=${range}`),
   overview: () => request('/api/overview'),
+  snoozeAlert: (id, hours = 24) => request(`/api/alerts/${encodeURIComponent(id)}/snooze`, { method: 'POST', body: JSON.stringify({ hours }) }),
   accountingAccounts: () => request('/api/accounting/accounts'),
   trialBalance: (through = '') => request(`/api/accounting/trial-balance${through ? `?through=${encodeURIComponent(through)}` : ''}`),
   journal: (params = {}) => request(`/api/accounting/journal?${new URLSearchParams(params)}`),

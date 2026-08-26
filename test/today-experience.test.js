@@ -22,6 +22,16 @@ test('pulse prioritizes overdue work over a positive cash day', () => {
   assert.match(pulse.title, /2 سررسید/);
 });
 
+test('pulse renders only the server-ranked alert with its direct action', () => {
+  const pulse = buildTodayPulse({
+    summary: { netCashFlow: -9_000_000 }, transactions: [{ id: '1' }],
+    overview: { alerts: [{ id: 'growth' }], priorityAlert: { id: 'growth', level: 'warning', title: 'هزینه رشد کرده', detail: 'از خط مبنا بیشتر است.', action: { screen: 'report', label: 'دیدن گزارش' } } },
+  });
+  assert.equal(pulse.alertId, 'growth');
+  assert.equal(pulse.action, 'report');
+  assert.equal(pulse.actionLabel, 'دیدن گزارش');
+});
+
 test('work queue orders unsynced and suspicious work before closing', () => {
   const tasks = buildTodayTasks({
     profileType: 'business', pendingAudioCount: 1, overview: { overdue: 1 },

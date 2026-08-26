@@ -15,8 +15,21 @@ export function todayComposerState({ recordState = 'idle', manualText = '', revi
 }
 
 export function buildTodayPulse({ summary = {}, overview = {}, transactions = [] } = {}) {
-  if (Number(overview.overdue) > 0) {
-    return { tone: 'danger', eyebrow: 'نیاز به توجه', title: `${Number(overview.overdue)} سررسید عقب‌افتاده داری`, detail: 'اول سررسیدهای قدیمی را تعیین‌تکلیف کن تا تصویر نقدینگی واقعی‌تر بماند.' };
+  if (overview.priorityAlert) {
+    const alert = overview.priorityAlert;
+    return {
+      tone: alert.level === 'danger' ? 'danger' : 'warning',
+      eyebrow: 'اولویت امروز',
+      title: alert.title,
+      detail: alert.detail,
+      action: alert.action?.screen || null,
+      actionTarget: alert.action?.tab || alert.action?.target || '',
+      actionLabel: alert.action?.label || 'رسیدگی',
+      alertId: alert.id,
+    };
+  }
+  if (!Array.isArray(overview.alerts) && Number(overview.overdue) > 0) {
+    return { tone: 'danger', eyebrow: 'نیاز به توجه', title: `${Number(overview.overdue)} سررسید عقب‌افتاده داری`, detail: 'اول سررسیدهای قدیمی را تعیین‌تکلیف کن تا تصویر نقدینگی واقعی‌تر بماند.', action: 'ledger', actionLabel: 'رسیدگی' };
   }
   if (!transactions.length) {
     return { tone: 'neutral', eyebrow: 'شروع روز', title: 'هنوز نبض امروز شکل نگرفته', detail: 'اولین دریافت یا پرداخت را بگو؛ بعد از همان ثبت، تصویر روز ساخته می‌شود.' };

@@ -22,6 +22,7 @@ test('creates a complete encrypted backup including receipt bytes', () => {
     database.insertTransactions({ transcript: 'عبارت کاملاً محرمانه', transactions: [{ amount: 345_678, type: 'income', category: 'فروش', rawText: 'عبارت کاملاً محرمانه' }] });
     database.saveReceipt({ buffer: Buffer.from('private-receipt-bytes'), fileName: 'receipt.png', mimeType: 'image/png', note: 'رسید محرمانه', amount: 345_678, type: 'income', category: 'فروش' });
     database.saveTaxRate({ name: 'نرخ پشتیبان آزمون', rate: 10, treatment: 'taxable', active: true, isDefault: true });
+    database.snoozeFinancialAlert('low-cash', { hours: 24 });
     const snapshot = database.financialBackupSnapshot({ id: 'primary' });
     encrypted = backup.createEncryptedBackup(snapshot, passphrase);
     assert.equal(encrypted.includes(Buffer.from('عبارت کاملاً محرمانه')), false);
@@ -29,6 +30,7 @@ test('creates a complete encrypted backup including receipt bytes', () => {
     const opened = backup.openEncryptedBackup(encrypted, passphrase);
     assert.deepEqual(Buffer.from(opened.tables.receipts[0].image_data), Buffer.from('private-receipt-bytes'));
     assert.equal(opened.tables.tax_rates.some((item) => item.name === 'نرخ پشتیبان آزمون' && item.rate_bps === 1000), true);
+    assert.equal(opened.tables.financial_alert_feedback.some((item) => item.alert_id === 'low-cash'), true);
     assert.deepEqual(backup.backupSummary(opened), {
       exportedAt: opened.exportedAt, sourceWorkspaceId: 'primary', transactions: 1,
       income: 345_678, expense: 0, contacts: 0, invoices: 0, receipts: 1, products: 0,
@@ -45,7 +47,7 @@ test('rejects a wrong password and a structurally incomplete backup', () => {
 
 test('keeps backups from before the ledger upgrade restorable', () => {
   const legacy = database.runInWorkspace('primary', { role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
-  for (const table of ['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'tax_rates']) delete legacy.tables[table];
+  for (const table of ['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'tax_rates', 'financial_alert_feedback']) delete legacy.tables[table];
   assert.doesNotThrow(() => backup.validateFinancialBackup(legacy));
   assert.deepEqual(legacy.tables.journal_entries, []);
 });

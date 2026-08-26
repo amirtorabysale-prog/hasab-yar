@@ -2,7 +2,7 @@
 
 PWA فارسی و موبایل‌اول برای ثبت دریافت و پرداخت با صدا یا متن. هر جمله ابتدا به تراکنش‌های ساخت‌یافته تبدیل می‌شود و فقط پس از بازبینی مبلغ، نوع و دسته توسط کاربر در پایگاه‌داده ثبت می‌شود.
 
-حساب‌یار در نسخه فعلی «دفتر مالی صوتی و دستیار مدیریت نقدینگی» با دفتر کل دوطرفه، چرخهٔ فاکتور، تطبیق بانکی، انبار دائمی و مالیات قابل‌تنظیم است، نه نرم‌افزار حسابداری رسمی. خلاصه‌های روزانه همچنان بر پایه دریافت و پرداخت هستند و جایگزین صورت مالی، دفتر قانونی یا محاسبه سود تعهدی کامل نیستند. محدوده محصول در [docs/product-scope.md](docs/product-scope.md)، قواعد صحت مالی در [docs/accounting-integrity.md](docs/accounting-integrity.md)، هسته دفتر کل در [docs/double-entry-ledger.md](docs/double-entry-ledger.md)، چرخهٔ فاکتور در [docs/invoicing-and-receivables.md](docs/invoicing-and-receivables.md)، تطبیق بانک در [docs/bank-reconciliation.md](docs/bank-reconciliation.md)، انبار و بهای تمام‌شده در [docs/inventory-and-cogs.md](docs/inventory-and-cogs.md)، مالیات مدیریتی در [docs/tax-and-vat.md](docs/tax-and-vat.md)، تنظیمات امنیتی در [docs/security-hardening.md](docs/security-hardening.md)، معماری دفترها و نقش‌ها در [docs/workspaces-and-roles.md](docs/workspaces-and-roles.md) و روش پشتیبان‌گیری در [docs/backup-and-recovery.md](docs/backup-and-recovery.md) ثبت شده است.
+حساب‌یار در نسخه فعلی «دفتر مالی صوتی و دستیار مدیریت نقدینگی» با دفتر کل دوطرفه، چرخهٔ فاکتور، تطبیق بانکی، انبار دائمی و مالیات قابل‌تنظیم است، نه نرم‌افزار حسابداری رسمی. خلاصه‌های روزانه همچنان بر پایه دریافت و پرداخت هستند و جایگزین صورت مالی، دفتر قانونی یا محاسبه سود تعهدی کامل نیستند. محدوده محصول در [docs/product-scope.md](docs/product-scope.md)، قواعد صحت مالی در [docs/accounting-integrity.md](docs/accounting-integrity.md)، [حافظهٔ مالی و هشدارهای قابل اقدام](docs/financial-memory-and-alerts.md)، هسته دفتر کل در [docs/double-entry-ledger.md](docs/double-entry-ledger.md)، چرخهٔ فاکتور در [docs/invoicing-and-receivables.md](docs/invoicing-and-receivables.md)، تطبیق بانک در [docs/bank-reconciliation.md](docs/bank-reconciliation.md)، انبار و بهای تمام‌شده در [docs/inventory-and-cogs.md](docs/inventory-and-cogs.md)، مالیات مدیریتی در [docs/tax-and-vat.md](docs/tax-and-vat.md)، تنظیمات امنیتی در [docs/security-hardening.md](docs/security-hardening.md)، معماری دفترها و نقش‌ها در [docs/workspaces-and-roles.md](docs/workspaces-and-roles.md) و روش پشتیبان‌گیری در [docs/backup-and-recovery.md](docs/backup-and-recovery.md) ثبت شده است.
 
 اولویت‌های توسعه، قابلیت‌های متوقف‌شده و معیار پذیرش هر فاز در [نقشهٔ اجرایی محصول](docs/product-roadmap.md) ثبت شده‌اند.
 
@@ -27,7 +27,9 @@ PWA فارسی و موبایل‌اول برای ثبت دریافت و پردا
 - OCR عکس رسید، صندوق بازبینی، توضیح صوتی و اتصال کنترل‌شده به ثبت دفتر یا ردیف بانک
 - انبار دائمی با میانگین موزون، ارزش موجودی، بهای تمام‌شده فروش و هشدار کمبود
 - نرخ مالیاتی قابل‌تنظیم در هر ردیف فاکتور، تفکیک مشمول/نرخ صفر/معاف و گزارش مالیات فروش و اعتبار خرید
-- پرسش فارسی از دادهٔ مالی با پاسخ قطعی و بدون ساختن عدد خیالی
+- پرسش فارسی از دادهٔ مالی با بازه، واحد، فرمول و لینک تمام منابع سازندهٔ عدد
+- یک هشدار اولویت‌دار در «امروز»، هشدارهای توضیح‌پذیر با حساسیت قابل تنظیم و تعویق ۲۴ ساعته
+- سه سناریوی دوام نقدینگی بدون فرض درآمد آینده
 - دو تجربه متمایز شخصی و کسب‌وکار، هشدار نقدینگی و تخمین دوام موجودی
 - پشتیبان رمزگذاری‌شدهٔ نسخه‌دار، بازبینی پیش از بازیابی و نقطهٔ بازگشت خودکار
 - ذخیره پایدار در SQLite و API واقعی برای تمام جریان‌های مالی
