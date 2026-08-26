@@ -4,13 +4,13 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
+  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
-  recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
-  confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
+  listAccountingTransferBatches, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
+  confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
@@ -413,6 +413,39 @@ app.get('/api/collaboration/monthly-package/download', (request, response) => {
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
   response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-accountant-${request.workspace.id}-${packageData.scope.month}.json"`);
   return response.send(JSON.stringify(packageData, null, 2));
+});
+app.get('/api/accountant-transfer/overview', (request, response, next) => {
+  try { return response.json(accountingTransferOverview(request.query.month, request.query.target)); }
+  catch (error) { return next(error); }
+});
+app.put('/api/accountant-transfer/settings', (request, response, next) => {
+  try { return response.json({ item: saveAccountingTransferSettings(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.put('/api/accountant-transfer/mappings/:ledgerAccountId', (request, response, next) => {
+  try {
+    const item = saveAccountingTransferMapping({ ...request.body, ledgerAccountId: request.params.ledgerAccountId });
+    return response.json({ item });
+  } catch (error) { return next(error); }
+});
+app.get('/api/accountant-transfer/batches', (request, response) => response.json({ items: listAccountingTransferBatches(request.query) }));
+app.post('/api/accountant-transfer/batches', (request, response, next) => {
+  try { return response.status(201).json({ item: createAccountingTransferBatch(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/accountant-transfer/batches/:id/download', (request, response) => {
+  const item = accountingTransferBatchFile(request.params.id);
+  if (!item) return response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
+  response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  response.setHeader('Content-Disposition', `attachment; filename="${item.fileName}"`);
+  response.setHeader('X-Content-SHA256', item.digest);
+  return response.send(item.fileData);
+});
+app.post('/api/accountant-transfer/batches/:id/status', (request, response, next) => {
+  try {
+    const item = updateAccountingTransferBatchStatus(request.params.id, request.body || {});
+    return item ? response.json({ item }) : response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
+  } catch (error) { return next(error); }
 });
 app.post('/api/collaboration/requests', (request, response, next) => {
   try { return response.status(201).json({ item: createCollaborationRequest(request.body || {}) }); }

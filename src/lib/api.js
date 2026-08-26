@@ -201,6 +201,12 @@ export const api = {
   updateWorkspacePlan: (workspaceId, payload) => request(`/api/commercial/admin/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'POST', body: JSON.stringify(payload) }),
   collaborationOverview: (month = '') => request(`/api/collaboration/overview${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   monthlyAccountantPackage: (month = '') => request(`/api/collaboration/monthly-package${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+  accountingTransferOverview: (month = '', target = 'generic-csv') => request(`/api/accountant-transfer/overview?${new URLSearchParams({ month, target })}`),
+  saveAccountingTransferSettings: (payload) => request('/api/accountant-transfer/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  saveAccountingTransferMapping: (ledgerAccountId, payload) => request(`/api/accountant-transfer/mappings/${encodeURIComponent(ledgerAccountId)}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createAccountingTransferBatch: (payload) => request('/api/accountant-transfer/batches', { method: 'POST', body: JSON.stringify(payload) }),
+  accountingTransferBatches: (params = {}) => request(`/api/accountant-transfer/batches?${new URLSearchParams(params)}`),
+  updateAccountingTransferBatchStatus: (id, status, note = '') => request(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/status`, { method: 'POST', body: JSON.stringify({ status, note }) }),
   createCollaborationRequest: (payload) => request('/api/collaboration/requests', { method: 'POST', body: JSON.stringify(payload) }),
   answerCollaborationRequest: (id, answer) => request(`/api/collaboration/requests/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify({ answer }) }),
   resolveCollaborationRequest: (id) => request(`/api/collaboration/requests/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: '{}' }),
@@ -217,6 +223,25 @@ export const api = {
     const blob = await response.blob();
     const disposition = response.headers.get('content-disposition') || '';
     const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `hesab-yar-accountant-${month || new Date().toISOString().slice(0, 7)}.json`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { fileName, bytes: blob.size };
+  },
+  downloadAccountingTransferBatch: async (id, fallbackFileName = '') => {
+    const response = await fetch(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/download`, {
+      credentials: 'same-origin', headers: protectedHeaders(false),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(body.message || 'دریافت خروجی حسابداری انجام نشد.'), { status: response.status, code: body.code });
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFileName || `hesab-yar-ledger-${id}.csv`;
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
