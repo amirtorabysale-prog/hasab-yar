@@ -1,4 +1,5 @@
-const CACHE = 'hesab-yar-v3';
+// با هر تغییر در راهبرد کش، نسخه بالا می‌رود تا کش قدیمی در activate پاک شود.
+const CACHE = 'hesab-yar-v4';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (event) => {

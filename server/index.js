@@ -667,8 +667,28 @@ app.use('/api', (_request, response) => response.status(404).json({ code: 'API_N
 
 const dist = resolve('dist');
 if (existsSync(dist)) {
-  app.use(express.static(dist, { maxAge: '1h', etag: true }));
-  app.use((request, response, next) => request.method === 'GET' ? response.sendFile(resolve(dist, 'index.html')) : next());
+  // فایل‌های داخل assets نام هش‌دار دارند و محتوایشان هرگز عوض نمی‌شود، پس
+  // می‌توانند یک سال کش شوند.
+  app.use('/assets', express.static(resolve(dist, 'assets'), {
+    maxAge: '1y', immutable: true, etag: true, index: false,
+  }));
+  // بقیهٔ فایل‌ها نام ثابت دارند. اگر index.html یا sw.js کش شوند، دیپلوی تازه
+  // تا پایان عمر کش برای مرورگر کاربر نامرئی می‌ماند و کاربر مجبور می‌شود
+  // Ctrl+Shift+R بزند. no-cache یعنی «هر بار بپرس»، نه «کش نکن»؛ با ETag
+  // پاسخ معمولاً یک 304 کوتاه است.
+  const alwaysRevalidate = /(?:index\.html|sw\.js|manifest\.webmanifest)$/;
+  app.use(express.static(dist, {
+    etag: true,
+    index: false,
+    setHeaders(response, filePath) {
+      response.setHeader('Cache-Control', alwaysRevalidate.test(filePath) ? 'no-cache' : 'public, max-age=3600');
+    },
+  }));
+  app.use((request, response, next) => {
+    if (request.method !== 'GET') return next();
+    response.setHeader('Cache-Control', 'no-cache');
+    return response.sendFile(resolve(dist, 'index.html'));
+  });
 }
 
 app.use((error, _request, response, _next) => {
@@ -711,4 +731,6 @@ void runBackupJob();
 const backupTimer = setInterval(runBackupJob, 6 * 60 * 60 * 1000);
 backupTimer.unref();
 
-app.listen(port, '0.0.0.0', () => console.log(`HesabYar API listening on http://localhost:${port}`));
+// سرور export می‌شود تا تست بتواند بعد از پایان کار ببنددش و فرایند معلق نماند.
+export const server = app.listen(port, '0.0.0.0', () => console.log(`HesabYar API listening on http://localhost:${port}`));
+export { app };

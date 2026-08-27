@@ -719,7 +719,7 @@ export default function App() {
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
-          {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} />}
+          {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} />}
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
@@ -1981,7 +1981,28 @@ function FirmClientRow({ client, onOpen, isActive }) {
   </article>;
 }
 
-function FirmConsolePage({ access, notify, switchWorkspace }) {
+/** ساخت پروندهٔ مشتری تازه از داخل میز کار، بدون رفتن به تنظیمات. */
+function AddClientForm({ notify, onAdded }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api.createWorkspace({ name, profileType: 'business' });
+      setName('');
+      await onAdded();
+      notify('پروندهٔ مشتری ساخته شد.');
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+  return <form onSubmit={submit} className="mt-3 flex flex-wrap gap-2">
+    <input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} placeholder="نام شرکت مشتری" className="tap min-w-52 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
+    <button disabled={busy} className="tap rounded-lg bg-accent px-4 text-sm font-bold text-white disabled:opacity-45">{busy ? 'در حال ساخت…' : 'افزودن پروندهٔ مشتری'}</button>
+  </form>;
+}
+
+function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess }) {
   const [portfolio, setPortfolio] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -2034,6 +2055,14 @@ function FirmConsolePage({ access, notify, switchWorkspace }) {
           {item.label} · <b className="numbers">{toPersianDigits(item.clients)}</b> پرونده
         </span>)}
       </div>
+    </div>}
+
+    {!loading && clients.length <= 1 && <div className="mt-5 rounded-[10px] border border-accent/40 bg-warn-bg px-4 py-4">
+      <p className="font-bold text-accent">میز کار وقتی می‌درخشد که چند پروندهٔ مشتری داشته باشی.</p>
+      <p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">
+        هر مشتری یک پروندهٔ کاملاً جدا با دیتابیس مستقل می‌گیرد. از همین‌جا پرونده بساز؛ بعد می‌توانی از تنظیمات، همکارانت را با نقش حسابدار یا فقط‌مشاهده به هر پرونده اضافه کنی.
+      </p>
+      <AddClientForm notify={notify} onAdded={async () => { await refreshAccess?.(); await load(true); }} />
     </div>}
 
     <div className="mt-6 border-t border-line">
@@ -2348,7 +2377,7 @@ function PilotPortfolioPanel({ portfolio, updatePlan }) {
 function DesktopNav({ screen, navigate, businessName, profileType = 'business', access }) {
   // میز کار فقط وقتی معنا دارد که کاربر بیش از یک پرونده داشته باشد.
   const items = [
-    ...(access?.workspaces?.length > 1 ? [['firm', 'میز کار دفتر', LayoutGrid]] : []),
+    ['firm', 'میز کار دفتر', LayoutGrid],
     ['today', 'امروز', Home], ['ledger', 'دفتر مالی', WalletCards], ['report', 'گزارش', BarChart3],
     ...(profileType === 'business' ? [['accounting', 'حسابداری', BookOpenCheck], ['chart', 'کدینگ حساب‌ها', Landmark], ['tax', 'مالیات', HandCoins], ...(['owner', 'manager', 'accountant'].includes(access?.workspace?.role) ? [['collaboration', 'همکاری حسابدار', Users]] : [])] : []),
     ['learning', 'یادگیری‌ها', BookOpenCheck], ['settings', 'تنظیمات', Settings],
@@ -2694,7 +2723,7 @@ function Drawer({ profileType = 'business', close, navigate, access }) {
     <aside className="sheet-in h-full w-[82%] max-w-[330px] bg-paper px-4 py-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">{profile.label} · دستیار نقدینگی</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div>
       <div className="mt-8 space-y-2">
-        {access?.workspaces?.length > 1 && <DrawerItem icon={LayoutGrid} label="میز کار دفتر" onClick={() => navigate('firm')} />}
+        <DrawerItem icon={LayoutGrid} label="میز کار دفتر" onClick={() => navigate('firm')} />
         <DrawerItem icon={Home} label="امروز" onClick={() => navigate('today')} />
         <DrawerItem icon={WalletCards} label="دفتر مالی" onClick={() => navigate('ledger')} />
         <DrawerItem icon={BarChart3} label="گزارش" onClick={() => navigate('report')} />
