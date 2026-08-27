@@ -4,7 +4,7 @@ PWA فارسی و موبایل‌اول برای ثبت دریافت و پردا
 
 حساب‌یار در نسخه فعلی «دفتر مالی صوتی و دستیار مدیریت نقدینگی» با دفتر کل دوطرفه، چرخهٔ فاکتور، تطبیق بانکی، انبار دائمی و مالیات قابل‌تنظیم است، نه نرم‌افزار حسابداری رسمی. خلاصه‌های روزانه همچنان بر پایه دریافت و پرداخت هستند و جایگزین صورت مالی، دفتر قانونی یا محاسبه سود تعهدی کامل نیستند. محدوده محصول در [docs/product-scope.md](docs/product-scope.md)، قواعد صحت مالی در [docs/accounting-integrity.md](docs/accounting-integrity.md)، [حافظهٔ مالی و هشدارهای قابل اقدام](docs/financial-memory-and-alerts.md)، هسته دفتر کل در [docs/double-entry-ledger.md](docs/double-entry-ledger.md)، چرخهٔ فاکتور در [docs/invoicing-and-receivables.md](docs/invoicing-and-receivables.md)، تطبیق بانک در [docs/bank-reconciliation.md](docs/bank-reconciliation.md)، انبار و بهای تمام‌شده در [docs/inventory-and-cogs.md](docs/inventory-and-cogs.md)، مالیات مدیریتی در [docs/tax-and-vat.md](docs/tax-and-vat.md)، تنظیمات امنیتی در [docs/security-hardening.md](docs/security-hardening.md)، معماری دفترها و نقش‌ها در [docs/workspaces-and-roles.md](docs/workspaces-and-roles.md) و روش پشتیبان‌گیری در [docs/backup-and-recovery.md](docs/backup-and-recovery.md) ثبت شده است.
 
-اولویت‌های توسعه، قابلیت‌های متوقف‌شده و معیار پذیرش هر فاز در [نقشهٔ اجرایی محصول](docs/product-roadmap.md) ثبت شده‌اند.
+اولویت‌های توسعه، قابلیت‌های متوقف‌شده و معیار پذیرش هر فاز در [نقشهٔ اجرایی محصول](docs/product-roadmap.md) ثبت شده‌اند. جریان کنترل‌شدهٔ آزمون مقصد در [اعتبارسنجی انتقال پارسیان](docs/phase-8-parsian-validation.md) توضیح داده شده است.
 
 مسیر فعلی محصول به سمت مشتری «دفتر حسابداری» و ترتیب یازده فاز بعدی در [نقشهٔ فازبندی‌شدهٔ دفتر حسابداری](docs/firm-roadmap.md) آمده است. فاز ۱ (میز کار دفتر حسابداری) اجرا شده است.
 

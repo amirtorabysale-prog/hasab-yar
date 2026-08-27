@@ -66,6 +66,36 @@ test('requires a reviewed template and complete account mappings for Parsian pre
   assert.match(overview.readiness.disclaimer, /\.bak/);
   const batch = database.createAccountingTransferBatch({ month: '1405-05', targetSystem: 'parsian-review-csv' }, new Date('2026-08-20T12:00:00.000Z'));
   assert.match(database.accountingTransferBatchFile(batch.id).fileData.toString('utf8'), /P-1/);
+  assert.equal(batch.acceptanceReady, false);
+  assert.throws(() => database.updateAccountingTransferBatchStatus(batch.id, { status: 'accepted' }), (error) => error.code === 'TRANSFER_TRIAL_REQUIRED');
+
+  const failed = database.createAccountingTransferValidation(batch.id, {
+    softwareName: 'پارسیان', softwareVersion: '1405.2', testCompanyLabel: 'شرکت نمونه الف',
+    attemptType: 'dry-run', outcome: 'failed', amountUnit: 'rial', importedRows: 0, rejectedRows: batch.rowCount,
+    importedDebitTotal: 0, importedCreditTotal: 0, errorSummary: 'کد حساب مقصد در قالب نمونه پذیرفته نشد.',
+  });
+  assert.equal(failed.outcome, 'failed');
+  assert.throws(() => database.createAccountingTransferValidation(batch.id, {
+    softwareName: 'پارسیان', softwareVersion: '1405.2', testCompanyLabel: 'شرکت نمونه الف',
+    attemptType: 'trial-import', outcome: 'passed', amountUnit: 'rial', importedRows: batch.rowCount - 1,
+    rejectedRows: 1, importedDebitTotal: batch.debitTotal * 10, importedCreditTotal: batch.creditTotal * 10,
+  }), (error) => error.code === 'TRANSFER_VALIDATION_MISMATCH');
+
+  database.createAccountingTransferValidation(batch.id, {
+    softwareName: 'پارسیان', softwareVersion: '1405.2', testCompanyLabel: 'شرکت نمونه الف',
+    attemptType: 'dry-run', outcome: 'passed', amountUnit: 'rial', importedRows: batch.rowCount, rejectedRows: 0,
+    importedDebitTotal: batch.debitTotal * 10, importedCreditTotal: batch.creditTotal * 10,
+  });
+  assert.throws(() => database.updateAccountingTransferBatchStatus(batch.id, { status: 'accepted' }), (error) => error.code === 'TRANSFER_TRIAL_REQUIRED');
+
+  const trial = database.createAccountingTransferValidation(batch.id, {
+    softwareName: 'پارسیان', softwareVersion: '1405.2', testCompanyLabel: 'شرکت نمونه الف',
+    attemptType: 'trial-import', outcome: 'passed', amountUnit: 'rial', importedRows: batch.rowCount, rejectedRows: 0,
+    importedDebitTotal: batch.debitTotal * 10, importedCreditTotal: batch.creditTotal * 10, note: 'ورود در شرکت آزمایشی و کنترل تراز انجام شد.',
+  });
+  assert.equal(trial.attemptType, 'trial-import');
+  assert.equal(database.listAccountingTransferBatches({ targetSystem: 'parsian-review-csv' })[0].acceptanceReady, true);
+  assert.equal(database.updateAccountingTransferBatchStatus(batch.id, { status: 'accepted' }).status, 'accepted');
 }));
 
 test('blocks export when a transaction still needs review and isolates transfer history by workspace', () => {
@@ -94,6 +124,7 @@ test('includes transfer settings, mappings and immutable files in encrypted-back
   assert.ok(snapshot.tables.accounting_transfer_settings.length >= 1);
   assert.ok(snapshot.tables.accounting_transfer_mappings.length >= 2);
   assert.ok(snapshot.tables.accounting_transfer_batches.length >= 2);
+  assert.ok(snapshot.tables.accounting_transfer_validations.length >= 3);
   assert.ok(Buffer.from(snapshot.tables.accounting_transfer_batches[0].file_data).length > 100);
 }));
 

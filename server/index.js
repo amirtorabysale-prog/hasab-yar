@@ -4,14 +4,14 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
+  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
-  listAccountingTransferBatches, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
+  listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
@@ -498,6 +498,17 @@ app.post('/api/accountant-transfer/batches/:id/status', (request, response, next
   try {
     const item = updateAccountingTransferBatchStatus(request.params.id, request.body || {});
     return item ? response.json({ item }) : response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
+app.get('/api/accountant-transfer/batches/:id/validations', (request, response) => {
+  const batch = accountingTransferBatchFile(request.params.id);
+  if (!batch) return response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
+  return response.json({ items: listAccountingTransferValidations(request.params.id) });
+});
+app.post('/api/accountant-transfer/batches/:id/validations', (request, response, next) => {
+  try {
+    const item = createAccountingTransferValidation(request.params.id, request.body || {});
+    return item ? response.status(201).json({ item }) : response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
   } catch (error) { return next(error); }
 });
 app.post('/api/collaboration/requests', (request, response, next) => {

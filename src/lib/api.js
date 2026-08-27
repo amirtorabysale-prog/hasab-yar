@@ -217,6 +217,8 @@ export const api = {
   createAccountingTransferBatch: (payload) => request('/api/accountant-transfer/batches', { method: 'POST', body: JSON.stringify(payload) }),
   accountingTransferBatches: (params = {}) => request(`/api/accountant-transfer/batches?${new URLSearchParams(params)}`),
   updateAccountingTransferBatchStatus: (id, status, note = '') => request(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/status`, { method: 'POST', body: JSON.stringify({ status, note }) }),
+  accountingTransferValidations: (id) => request(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/validations`),
+  createAccountingTransferValidation: (id, payload) => request(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/validations`, { method: 'POST', body: JSON.stringify(payload) }),
   createCollaborationRequest: (payload) => request('/api/collaboration/requests', { method: 'POST', body: JSON.stringify(payload) }),
   answerCollaborationRequest: (id, answer) => request(`/api/collaboration/requests/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify({ answer }) }),
   resolveCollaborationRequest: (id) => request(`/api/collaboration/requests/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: '{}' }),
