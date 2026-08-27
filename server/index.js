@@ -9,6 +9,8 @@ import {
   ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
+  applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
 } from './db.js';
@@ -35,6 +37,7 @@ const port = Number(process.env.PORT || 4173);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 const backupUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
 const statementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
+const chartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 const adminState = ensureAdmin();
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
@@ -168,6 +171,15 @@ app.delete('/api/workspace/members/:userId', (request, response, next) => {
   try { return response.status(removeWorkspaceMember(request.workspace.id, request.params.userId) ? 204 : 404).end(); }
   catch (error) { error.status ||= 400; return next(error); }
 });
+// میز کار دفتر حسابداری. فقط پرونده‌هایی که همین کاربر عضوشان است دیده می‌شوند.
+app.get('/api/firm/portfolio', (request, response, next) => {
+  try {
+    return response.json(firmPortfolio(request.user.id, {
+      month: request.query.month || '',
+      refresh: request.query.refresh === '1' || request.query.refresh === 'true',
+    }));
+  } catch (error) { return next(error); }
+});
 app.get('/api/bootstrap', (request, response) => {
   materializeRecurringRules();
   return response.json({
@@ -266,6 +278,47 @@ app.post('/api/accounting/periods/:period/reopen', (request, response, next) => 
     recordAudit('reopen', 'accounting_period', request.params.period, { reason: request.body?.reason });
     return response.json({ item });
   } catch (error) { return next(error); }
+});
+// فاز ۲ — کدینگ دفتر، تفصیلی شناور و مرکز هزینه.
+app.get('/api/chart/overview', (_request, response, next) => {
+  try { return response.json(chartOverview()); } catch (error) { return next(error); }
+});
+app.post('/api/chart/template', (request, response, next) => {
+  try { return response.status(201).json(installChartTemplate()); } catch (error) { return next(error); }
+});
+app.post('/api/chart/import', chartUpload.single('chart'), (request, response, next) => {
+  try {
+    const text = request.file ? request.file.buffer.toString('utf8') : String(request.body?.csv || '');
+    if (!text.trim()) return response.status(400).json({ code: 'CHART_FILE_EMPTY', message: 'فایل کدینگ خالی است.' });
+    return response.status(201).json(importChart(text, { replace: request.body?.replace === 'true' || request.body?.replace === true }));
+  } catch (error) { return next(error); }
+});
+app.post('/api/chart/accounts', (request, response, next) => {
+  try { return response.status(201).json({ item: saveChartAccountEntry(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.put('/api/chart/accounts/:id', (request, response, next) => {
+  try { return response.json({ item: saveChartAccountEntry({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
+});
+app.put('/api/chart/mappings/:ledgerAccountId', (request, response, next) => {
+  try { return response.json(mapLedgerAccount(request.params.ledgerAccountId, request.body?.chartAccountId || null)); } catch (error) { return next(error); }
+});
+app.post('/api/chart/mappings/suggest', (_request, response, next) => {
+  try { return response.json(applyChartSuggestions()); } catch (error) { return next(error); }
+});
+app.get('/api/chart/dimensions/balance', (request, response, next) => {
+  try { return response.json(dimensionReport(request.query)); } catch (error) { return next(error); }
+});
+app.post('/api/chart/analytics', (request, response, next) => {
+  try { return response.status(201).json({ item: saveAnalytic(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.put('/api/chart/analytics/:id', (request, response, next) => {
+  try { return response.json({ item: saveAnalytic({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
+});
+app.post('/api/chart/cost-centers', (request, response, next) => {
+  try { return response.status(201).json({ item: saveCostCenterEntry(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.put('/api/chart/cost-centers/:id', (request, response, next) => {
+  try { return response.json({ item: saveCostCenterEntry({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
 });
 app.get('/api/tax/rates', (_request, response) => response.json({ items: listTaxRates() }));
 app.post('/api/tax/rates', (request, response, next) => { try { response.status(201).json({ item: saveTaxRate(request.body) }); } catch (error) { next(error); } });

@@ -35,6 +35,12 @@ import {
   ACCOUNTING_TRANSFER_TARGETS, accountingTransferReadiness, buildAccountingTransferCsv,
   normalizeAccountingTransferTarget,
 } from './accountingTransfer.js';
+import { buildFirmPortfolio, parseStoredMoment } from './firm.js';
+import {
+  DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
+  importChartOfAccounts, installDefaultChartTemplate, listAnalyticAccounts, listChartAccounts, listCostCenters,
+  mapLedgerAccountToChart, parseChartCsv, saveAnalyticAccount, saveChartAccount, saveCostCenter,
+} from './chartOfAccounts.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -417,6 +423,20 @@ function ensureCommercialSchema(database) {
   `);
 }
 
+// فقط روی دیتابیس کنترل. خلاصهٔ وضعیت هر پرونده اینجا cache می‌شود تا باز کردن
+// میز کار با ده‌ها پرونده به باز کردن ده‌ها فایل SQLite در هر درخواست تبدیل نشود.
+function ensureFirmConsoleSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS firm_client_cache (
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      month TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (workspace_id,month)
+    );
+  `);
+}
+
 function ensureAccountingTransferSchema(database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS accounting_transfer_settings (
@@ -480,6 +500,7 @@ ensureReceiptAutomationSchema(controlDb);
 ensureFinancialAlertSchema(controlDb);
 ensureCollaborationSchema(controlDb);
 ensureCommercialSchema(controlDb);
+ensureFirmConsoleSchema(controlDb);
 ensureAccountingTransferSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
@@ -1244,6 +1265,71 @@ export function monthlyAccountantPackage(month = '', now = new Date()) {
   return { ...payload, manifest: { algorithm: 'sha256', digest, sourceIdsComplete: true, receiptImagesIncluded: false } };
 }
 
+// ---------------------------------------------------------------------------
+// فاز ۲ — کدینگ دفتر، تفصیلی شناور و مرکز هزینه (روی دیتابیس دفتر فعال)
+// ---------------------------------------------------------------------------
+
+export function chartOverview() {
+  const database = activeWorkspaceDatabase();
+  return {
+    accounts: listChartAccounts(database, { includeInactive: true }),
+    mapping: chartMappingOverview(database),
+    analytics: listAnalyticAccounts(database, { includeInactive: true }),
+    costCenters: listCostCenters(database, { includeInactive: true }),
+    template: { accountCount: DEFAULT_CHART_TEMPLATE.length },
+  };
+}
+
+export function importChart(csvText, { replace = false } = {}) {
+  const { rows } = parseChartCsv(csvText);
+  const result = importChartOfAccounts(activeWorkspaceDatabase(), rows, { source: 'import', replace });
+  audit('import', 'chart_of_accounts', 'chart', result);
+  return { ...result, ...chartOverview() };
+}
+
+export function installChartTemplate() {
+  const result = installDefaultChartTemplate(activeWorkspaceDatabase());
+  audit('install-template', 'chart_of_accounts', 'chart', result);
+  return { ...result, ...chartOverview() };
+}
+
+export function saveChartAccountEntry(values = {}) {
+  const item = saveChartAccount(activeWorkspaceDatabase(), values);
+  audit('save', 'chart_account', item.id, { code: item.code, name: item.name, level: item.level });
+  return item;
+}
+
+export function mapLedgerAccount(ledgerAccountId, chartAccountId) {
+  const result = mapLedgerAccountToChart(activeWorkspaceDatabase(), ledgerAccountId, chartAccountId);
+  audit('map', 'ledger_account', ledgerAccountId, { chartCode: result.chartAccount?.code || null });
+  return { ...result, mapping: chartMappingOverview(activeWorkspaceDatabase()) };
+}
+
+export function applyChartSuggestions() {
+  const result = applySuggestedChartMappings(activeWorkspaceDatabase());
+  audit('map-suggested', 'chart_of_accounts', 'chart', { applied: result.applied });
+  return result;
+}
+
+export function saveAnalytic(values = {}) {
+  const item = saveAnalyticAccount(activeWorkspaceDatabase(), values);
+  audit('save', 'analytic_account', item.id, { code: item.code, name: item.name });
+  return item;
+}
+
+export function saveCostCenterEntry(values = {}) {
+  const item = saveCostCenter(activeWorkspaceDatabase(), values);
+  audit('save', 'cost_center', item.id, { code: item.code, name: item.name });
+  return item;
+}
+
+export function dimensionReport(query = {}) {
+  return dimensionBalance(activeWorkspaceDatabase(), {
+    dimension: query.dimension === 'analytic' ? 'analytic' : 'costCenter',
+    from: query.from || '', to: query.to || '',
+  });
+}
+
 function accountingTransferSettings(targetSystem = 'generic-csv') {
   const target = normalizeAccountingTransferTarget(targetSystem);
   const row = db.prepare(`SELECT target_system AS targetSystem,template_name AS templateName,
@@ -1269,9 +1355,15 @@ function accountingTransferJournalRows(range) {
     journal_entries.memo,journal_entries.entry_kind AS entryKind,journal_entries.source_type AS sourceType,
     journal_entries.source_id AS sourceId,journal_entries.revision,journal_lines.account_id AS accountId,
     ledger_accounts.code AS accountCode,ledger_accounts.name AS accountName,journal_lines.debit,journal_lines.credit,
-    journal_lines.description AS lineDescription
+    journal_lines.description AS lineDescription,
+    chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
+    analytic_accounts.code AS analyticCode,analytic_accounts.name AS analyticName,
+    cost_centers.code AS costCenterCode,cost_centers.name AS costCenterName
     FROM journal_entries JOIN journal_lines ON journal_lines.entry_id=journal_entries.id
     JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+    LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
+    LEFT JOIN cost_centers ON cost_centers.id=journal_lines.cost_center_id
     WHERE journal_entries.occurred_at>=? AND journal_entries.occurred_at<?
     ORDER BY journal_entries.occurred_at,journal_entries.created_at,journal_entries.id,journal_lines.rowid`).all(range.from, range.toExclusive);
 }
@@ -1282,8 +1374,12 @@ function accountingTransferState(month = '', targetSystem = 'generic-csv', now =
   const settings = accountingTransferSettings(target);
   const mappings = accountingTransferMappings(target);
   const journalRows = accountingTransferJournalRows(packageData.scope);
-  const readiness = accountingTransferReadiness({ packageData, journalRows, settings, mappings });
-  return { packageData, settings, mappings, journalRows, readiness };
+  const chart = chartMappingOverview(activeWorkspaceDatabase());
+  const readiness = accountingTransferReadiness({
+    packageData, journalRows, settings, mappings,
+    chart: { installed: chart.chartInstalled, complete: chart.complete },
+  });
+  return { packageData, settings, mappings, journalRows, readiness, chart };
 }
 
 function hydrateAccountingTransferBatch(row, includeFile = false) {
@@ -1463,6 +1559,104 @@ export function pilotPortfolio(now = new Date()) {
     ...pilotWorkspaceDashboard(now, workspace), commercial: commercialStatus(workspace.id, now),
   })));
   return { generatedAt: now.toISOString(), summary: pilotRetentionSummary(workspaces), workspaces };
+}
+
+const FIRM_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// شمارش‌های سبک یک پرونده برای میز کار. عمداً از monthlyAccountantPackage استفاده
+// نمی‌کند چون آن تابع کل تراکنش‌ها و رسیدها را می‌خواند و برای ۵۰ پرونده گران است.
+function firmClientSnapshot(month = '', now = new Date()) {
+  const range = monthWindowForWorkspace(month, now);
+  const count = (sql, ...parameters) => Number(db.prepare(sql).get(...parameters)?.count || 0);
+
+  const ledger = db.prepare(`SELECT COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit
+    FROM journal_lines JOIN journal_entries ON journal_entries.id=journal_lines.entry_id
+    WHERE journal_entries.occurred_at>=datetime(?) AND journal_entries.occurred_at<datetime(?)`).get(range.from, range.toExclusive);
+
+  const rangeStartDay = localDay(new Date(range.from), range.timeZone);
+  const rangeEndDay = localDay(new Date(range.toExclusive), range.timeZone);
+  const totals = db.prepare(`SELECT
+      COUNT(*) AS count,
+      COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income,
+      COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS expense
+    FROM transactions WHERE status!='deleted' AND occurred_at>=datetime(?) AND occurred_at<datetime(?)`).get(range.from, range.toExclusive);
+
+  const lastBatch = db.prepare(`SELECT id,period,target_system AS targetSystem,status,row_count AS rowCount,
+    created_at AS createdAt FROM accounting_transfer_batches ORDER BY created_at DESC LIMIT 1`).get() || null;
+
+  return {
+    month: range.period || range.month || null,
+    available: true,
+    counts: {
+      // رسید تا وقتی به ثبت وصل یا صرف‌نظر نشده، مدرک معلق است.
+      openReceipts: count("SELECT COUNT(*) AS count FROM receipts WHERE status NOT IN ('linked','ignored')"),
+      unexplainedClosings: count(
+        "SELECT COUNT(*) AS count FROM daily_closings WHERE day>=? AND day<? AND difference<>0 AND TRIM(COALESCE(note,''))=''",
+        rangeStartDay, rangeEndDay,
+      ),
+      unmatchedBankLines: count("SELECT COUNT(*) AS count FROM bank_statement_lines WHERE status='unmatched'"),
+      openRequests: count("SELECT COUNT(*) AS count FROM collaboration_requests WHERE status='open'"),
+      answeredRequests: count("SELECT COUNT(*) AS count FROM collaboration_requests WHERE status='answered'"),
+      unreviewedTransactions: count("SELECT COUNT(*) AS count FROM transactions WHERE needs_review=1 AND status!='deleted'"),
+      overdueObligations: count(
+        "SELECT COUNT(*) AS count FROM obligations WHERE status='open' AND due_at IS NOT NULL AND due_at<datetime(?)",
+        now.toISOString(),
+      ),
+    },
+    ledgerBalanced: Number(ledger?.debit || 0) === Number(ledger?.credit || 0),
+    periodLocked: (db.prepare('SELECT status FROM accounting_periods WHERE period=?').get(range.period || '')?.status || 'open') === 'locked',
+    lastActivityAt: db.prepare('SELECT MAX(created_at) AS createdAt FROM audit_log').get()?.createdAt || null,
+    activity: {
+      transactionCount: Number(totals?.count || 0),
+      income: Number(totals?.income || 0),
+      expense: Number(totals?.expense || 0),
+      entryCount: count('SELECT COUNT(*) AS count FROM journal_entries WHERE occurred_at>=datetime(?) AND occurred_at<datetime(?)', range.from, range.toExclusive),
+    },
+    delivery: { lastBatch },
+  };
+}
+
+function cachedFirmSnapshot(workspaceId, month, now, refresh) {
+  const cached = controlDb.prepare('SELECT payload,computed_at AS computedAt FROM firm_client_cache WHERE workspace_id=? AND month=?')
+    .get(workspaceId, month);
+  if (!refresh && cached) {
+    const computedAt = parseStoredMoment(cached.computedAt);
+    const age = computedAt ? now.getTime() - computedAt.getTime() : Number.NaN;
+    if (Number.isFinite(age) && age >= 0 && age < FIRM_CACHE_TTL_MS) {
+      return { ...parseStoredJson(cached.payload, {}), cached: true, computedAt: cached.computedAt };
+    }
+  }
+  const snapshot = runInWorkspace(workspaceId, { role: 'accountant' }, () => firmClientSnapshot(month, now));
+  controlDb.prepare(`INSERT INTO firm_client_cache (workspace_id,month,payload,computed_at) VALUES (?,?,?,?)
+    ON CONFLICT(workspace_id,month) DO UPDATE SET payload=excluded.payload,computed_at=excluded.computed_at`)
+    .run(workspaceId, month, JSON.stringify(snapshot), now.toISOString());
+  return { ...snapshot, cached: false, computedAt: now.toISOString() };
+}
+
+/**
+ * میز کار دفتر حسابداری: وضعیت همهٔ پرونده‌هایی که همین کاربر عضو آن‌هاست.
+ * پرونده‌ای که کاربر عضوش نیست هرگز وارد این خروجی نمی‌شود.
+ */
+export function firmPortfolio(userId, { month = '', refresh = false, now = new Date() } = {}) {
+  const memberships = listUserWorkspaces(userId);
+  const requested = normalizePersian(String(month || '').trim());
+  const snapshots = memberships.map((workspace) => {
+    const key = /^\d{4}-(0[1-9]|1[0-2])$/.test(requested)
+      ? requested
+      : runInWorkspace(workspace.id, { role: 'accountant' }, () => periodForDate(now, currentTimeZone()));
+    try {
+      return { workspace, ...cachedFirmSnapshot(workspace.id, key, now, refresh), month: key };
+    } catch (error) {
+      // یک پروندهٔ خراب نباید کل میز کار را از کار بیندازد؛ ردیفش «نامشخص» می‌ماند.
+      return { workspace, month: key, available: false, error: error.message };
+    }
+  });
+  const portfolio = buildFirmPortfolio(snapshots, { now });
+  return { generatedAt: now.toISOString(), ...portfolio };
+}
+
+export function invalidateFirmCache(workspaceId) {
+  controlDb.prepare('DELETE FROM firm_client_cache WHERE workspace_id=?').run(String(workspaceId || ''));
 }
 
 export function workspaceOperationalSignals() {
