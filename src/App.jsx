@@ -2189,6 +2189,19 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   const chartCheck = failed.find((item) => item.id === 'chart');
   const unmapped = readiness?.chart?.unmappedUsedAccounts || [];
   const approvalCheck = failed.find((item) => item.id === 'approval');
+  const mappingCheck = failed.find((item) => item.id === 'mappings');
+  const templateCheck = failed.find((item) => item.id === 'template');
+  const missing = readiness?.missingMappings || [];
+
+  const fillFromChart = async () => {
+    setBusy(true);
+    try {
+      const result = await api.fillTransferMappingsFromChart(readiness?.target?.id, false);
+      await refresh();
+      notify(`کد مقصد ${toPersianDigits(result.filled)} حساب از کدینگ دفتر پر شد${result.kept ? ` و ${toPersianDigits(result.kept)} نگاشت دستی دست‌نخورده ماند` : ''}.`);
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
 
   const applySuggestions = async () => {
     setBusy(true);
@@ -2217,6 +2230,29 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
       </div>
       <p className="mt-2 text-[11px] leading-5 text-muted">
         حساب‌یار برای هر حساب، معین هم‌نوع کدینگ تو را پیشنهاد می‌دهد. اگر حسابی معین متناسب نداشت، اول آن معین را در کدینگ بساز.
+      </p>
+    </div>}
+
+    {mappingCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+      <p className="font-bold text-expense">{toPersianDigits(mappingCheck.count)} حساب هنوز کد مقصد ندارد</p>
+      {missing.length > 0 && <ul className="mt-2 space-y-0.5">
+        {missing.slice(0, 8).map((item) => <li key={item.id}><span className="numbers text-muted">{toPersianDigits(item.code)}</span> · {item.name}</li>)}
+        {missing.length > 8 && <li className="text-muted">و {toPersianDigits(missing.length - 8)} حساب دیگر…</li>}
+      </ul>}
+      <button disabled={busy} onClick={fillFromChart} className="tap mt-3 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white disabled:opacity-45">
+        {busy ? 'در حال پرکردن…' : 'پرکردن کد مقصد از کدینگ دفتر'}
+      </button>
+      <p className="mt-2 text-[11px] leading-5 text-muted">
+        کدینگی که در حساب‌یار وارد کرده‌ای همان کدینگ نرم‌افزار مقصد توست، پس کد مقصد از روی آن پر می‌شود.
+        نگاشت‌هایی که خودت دستی نوشته‌ای بازنویسی نمی‌شوند. اگر حسابی به کدینگ وصل نباشد، اول در صفحهٔ کدینگ نگاشتش کن.
+      </p>
+    </div>}
+
+    {templateCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+      <p className="font-bold text-expense">قالب مقصد هنوز کنترل و نام‌گذاری نشده است</p>
+      <p className="mt-1 text-[11px] leading-5 text-muted">
+        در همین صفحه، کادر «نام یا نسخهٔ قالب کنترل‌شده» را پر کن و تیک تأیید حسابدار را بزن، بعد «ذخیره کنترل قالب».
+        این تأیید یعنی خودت ستون‌ها و واحد پول را روی یک شرکت آزمایشی دیده‌ای؛ ادعای پشتیبانی رسمی سازنده نیست.
       </p>
     </div>}
 

@@ -1685,6 +1685,45 @@ export function saveAccountingTransferSettings(values = {}) {
   return accountingTransferSettings(targetSystem);
 }
 
+/**
+ * کد مقصد را از کدینگ دفتر پر می‌کند.
+ *
+ * دفتر حسابداری کدینگ خودش را وارد حساب‌یار کرده و همان کدینگ، کدینگ نرم‌افزار
+ * مقصدش هم هست. پس تایپ دوبارهٔ کد مقصد برای ده‌ها حساب، دوباره‌کاری محض بود.
+ * نگاشت دستی موجود بازنویسی نمی‌شود مگر صریحاً خواسته شود.
+ */
+export function fillTransferMappingsFromChart(targetSystem = 'parsian-review-csv', { overwrite = false } = {}) {
+  const target = normalizeAccountingTransferTarget(targetSystem);
+  const rows = db.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,
+    chart_accounts.code AS chartCode,chart_accounts.name AS chartName
+    FROM ledger_accounts JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    WHERE ledger_accounts.active=1`).all();
+  if (!rows.length) {
+    throw Object.assign(new Error('هیچ حسابی به کدینگ دفتر نگاشت نشده است؛ اول در صفحهٔ کدینگ نگاشت را کامل کن.'), {
+      status: 409, code: 'CHART_MAPPING_EMPTY',
+    });
+  }
+  const existing = new Map(accountingTransferMappings(target).map((item) => [item.ledgerAccountId, item]));
+  const insert = db.prepare(`INSERT INTO accounting_transfer_mappings (target_system,ledger_account_id,target_code,target_name,updated_by)
+    VALUES (?,?,?,?,?) ON CONFLICT(target_system,ledger_account_id) DO UPDATE SET target_code=excluded.target_code,
+    target_name=excluded.target_name,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`);
+  const userId = currentWorkspace()?.userId || null;
+  let filled = 0;
+  let kept = 0;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const row of rows) {
+      const current = existing.get(row.id);
+      if (current?.targetCode && !overwrite) { kept += 1; continue; }
+      insert.run(target, row.id, row.chartCode, row.chartName, userId);
+      filled += 1;
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  audit('fill-transfer-mappings', 'accounting_transfer_settings', target, { filled, kept, overwrite });
+  return { targetSystem: target, filled, kept, mappings: accountingTransferMappings(target) };
+}
+
 export function saveAccountingTransferMapping(values = {}) {
   const targetSystem = normalizeAccountingTransferTarget(values.targetSystem);
   const ledgerAccountId = String(values.ledgerAccountId || '').trim();

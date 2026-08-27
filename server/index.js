@@ -12,6 +12,7 @@ import {
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
+  fillTransferMappingsFromChart,
   saveJournalTemplate, submitJournalApproval,
   mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
@@ -532,6 +533,11 @@ app.get('/api/accountant-transfer/overview', (request, response, next) => {
 app.put('/api/accountant-transfer/settings', (request, response, next) => {
   try { return response.json({ item: saveAccountingTransferSettings(request.body || {}) }); }
   catch (error) { return next(error); }
+});
+app.post('/api/accountant-transfer/mappings/from-chart', (request, response, next) => {
+  try {
+    return response.json(fillTransferMappingsFromChart(request.body?.targetSystem, { overwrite: request.body?.overwrite === true }));
+  } catch (error) { return next(error); }
 });
 app.put('/api/accountant-transfer/mappings/:ledgerAccountId', (request, response, next) => {
   try {
