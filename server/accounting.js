@@ -351,6 +351,52 @@ export function syncOpeningBalanceJournal(database, operationalAccountId, { crea
   });
 }
 
+/**
+ * ماندهٔ افتتاحیهٔ واردشده از نرم‌افزار مقصد را به یک سند افتتاحیهٔ متوازن
+ * تبدیل می‌کند. ورود دوباره، سند قبلی را معکوس می‌کند و سند تازه می‌سازد؛
+ * تاریخچه بازنویسی نمی‌شود.
+ */
+export function postImportedOpeningBalances(database, prepared = [], { occurredAt, memo = 'ماندهٔ افتتاحیهٔ واردشده', createdBy = null, timeZone = 'Asia/Tehran', replace = false } = {}) {
+  ensureAccountingSchema(database);
+  const postedAt = occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(postedAt, timeZone));
+
+  const prior = database.prepare(`SELECT * FROM journal_entries WHERE source_type='opening_import'
+    AND entry_kind='opening' ORDER BY revision DESC,created_at DESC LIMIT 1`).get();
+  const priorLive = prior && !database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(prior.id);
+  if (priorLive && !replace) {
+    throw accountingError('برای این دفتر از قبل سند افتتاحیهٔ واردشده وجود دارد؛ برای جایگزینی گزینهٔ جایگزینی را روشن کن.', 'OPENING_IMPORT_EXISTS', 409);
+  }
+  if (priorLive) {
+    const reverseLines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(prior.id)
+      .map((line) => ({ ...line, debit: line.credit, credit: line.debit }));
+    insertJournal(database, {
+      sourceType: 'opening_import', sourceId: prior.source_id,
+      revision: nextRevision(database, 'opening_import', prior.source_id), entryKind: 'reversal',
+      occurredAt: postedAt, memo: 'معکوس ماندهٔ افتتاحیهٔ قبلی', reversesEntryId: prior.id, createdBy, lines: reverseLines,
+    });
+  }
+
+  const sourceId = randomUUID();
+  const lines = prepared.map((item) => ({
+    accountId: item.ledgerAccountId,
+    debit: item.debit || 0,
+    credit: item.credit || 0,
+    description: item.name || '',
+    analyticId: item.analyticId || null,
+  }));
+  const result = insertJournal(database, {
+    sourceType: 'opening_import', sourceId, revision: 1, entryKind: 'opening',
+    occurredAt: postedAt, memo, createdBy, lines,
+  });
+  return { ...result, replacedEntryId: priorLive ? prior.id : null, lineCount: lines.length };
+}
+
+// برای ماژول ورود داده: ساخت کد داخلی تازه در همان بازه‌های همیشگی.
+export function nextLedgerCode(database, type) {
+  return nextCode(database, type);
+}
+
 export function migrateAccountingLedger(database, { createdBy = null } = {}) {
   ensureAccountingSchema(database);
   const accounts = database.prepare('SELECT id FROM accounts').all();

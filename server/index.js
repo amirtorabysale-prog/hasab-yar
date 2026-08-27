@@ -10,6 +10,7 @@ import {
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
@@ -286,6 +287,39 @@ app.get('/api/chart/overview', (_request, response, next) => {
 app.post('/api/chart/template', (request, response, next) => {
   try { return response.status(201).json(installChartTemplate()); } catch (error) { return next(error); }
 });
+// ورود داده از اکسل و پارسیان. تشخیص xlsx یا CSV از روی بایت فایل است، نه پسوند.
+app.get('/api/import/template', (_request, response, next) => {
+  try {
+    response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    response.setHeader('Content-Disposition', 'attachment; filename="hesab-yar-import-templates.xlsx"');
+    return response.send(importTemplateWorkbook());
+  } catch (error) { return next(error); }
+});
+app.post('/api/import/chart', chartUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.status(201).json(importChartFile(request.file.buffer, request.file.originalname, {
+      replace: request.body?.replace === 'true' || request.body?.replace === true,
+    }));
+  } catch (error) { return next(error); }
+});
+app.post('/api/import/analytics', chartUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.status(201).json(importAnalyticsFile(request.file.buffer, request.file.originalname));
+  } catch (error) { return next(error); }
+});
+app.post('/api/import/opening-balances', chartUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.status(201).json(importOpeningBalanceFile(request.file.buffer, request.file.originalname, {
+      amountUnit: request.body?.amountUnit,
+      replace: request.body?.replace === 'true' || request.body?.replace === true,
+      occurredAt: request.body?.occurredAt || '',
+    }));
+  } catch (error) { return next(error); }
+});
+app.get('/api/accountant-transfer/fields', (_request, response) => response.json(transferFieldCatalog()));
 app.post('/api/chart/import', chartUpload.single('chart'), (request, response, next) => {
   try {
     const text = request.file ? request.file.buffer.toString('utf8') : String(request.body?.csv || '');
@@ -489,7 +523,7 @@ app.post('/api/accountant-transfer/batches', (request, response, next) => {
 app.get('/api/accountant-transfer/batches/:id/download', (request, response) => {
   const item = accountingTransferBatchFile(request.params.id);
   if (!item) return response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
-  response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  response.setHeader('Content-Type', item.mimeType || 'text/csv; charset=utf-8');
   response.setHeader('Content-Disposition', `attachment; filename="${item.fileName}"`);
   response.setHeader('X-Content-SHA256', item.digest);
   return response.send(item.fileData);
