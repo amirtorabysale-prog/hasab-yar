@@ -20,14 +20,17 @@ process.chdir(root);
 process.env.DATABASE_PATH = resolve(root, 'db.sqlite');
 process.env.ADMIN_USERNAME = 'static-owner';
 process.env.ADMIN_PASSWORD = 'Static-Long-Passphrase-9931';
-process.env.PORT = '4288';
+// پورت از pid ساخته می‌شود؛ پورت ثابت باعث می‌شد یک سرور جامانده از اجرای قبلی
+// بی‌سروصدا پاسخ بدهد و تست، کدِ قدیمی را بسنجد.
+const port = 4300 + (process.pid % 900);
+process.env.PORT = String(port);
 
 const { server } = await import(`../server/index.js?static=${process.pid}`);
 await new Promise((done) => { setTimeout(done, 700); });
 
-const base = 'http://127.0.0.1:4288';
-const headersFor = async (path) => {
-  const response = await fetch(base + path);
+const base = `http://127.0.0.1:${port}`;
+const headersFor = async (path, method = 'GET') => {
+  const response = await fetch(base + path, { method });
   await response.arrayBuffer();
   return { status: response.status, cacheControl: response.headers.get('cache-control') || '' };
 };
@@ -48,6 +51,15 @@ test('an unknown path falls back to the app shell, also without a stale cache', 
   const deep = await headersFor('/ledger/anything');
   assert.equal(deep.status, 200);
   assert.match(deep.cacheControl, /no-cache/);
+});
+
+test('a HEAD request for the app shell answers like a GET, not with a 404', async () => {
+  // مانیتورینگ و بعضی proxyها با HEAD سلامت مسیر را می‌سنجند.
+  for (const path of ['/', '/ledger/anything']) {
+    const head = await headersFor(path, 'HEAD');
+    assert.equal(head.status, 200, path);
+    assert.match(head.cacheControl, /no-cache/, path);
+  }
 });
 
 test('the service worker is never served from a stale browser cache', async () => {

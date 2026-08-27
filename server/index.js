@@ -684,8 +684,10 @@ if (existsSync(dist)) {
       response.setHeader('Cache-Control', alwaysRevalidate.test(filePath) ? 'no-cache' : 'public, max-age=3600');
     },
   }));
+  // HEAD هم باید پوستهٔ برنامه را بگیرد؛ مانیتورینگ و بعضی proxyها با HEAD
+  // سلامت مسیر را می‌سنجند و ۴۰۴ گرفتنشان یعنی هشدار اشتباه.
   app.use((request, response, next) => {
-    if (request.method !== 'GET') return next();
+    if (request.method !== 'GET' && request.method !== 'HEAD') return next();
     response.setHeader('Cache-Control', 'no-cache');
     return response.sendFile(resolve(dist, 'index.html'));
   });
