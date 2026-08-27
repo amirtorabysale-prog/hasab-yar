@@ -458,6 +458,26 @@ function ensureAccountingTransferSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS idx_accounting_transfer_batches_period
       ON accounting_transfer_batches(period,target_system,created_at);
+    CREATE TABLE IF NOT EXISTS accounting_transfer_validations (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL REFERENCES accounting_transfer_batches(id) ON DELETE CASCADE,
+      software_name TEXT NOT NULL,
+      software_version TEXT NOT NULL,
+      test_company_label TEXT NOT NULL,
+      attempt_type TEXT NOT NULL CHECK(attempt_type IN ('dry-run','trial-import')),
+      outcome TEXT NOT NULL CHECK(outcome IN ('passed','failed')),
+      amount_unit TEXT NOT NULL CHECK(amount_unit IN ('toman','rial')),
+      imported_rows INTEGER NOT NULL DEFAULT 0,
+      rejected_rows INTEGER NOT NULL DEFAULT 0,
+      imported_debit_total INTEGER NOT NULL DEFAULT 0,
+      imported_credit_total INTEGER NOT NULL DEFAULT 0,
+      error_summary TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      tested_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_accounting_transfer_validations_batch
+      ON accounting_transfer_validations(batch_id,created_at);
   `);
 }
 
@@ -1288,12 +1308,22 @@ function accountingTransferState(month = '', targetSystem = 'generic-csv', now =
 
 function hydrateAccountingTransferBatch(row, includeFile = false) {
   if (!row) return null;
+  const latestValidation = db.prepare(`SELECT id,batch_id AS batchId,software_name AS softwareName,
+    software_version AS softwareVersion,test_company_label AS testCompanyLabel,attempt_type AS attemptType,
+    outcome,amount_unit AS amountUnit,imported_rows AS importedRows,rejected_rows AS rejectedRows,
+    imported_debit_total AS importedDebitTotal,imported_credit_total AS importedCreditTotal,
+    error_summary AS errorSummary,note,tested_by AS testedBy,created_at AS createdAt
+    FROM accounting_transfer_validations WHERE batch_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(row.id);
+  const passedTrial = db.prepare(`SELECT id FROM accounting_transfer_validations
+    WHERE batch_id=? AND attempt_type='trial-import' AND outcome='passed' ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(row.id);
   const item = {
     id: row.id, period: row.period, targetSystem: row.targetSystem, fileName: row.fileName,
     rowCount: Number(row.rowCount), entryCount: Number(row.entryCount), debitTotal: Number(row.debitTotal),
     creditTotal: Number(row.creditTotal), digest: row.digest, status: row.status, statusNote: row.statusNote,
     generatedBy: userIdentity(row.generatedBy), reviewedBy: userIdentity(row.reviewedBy),
     createdAt: row.createdAt, updatedAt: row.updatedAt,
+    latestValidation: latestValidation ? { ...latestValidation, testedBy: userIdentity(latestValidation.testedBy) } : null,
+    acceptanceReady: row.targetSystem !== 'parsian-review-csv' || Boolean(passedTrial),
   };
   if (includeFile) item.fileData = Buffer.from(row.fileData || []);
   return item;
@@ -1389,14 +1419,71 @@ export function accountingTransferBatchFile(id) {
   return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchFileSelect} WHERE id=?`).get(id), true);
 }
 
+export function listAccountingTransferValidations(batchId) {
+  return db.prepare(`SELECT id,batch_id AS batchId,software_name AS softwareName,
+    software_version AS softwareVersion,test_company_label AS testCompanyLabel,attempt_type AS attemptType,
+    outcome,amount_unit AS amountUnit,imported_rows AS importedRows,rejected_rows AS rejectedRows,
+    imported_debit_total AS importedDebitTotal,imported_credit_total AS importedCreditTotal,
+    error_summary AS errorSummary,note,tested_by AS testedBy,created_at AS createdAt
+    FROM accounting_transfer_validations WHERE batch_id=? ORDER BY created_at DESC,rowid DESC`).all(String(batchId || ''))
+    .map((item) => ({ ...item, testedBy: userIdentity(item.testedBy) }));
+}
+
+export function createAccountingTransferValidation(batchId, values = {}) {
+  const batch = db.prepare(`${accountingTransferBatchSelect} WHERE id=?`).get(String(batchId || ''));
+  if (!batch) return null;
+  if (['accepted', 'rejected'].includes(batch.status)) throw Object.assign(new Error('بستهٔ نهایی‌شده آزمون تازه نمی‌پذیرد؛ پس از اصلاح، بستهٔ جدید بساز.'), { status: 409, code: 'TRANSFER_BATCH_FINAL' });
+  const softwareName = String(values.softwareName || (batch.targetSystem === 'parsian-review-csv' ? 'پارسیان' : '')).trim().slice(0, 100);
+  const softwareVersion = String(values.softwareVersion || '').trim().slice(0, 100);
+  const testCompanyLabel = String(values.testCompanyLabel || '').trim().slice(0, 160);
+  const attemptType = values.attemptType === 'trial-import' ? 'trial-import' : 'dry-run';
+  const outcome = values.outcome === 'passed' ? 'passed' : 'failed';
+  const amountUnit = values.amountUnit === 'toman' ? 'toman' : 'rial';
+  const importedRows = Math.max(0, Math.round(Number(values.importedRows) || 0));
+  const rejectedRows = Math.max(0, Math.round(Number(values.rejectedRows) || 0));
+  const importedDebitTotal = Math.max(0, Math.round(Number(values.importedDebitTotal) || 0));
+  const importedCreditTotal = Math.max(0, Math.round(Number(values.importedCreditTotal) || 0));
+  const errorSummary = String(values.errorSummary || '').trim().slice(0, 1600);
+  const note = String(values.note || '').trim().slice(0, 1600);
+  if (softwareName.length < 2 || softwareVersion.length < 1 || testCompanyLabel.length < 2) throw new Error('نام نرم‌افزار، نسخه و برچسب شرکت آزمایشی را کامل وارد کن.');
+  if (outcome === 'failed' && errorSummary.length < 5) throw new Error('برای آزمون ناموفق، خلاصهٔ خطا را کامل وارد کن.');
+  const multiplier = amountUnit === 'rial' ? 10 : 1;
+  const expectedDebitTotal = Number(batch.debitTotal) * multiplier;
+  const expectedCreditTotal = Number(batch.creditTotal) * multiplier;
+  const exactMatch = importedRows === Number(batch.rowCount) && rejectedRows === 0
+    && importedDebitTotal === expectedDebitTotal && importedCreditTotal === expectedCreditTotal;
+  if (outcome === 'passed' && !exactMatch) throw Object.assign(new Error('آزمون موفق فقط وقتی ثبت می‌شود که تعداد ردیف، ردیف ردشده و جمع بدهکار/بستانکار دقیقاً با بسته برابر باشد.'), {
+    status: 409, code: 'TRANSFER_VALIDATION_MISMATCH', details: {
+      expectedRows: Number(batch.rowCount), expectedDebitTotal, expectedCreditTotal, amountUnit,
+    },
+  });
+  const id = randomUUID();
+  db.prepare(`INSERT INTO accounting_transfer_validations (id,batch_id,software_name,software_version,
+    test_company_label,attempt_type,outcome,amount_unit,imported_rows,rejected_rows,imported_debit_total,
+    imported_credit_total,error_summary,note,tested_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, batch.id, softwareName, softwareVersion, testCompanyLabel, attemptType, outcome, amountUnit,
+      importedRows, rejectedRows, importedDebitTotal, importedCreditTotal, errorSummary, note,
+      currentWorkspace()?.userId || null);
+  audit('validate-transfer-batch', 'accounting_transfer_batch', batch.id, {
+    validationId: id, attemptType, outcome, softwareName, softwareVersion, testCompanyLabel,
+    amountUnit, importedRows, rejectedRows, importedDebitTotal, importedCreditTotal,
+  });
+  return listAccountingTransferValidations(batch.id).find((item) => item.id === id);
+}
+
 export function updateAccountingTransferBatchStatus(id, values = {}) {
   const status = ['delivered', 'accepted', 'rejected'].includes(values.status) ? values.status : '';
   const note = String(values.note || '').trim().slice(0, 1200);
   if (!status) throw new Error('وضعیت تحویل معتبر نیست.');
   if (status === 'rejected' && note.length < 5) throw new Error('دلیل رد خروجی را کامل وارد کن.');
-  const current = db.prepare('SELECT id,status FROM accounting_transfer_batches WHERE id=?').get(id);
+  const current = db.prepare('SELECT id,status,target_system AS targetSystem FROM accounting_transfer_batches WHERE id=?').get(id);
   if (!current) return null;
   if (['accepted', 'rejected'].includes(current.status) && status !== current.status) throw Object.assign(new Error('خروجی نهایی‌شده قابل بازگرداندن نیست؛ پس از اصلاح داده یک بستهٔ جدید بساز.'), { status: 409, code: 'TRANSFER_BATCH_FINAL' });
+  if (status === 'accepted' && current.targetSystem === 'parsian-review-csv') {
+    const passedTrial = db.prepare(`SELECT id FROM accounting_transfer_validations
+      WHERE batch_id=? AND attempt_type='trial-import' AND outcome='passed' LIMIT 1`).get(id);
+    if (!passedTrial) throw Object.assign(new Error('پذیرش پارسیان فقط بعد از ثبت آزمون ورود موفق روی شرکت آزمایشی ممکن است.'), { status: 409, code: 'TRANSFER_TRIAL_REQUIRED' });
+  }
   db.prepare(`UPDATE accounting_transfer_batches SET status=?,status_note=?,reviewed_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
     .run(status, note, currentWorkspace()?.userId || null, id);
   audit('update-transfer-status', 'accounting_transfer_batch', id, { status, note });
@@ -2630,11 +2717,11 @@ export const FINANCIAL_BACKUP_TABLES = [
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
-  'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'audit_log',
+  'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
+  'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
