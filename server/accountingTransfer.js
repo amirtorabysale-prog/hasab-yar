@@ -48,7 +48,7 @@ function persianDateToken(value, timeZone = 'Asia/Tehran') {
   return `${part('year')}/${part('month')}/${part('day')}`;
 }
 
-export function accountingTransferReadiness({ packageData = {}, journalRows = [], settings = {}, mappings = [], chart = {} } = {}) {
+export function accountingTransferReadiness({ packageData = {}, journalRows = [], settings = {}, mappings = [], chart = {}, workflow = {} } = {}) {
   const target = accountingTransferTarget(settings.targetSystem);
   const checks = [];
   for (const item of packageData.checklist?.checks || []) checks.push({
@@ -94,6 +94,14 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
   checks.push(chart.installed
     ? { id: 'chart', label: 'هر حساب استفاده‌شده به معین کدینگ دفتر نگاشت شده', count: unmappedUsedAccounts.length, passed: unmappedUsedAccounts.length === 0, severity: 'blocker' }
     : { id: 'chart', label: 'کدینگ دفتر حسابداری هنوز وارد نشده است', count: 1, passed: false, severity: 'advisory' });
+
+  // سند کنترل‌نشده نباید تحویل دفتر شود؛ گردش ثبت‌کننده/کنترل‌کننده وقتی معنا
+  // دارد که خروجی هم به آن پایبند باشد.
+  const pendingApproval = Number(workflow.pendingInPeriod || 0);
+  checks.push({
+    id: 'approval', label: 'سند کنترل‌نشده در دوره باقی نمانده', count: pendingApproval,
+    passed: pendingApproval === 0, severity: 'blocker',
+  });
 
   const ready = checks.filter((item) => item.severity !== 'advisory').every((item) => item.passed);
   return {

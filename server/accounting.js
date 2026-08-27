@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { analyticForContact, ensureChartSchema, resolveLineDimensions } from './chartOfAccounts.js';
+import {
+  APPROVAL_STATES, assertApprovalTransition, backfillDocumentNumbers, ensureJournalWorkflowSchema,
+  nextDocumentNumber, normalizeApprovalState, worklistSummary,
+} from './journalWorkflow.js';
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
 
@@ -62,6 +66,12 @@ export function ensureAccountingSchema(database) {
   seed.run('ledger-opening-equity', '3000', 'سرمایه و ماندهٔ افتتاحیه', 'equity', 'credit', 'system', 'opening-equity');
   // ستون‌های بعد (تفصیلی و مرکز هزینه) و نگاشت کدینگ روی همین جدول‌ها می‌نشینند.
   ensureChartSchema(database);
+  ensureJournalWorkflowSchema(database);
+}
+
+// سال مالی از سال شمسی تاریخ وقوع سند گرفته می‌شود.
+export function fiscalYearForDate(occurredAt, timeZone = 'Asia/Tehran') {
+  return periodForDate(occurredAt, timeZone).split('-')[0];
 }
 
 function nextCode(database, type) {
@@ -156,12 +166,18 @@ function nextRevision(database, sourceType, sourceId) {
 function insertJournal(database, values) {
   const validated = validateLines(database, values.lines);
   const id = randomUUID();
+  // شماره در همان لحظهٔ درج و در همان تراکنش گرفته می‌شود تا دنبالهٔ سال مالی گپ نگیرد.
+  const fiscalYear = fiscalYearForDate(values.occurredAt, values.timeZone || 'Asia/Tehran');
+  const documentNumber = nextDocumentNumber(database, fiscalYear);
+  // سند خودکار سیستم «کنترل‌شده» است؛ فقط ثبت دستی و انبوه وارد گردش تأیید می‌شوند.
+  const approvalState = normalizeApprovalState(values.approvalState || 'approved');
   database.prepare(`INSERT INTO journal_entries
-    (id,source_type,source_id,revision,entry_kind,occurred_at,memo,reverses_entry_id,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(id, values.sourceType, values.sourceId, values.revision, values.entryKind || 'normal', values.occurredAt, String(values.memo || '').slice(0, 500), values.reversesEntryId || null, values.createdBy || null);
+    (id,source_type,source_id,revision,entry_kind,occurred_at,memo,reverses_entry_id,created_by,
+     document_number,fiscal_year,approval_state)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, values.sourceType, values.sourceId, values.revision, values.entryKind || 'normal', values.occurredAt, String(values.memo || '').slice(0, 500), values.reversesEntryId || null, values.createdBy || null, documentNumber, fiscalYear, approvalState);
   const insert = database.prepare('INSERT INTO journal_lines (id,entry_id,account_id,debit,credit,description,analytic_id,cost_center_id) VALUES (?,?,?,?,?,?,?,?)');
   for (const line of validated.lines) insert.run(randomUUID(), id, line.accountId, line.debit, line.credit, line.description, line.analyticId || null, line.costCenterId || null);
-  return { id, total: validated.total };
+  return { id, total: validated.total, documentNumber, fiscalYear, approvalState };
 }
 
 export function periodForDate(occurredAt, timeZone = 'Asia/Tehran') {
@@ -410,7 +426,9 @@ export function migrateAccountingLedger(database, { createdBy = null } = {}) {
     const exists = database.prepare("SELECT 1 FROM journal_entries WHERE source_type='transaction' AND source_id=?").get(transaction.id);
     if (!exists) syncTransactionJournal(database, transaction, { createdBy });
   }
-  return { accounts: accounts.length, transactions: transactions.length };
+  // اسناد پیش از فاز ۳ شماره ندارند؛ به ترتیب تاریخ وقوع شماره می‌گیرند.
+  const numbered = backfillDocumentNumbers(database, (occurredAt) => fiscalYearForDate(occurredAt));
+  return { accounts: accounts.length, transactions: transactions.length, numbered: numbered.numbered };
 }
 
 export function listLedgerAccounts(database) {
@@ -440,19 +458,25 @@ export function trialBalance(database, through = '') {
   return { unit: 'IRT', basis: 'double-entry-operational', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
 }
 
-export function listJournal(database, { page = 1, limit = 30, entryId = '' } = {}) {
+export function listJournal(database, { page = 1, limit = 30, entryId = '', approvalState = '' } = {}) {
   migrateAccountingLedger(database);
   const safeLimit = Math.min(100, Math.max(1, Number(limit) || 30));
   const safePage = Math.max(1, Number(page) || 1);
   const single = String(entryId || '').trim();
+  const state = Object.hasOwn(APPROVAL_STATES, approvalState) ? approvalState : '';
+  const filter = state ? 'WHERE approval_state=?' : '';
+  const filterParams = state ? [state] : [];
   const total = single
     ? Number(database.prepare('SELECT COUNT(*) AS count FROM journal_entries WHERE id=?').get(single).count)
-    : database.prepare('SELECT COUNT(*) AS count FROM journal_entries').get().count;
+    : Number(database.prepare(`SELECT COUNT(*) AS count FROM journal_entries ${filter}`).get(...filterParams).count);
   const select = `SELECT id,source_type AS sourceType,source_id AS sourceId,revision,entry_kind AS entryKind,
-    occurred_at AS occurredAt,memo,reverses_entry_id AS reversesEntryId,created_at AS createdAt FROM journal_entries`;
+    occurred_at AS occurredAt,memo,reverses_entry_id AS reversesEntryId,created_at AS createdAt,created_by AS createdBy,
+    document_number AS documentNumber,fiscal_year AS fiscalYear,approval_state AS approvalState,
+    submitted_by AS submittedBy,submitted_at AS submittedAt,reviewed_by AS reviewedBy,reviewed_at AS reviewedAt,
+    return_reason AS returnReason FROM journal_entries`;
   const entries = single
     ? database.prepare(`${select} WHERE id=?`).all(single)
-    : database.prepare(`${select} ORDER BY occurred_at DESC,created_at DESC LIMIT ? OFFSET ?`).all(safeLimit, (safePage - 1) * safeLimit);
+    : database.prepare(`${select} ${filter} ORDER BY occurred_at DESC,created_at DESC LIMIT ? OFFSET ?`).all(...filterParams, safeLimit, (safePage - 1) * safeLimit);
   const lines = database.prepare(`SELECT journal_lines.account_id AS accountId,ledger_accounts.code,ledger_accounts.name,
     journal_lines.debit,journal_lines.credit,journal_lines.description,
     chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
@@ -464,7 +488,99 @@ export function listJournal(database, { page = 1, limit = 30, entryId = '' } = {
     LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
     LEFT JOIN cost_centers ON cost_centers.id=journal_lines.cost_center_id
     WHERE journal_lines.entry_id=? ORDER BY journal_lines.rowid`);
-  return { items: entries.map((entry) => ({ ...entry, lines: lines.all(entry.id) })), total, page: safePage, pages: Math.max(1, Math.ceil(total / safeLimit)) };
+  return {
+    items: entries.map((entry) => ({
+      ...entry,
+      approvalState: normalizeApprovalState(entry.approvalState),
+      approvalLabel: APPROVAL_STATES[normalizeApprovalState(entry.approvalState)].label,
+      lines: lines.all(entry.id),
+    })),
+    total, page: safePage, pages: Math.max(1, Math.ceil(total / safeLimit)),
+  };
+}
+
+/**
+ * کارتابل سند: چه چیزی پیش‌نویس است، چه چیزی منتظر کنترل و چه چیزی برگشت خورده.
+ */
+export function journalWorklist(database, { userId = '', limit = 50 } = {}) {
+  ensureAccountingSchema(database);
+  const entries = database.prepare(`SELECT id,document_number AS documentNumber,fiscal_year AS fiscalYear,
+    occurred_at AS occurredAt,memo,approval_state AS approvalState,created_by AS createdBy,
+    submitted_by AS submittedBy,submitted_at AS submittedAt,return_reason AS returnReason,
+    (SELECT COALESCE(SUM(debit),0) FROM journal_lines WHERE entry_id=journal_entries.id) AS total
+    FROM journal_entries WHERE approval_state<>'approved'
+    ORDER BY CASE approval_state WHEN 'submitted' THEN 0 WHEN 'returned' THEN 1 ELSE 2 END,occurred_at DESC
+    LIMIT ?`).all(Math.min(200, Math.max(1, Number(limit) || 50)))
+    .map((item) => ({ ...item, approvalLabel: APPROVAL_STATES[normalizeApprovalState(item.approvalState)].label }));
+  const all = database.prepare('SELECT approval_state AS approvalState,created_by AS createdBy FROM journal_entries').all();
+  return { items: entries, summary: worklistSummary(all, { userId }), states: Object.values(APPROVAL_STATES) };
+}
+
+/**
+ * وضعیت تأیید یک سند را جابه‌جا می‌کند و رد پای کامل نگه می‌دارد.
+ * دورهٔ قفل‌شده هیچ تغییری نمی‌پذیرد، حتی تغییر وضعیت.
+ */
+export function setJournalApproval(database, entryId, nextState, { userId = null, reason = '', timeZone = 'Asia/Tehran', allowSelfApproval = true } = {}) {
+  ensureAccountingSchema(database);
+  const entry = database.prepare(`SELECT id,occurred_at AS occurredAt,approval_state AS approvalState,
+    created_by AS createdBy,submitted_by AS submittedBy FROM journal_entries WHERE id=?`).get(String(entryId || ''));
+  if (!entry) throw accountingError('سند پیدا نشد.', 'JOURNAL_ENTRY_NOT_FOUND', 404);
+  assertAccountingPeriodOpen(database, periodForDate(entry.occurredAt, timeZone));
+
+  const sameUser = Boolean(userId) && userId === (entry.submittedBy || entry.createdBy);
+  const move = assertApprovalTransition(entry.approvalState, nextState, { reason, sameUser, allowSelfApproval });
+  const cleanReason = String(reason || '').trim().slice(0, 500);
+
+  if (move.to === 'submitted') {
+    database.prepare("UPDATE journal_entries SET approval_state='submitted',submitted_by=?,submitted_at=CURRENT_TIMESTAMP,return_reason='' WHERE id=?").run(userId, entry.id);
+  } else if (move.to === 'approved') {
+    database.prepare("UPDATE journal_entries SET approval_state='approved',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,return_reason='' WHERE id=?").run(userId, entry.id);
+  } else {
+    database.prepare("UPDATE journal_entries SET approval_state='returned',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,return_reason=? WHERE id=?").run(userId, cleanReason, entry.id);
+  }
+  return { ...move, entry: listJournal(database, { entryId: entry.id }).items[0] };
+}
+
+/**
+ * ثبت انبوه: چند سند در یک تراکنش. یا همه ثبت می‌شوند یا هیچ‌کدام.
+ * ثبت نیمه‌کاره برای کمک‌حسابداری که ۳۰۰ ردیف زده، بدترین حالت ممکن است.
+ */
+export function createJournalBatch(database, documents = [], { createdBy = null, timeZone = 'Asia/Tehran', approvalState = 'draft' } = {}) {
+  ensureAccountingSchema(database);
+  const list = Array.isArray(documents) ? documents : [];
+  if (!list.length) throw accountingError('هیچ سندی برای ثبت فرستاده نشد.', 'JOURNAL_BATCH_EMPTY');
+  if (list.length > 200) throw accountingError('در هر بار حداکثر ۲۰۰ سند قابل ثبت است.', 'JOURNAL_BATCH_TOO_LARGE');
+
+  const errors = [];
+  const prepared = list.map((document, index) => {
+    const position = index + 1;
+    const occurredAt = document?.occurredAt || new Date().toISOString();
+    if (Number.isNaN(new Date(occurredAt).getTime())) { errors.push({ position, message: 'تاریخ سند معتبر نیست.' }); return null; }
+    try {
+      assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+      // پیش از شروع تراکنش، هر سند جداگانه سنجیده می‌شود تا خطا با شمارهٔ سند برگردد.
+      validateLines(database, document?.lines);
+    } catch (error) { errors.push({ position, message: error.message, code: error.code }); return null; }
+    return { occurredAt, memo: document?.memo || 'سند دستی', lines: document.lines };
+  });
+  if (errors.length) throw Object.assign(accountingError('ثبت انبوه انجام نشد؛ هیچ سندی ثبت نشده است.', 'JOURNAL_BATCH_INVALID'), { details: { errors } });
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const created = prepared.map((document) => insertJournal(database, {
+      sourceType: 'manual-batch', sourceId: randomUUID(), revision: 1, entryKind: 'adjustment',
+      occurredAt: document.occurredAt, memo: document.memo, createdBy, timeZone,
+      approvalState: normalizeApprovalState(approvalState),
+      lines: document.lines,
+    }));
+    database.exec('COMMIT');
+    return {
+      created: created.length,
+      documentNumbers: created.map((item) => item.documentNumber),
+      total: created.reduce((sum, item) => sum + item.total, 0),
+      entryIds: created.map((item) => item.id),
+    };
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
 }
 
 export function createAdjustingJournal(database, values, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {

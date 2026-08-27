@@ -11,6 +11,8 @@ import {
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
+  createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
+  saveJournalTemplate, submitJournalApproval,
   mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
@@ -265,6 +267,28 @@ app.post('/api/accounting/journal', (request, response, next) => {
     return response.status(201).json({ item });
   } catch (error) { return next(error); }
 });
+// فاز ۳ — ثبت انبوه، کارتابل تأیید و الگوی سند.
+app.post('/api/accounting/journal/batch', (request, response, next) => {
+  try { return response.status(201).json(createJournalDocuments(request.body?.documents, request.body || {})); }
+  catch (error) { return next(error); }
+});
+app.get('/api/accounting/journal/worklist', (request, response, next) => {
+  try { return response.json(journalWorklistOverview(request.query)); } catch (error) { return next(error); }
+});
+app.post('/api/accounting/journal/:id/approval', (request, response, next) => {
+  try { return response.json(submitJournalApproval(request.params.id, request.body?.state, request.body?.reason || '')); }
+  catch (error) { return next(error); }
+});
+app.get('/api/accounting/templates', (_request, response, next) => {
+  try { return response.json({ items: listJournalTemplates() }); } catch (error) { return next(error); }
+});
+app.post('/api/accounting/templates', (request, response, next) => {
+  try { return response.status(201).json({ item: saveJournalTemplate(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.put('/api/accounting/templates/:id', (request, response, next) => {
+  try { return response.json({ item: saveJournalTemplate({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
+});
+app.delete('/api/accounting/templates/:id', (request, response) => response.status(deleteJournalTemplate(request.params.id) ? 204 : 404).end());
 app.get('/api/accounting/periods', (_request, response) => response.json({ items: accountingPeriods(activeWorkspaceDatabase()), currentPeriod: periodForDate(new Date(), getSettings().timezone) }));
 app.post('/api/accounting/periods/:period/lock', (request, response, next) => {
   try {

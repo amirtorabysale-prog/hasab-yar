@@ -24,6 +24,9 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath.startsWith('/auth/') || normalizedPath.startsWith('/alerts/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
   if (normalizedPath.startsWith('/workspace/members')) return 'owner';
   if (normalizedPath.startsWith('/accounting/periods/')) return 'owner';
+  // کنترل و تأیید سند کار حسابدار ارشد است، نه کمک‌حسابداری که ثبت می‌زند.
+  if (/^\/accounting\/journal\/[^/]+\/approval$/.test(normalizedPath)) return 'manager';
+  if (normalizedPath.startsWith('/accounting/templates')) return 'manager';
   if (normalizedPath.startsWith('/reconciliation/imports/') && normalizedPath.endsWith('/close')) return 'manager';
   // کدینگ، تفصیلی و مرکز هزینه دادهٔ پایهٔ دفترند، نه ثبت روزانه؛ تغییرشان در سطح تنظیمات است.
   if (normalizedPath.startsWith('/chart/')) return 'manager';

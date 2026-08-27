@@ -10,6 +10,7 @@ export const FIRM_BLOCKER_RULES = Object.freeze([
   Object.freeze({ id: 'unexplainedClosings', label: 'اختلاف صندوق بدون توضیح', field: 'unexplainedClosings' }),
   Object.freeze({ id: 'unmatchedBankLines', label: 'ردیف بانکی تطبیق‌نشده', field: 'unmatchedBankLines' }),
   Object.freeze({ id: 'openRequests', label: 'درخواست توضیح بی‌پاسخ', field: 'openRequests' }),
+  Object.freeze({ id: 'pendingApproval', label: 'سند کنترل‌نشده', field: 'pendingApproval' }),
 ]);
 
 // مواردی که تحویل را متوقف نمی‌کنند اما کار حسابدار را روی میز نگه می‌دارند.
