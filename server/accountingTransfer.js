@@ -1,3 +1,6 @@
+import { buildWorkbook } from './spreadsheet.js';
+import { DEFAULT_TRANSFER_COLUMNS, applyTransferTemplate } from './transferTemplates.js';
+
 const TARGET_CATALOG = Object.freeze({
   'generic-csv': Object.freeze({
     id: 'generic-csv',
@@ -102,6 +105,52 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
     disclaimer: target.id === 'generic-csv'
       ? 'این CSV خروجی استاندارد حساب‌یار است؛ پیش از ورود به هر نرم‌افزار، ستون‌ها و واحد پول باید روی شرکت آزمایشی کنترل شوند.'
       : 'این فایل برای نگاشت و کنترل حسابدار است؛ فایل .bak یا خروجی رسمی و تضمین‌شدهٔ پارسیان نیست و ورود مستقیم بدون آزمون شرکت نمونه مجاز نیست.',
+  };
+}
+
+export const TRANSFER_FILE_FORMATS = Object.freeze({
+  csv: Object.freeze({ id: 'csv', label: 'CSV برای اکسل', extension: 'csv', mimeType: 'text/csv; charset=utf-8' }),
+  xlsx: Object.freeze({ id: 'xlsx', label: 'اکسل (xlsx)', extension: 'xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+});
+
+export function normalizeTransferFileFormat(value) {
+  return Object.hasOwn(TRANSFER_FILE_FORMATS, value) ? value : 'csv';
+}
+
+/**
+ * خروجی را طبق قالب ستونی دفتر می‌سازد — CSV یا اکسل واقعی.
+ * شیت دوم عمداً «شناسنامهٔ فایل» است: واحد مبلغ، دوره، جمع‌ها و مرز صراحت
+ * محصول، تا کسی فایل را بدون دانستن واحدش وارد نرم‌افزار نکند.
+ */
+export function buildAccountingTransferFile({ period, journalRows = [], settings = {}, mappings = [], timeZone = 'Asia/Tehran', fileFormat = 'csv', columns, amountUnit = 'toman', targetLabel = '' } = {}) {
+  const table = applyTransferTemplate({
+    columns: columns && columns.length ? columns : DEFAULT_TRANSFER_COLUMNS,
+    amountUnit, journalRows, period, mappings,
+    persianDate: (value) => persianDateToken(value, timeZone),
+  });
+  if (normalizeTransferFileFormat(fileFormat) === 'csv') {
+    const body = [table.headers, ...table.rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+    return { buffer: Buffer.from(`﻿${body}\r\n`, 'utf8'), table };
+  }
+  const manifest = [
+    ['شناسنامهٔ فایل انتقال حساب‌یار'],
+    ['دوره', period],
+    ['مقصد', targetLabel || settings.targetSystem || ''],
+    ['واحد مبلغ ستون‌های مبلغ', table.amountUnitLabel],
+    ['تعداد ردیف', table.rows.length],
+    ['جمع بدهکار (تومان)', table.totals.debitToman],
+    ['جمع بستانکار (تومان)', table.totals.creditToman],
+    [`جمع بدهکار (${table.amountUnitLabel})`, table.totals.debit],
+    [`جمع بستانکار (${table.amountUnitLabel})`, table.totals.credit],
+    ['قالب کنترل‌شده', settings.templateName || '—'],
+    ['توضیح', 'این فایل خروجی کنترل‌شدهٔ حساب‌یار است و ادعای ورود مستقیم تأییدشده به هیچ نرم‌افزاری ندارد.'],
+  ];
+  return {
+    buffer: buildWorkbook([
+      { name: 'ردیف‌های دفتر کل', rows: [table.headers, ...table.rows] },
+      { name: 'شناسنامه', rows: manifest },
+    ]),
+    table,
   };
 }
 

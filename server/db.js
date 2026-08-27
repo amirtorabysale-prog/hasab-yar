@@ -7,6 +7,7 @@ import { passwordPolicy } from './security.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
   postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
+  nextLedgerCode, postImportedOpeningBalances,
   syncOpeningBalanceJournal, syncTransactionJournal,
 } from './accounting.js';
 import {
@@ -32,9 +33,16 @@ import {
   normalizePlanId, pilotRetentionSummary, quotaError, usageQuotaSnapshot,
 } from './collaboration.js';
 import {
-  ACCOUNTING_TRANSFER_TARGETS, accountingTransferReadiness, buildAccountingTransferCsv,
-  normalizeAccountingTransferTarget,
+  ACCOUNTING_TRANSFER_TARGETS, TRANSFER_FILE_FORMATS, accountingTransferReadiness, buildAccountingTransferFile,
+  normalizeAccountingTransferTarget, normalizeTransferFileFormat,
 } from './accountingTransfer.js';
+import {
+  DEFAULT_TRANSFER_COLUMNS, TRANSFER_FIELDS, amountUnitLabel, normalizeAmountUnit, normalizeTransferColumns,
+} from './transferTemplates.js';
+import { buildWorkbook, readTabularFile } from './spreadsheet.js';
+import {
+  importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows, tableFromSheet,
+} from './ledgerImport.js';
 import { buildFirmPortfolio, parseStoredMoment } from './firm.js';
 import {
   DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
@@ -499,6 +507,13 @@ function ensureAccountingTransferSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_accounting_transfer_validations_batch
       ON accounting_transfer_validations(batch_id,created_at);
   `);
+  // قالب ستونی و قالب فایل به‌جای افزودن target تازه اضافه شده‌اند؛ CHECK فعلی
+  // روی target_system در SQLite قابل تغییر نیست و مهاجرت مخربی لازم می‌شد.
+  ensureColumnOn(database, 'accounting_transfer_settings', "file_format TEXT NOT NULL DEFAULT 'csv'");
+  ensureColumnOn(database, 'accounting_transfer_settings', "amount_unit TEXT NOT NULL DEFAULT 'toman'");
+  ensureColumnOn(database, 'accounting_transfer_settings', "columns_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumnOn(database, 'accounting_transfer_batches', "file_format TEXT NOT NULL DEFAULT 'csv'");
+  ensureColumnOn(database, 'accounting_transfer_batches', "amount_unit TEXT NOT NULL DEFAULT 'toman'");
 }
 
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
@@ -1343,6 +1358,110 @@ export function saveCostCenterEntry(values = {}) {
   return item;
 }
 
+// ---------------------------------------------------------------------------
+// ورود داده از اکسل و پارسیان
+// ---------------------------------------------------------------------------
+
+const CHART_SHEET_ALIASES = {
+  code: ['code', 'accountcode', 'کد', 'کدحساب', 'کدینگ'],
+  name: ['name', 'title', 'accountname', 'نام', 'نامحساب', 'شرح', 'عنوان'],
+  level: ['level', 'سطح', 'نوعسطح', 'ردهحساب'],
+  parentCode: ['parent', 'parentcode', 'کدوالد', 'والد', 'کدبالاسری', 'حسابوالد'],
+  type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
+  role: ['role', 'نقش', 'کاربرد'],
+};
+
+const ANALYTIC_SHEET_ALIASES = {
+  code: ['code', 'کد', 'کدتفصیلی', 'کدطرفحساب', 'کدشناور'],
+  name: ['name', 'title', 'نام', 'نامتفصیلی', 'شرح', 'عنوان', 'نامطرفحساب'],
+  kind: ['kind', 'type', 'نوع', 'گروه', 'نوعتفصیلی'],
+};
+
+const OPENING_SHEET_ALIASES = {
+  code: ['code', 'accountcode', 'کد', 'کدحساب', 'کدمعین', 'کدینگ'],
+  name: ['name', 'accountname', 'نام', 'نامحساب', 'شرححساب', 'عنوان'],
+  debit: ['debit', 'بدهکار', 'ماندهبدهکار', 'گردشبدهکار', 'بدهکارریال', 'بدهکارتومان'],
+  credit: ['credit', 'بستانکار', 'ماندهبستانکار', 'گردشبستانکار', 'بستانکارریال', 'بستانکارتومان'],
+  analyticCode: ['analytic', 'analyticcode', 'کدتفصیلی', 'تفصیلی', 'شناور'],
+};
+
+function firstSheet(buffer, fileName) {
+  const sheets = readTabularFile(buffer, fileName);
+  return sheets[0];
+}
+
+/** ورود کدینگ از اکسل یا CSV — همان قواعد اعتبارسنجی فاز کدینگ. */
+export function importChartFile(buffer, fileName = '', { replace = false } = {}) {
+  const rows = tableFromSheet(firstSheet(buffer, fileName), {
+    aliases: CHART_SHEET_ALIASES, required: ['code', 'name', 'level', 'type'], label: 'فایل کدینگ',
+    labels: { code: 'کد', name: 'نام', level: 'سطح', type: 'نوع', parentCode: 'کد والد' },
+  });
+  const result = importChartOfAccounts(activeWorkspaceDatabase(), rows, { source: 'import', replace });
+  audit('import', 'chart_of_accounts', 'chart', { ...result, fileName });
+  return { ...result, ...chartOverview() };
+}
+
+/** ورود تفصیلی و طرف حساب از اکسل یا CSV. */
+export function importAnalyticsFile(buffer, fileName = '') {
+  const rows = tableFromSheet(firstSheet(buffer, fileName), {
+    aliases: ANALYTIC_SHEET_ALIASES, required: ['name'], label: 'فایل تفصیلی',
+    labels: { code: 'کد', name: 'نام', kind: 'نوع' },
+  });
+  const result = importAnalyticRows(activeWorkspaceDatabase(), rows);
+  audit('import', 'analytic_accounts', 'analytics', { ...result, fileName });
+  return { ...result, ...chartOverview() };
+}
+
+/**
+ * ورود ماندهٔ افتتاحیه از تراز نرم‌افزار مقصد و ساخت یک سند افتتاحیهٔ متوازن.
+ * واحد مبلغ اجباری است؛ حدس‌زدن تومان/ریال یعنی خطای ده‌برابری.
+ */
+export function importOpeningBalanceFile(buffer, fileName = '', { amountUnit = 'toman', replace = false, occurredAt = '' } = {}) {
+  const database = activeWorkspaceDatabase();
+  const rows = tableFromSheet(firstSheet(buffer, fileName), {
+    aliases: OPENING_SHEET_ALIASES, required: ['code', 'debit', 'credit'], label: 'فایل ماندهٔ افتتاحیه',
+    labels: { code: 'کد حساب', debit: 'بدهکار', credit: 'بستانکار', analyticCode: 'کد تفصیلی' },
+  });
+  const prepared = prepareOpeningBalanceRows(database, rows, { amountUnit: normalizeAmountUnit(amountUnit) === 'rial' ? 'rial' : 'toman' });
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const lines = prepared.rows.map((item) => ({
+      ...item, ledgerAccountId: ledgerAccountForChart(database, item.chart, (type) => nextLedgerCode(database, type)),
+    }));
+    const posted = postImportedOpeningBalances(database, lines, {
+      occurredAt: occurredAt || new Date().toISOString(),
+      createdBy: currentWorkspace()?.userId || null,
+      timeZone: currentTimeZone(),
+      replace,
+    });
+    database.exec('COMMIT');
+    audit('import', 'opening_balance', posted.id, {
+      fileName, amountUnit: prepared.amountUnit, lineCount: posted.lineCount,
+      debitTotal: prepared.debitTotal, replacedEntryId: posted.replacedEntryId,
+    });
+    return {
+      entryId: posted.id, lineCount: posted.lineCount, replacedEntryId: posted.replacedEntryId,
+      debitTotal: prepared.debitTotal, creditTotal: prepared.creditTotal, amountUnit: prepared.amountUnit,
+      mapping: chartMappingOverview(database),
+    };
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+}
+
+/** الگوهای خالی اکسل تا حسابدار بداند دقیقاً چه ستون‌هایی لازم است. */
+export function importTemplateWorkbook() {
+  return buildWorkbook([
+    { name: 'کدینگ', rows: [['کد', 'نام', 'سطح', 'کد والد', 'نوع', 'نقش'], ['1', 'دارایی‌های جاری', 'گروه', '', 'دارایی', ''], ['11', 'موجودی نقد و بانک', 'کل', '1', 'دارایی', ''], ['1101', 'صندوق', 'معین', '11', 'دارایی', 'cash']] },
+    { name: 'تفصیلی', rows: [['کد', 'نام', 'نوع'], ['1001', 'شرکت آبان', 'مشتری'], ['1002', 'پروژهٔ برج', 'پروژه']] },
+    { name: 'مانده افتتاحیه', rows: [['کد حساب', 'نام حساب', 'بدهکار', 'بستانکار', 'کد تفصیلی'], ['1101', 'صندوق', 5_000_000, '', ''], ['5101', 'سرمایه', '', 5_000_000, '']] },
+    { name: 'راهنما', rows: [['هر شیت را جداگانه بارگذاری کن.'], ['سطح: گروه / کل / معین'], ['نوع: دارایی / بدهی / سرمایه / درآمد / هزینه'], ['کد فرزند باید با کد والد شروع شود.'], ['واحد مبلغ ماندهٔ افتتاحیه را هنگام بارگذاری صریح انتخاب کن.']] },
+  ]);
+}
+
+export function transferFieldCatalog() {
+  return { fields: TRANSFER_FIELDS, defaultColumns: DEFAULT_TRANSFER_COLUMNS, formats: Object.values(TRANSFER_FILE_FORMATS) };
+}
+
 export function dimensionReport(query = {}) {
   return dimensionBalance(activeWorkspaceDatabase(), {
     dimension: query.dimension === 'analytic' ? 'analytic' : 'costCenter',
@@ -1353,10 +1472,21 @@ export function dimensionReport(query = {}) {
 function accountingTransferSettings(targetSystem = 'generic-csv') {
   const target = normalizeAccountingTransferTarget(targetSystem);
   const row = db.prepare(`SELECT target_system AS targetSystem,template_name AS templateName,
-    template_verified AS templateVerified,note,updated_at AS updatedAt
+    template_verified AS templateVerified,note,updated_at AS updatedAt,
+    file_format AS fileFormat,amount_unit AS amountUnit,columns_json AS columnsJson
     FROM accounting_transfer_settings WHERE target_system=?`).get(target);
-  return row ? { ...row, templateVerified: Boolean(row.templateVerified) } : {
-    targetSystem: target, templateName: '', templateVerified: false, note: '', updatedAt: null,
+  const stored = parseStoredJson(row?.columnsJson, []);
+  const columns = Array.isArray(stored) && stored.length ? stored : [...DEFAULT_TRANSFER_COLUMNS];
+  return {
+    targetSystem: target,
+    templateName: row?.templateName || '',
+    templateVerified: Boolean(row?.templateVerified),
+    note: row?.note || '',
+    updatedAt: row?.updatedAt || null,
+    fileFormat: normalizeTransferFileFormat(row?.fileFormat),
+    amountUnit: normalizeAmountUnit(row?.amountUnit),
+    columns,
+    usingDefaultColumns: !(Array.isArray(stored) && stored.length),
   };
 }
 
@@ -1418,6 +1548,11 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
     creditTotal: Number(row.creditTotal), digest: row.digest, status: row.status, statusNote: row.statusNote,
     generatedBy: userIdentity(row.generatedBy), reviewedBy: userIdentity(row.reviewedBy),
     createdAt: row.createdAt, updatedAt: row.updatedAt,
+    fileFormat: normalizeTransferFileFormat(row.fileFormat),
+    fileFormatLabel: TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].label,
+    mimeType: TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].mimeType,
+    amountUnit: normalizeAmountUnit(row.amountUnit),
+    amountUnitLabel: amountUnitLabel(row.amountUnit),
     latestValidation: latestValidation ? { ...latestValidation, testedBy: userIdentity(latestValidation.testedBy) } : null,
     acceptanceReady: row.targetSystem !== 'parsian-review-csv' || Boolean(passedTrial),
   };
@@ -1428,7 +1563,7 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
 const accountingTransferBatchColumns = `id,period,target_system AS targetSystem,file_name AS fileName,
   row_count AS rowCount,entry_count AS entryCount,debit_total AS debitTotal,credit_total AS creditTotal,digest,status,
   status_note AS statusNote,generated_by AS generatedBy,reviewed_by AS reviewedBy,created_at AS createdAt,
-  updated_at AS updatedAt`;
+  updated_at AS updatedAt,file_format AS fileFormat,amount_unit AS amountUnit`;
 const accountingTransferBatchSelect = `SELECT ${accountingTransferBatchColumns} FROM accounting_transfer_batches`;
 const accountingTransferBatchFileSelect = `SELECT ${accountingTransferBatchColumns},file_data AS fileData FROM accounting_transfer_batches`;
 
@@ -1459,11 +1594,20 @@ export function saveAccountingTransferSettings(values = {}) {
   if (targetSystem === 'parsian-review-csv' && templateVerified && templateName.length < 3) {
     throw new Error('برای تأیید نگاشت پارسیان، نام یا نسخهٔ قالب کنترل‌شده را وارد کن.');
   }
-  db.prepare(`INSERT INTO accounting_transfer_settings (target_system,template_name,template_verified,note,updated_by)
-    VALUES (?,?,?,?,?) ON CONFLICT(target_system) DO UPDATE SET template_name=excluded.template_name,
-    template_verified=excluded.template_verified,note=excluded.note,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`)
-    .run(targetSystem, templateName, templateVerified ? 1 : 0, note, currentWorkspace()?.userId || null);
-  audit('update-transfer-settings', 'accounting_transfer_settings', targetSystem, { templateName, templateVerified });
+  const current = accountingTransferSettings(targetSystem);
+  const fileFormat = values.fileFormat == null ? current.fileFormat : normalizeTransferFileFormat(values.fileFormat);
+  const amountUnit = values.amountUnit == null ? current.amountUnit : normalizeAmountUnit(values.amountUnit);
+  // ستون‌ها فقط وقتی بازنویسی می‌شوند که کاربر صریحاً فرستاده باشد؛ ذخیرهٔ
+  // نام قالب نباید چیدمان ستون‌های کنترل‌شده را پاک کند.
+  const columns = values.columns == null ? null : normalizeTransferColumns(values.columns).columns;
+
+  db.prepare(`INSERT INTO accounting_transfer_settings (target_system,template_name,template_verified,note,updated_by,file_format,amount_unit,columns_json)
+    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(target_system) DO UPDATE SET template_name=excluded.template_name,
+    template_verified=excluded.template_verified,note=excluded.note,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,
+    file_format=excluded.file_format,amount_unit=excluded.amount_unit,columns_json=excluded.columns_json`)
+    .run(targetSystem, templateName, templateVerified ? 1 : 0, note, currentWorkspace()?.userId || null,
+      fileFormat, amountUnit, JSON.stringify(columns ?? (current.usingDefaultColumns ? [] : current.columns)));
+  audit('update-transfer-settings', 'accounting_transfer_settings', targetSystem, { templateName, templateVerified, fileFormat, amountUnit, columnCount: (columns || current.columns).length });
   return accountingTransferSettings(targetSystem);
 }
 
@@ -1489,24 +1633,29 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
   if (!state.readiness.ready) throw Object.assign(new Error('خروجی هنوز آماده نیست؛ موارد کنترل‌نشده را برطرف کن.'), {
     status: 409, code: 'ACCOUNTING_TRANSFER_NOT_READY', details: { readiness: state.readiness },
   });
-  const fileData = buildAccountingTransferCsv({
+  const fileFormat = normalizeTransferFileFormat(values.fileFormat || state.settings.fileFormat);
+  const built = buildAccountingTransferFile({
     period: state.packageData.scope.period, journalRows: state.journalRows, settings: state.settings,
     mappings: state.mappings, timeZone: state.packageData.scope.timeZone,
+    fileFormat, columns: state.settings.columns, amountUnit: state.settings.amountUnit,
+    targetLabel: state.readiness.target?.label || '',
   });
+  const fileData = built.buffer;
   const digest = createHash('sha256').update(fileData).digest('hex');
   const existing = db.prepare(`${accountingTransferBatchSelect} WHERE period=? AND target_system=? AND digest=?`)
     .get(state.packageData.scope.period, targetSystem, digest);
   if (existing) return hydrateAccountingTransferBatch(existing);
   const id = randomUUID();
   const workspaceId = String(currentWorkspace()?.id || 'primary').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'primary';
-  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}.csv`;
+  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}.${TRANSFER_FILE_FORMATS[fileFormat].extension}`;
   db.prepare(`INSERT INTO accounting_transfer_batches (id,period,target_system,file_name,row_count,entry_count,debit_total,
-    credit_total,digest,readiness_snapshot,file_data,generated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    credit_total,digest,readiness_snapshot,file_data,generated_by,file_format,amount_unit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, state.packageData.scope.period, targetSystem, fileName, state.readiness.rowCount, state.readiness.entryCount,
       state.readiness.debitTotal, state.readiness.creditTotal, digest, JSON.stringify(state.readiness), fileData,
-      currentWorkspace()?.userId || null);
+      currentWorkspace()?.userId || null, fileFormat, state.settings.amountUnit);
   audit('generate-transfer-batch', 'accounting_transfer_batch', id, {
-    period: state.packageData.scope.period, targetSystem, digest, rowCount: state.readiness.rowCount,
+    period: state.packageData.scope.period, targetSystem, digest, rowCount: state.readiness.rowCount, fileFormat,
+    amountUnit: state.settings.amountUnit,
   });
   return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchSelect} WHERE id=?`).get(id));
 }

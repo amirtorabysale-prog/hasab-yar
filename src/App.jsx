@@ -1516,9 +1516,10 @@ function ChartPage({ access, notify }) {
 
     {tab === 'dimensions' && <DimensionsPanel overview={overview} canManage={canManage} notify={notify} refresh={load} dimension={dimension} setDimension={setDimension} />}
 
-    {tab === 'import' && <div className="mt-4 space-y-3">
-      <p className="text-[13px] leading-6 text-muted">
-        فایل CSV با سرستون‌های «کد، نام، سطح، کد والد، نوع» را اینجا بگذار. سطح یکی از گروه/کل/معین و نوع یکی از دارایی/بدهی/سرمایه/درآمد/هزینه است.
+    {tab === 'import' && <div className="mt-4 space-y-5">
+      <ExcelImportPanel canManage={canManage} notify={notify} refresh={load} />
+      <p className="border-t border-line pt-4 text-[13px] leading-6 text-muted">
+        یا کدینگ را به‌شکل متن CSV اینجا بچسبان. سرستون‌های «کد، نام، سطح، کد والد، نوع»؛ سطح یکی از گروه/کل/معین و نوع یکی از دارایی/بدهی/سرمایه/درآمد/هزینه است.
         کد فرزند باید با کد والد شروع شود. اگر حتی یک ردیف ایراد داشته باشد، هیچ ردیفی وارد نمی‌شود.
       </p>
       <textarea
@@ -1528,6 +1529,107 @@ function ChartPage({ access, notify }) {
       />
       <button disabled={!canManage || !csv.trim()} onClick={() => run(async () => { await api.importChart(csv); setCsv(''); }, 'کدینگ وارد شد.')} className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">ورود کدینگ</button>
       {!canManage && <p className="text-[12px] text-muted">تغییر کدینگ فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
+    </div>}
+  </section>;
+}
+
+const IMPORT_KINDS = [
+  { id: 'chart', label: 'کدینگ حساب‌ها', hint: 'ستون‌ها: کد، نام، سطح، کد والد، نوع' },
+  { id: 'analytics', label: 'تفصیلی و طرف حساب', hint: 'ستون‌ها: کد، نام، نوع' },
+  { id: 'opening', label: 'ماندهٔ افتتاحیه', hint: 'ستون‌ها: کد حساب، بدهکار، بستانکار، کد تفصیلی' },
+];
+
+function ExcelImportPanel({ canManage, notify, refresh }) {
+  const [kind, setKind] = useState('chart');
+  const [file, setFile] = useState(null);
+  const [amountUnit, setAmountUnit] = useState('toman');
+  const [replace, setReplace] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [issues, setIssues] = useState([]);
+  const [result, setResult] = useState(null);
+
+  const active = IMPORT_KINDS.find((item) => item.id === kind);
+
+  const download = async () => {
+    try {
+      const { blob, fileName } = await api.downloadImportTemplate();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = fileName;
+      document.body.appendChild(link); link.click(); link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) { notify(error.message); }
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!file) return;
+    setBusy(true); setIssues([]); setResult(null);
+    try {
+      const response = kind === 'chart' ? await api.importChartFile(file, replace)
+        : kind === 'analytics' ? await api.importAnalyticsFile(file)
+          : await api.importOpeningBalances(file, { amountUnit, replace });
+      setResult(response);
+      setFile(null);
+      await refresh();
+      notify('فایل با موفقیت وارد شد.');
+    } catch (error) {
+      // ایراد ردیفی با شمارهٔ سطر نشان داده می‌شود تا حسابدار دقیقاً بداند کجا را اصلاح کند.
+      setIssues(error.details?.errors || []);
+      notify(error.message);
+    }
+    setBusy(false);
+  };
+
+  return <section className="rounded-[10px] border border-line bg-surface p-4">
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div>
+        <p className="font-bold">ورود از اکسل یا پارسیان</p>
+        <p className="mt-1 max-w-xl text-[12px] leading-6 text-muted">
+          فایل اکسل (xlsx) یا CSV را مستقیم بارگذاری کن. نوع فایل از محتوایش تشخیص داده می‌شود، نه از پسوند.
+          اگر یک ردیف ایراد داشته باشد هیچ ردیفی وارد نمی‌شود.
+        </p>
+      </div>
+      <button type="button" onClick={download} className="tap flex items-center gap-2 rounded-lg border border-line bg-paper px-3 text-[13px] font-bold"><Download size={16} />الگوی خالی اکسل</button>
+    </div>
+
+    <div className="mt-3 flex flex-wrap gap-1.5 text-[13px] font-bold">
+      {IMPORT_KINDS.map((item) => <button key={item.id} type="button" onClick={() => { setKind(item.id); setIssues([]); setResult(null); }} className={`tap rounded-lg border px-3 ${kind === item.id ? 'border-accent bg-warn-bg text-accent' : 'border-line bg-paper text-muted'}`}>{item.label}</button>)}
+    </div>
+
+    <form onSubmit={submit} className="mt-3 space-y-3">
+      <p className="text-[12px] text-muted">{active.hint}</p>
+      <input
+        type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        onChange={(event) => { setFile(event.target.files?.[0] || null); setIssues([]); setResult(null); }}
+        disabled={!canManage} className="block w-full text-[13px] file:ml-3 file:rounded-lg file:border file:border-line file:bg-paper file:px-3 file:py-2 file:text-[13px] file:font-bold"
+      />
+      {kind === 'opening' && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-warn-bg px-3 py-2">
+        <label className="text-[13px] font-bold text-accent">واحد مبلغ فایل
+          <select value={amountUnit} onChange={(event) => setAmountUnit(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] text-ink"><option value="toman">تومان</option><option value="rial">ریال</option></select>
+        </label>
+        <span className="text-[11px] leading-5 text-muted">اشتباه در این انتخاب یعنی خطای ده‌برابری؛ حساب‌یار آن را حدس نمی‌زند.</span>
+      </div>}
+      {kind !== 'analytics' && <label className="flex items-center gap-2 text-[12px] text-muted">
+        <input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} />
+        {kind === 'chart' ? 'کدینگ فعلی جایگزین شود (فقط وقتی هیچ نگاشتی وجود ندارد)' : 'سند افتتاحیهٔ قبلی معکوس و جایگزین شود'}
+      </label>}
+      <button disabled={!canManage || !file || busy} className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">{busy ? 'در حال ورود…' : 'بارگذاری فایل'}</button>
+      {!canManage && <p className="text-[12px] text-muted">ورود داده فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
+    </form>
+
+    {issues.length > 0 && <div className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3">
+      <p className="text-[13px] font-bold text-expense">{toPersianDigits(issues.length)} ایراد در فایل — هیچ ردیفی وارد نشد</p>
+      <ul className="mt-2 space-y-1 text-[12px] leading-6">
+        {issues.slice(0, 12).map((item, index) => <li key={`${item.rowNumber}-${index}`}>ردیف <b className="numbers">{toPersianDigits(item.rowNumber ?? item.position ?? '—')}</b>: {item.message}</li>)}
+        {issues.length > 12 && <li className="text-muted">و {toPersianDigits(issues.length - 12)} مورد دیگر…</li>}
+      </ul>
+    </div>}
+
+    {result && <div className="mt-3 rounded-lg border border-income/40 bg-income/5 p-3 text-[13px] leading-6">
+      {result.entryId
+        ? <>سند افتتاحیه با <b className="numbers">{toPersianDigits(result.lineCount)}</b> ردیف ثبت شد؛ جمع هر طرف <b className="numbers">{formatAmount(result.debitTotal)}</b> تومان.{result.replacedEntryId && ' سند قبلی معکوس شد.'}</>
+        : <><b className="numbers">{toPersianDigits(result.created)}</b> ردیف تازه و <b className="numbers">{toPersianDigits(result.updated)}</b> ردیف به‌روزشده.</>}
     </div>}
   </section>;
 }
@@ -1825,6 +1927,7 @@ function CollaborationPage({ access, notify }) {
     </div>
 
     <AccountingTransferPanel month={month} target={transferTarget} setTarget={setTransferTarget} overview={transfer} notify={notify} refresh={load} />
+    <TransferLayoutPanel target={transferTarget} settings={transfer?.settings} notify={notify} refresh={load} />
 
     <section className="mt-4 rounded-[12px] border border-line bg-surface p-4"><div className="flex items-center justify-between"><div><h2 className="font-extrabold">صندوق درخواست توضیح</h2><p className="mt-1 text-xs leading-6 text-muted">حسابدار سؤال را به یک منبع وصل می‌کند؛ مدیر یا مالک پاسخ می‌دهد و حسابدار پس از کنترل آن را می‌بندد.</p></div><Users size={22} className="text-accent" /></div><form onSubmit={createRequest} className="mt-4 grid gap-2 md:grid-cols-[150px_minmax(0,1fr)_110px]"><select value={requestDraft.entityType} onChange={(event) => setRequestDraft({ ...requestDraft, entityType: event.target.value, entityId: '' })} className="tap rounded-lg border border-line bg-surface px-3 text-sm">{Object.entries(entityLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>{requestDraft.entityType === 'general' ? <input required minLength={5} value={requestDraft.question} onChange={(event) => setRequestDraft({ ...requestDraft, question: event.target.value })} placeholder="مثلاً این پرداخت بابت کدام پروژه بود؟" className="tap rounded-lg border border-line px-3" /> : <div className="grid gap-2 sm:grid-cols-[160px_1fr]"><input required value={requestDraft.entityId} onChange={(event) => setRequestDraft({ ...requestDraft, entityId: event.target.value })} placeholder="شناسه منبع" dir="ltr" className="tap rounded-lg border border-line px-3 text-left text-xs" /><input required minLength={5} value={requestDraft.question} onChange={(event) => setRequestDraft({ ...requestDraft, question: event.target.value })} placeholder="سؤال حسابدار" className="tap rounded-lg border border-line px-3" /></div>}<button className="tap rounded-lg bg-accent px-3 text-sm font-bold text-white">ثبت درخواست</button><label className="flex items-center gap-2 text-xs md:col-span-3"><input type="checkbox" checked={requestDraft.priority === 'urgent'} onChange={(event) => setRequestDraft({ ...requestDraft, priority: event.target.checked ? 'urgent' : 'normal' })} />فوری است</label></form><div className="mt-5 space-y-3">{overview?.requests?.length ? overview.requests.map((item) => <article key={item.id} className={`rounded-lg border p-3 ${item.priority === 'urgent' && item.status !== 'resolved' ? 'border-expense/30 bg-expense/5' : 'border-line'}`}><div className="flex flex-wrap items-center gap-2 text-[11px]"><b>{entityLabels[item.entityType]}</b><span className="rounded-md bg-paper px-2 py-1">{item.status === 'open' ? 'منتظر پاسخ' : item.status === 'answered' ? 'پاسخ داده‌شده' : 'بسته'}</span><span className="text-muted">{item.requestedBy?.label} · {persianDate(item.createdAt)}</span></div><p className="mt-3 text-sm font-bold leading-6">{item.question}</p>{item.entityId && <p className="mt-1 truncate text-[10px] text-muted" dir="ltr">{item.entityId}</p>}{item.answer && <div className="mt-3 rounded-lg bg-paper px-3 py-2"><p className="text-[11px] text-muted">پاسخ {item.answeredBy?.label}</p><p className="mt-1 text-sm leading-6">{item.answer}</p></div>}{item.status === 'open' && canAnswer && <div className="mt-3 flex gap-2"><input value={answers[item.id] || ''} onChange={(event) => setAnswers({ ...answers, [item.id]: event.target.value })} placeholder="پاسخ مستند صاحب کسب‌وکار" className="tap min-w-0 flex-1 rounded-lg border border-line px-3" /><button disabled={!String(answers[item.id] || '').trim()} onClick={() => answer(item.id)} className="tap rounded-lg bg-ink px-3 text-xs font-bold text-white disabled:opacity-40">ثبت پاسخ</button></div>}{item.status === 'answered' && <button onClick={() => resolveRequest(item.id)} className="tap mt-3 rounded-lg border border-income/30 px-3 text-xs font-bold text-income">کنترل شد؛ بستن درخواست</button>}</article>) : <p className="rounded-lg bg-paper px-3 py-4 text-center text-xs text-muted">درخواست بازی وجود ندارد.</p>}</div></section>
 
@@ -1832,6 +1935,96 @@ function CollaborationPage({ access, notify }) {
 
     {portfolio && <PilotPortfolioPanel portfolio={portfolio} updatePlan={updatePlan} />}
   </main>;
+}
+
+function TransferLayoutPanel({ target, settings, notify, refresh }) {
+  const [catalogue, setCatalogue] = useState(null);
+  const [columns, setColumns] = useState([]);
+  const [fileFormat, setFileFormat] = useState('csv');
+  const [amountUnit, setAmountUnit] = useState('toman');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.transferFields().then(setCatalogue).catch((error) => notify(error.message));
+  }, [notify]);
+
+  useEffect(() => {
+    setColumns(settings?.columns || []);
+    setFileFormat(settings?.fileFormat || 'csv');
+    setAmountUnit(settings?.amountUnit || 'toman');
+  }, [settings]);
+
+  const move = (index, step) => {
+    const next = [...columns];
+    const target_ = index + step;
+    if (target_ < 0 || target_ >= next.length) return;
+    [next[index], next[target_]] = [next[target_], next[index]];
+    setColumns(next);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.saveAccountingTransferSettings({ targetSystem: target, fileFormat, amountUnit, columns });
+      await refresh();
+      notify('قالب ستونی خروجی ذخیره شد.');
+    } catch (error) {
+      notify(error.details?.errors?.[0]?.message || error.message);
+    }
+    setBusy(false);
+  };
+
+  if (!catalogue) return null;
+  const unused = catalogue.fields.filter((field) => !columns.some((column) => column.field === field.id));
+
+  return <section className="mt-5 rounded-[10px] border border-line bg-surface p-4">
+    <p className="font-bold">قالب ستونی فایل خروجی</p>
+    <p className="mt-1 max-w-2xl text-[12px] leading-6 text-muted">
+      حساب‌یار قالب رسمی هیچ نسخه‌ای از پارسیان را نمی‌داند و ادعایش را هم نمی‌کند. یک بار بگو فایل ورودی نرم‌افزارت
+      چه ستون‌هایی با چه نام و ترتیبی می‌خواهد؛ از آن به بعد خروجی دقیقاً همان می‌شود.
+    </p>
+
+    <div className="mt-3 flex flex-wrap gap-4">
+      <label className="text-[13px] font-bold">قالب فایل
+        <select value={fileFormat} onChange={(event) => setFileFormat(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] font-normal">
+          {catalogue.formats.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+      </label>
+      <label className="text-[13px] font-bold">واحد ستون‌های مبلغ
+        <select value={amountUnit} onChange={(event) => setAmountUnit(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] font-normal"><option value="toman">تومان</option><option value="rial">ریال</option></select>
+      </label>
+    </div>
+
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[560px] text-right text-[13px]">
+        <thead className="border-b border-line text-[12px] text-muted"><tr><th className="pb-2 pl-2 font-bold">#</th><th className="pb-2 pl-2 font-bold">عنوان ستون در فایل مقصد</th><th className="pb-2 pl-2 font-bold">دادهٔ حساب‌یار</th><th className="pb-2 font-bold">ترتیب</th></tr></thead>
+        <tbody>
+          {columns.map((column, index) => <tr key={`${column.field}-${index}`} className="border-b border-line">
+            <td className="numbers py-2 pl-2 text-muted">{toPersianDigits(index + 1)}</td>
+            <td className="py-2 pl-2">
+              <input value={column.header} onChange={(event) => setColumns(columns.map((item, position) => (position === index ? { ...item, header: event.target.value } : item)))} className="tap w-full rounded-lg border border-line bg-paper px-2 text-[13px]" />
+            </td>
+            <td className="py-2 pl-2 text-muted">{catalogue.fields.find((field) => field.id === column.field)?.label || column.field}</td>
+            <td className="whitespace-nowrap py-2">
+              <button type="button" onClick={() => move(index, -1)} className="tap px-1 text-muted">▲</button>
+              <button type="button" onClick={() => move(index, 1)} className="tap px-1 text-muted">▼</button>
+              <button type="button" onClick={() => setColumns(columns.filter((_item, position) => position !== index))} className="tap px-1 text-expense"><Trash2 size={15} /></button>
+            </td>
+          </tr>)}
+          {!columns.length && <tr><td colSpan={4} className="py-4 text-center text-muted">هیچ ستونی نمانده؛ حداقل کد حساب و دو ستون مبلغ لازم است.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+
+    {unused.length > 0 && <div className="mt-3">
+      <p className="text-[12px] text-muted">افزودن ستون:</p>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {unused.map((field) => <button key={field.id} type="button" onClick={() => setColumns([...columns, { field: field.id, header: field.label }])} className="tap rounded border border-line bg-paper px-2 py-0.5 text-[12px]">+ {field.label}</button>)}
+      </div>
+    </div>}
+
+    <button disabled={busy} onClick={save} className="tap mt-4 rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">{busy ? 'در حال ذخیره…' : 'ذخیرهٔ قالب'}</button>
+  </section>;
 }
 
 function AccountingTransferPanel({ month, target, setTarget, overview, notify, refresh }) {

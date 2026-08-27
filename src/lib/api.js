@@ -200,6 +200,21 @@ export const api = {
   commercialStatus: () => request('/api/commercial/status'),
   updateWorkspacePlan: (workspaceId, payload) => request(`/api/commercial/admin/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'POST', body: JSON.stringify(payload) }),
   chartOverview: () => request('/api/chart/overview'),
+  importChartFile: (file, replace = false) => { const form = new FormData(); form.append('file', file); form.append('replace', String(replace)); return request('/api/import/chart', { method: 'POST', body: form }); },
+  importAnalyticsFile: (file) => { const form = new FormData(); form.append('file', file); return request('/api/import/analytics', { method: 'POST', body: form }); },
+  importOpeningBalances: (file, { amountUnit = 'toman', replace = false } = {}) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('amountUnit', amountUnit);
+    form.append('replace', String(replace));
+    return request('/api/import/opening-balances', { method: 'POST', body: form });
+  },
+  transferFields: () => request('/api/accountant-transfer/fields'),
+  downloadImportTemplate: async () => {
+    const response = await fetch('/api/import/template', { credentials: 'same-origin', headers: protectedHeaders(false) });
+    if (!response.ok) throw new Error('دریافت الگوی اکسل ممکن نشد.');
+    return { blob: await response.blob(), fileName: 'hesab-yar-import-templates.xlsx' };
+  },
   installChartTemplate: () => request('/api/chart/template', { method: 'POST', body: '{}' }),
   importChart: (csv, replace = false) => request('/api/chart/import', { method: 'POST', body: JSON.stringify({ csv, replace }) }),
   saveChartAccount: (payload) => request(payload.id ? `/api/chart/accounts/${encodeURIComponent(payload.id)}` : '/api/chart/accounts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
