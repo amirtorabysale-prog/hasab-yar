@@ -39,8 +39,15 @@ export const TRANSFER_FIELDS = Object.freeze([
   Object.freeze({ id: 'lineDescription', label: 'شرح ردیف', kind: 'text' }),
   Object.freeze({ id: 'accountCode', label: 'کد حساب حساب‌یار', kind: 'text' }),
   Object.freeze({ id: 'accountName', label: 'نام حساب حساب‌یار', kind: 'text' }),
-  Object.freeze({ id: 'chartCode', label: 'کد معین کدینگ', kind: 'text' }),
+  Object.freeze({ id: 'chartCode', label: 'کد کامل کدینگ', kind: 'text' }),
   Object.freeze({ id: 'chartName', label: 'نام معین کدینگ', kind: 'text' }),
+  // پارسیان حساب را سه عدد جدا می‌خواهد، نه یک کد یکجا.
+  Object.freeze({ id: 'kolCode', label: 'کد کل', kind: 'text' }),
+  Object.freeze({ id: 'kolName', label: 'نام کل', kind: 'text' }),
+  Object.freeze({ id: 'moeenCode', label: 'کد معین', kind: 'text' }),
+  Object.freeze({ id: 'moeenName', label: 'نام معین', kind: 'text' }),
+  Object.freeze({ id: 'tafsiliCode', label: 'کد تفصیلی (پارسیان)', kind: 'text' }),
+  Object.freeze({ id: 'tafsiliName', label: 'نام تفصیلی (پارسیان)', kind: 'text' }),
   Object.freeze({ id: 'analyticCode', label: 'کد تفصیلی', kind: 'text' }),
   Object.freeze({ id: 'analyticName', label: 'نام تفصیلی', kind: 'text' }),
   Object.freeze({ id: 'costCenterCode', label: 'کد مرکز هزینه', kind: 'text' }),
@@ -95,7 +102,7 @@ export function normalizeTransferColumns(columns = []) {
   const hasDebit = normalized.some((item) => ['debit', 'debitToman', 'debitRial'].includes(item.field));
   const hasCredit = normalized.some((item) => ['credit', 'creditToman', 'creditRial'].includes(item.field));
   if (!hasDebit || !hasCredit) throw templateError('قالب باید هم ستون بدهکار داشته باشد و هم ستون بستانکار.', 'TRANSFER_TEMPLATE_NO_AMOUNT');
-  const hasAccount = normalized.some((item) => ['accountCode', 'chartCode', 'targetCode'].includes(item.field));
+  const hasAccount = normalized.some((item) => ['accountCode', 'chartCode', 'targetCode', 'moeenCode', 'kolCode'].includes(item.field));
   if (!hasAccount) throw templateError('قالب باید حداقل یک ستون کد حساب داشته باشد (کد حساب‌یار، کد معین کدینگ یا کد مقصد).', 'TRANSFER_TEMPLATE_NO_ACCOUNT');
   return { columns: normalized, errors: [] };
 }
@@ -128,6 +135,9 @@ export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amou
       memo: item.memo || '', lineDescription: item.lineDescription || '',
       accountCode: item.accountCode || '', accountName: item.accountName || '',
       chartCode: item.chartCode || '', chartName: item.chartName || '',
+      kolCode: item.kolCode || '', kolName: item.kolName || '',
+      moeenCode: item.moeenCode || '', moeenName: item.moeenName || '',
+      tafsiliCode: item.tafsiliCode || '', tafsiliName: item.tafsiliName || '',
       analyticCode: item.analyticCode || '', analyticName: item.analyticName || '',
       costCenterCode: item.costCenterCode || '', costCenterName: item.costCenterName || '',
       targetCode: mapping.targetCode || '', targetName: mapping.targetName || '',

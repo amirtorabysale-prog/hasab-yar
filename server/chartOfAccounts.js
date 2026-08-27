@@ -72,6 +72,7 @@ export function ensureChartSchema(database) {
       type TEXT NOT NULL CHECK(type IN ('asset','liability','equity','income','expense')),
       normal_side TEXT NOT NULL CHECK(normal_side IN ('debit','credit')),
       role TEXT NOT NULL DEFAULT '',
+      level_code TEXT NOT NULL DEFAULT '',
       active INTEGER NOT NULL DEFAULT 1,
       source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual','template','import')),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -103,6 +104,7 @@ export function ensureChartSchema(database) {
   // ابعاد روی آرتیکل سند می‌نشینند، نه روی حساب — این تعریف «شناور» بودن تفصیلی است.
   ensureColumn(database, 'journal_lines', 'analytic_id TEXT REFERENCES analytic_accounts(id) ON DELETE RESTRICT');
   ensureColumn(database, 'journal_lines', 'cost_center_id TEXT REFERENCES cost_centers(id) ON DELETE RESTRICT');
+  ensureColumn(database, 'chart_accounts', "level_code TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'ledger_accounts', 'chart_account_id TEXT REFERENCES chart_accounts(id) ON DELETE RESTRICT');
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_journal_lines_analytic ON journal_lines(analytic_id) WHERE analytic_id IS NOT NULL;
@@ -148,7 +150,20 @@ export function normalizeChartType(value) {
  * - فقط «معین» قابل ثبت سند است.
  * هر ایراد با شمارهٔ ردیف برمی‌گردد تا حسابدار دقیقاً بداند کدام سطر فایلش خراب است.
  */
-export function validateChartRows(rows = []) {
+// سبک کدینگ. `prefix` قرارداد رایج است (کد فرزند با کد والد شروع می‌شود).
+// `segmented` همان چیزی است که پارسیان واقعاً دارد: هر سطح کد مستقل خودش را
+// دارد و کد کل هیچ ربطی به کد گروهش ندارد؛ بعضی کل‌ها اصلاً گروه ندارند.
+export const CHART_CODING_STYLES = Object.freeze({
+  prefix: Object.freeze({ id: 'prefix', label: 'پیشوندی (کد فرزند با کد والد شروع می‌شود)' }),
+  segmented: Object.freeze({ id: 'segmented', label: 'سطحی و مستقل (مانند پارسیان)' }),
+});
+
+export function normalizeCodingStyle(value) {
+  return Object.hasOwn(CHART_CODING_STYLES, value) ? value : 'prefix';
+}
+
+export function validateChartRows(rows = [], { codingStyle = 'prefix' } = {}) {
+  const style = normalizeCodingStyle(codingStyle);
   const errors = [];
   const byCode = new Map();
   const accounts = [];
@@ -167,10 +182,15 @@ export function validateChartRows(rows = []) {
     if (!type) { errors.push({ rowNumber, code, message: 'نوع حساب باید دارایی، بدهی، سرمایه، درآمد یا هزینه باشد.' }); return; }
     if (byCode.has(code)) { errors.push({ rowNumber, code, message: `کد ${code} در فایل تکراری است.` }); return; }
 
+    // کد سطح: کدی که خود نرم‌افزار مقصد برای این حساب می‌شناسد. اگر داده نشود،
+    // در سبک پیشوندی از تفاضل کد فرزند و والد و در سبک سطحی از خود کد می‌آید.
+    const levelCode = normalizeChartCode(row.levelCode);
+    if (levelCode && !chartCodeIsValid(levelCode)) { errors.push({ rowNumber, code, message: 'کد سطح باید فقط رقم باشد.' }); return; }
     const account = {
       rowNumber, code, name, level, type,
       normalSide: CHART_TYPES[type].normalSide,
       parentCode: parentCode || null,
+      levelCode,
       role: CHART_ROLES.includes(String(row.role || '').trim()) ? String(row.role).trim() : '',
       postable: level === 'subsidiary',
     };
@@ -181,9 +201,13 @@ export function validateChartRows(rows = []) {
   for (const account of accounts) {
     if (account.level === 'group') {
       if (account.parentCode) errors.push({ rowNumber: account.rowNumber, code: account.code, message: 'گروه نباید والد داشته باشد.' });
+      account.levelCode ||= account.code;
       continue;
     }
     if (!account.parentCode) {
+      // در سبک سطحی، حسابی که والد ندارد پذیرفته می‌شود؛ پارسیان چنین کل‌هایی
+      // واقعاً دارد (مثلاً «تراز افتتاحیه»).
+      if (style === 'segmented') { account.levelCode ||= account.code; continue; }
       errors.push({ rowNumber: account.rowNumber, code: account.code, message: `${CHART_LEVELS[account.level].label} باید کد والد داشته باشد.` });
       continue;
     }
@@ -197,9 +221,14 @@ export function validateChartRows(rows = []) {
       errors.push({ rowNumber: account.rowNumber, code: account.code, message: `والد ${CHART_LEVELS[account.level].label} باید ${CHART_LEVELS[expectedParentLevel].label} باشد.` });
       continue;
     }
-    if (!account.code.startsWith(parent.code) || account.code.length <= parent.code.length) {
-      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `کد ${account.code} باید با کد والد ${parent.code} شروع شود و از آن بلندتر باشد.` });
-      continue;
+    if (style === 'prefix') {
+      if (!account.code.startsWith(parent.code) || account.code.length <= parent.code.length) {
+        errors.push({ rowNumber: account.rowNumber, code: account.code, message: `کد ${account.code} باید با کد والد ${parent.code} شروع شود و از آن بلندتر باشد.` });
+        continue;
+      }
+      account.levelCode ||= account.code.slice(parent.code.length);
+    } else {
+      account.levelCode ||= account.code;
     }
     if (parent.type !== account.type) {
       errors.push({ rowNumber: account.rowNumber, code: account.code, message: `نوع حساب با والد ${parent.code} یکی نیست.` });
@@ -330,9 +359,9 @@ export function chartAccountByCode(database, code) {
   return database.prepare('SELECT * FROM chart_accounts WHERE code=?').get(normalizeChartCode(code)) || null;
 }
 
-export function importChartOfAccounts(database, rows = [], { source = 'import', replace = false } = {}) {
+export function importChartOfAccounts(database, rows = [], { source = 'import', replace = false, codingStyle = 'prefix' } = {}) {
   ensureChartSchema(database);
-  const { accounts, errors } = validateChartRows(rows);
+  const { accounts, errors } = validateChartRows(rows, { codingStyle });
   if (errors.length) throw Object.assign(chartError('فایل کدینگ ایراد دارد و هیچ ردیفی وارد نشد.', 'CHART_ROWS_INVALID'), { details: { errors } });
   if (!accounts.length) throw chartError('هیچ حساب معتبری در فایل نبود.', 'CHART_ROWS_EMPTY');
 
@@ -344,9 +373,9 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
       if (linked) throw chartError('کدینگ فعلی به حساب‌های دفتر نگاشت شده است؛ پیش از جایگزینی باید نگاشت‌ها برداشته شوند.', 'CHART_IN_USE', 409);
       database.prepare('DELETE FROM chart_accounts').run();
     }
-    const insert = database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,source)
-      VALUES (?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(code) DO UPDATE SET name=excluded.name,role=excluded.role`);
+    const insert = database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,source,level_code)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(code) DO UPDATE SET name=excluded.name,role=excluded.role,level_code=excluded.level_code`);
     let created = 0;
     let updated = 0;
     for (const account of accounts) {
@@ -356,7 +385,7 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
       }
       const parentId = account.parentCode ? database.prepare('SELECT id FROM chart_accounts WHERE code=?').get(account.parentCode)?.id || null : null;
       if (account.parentCode && !parentId) throw chartError(`والد ${account.parentCode} پیدا نشد.`, 'CHART_PARENT_MISSING');
-      insert.run(existing?.id || randomUUID(), account.code, account.name, account.level, parentId, account.type, account.normalSide, account.role, source);
+      insert.run(existing?.id || randomUUID(), account.code, account.name, account.level, parentId, account.type, account.normalSide, account.role, source, account.levelCode || account.code);
       if (existing) updated += 1; else created += 1;
     }
     database.exec('COMMIT');
@@ -408,6 +437,7 @@ export function listChartAccounts(database, { includeInactive = false } = {}) {
   ensureChartSchema(database);
   const rows = database.prepare(`SELECT chart_accounts.id,chart_accounts.code,chart_accounts.name,chart_accounts.level,
     chart_accounts.type,chart_accounts.normal_side AS normalSide,chart_accounts.role,chart_accounts.active,chart_accounts.source,
+    chart_accounts.level_code AS levelCode,
     parent.code AS parentCode,parent.name AS parentName,
     (SELECT COUNT(*) FROM ledger_accounts WHERE ledger_accounts.chart_account_id=chart_accounts.id) AS mappedAccounts
     FROM chart_accounts LEFT JOIN chart_accounts AS parent ON parent.id=chart_accounts.parent_id

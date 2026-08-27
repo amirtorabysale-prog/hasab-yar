@@ -1577,11 +1577,16 @@ function accountingTransferJournalRows(range) {
     ledger_accounts.code AS accountCode,ledger_accounts.name AS accountName,journal_lines.debit,journal_lines.credit,
     journal_lines.description AS lineDescription,
     chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
+    -- پارسیان حساب را سه ستون عددی جدا می‌خواهد: کل، معین، تفصیلی.
+    chart_parent.level_code AS kolCode,chart_parent.name AS kolName,
+    chart_accounts.level_code AS moeenCode,chart_accounts.name AS moeenName,
+    analytic_accounts.code AS tafsiliCode,analytic_accounts.name AS tafsiliName,
     analytic_accounts.code AS analyticCode,analytic_accounts.name AS analyticName,
     cost_centers.code AS costCenterCode,cost_centers.name AS costCenterName
     FROM journal_entries JOIN journal_lines ON journal_lines.entry_id=journal_entries.id
     JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
     LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    LEFT JOIN chart_accounts AS chart_parent ON chart_parent.id=chart_accounts.parent_id
     LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
     LEFT JOIN cost_centers ON cost_centers.id=journal_lines.cost_center_id
     WHERE journal_entries.occurred_at>=? AND journal_entries.occurred_at<?
