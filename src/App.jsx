@@ -721,7 +721,7 @@ export default function App() {
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} />}
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
-          {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} />}
+          {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
           {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /></>}
         </div>
@@ -2080,7 +2080,7 @@ function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess }) {
   </section>;
 }
 
-function CollaborationPage({ access, notify }) {
+function CollaborationPage({ access, notify, navigate }) {
   const [month, setMonth] = useState(() => persianPeriodToken());
   const [transferTarget, setTransferTarget] = useState('generic-csv');
   const periodOptions = useMemo(() => recentPersianPeriods(), []);
@@ -2166,7 +2166,7 @@ function CollaborationPage({ access, notify }) {
       <section className="rounded-[12px] border border-line bg-surface p-4"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">پلن و مصرف ماه</h2><p className="mt-1 text-xs text-muted">{commercial.plan?.label || 'رایگان'} · {commercial.plan?.description}</p></div><HandCoins size={22} className="text-accent" /></div><div className="mt-4 space-y-4">{commercial.quotas?.map((item) => <div key={item.id}><div className="flex justify-between text-xs"><span className="font-bold">{item.label}</span><span className={item.exhausted ? 'text-expense' : 'text-muted'}>{toPersianDigits(item.used)} از {toPersianDigits(item.limit)}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-paper"><div className={`h-full rounded-full ${item.percent >= 90 ? 'bg-expense' : 'bg-accent'}`} style={{ width: `${item.percent}%` }} /></div>{item.note && <p className="mt-1 text-[10px] leading-5 text-muted">{item.note}</p>}</div>)}</div><div className="mt-4 border-t border-line pt-4"><div className="flex justify-between text-sm"><span className="text-muted">هزینهٔ تخمینی provider</span><b dir="ltr">${Number(cost.estimatedCostUsd || 0).toFixed(4)}</b></div>{cost.budgetUsd > 0 && <div className="mt-2 flex justify-between text-xs"><span className="text-muted">سقف بودجه</span><b dir="ltr">${Number(cost.budgetUsd).toFixed(2)}</b></div>}{!cost.pricingComplete && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[11px] leading-5 text-expense">بعضی نرخ‌های provider در Railway تنظیم نشده‌اند؛ جمع هزینه کامل نیست و به‌عنوان عدد قطعی نمایش داده نمی‌شود.</p>}<p className="mt-3 text-[11px] font-bold leading-5 text-income">{commercial.coreEntryMessage}</p></div></section>
     </div>
 
-    <AccountingTransferPanel month={month} target={transferTarget} setTarget={setTransferTarget} overview={transfer} notify={notify} refresh={load} />
+    <AccountingTransferPanel month={month} target={transferTarget} setTarget={setTransferTarget} overview={transfer} notify={notify} refresh={load} navigate={navigate} />
     <TransferLayoutPanel target={transferTarget} settings={transfer?.settings} notify={notify} refresh={load} />
 
     <section className="mt-4 rounded-[12px] border border-line bg-surface p-4"><div className="flex items-center justify-between"><div><h2 className="font-extrabold">صندوق درخواست توضیح</h2><p className="mt-1 text-xs leading-6 text-muted">حسابدار سؤال را به یک منبع وصل می‌کند؛ مدیر یا مالک پاسخ می‌دهد و حسابدار پس از کنترل آن را می‌بندد.</p></div><Users size={22} className="text-accent" /></div><form onSubmit={createRequest} className="mt-4 grid gap-2 md:grid-cols-[150px_minmax(0,1fr)_110px]"><select value={requestDraft.entityType} onChange={(event) => setRequestDraft({ ...requestDraft, entityType: event.target.value, entityId: '' })} className="tap rounded-lg border border-line bg-surface px-3 text-sm">{Object.entries(entityLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>{requestDraft.entityType === 'general' ? <input required minLength={5} value={requestDraft.question} onChange={(event) => setRequestDraft({ ...requestDraft, question: event.target.value })} placeholder="مثلاً این پرداخت بابت کدام پروژه بود؟" className="tap rounded-lg border border-line px-3" /> : <div className="grid gap-2 sm:grid-cols-[160px_1fr]"><input required value={requestDraft.entityId} onChange={(event) => setRequestDraft({ ...requestDraft, entityId: event.target.value })} placeholder="شناسه منبع" dir="ltr" className="tap rounded-lg border border-line px-3 text-left text-xs" /><input required minLength={5} value={requestDraft.question} onChange={(event) => setRequestDraft({ ...requestDraft, question: event.target.value })} placeholder="سؤال حسابدار" className="tap rounded-lg border border-line px-3" /></div>}<button className="tap rounded-lg bg-accent px-3 text-sm font-bold text-white">ثبت درخواست</button><label className="flex items-center gap-2 text-xs md:col-span-3"><input type="checkbox" checked={requestDraft.priority === 'urgent'} onChange={(event) => setRequestDraft({ ...requestDraft, priority: event.target.checked ? 'urgent' : 'normal' })} />فوری است</label></form><div className="mt-5 space-y-3">{overview?.requests?.length ? overview.requests.map((item) => <article key={item.id} className={`rounded-lg border p-3 ${item.priority === 'urgent' && item.status !== 'resolved' ? 'border-expense/30 bg-expense/5' : 'border-line'}`}><div className="flex flex-wrap items-center gap-2 text-[11px]"><b>{entityLabels[item.entityType]}</b><span className="rounded-md bg-paper px-2 py-1">{item.status === 'open' ? 'منتظر پاسخ' : item.status === 'answered' ? 'پاسخ داده‌شده' : 'بسته'}</span><span className="text-muted">{item.requestedBy?.label} · {persianDate(item.createdAt)}</span></div><p className="mt-3 text-sm font-bold leading-6">{item.question}</p>{item.entityId && <p className="mt-1 truncate text-[10px] text-muted" dir="ltr">{item.entityId}</p>}{item.answer && <div className="mt-3 rounded-lg bg-paper px-3 py-2"><p className="text-[11px] text-muted">پاسخ {item.answeredBy?.label}</p><p className="mt-1 text-sm leading-6">{item.answer}</p></div>}{item.status === 'open' && canAnswer && <div className="mt-3 flex gap-2"><input value={answers[item.id] || ''} onChange={(event) => setAnswers({ ...answers, [item.id]: event.target.value })} placeholder="پاسخ مستند صاحب کسب‌وکار" className="tap min-w-0 flex-1 rounded-lg border border-line px-3" /><button disabled={!String(answers[item.id] || '').trim()} onClick={() => answer(item.id)} className="tap rounded-lg bg-ink px-3 text-xs font-bold text-white disabled:opacity-40">ثبت پاسخ</button></div>}{item.status === 'answered' && <button onClick={() => resolveRequest(item.id)} className="tap mt-3 rounded-lg border border-income/30 px-3 text-xs font-bold text-income">کنترل شد؛ بستن درخواست</button>}</article>) : <p className="rounded-lg bg-paper px-3 py-4 text-center text-xs text-muted">درخواست بازی وجود ندارد.</p>}</div></section>
@@ -2175,6 +2175,56 @@ function CollaborationPage({ access, notify }) {
 
     {portfolio && <PilotPortfolioPanel portfolio={portfolio} updatePlan={updatePlan} />}
   </main>;
+}
+
+/**
+ * وقتی یک کنترل آمادگی قرمز است، گفتن «چه چیزی خراب است» کافی نیست؛ باید
+ * گفت کدام قلم و از کجا درست می‌شود. این بخش همان شکاف را پر می‌کند.
+ */
+function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
+  const [busy, setBusy] = useState(false);
+  const failed = (readiness?.checks || []).filter((item) => !item.passed && item.severity !== 'advisory');
+  if (!failed.length) return null;
+
+  const chartCheck = failed.find((item) => item.id === 'chart');
+  const unmapped = readiness?.chart?.unmappedUsedAccounts || [];
+  const approvalCheck = failed.find((item) => item.id === 'approval');
+
+  const applySuggestions = async () => {
+    setBusy(true);
+    try {
+      const result = await api.applyChartSuggestions();
+      await refresh();
+      notify(result.unmappedCount === 0
+        ? `نگاشت ${toPersianDigits(result.applied)} حساب انجام شد و این ایراد برطرف شد.`
+        : `${toPersianDigits(result.applied)} حساب نگاشت شد؛ ${toPersianDigits(result.unmappedCount)} حساب هنوز معین متناسب ندارد.`);
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
+  return <div className="mt-3 space-y-2">
+    {chartCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+      <p className="font-bold text-expense">این حساب‌ها هنوز معین مقصد ندارند</p>
+      {unmapped.length > 0 && <ul className="mt-2 space-y-0.5">
+        {unmapped.slice(0, 8).map((item) => <li key={item.id}><span className="numbers text-muted">{toPersianDigits(item.code)}</span> · {item.name}</li>)}
+        {unmapped.length > 8 && <li className="text-muted">و {toPersianDigits(unmapped.length - 8)} حساب دیگر…</li>}
+      </ul>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button disabled={busy} onClick={applySuggestions} className="tap rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white disabled:opacity-45">
+          {busy ? 'در حال نگاشت…' : 'اعمال نگاشت پیشنهادی'}
+        </button>
+        <button onClick={() => navigate('chart')} className="tap rounded-lg border border-line bg-paper px-3 py-1.5 text-xs font-bold">نگاشت دستی در صفحهٔ کدینگ</button>
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-muted">
+        حساب‌یار برای هر حساب، معین هم‌نوع کدینگ تو را پیشنهاد می‌دهد. اگر حسابی معین متناسب نداشت، اول آن معین را در کدینگ بساز.
+      </p>
+    </div>}
+
+    {approvalCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+      <p className="font-bold text-expense">{toPersianDigits(approvalCheck.count)} سند هنوز کنترل نشده است</p>
+      <button onClick={() => navigate('accounting')} className="tap mt-2 rounded-lg border border-line bg-paper px-3 py-1.5 text-xs font-bold">رفتن به کارتابل سند</button>
+    </div>}
+  </div>;
 }
 
 function TransferLayoutPanel({ target, settings, notify, refresh }) {
@@ -2267,7 +2317,7 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
   </section>;
 }
 
-function AccountingTransferPanel({ month, target, setTarget, overview, notify, refresh }) {
+function AccountingTransferPanel({ month, target, setTarget, overview, notify, refresh, navigate }) {
   const [settingsDraft, setSettingsDraft] = useState({ templateName: '', templateVerified: false, note: '' });
   const [mappingDrafts, setMappingDrafts] = useState({});
   const [busy, setBusy] = useState('');
@@ -2356,7 +2406,9 @@ function AccountingTransferPanel({ month, target, setTarget, overview, notify, r
     <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold text-accent">فاز ۸ · اعتبارسنجی انتقال واقعی</p><h2 className="mt-1 font-extrabold">خروجی کنترل‌شده و آزمون شرکت نمونه</h2><p className="mt-1 max-w-[680px] text-xs leading-6 text-muted">هر بسته علاوه بر هش ثابت، نتیجهٔ Dry Run و ورود آزمایشی را با نسخهٔ نرم‌افزار، ردیف‌های ردشده و جمع بدهکار/بستانکار ثبت می‌کند. خروجی پارسیان بدون آزمون ورود موفق قابل پذیرش نیست.</p></div><label className="text-xs text-muted">مقصد خروجی<select value={target} onChange={(event) => setTarget(event.target.value)} className="tap mt-2 block rounded-lg border border-line bg-paper px-3 text-ink">{targets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div>
 
     <div className="mt-4 grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
-      <div><div className="divide-y divide-line rounded-lg border border-line px-3">{(readiness.checks || []).map((item) => <div key={item.id} className="flex min-h-11 items-center gap-2 py-2 text-xs"><span className={`grid h-5 w-5 place-items-center rounded-full ${item.passed ? 'bg-income/10 text-income' : 'bg-expense/10 text-expense'}`}>{item.passed ? <Check size={14} /> : <CircleAlert size={14} />}</span><span className="flex-1 font-bold">{item.label}</span>{!item.passed && <b className="numbers text-expense">{toPersianDigits(item.count || 0)}</b>}</div>)}</div><div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">سند</span><b className="numbers mt-1 block">{toPersianDigits(readiness.entryCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">ردیف</span><b className="numbers mt-1 block">{toPersianDigits(readiness.rowCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">جمع بدهکار</span><b className="numbers mt-1 block text-[11px]">{formatAmount(readiness.debitTotal || 0)}</b></div></div><button disabled={!readiness.ready || busy === 'batch'} onClick={createBatch} className="tap mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-ink font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Download size={17} />{busy === 'batch' ? 'در حال ساخت…' : 'ساخت و دریافت CSV'}</button><p className="mt-2 text-[10px] leading-5 text-muted">{readiness.disclaimer}</p></div>
+      <div><div className="divide-y divide-line rounded-lg border border-line px-3">{(readiness.checks || []).map((item) => <div key={item.id} className="flex min-h-11 items-center gap-2 py-2 text-xs"><span className={`grid h-5 w-5 place-items-center rounded-full ${item.passed ? 'bg-income/10 text-income' : 'bg-expense/10 text-expense'}`}>{item.passed ? <Check size={14} /> : <CircleAlert size={14} />}</span><span className="flex-1 font-bold">{item.label}</span>{!item.passed && <b className="numbers text-expense">{toPersianDigits(item.count || 0)}</b>}</div>)}</div>
+      <ReadinessFixHints readiness={readiness} navigate={navigate} notify={notify} refresh={refresh} />
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">سند</span><b className="numbers mt-1 block">{toPersianDigits(readiness.entryCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">ردیف</span><b className="numbers mt-1 block">{toPersianDigits(readiness.rowCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">جمع بدهکار</span><b className="numbers mt-1 block text-[11px]">{formatAmount(readiness.debitTotal || 0)}</b></div></div><button disabled={!readiness.ready || busy === 'batch'} onClick={createBatch} className="tap mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-ink font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Download size={17} />{busy === 'batch' ? 'در حال ساخت…' : `ساخت و دریافت ${overview?.settings?.fileFormat === 'xlsx' ? 'اکسل' : 'CSV'}`}</button><p className="mt-2 text-[10px] leading-5 text-muted">{readiness.disclaimer}</p></div>
 
       <div>{target === 'parsian-review-csv' ? <><div className="rounded-lg border border-line bg-paper p-3"><label className="text-xs text-muted">نام یا نسخهٔ قالب کنترل‌شده<input value={settingsDraft.templateName} onChange={(event) => setSettingsDraft({ ...settingsDraft, templateName: event.target.value })} placeholder="مثلاً خروجی نمونه پارسیان شرکت آزمایشی" className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3" /></label><label className="mt-3 flex items-start gap-2 text-xs leading-6"><input type="checkbox" checked={settingsDraft.templateVerified} onChange={(event) => setSettingsDraft({ ...settingsDraft, templateVerified: event.target.checked })} className="mt-1" /><span>حسابدار ستون‌ها و واحد پول را با یک شرکت آزمایشی کنترل کرده است؛ این تأیید به معنی پشتیبانی رسمی سازنده نیست.</span></label><button disabled={busy === 'settings'} onClick={saveSettings} className="tap mt-3 rounded-lg border border-ink px-3 text-xs font-bold">ذخیره کنترل قالب</button></div><div className="mt-3 space-y-2">{(readiness.accounts || []).map((account) => { const draft = mappingDrafts[account.id] || { targetCode: '', targetName: '' }; return <div key={account.id} className="grid gap-2 rounded-lg border border-line p-3 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,1fr)_70px]"><div><b className="text-xs">{account.name}</b><p className="numbers mt-1 text-[10px] text-muted">{account.code}</p></div><input value={draft.targetCode} onChange={(event) => setMappingDrafts({ ...mappingDrafts, [account.id]: { ...draft, targetCode: event.target.value } })} placeholder="کد مقصد" dir="ltr" className="tap rounded-lg border border-line px-2 text-left text-xs" /><input value={draft.targetName} onChange={(event) => setMappingDrafts({ ...mappingDrafts, [account.id]: { ...draft, targetName: event.target.value } })} placeholder="نام حساب مقصد" className="tap rounded-lg border border-line px-2 text-xs" /><button disabled={!draft.targetCode || busy === `mapping-${account.id}`} onClick={() => saveMapping(account.id)} className="tap rounded-lg bg-accent px-2 text-xs font-bold text-white disabled:opacity-40">ذخیره</button></div>; })}</div></> : <div className="rounded-lg bg-paper p-4 text-xs leading-6 text-muted"><b className="text-ink">قالب استاندارد حساب‌یار</b><p className="mt-2">هر ردیف دفتر کل با بدهکار/بستانکار تومان و ریال، کد و نام حساب، نوع و شناسهٔ منبع و تاریخ شمسی/ISO صادر می‌شود. متن‌های خطرناک برای Formula Injection خنثی می‌شوند.</p></div>}</div>
     </div>
