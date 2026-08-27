@@ -8,6 +8,7 @@ import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
   postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
   nextLedgerCode, postImportedOpeningBalances,
+  createJournalBatch, journalWorklist, listJournal as listJournalEntries, setJournalApproval,
   syncOpeningBalanceJournal, syncTransactionJournal,
 } from './accounting.js';
 import {
@@ -40,6 +41,7 @@ import {
   DEFAULT_TRANSFER_COLUMNS, TRANSFER_FIELDS, amountUnitLabel, normalizeAmountUnit, normalizeTransferColumns,
 } from './transferTemplates.js';
 import { buildWorkbook, readTabularFile } from './spreadsheet.js';
+import { normalizeTemplateLines } from './journalWorkflow.js';
 import {
   importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows, tableFromSheet,
 } from './ledgerImport.js';
@@ -1458,6 +1460,74 @@ export function importTemplateWorkbook() {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// فاز ۳ — ثبت انبوه، کارتابل تأیید و الگوی سند
+// ---------------------------------------------------------------------------
+
+export function journalWorklistOverview(query = {}) {
+  return journalWorklist(activeWorkspaceDatabase(), {
+    userId: currentWorkspace()?.userId || '', limit: query.limit,
+  });
+}
+
+export function submitJournalApproval(entryId, nextState, reason = '') {
+  const result = setJournalApproval(activeWorkspaceDatabase(), entryId, nextState, {
+    userId: currentWorkspace()?.userId || null, reason, timeZone: currentTimeZone(),
+  });
+  audit('approval', 'journal_entry', entryId, { from: result.from, to: result.to, reason: reason || undefined });
+  return result;
+}
+
+export function createJournalDocuments(documents = [], options = {}) {
+  const result = createJournalBatch(activeWorkspaceDatabase(), documents, {
+    createdBy: currentWorkspace()?.userId || null,
+    timeZone: currentTimeZone(),
+    approvalState: options.approvalState || 'draft',
+  });
+  audit('create-batch', 'journal_entry', result.entryIds[0] || 'batch', {
+    created: result.created, documentNumbers: result.documentNumbers,
+  });
+  return result;
+}
+
+export function listJournalTemplates() {
+  const database = activeWorkspaceDatabase();
+  ensureAccountingSchema(database);
+  return database.prepare(`SELECT id,name,memo,lines,created_at AS createdAt,updated_at AS updatedAt
+    FROM journal_templates ORDER BY name`).all()
+    .map((item) => ({ ...item, lines: parseStoredJson(item.lines, []) }));
+}
+
+export function saveJournalTemplate(values = {}) {
+  const database = activeWorkspaceDatabase();
+  ensureAccountingSchema(database);
+  const name = String(values.name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (name.length < 2) throw Object.assign(new Error('نام الگو باید حداقل دو نویسه باشد.'), { status: 400 });
+  const lines = normalizeTemplateLines(values.lines);
+  for (const line of lines) {
+    if (!database.prepare('SELECT 1 FROM ledger_accounts WHERE id=? AND active=1').get(line.accountId)) {
+      throw Object.assign(new Error('یکی از حساب‌های الگو معتبر یا فعال نیست.'), { status: 400, code: 'LEDGER_ACCOUNT_MISSING' });
+    }
+  }
+  const existing = values.id
+    ? database.prepare('SELECT id FROM journal_templates WHERE id=?').get(values.id)
+    : database.prepare('SELECT id FROM journal_templates WHERE name=?').get(name);
+  const id = existing?.id || randomUUID();
+  database.prepare(`INSERT INTO journal_templates (id,name,memo,lines,created_by) VALUES (?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,memo=excluded.memo,lines=excluded.lines,updated_at=CURRENT_TIMESTAMP`)
+    .run(id, name, String(values.memo || '').slice(0, 300), JSON.stringify(lines), currentWorkspace()?.userId || null);
+  audit('save', 'journal_template', id, { name, lineCount: lines.length });
+  return listJournalTemplates().find((item) => item.id === id);
+}
+
+export function deleteJournalTemplate(id) {
+  const database = activeWorkspaceDatabase();
+  ensureAccountingSchema(database);
+  const result = database.prepare('DELETE FROM journal_templates WHERE id=?').run(String(id || ''));
+  if (result.changes) audit('delete', 'journal_template', id, {});
+  return Boolean(result.changes);
+}
+
 export function transferFieldCatalog() {
   return { fields: TRANSFER_FIELDS, defaultColumns: DEFAULT_TRANSFER_COLUMNS, formats: Object.values(TRANSFER_FILE_FORMATS) };
 }
@@ -1525,11 +1595,15 @@ function accountingTransferState(month = '', targetSystem = 'generic-csv', now =
   const mappings = accountingTransferMappings(target);
   const journalRows = accountingTransferJournalRows(packageData.scope);
   const chart = chartMappingOverview(activeWorkspaceDatabase());
+  const pendingInPeriod = Number(db.prepare(`SELECT COUNT(*) AS count FROM journal_entries
+    WHERE approval_state<>'approved' AND occurred_at>=? AND occurred_at<?`)
+    .get(packageData.scope.from, packageData.scope.toExclusive).count || 0);
   const readiness = accountingTransferReadiness({
     packageData, journalRows, settings, mappings,
     chart: { installed: chart.chartInstalled, complete: chart.complete },
+    workflow: { pendingInPeriod },
   });
-  return { packageData, settings, mappings, journalRows, readiness, chart };
+  return { packageData, settings, mappings, journalRows, readiness, chart, workflow: { pendingInPeriod } };
 }
 
 function hydrateAccountingTransferBatch(row, includeFile = false) {
@@ -1834,6 +1908,11 @@ function firmClientSnapshot(month = '', now = new Date()) {
       openRequests: count("SELECT COUNT(*) AS count FROM collaboration_requests WHERE status='open'"),
       answeredRequests: count("SELECT COUNT(*) AS count FROM collaboration_requests WHERE status='answered'"),
       unreviewedTransactions: count("SELECT COUNT(*) AS count FROM transactions WHERE needs_review=1 AND status!='deleted'"),
+      // سند پیش‌نویس، در انتظار کنترل یا برگشتی در همان دوره.
+      pendingApproval: count(
+        "SELECT COUNT(*) AS count FROM journal_entries WHERE approval_state<>'approved' AND occurred_at>=datetime(?) AND occurred_at<datetime(?)",
+        range.from, range.toExclusive,
+      ),
       overdueObligations: count(
         "SELECT COUNT(*) AS count FROM obligations WHERE status='open' AND due_at IS NOT NULL AND due_at<datetime(?)",
         now.toISOString(),
