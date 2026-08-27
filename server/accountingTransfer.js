@@ -45,7 +45,7 @@ function persianDateToken(value, timeZone = 'Asia/Tehran') {
   return `${part('year')}/${part('month')}/${part('day')}`;
 }
 
-export function accountingTransferReadiness({ packageData = {}, journalRows = [], settings = {}, mappings = [] } = {}) {
+export function accountingTransferReadiness({ packageData = {}, journalRows = [], settings = {}, mappings = [], chart = {} } = {}) {
   const target = accountingTransferTarget(settings.targetSystem);
   const checks = [];
   for (const item of packageData.checklist?.checks || []) checks.push({
@@ -84,10 +84,19 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
     });
   }
 
-  const ready = checks.every((item) => item.passed);
+  // کدینگ دفتر: تا وقتی نصب نشده، فقط یک یادآوری است و جلوی خروجی را نمی‌گیرد.
+  // به‌محض نصب، هر حساب استفاده‌شدهٔ بدون معین مقصد یک ایراد بازدارنده است.
+  const unmappedUsedAccounts = [...new Map(journalRows.filter((item) => !item.chartCode)
+    .map((item) => [item.accountId, { id: item.accountId, code: item.accountCode, name: item.accountName }])).values()];
+  checks.push(chart.installed
+    ? { id: 'chart', label: 'هر حساب استفاده‌شده به معین کدینگ دفتر نگاشت شده', count: unmappedUsedAccounts.length, passed: unmappedUsedAccounts.length === 0, severity: 'blocker' }
+    : { id: 'chart', label: 'کدینگ دفتر حسابداری هنوز وارد نشده است', count: 1, passed: false, severity: 'advisory' });
+
+  const ready = checks.filter((item) => item.severity !== 'advisory').every((item) => item.passed);
   return {
     ready, target, checks, rowCount: journalRows.length, entryCount: entryIds.size, debitTotal, creditTotal,
     accountCount: accounts.length, accounts, missingMappings,
+    chart: { installed: Boolean(chart.installed), unmappedUsedAccounts, unmappedUsedCount: unmappedUsedAccounts.length },
     compatibility: target.id === 'generic-csv' ? 'generic-ledger-csv-v1' : 'parsian-mapping-review-v1',
     directImportCertified: false,
     disclaimer: target.id === 'generic-csv'
@@ -101,7 +110,8 @@ export function buildAccountingTransferCsv({ period, journalRows = [], settings 
   const lineNumbers = new Map();
   const headers = [
     'شناسه سند حساب‌یار', 'ردیف سند', 'دوره شمسی', 'تاریخ شمسی', 'تاریخ ISO', 'نوع سند', 'نوع منبع', 'شناسه منبع',
-    'شرح سند', 'شرح ردیف', 'کد حساب حساب‌یار', 'نام حساب حساب‌یار', 'بدهکار تومان', 'بستانکار تومان',
+    'شرح سند', 'شرح ردیف', 'کد حساب حساب‌یار', 'نام حساب حساب‌یار', 'کد معین کدینگ', 'نام معین کدینگ',
+    'کد تفصیلی', 'نام تفصیلی', 'کد مرکز هزینه', 'نام مرکز هزینه', 'بدهکار تومان', 'بستانکار تومان',
     'بدهکار ریال', 'بستانکار ریال', 'کد حساب مقصد', 'نام حساب مقصد',
   ];
   const rows = journalRows.map((item) => {
@@ -111,7 +121,9 @@ export function buildAccountingTransferCsv({ period, journalRows = [], settings 
     return [
       item.entryId, lineNumber, period, persianDateToken(item.occurredAt, timeZone), item.occurredAt,
       item.entryKind, item.sourceType, item.sourceId, item.memo, item.lineDescription || '', item.accountCode,
-      item.accountName, Number(item.debit || 0), Number(item.credit || 0), Number(item.debit || 0) * 10,
+      item.accountName, item.chartCode || '', item.chartName || '',
+      item.analyticCode || '', item.analyticName || '', item.costCenterCode || '', item.costCenterName || '',
+      Number(item.debit || 0), Number(item.credit || 0), Number(item.debit || 0) * 10,
       Number(item.credit || 0) * 10, mapping.targetCode || '', mapping.targetName || '',
     ];
   });

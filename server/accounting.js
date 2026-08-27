@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { analyticForContact, ensureChartSchema, resolveLineDimensions } from './chartOfAccounts.js';
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
 
@@ -59,6 +60,8 @@ export function ensureAccountingSchema(database) {
   const seed = database.prepare(`INSERT OR IGNORE INTO ledger_accounts
     (id,code,name,type,normal_side,source_kind,source_key) VALUES (?,?,?,?,?,?,?)`);
   seed.run('ledger-opening-equity', '3000', 'سرمایه و ماندهٔ افتتاحیه', 'equity', 'credit', 'system', 'opening-equity');
+  // ستون‌های بعد (تفصیلی و مرکز هزینه) و نگاشت کدینگ روی همین جدول‌ها می‌نشینند.
+  ensureChartSchema(database);
 }
 
 function nextCode(database, type) {
@@ -135,7 +138,12 @@ function validateLines(database, lines) {
     if (!Number.isSafeInteger(lineDebit) || !Number.isSafeInteger(lineCredit) || (lineDebit > 0) === (lineCredit > 0)) throw accountingError('هر آرتیکل باید فقط بدهکار یا فقط بستانکار و دارای مبلغ مثبت باشد.');
     debit += lineDebit;
     credit += lineCredit;
-    return { accountId, debit: lineDebit, credit: lineCredit, description: String(line.description || '').slice(0, 300) };
+    const dimensions = resolveLineDimensions(database, line);
+    return {
+      accountId, debit: lineDebit, credit: lineCredit,
+      description: String(line.description || '').slice(0, 300),
+      ...dimensions,
+    };
   });
   if (debit !== credit || debit <= 0) throw accountingError('جمع بدهکار و بستانکار سند برابر نیست.', 'JOURNAL_UNBALANCED');
   return { lines: normalized, total: debit };
@@ -151,8 +159,8 @@ function insertJournal(database, values) {
   database.prepare(`INSERT INTO journal_entries
     (id,source_type,source_id,revision,entry_kind,occurred_at,memo,reverses_entry_id,created_by)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(id, values.sourceType, values.sourceId, values.revision, values.entryKind || 'normal', values.occurredAt, String(values.memo || '').slice(0, 500), values.reversesEntryId || null, values.createdBy || null);
-  const insert = database.prepare('INSERT INTO journal_lines (id,entry_id,account_id,debit,credit,description) VALUES (?,?,?,?,?,?)');
-  for (const line of validated.lines) insert.run(randomUUID(), id, line.accountId, line.debit, line.credit, line.description);
+  const insert = database.prepare('INSERT INTO journal_lines (id,entry_id,account_id,debit,credit,description,analytic_id,cost_center_id) VALUES (?,?,?,?,?,?,?,?)');
+  for (const line of validated.lines) insert.run(randomUUID(), id, line.accountId, line.debit, line.credit, line.description, line.analyticId || null, line.costCenterId || null);
   return { id, total: validated.total };
 }
 
@@ -194,7 +202,7 @@ export function reverseTransactionJournal(database, transactionId, occurredAt, {
   if (!original) return null;
   const alreadyReversed = database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id);
   if (alreadyReversed) return null;
-  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
     .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
   return insertJournal(database, {
     sourceType: 'transaction', sourceId: transactionId,
@@ -212,7 +220,10 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
   const existing = database.prepare("SELECT id FROM journal_entries WHERE source_type='invoice' AND source_id=? AND entry_kind='normal'").get(invoice.id);
   if (existing) return existing;
   const documentType = invoice.documentType || invoice.document_type || 'sales';
-  const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, invoice.contactName || invoice.customerName || invoice.customer_name, documentType);
+  const contactName = invoice.contactName || invoice.customerName || invoice.customer_name;
+  const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, contactName, documentType);
+  // طرف حساب علاوه بر حساب معین، به‌عنوان تفصیلی شناور روی همان آرتیکل می‌نشیند.
+  const counterpartyAnalytic = analyticForContact(database, invoice.contactId || invoice.contact_id, contactName || (documentType === 'purchase' ? 'تأمین‌کننده متفرقه' : 'مشتری متفرقه'))?.id || null;
   const category = categoryLedgerAccount(database, documentType === 'purchase' ? 'expense' : 'income', invoice.category || (documentType === 'purchase' ? 'مواد و کالا' : 'فروش'));
   const tax = Math.max(0, Math.round(Number(invoice.tax) || 0));
   const netAmount = amount - tax;
@@ -228,9 +239,9 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
     const serviceBase = netAmount - inventoryTotal;
     if (serviceBase < 0) throw accountingError('ارزش موجودی ردیف‌های خرید از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_INVENTORY_VALUE_INVALID');
     lines = [...inventoryLines, ...(serviceBase > 0 ? [{ accountId: category, debit: serviceBase }] : []),
-      ...(tax > 0 ? [{ accountId: inputTaxLedgerAccount(database), debit: tax }] : []), { accountId: counterparty, credit: amount }];
+      ...(tax > 0 ? [{ accountId: inputTaxLedgerAccount(database), debit: tax }] : []), { accountId: counterparty, credit: amount, analyticId: counterpartyAnalytic }];
   } else {
-    lines = [{ accountId: counterparty, debit: amount }, ...(netAmount > 0 ? [{ accountId: category, credit: netAmount }] : []),
+    lines = [{ accountId: counterparty, debit: amount, analyticId: counterpartyAnalytic }, ...(netAmount > 0 ? [{ accountId: category, credit: netAmount }] : []),
       ...(tax > 0 ? [{ accountId: outputTaxLedgerAccount(database), credit: tax }] : [])];
   }
   return insertJournal(database, {
@@ -272,7 +283,7 @@ export function reverseInventoryMovementJournal(database, movementId, occurredAt
   if (!original || database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id)) return null;
   const reversalAt = occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(reversalAt, timeZone));
-  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
     .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
   return insertJournal(database, {
     sourceType: 'inventory_movement', sourceId: movementId, revision: nextRevision(database, 'inventory_movement', movementId), entryKind: 'reversal',
@@ -289,11 +300,13 @@ export function postInvoicePaymentJournal(database, invoice, payment, { createdB
   const existing = database.prepare("SELECT id FROM journal_entries WHERE source_type='invoice_payment' AND source_id=?").get(payment.id);
   if (existing) return existing;
   const documentType = invoice.documentType || invoice.document_type || 'sales';
-  const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, invoice.contactName || invoice.customerName || invoice.customer_name, documentType);
+  const contactName = invoice.contactName || invoice.customerName || invoice.customer_name;
+  const counterparty = counterpartyLedgerAccount(database, invoice.contactId || invoice.contact_id, contactName, documentType);
+  const counterpartyAnalytic = analyticForContact(database, invoice.contactId || invoice.contact_id, contactName || (documentType === 'purchase' ? 'تأمین‌کننده متفرقه' : 'مشتری متفرقه'))?.id || null;
   const cash = operationalLedgerAccount(database, payment.accountId || payment.account_id || 'cash');
   const lines = documentType === 'purchase'
-    ? [{ accountId: counterparty, debit: amount }, { accountId: cash, credit: amount }]
-    : [{ accountId: cash, debit: amount }, { accountId: counterparty, credit: amount }];
+    ? [{ accountId: counterparty, debit: amount, analyticId: counterpartyAnalytic }, { accountId: cash, credit: amount }]
+    : [{ accountId: cash, debit: amount }, { accountId: counterparty, credit: amount, analyticId: counterpartyAnalytic }];
   return insertJournal(database, {
     sourceType: 'invoice_payment', sourceId: payment.id, revision: 1, occurredAt,
     memo: `${documentType === 'purchase' ? 'پرداخت' : 'وصول'} ${invoice.number}`,
@@ -308,7 +321,7 @@ export function reverseInvoiceJournal(database, invoice, occurredAt, { createdBy
   if (database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id)) return null;
   const reversalAt = occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(reversalAt, timeZone));
-  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
     .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
   return insertJournal(database, {
     sourceType: 'invoice', sourceId: invoice.id, revision: nextRevision(database, 'invoice', invoice.id), entryKind: 'reversal',
@@ -356,8 +369,11 @@ export function migrateAccountingLedger(database, { createdBy = null } = {}) {
 
 export function listLedgerAccounts(database) {
   migrateAccountingLedger(database);
-  return database.prepare(`SELECT id,code,name,type,normal_side AS normalSide,active FROM ledger_accounts
-    ORDER BY CAST(code AS INTEGER),name`).all();
+  return database.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,ledger_accounts.type,
+    ledger_accounts.normal_side AS normalSide,ledger_accounts.active,
+    ledger_accounts.chart_account_id AS chartAccountId,chart_accounts.code AS chartCode,chart_accounts.name AS chartName
+    FROM ledger_accounts LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all();
 }
 
 export function trialBalance(database, through = '') {
@@ -367,8 +383,10 @@ export function trialBalance(database, through = '') {
   const where = cutoff ? 'WHERE journal_entries.occurred_at<=?' : '';
   const params = cutoff ? [cutoff.toISOString()] : [];
   const rows = database.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,ledger_accounts.type,
+    chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
     COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit
-    FROM ledger_accounts LEFT JOIN journal_lines ON journal_lines.account_id=ledger_accounts.id
+    FROM ledger_accounts LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    LEFT JOIN journal_lines ON journal_lines.account_id=ledger_accounts.id
     LEFT JOIN journal_entries ON journal_entries.id=journal_lines.entry_id ${where}
     GROUP BY ledger_accounts.id ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all(...params)
     .map((row) => ({ ...row, debitBalance: Math.max(0, Number(row.debit) - Number(row.credit)), creditBalance: Math.max(0, Number(row.credit) - Number(row.debit)) }));
@@ -376,17 +394,30 @@ export function trialBalance(database, through = '') {
   return { unit: 'IRT', basis: 'double-entry-operational', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
 }
 
-export function listJournal(database, { page = 1, limit = 30 } = {}) {
+export function listJournal(database, { page = 1, limit = 30, entryId = '' } = {}) {
   migrateAccountingLedger(database);
   const safeLimit = Math.min(100, Math.max(1, Number(limit) || 30));
   const safePage = Math.max(1, Number(page) || 1);
-  const total = database.prepare('SELECT COUNT(*) AS count FROM journal_entries').get().count;
-  const entries = database.prepare(`SELECT id,source_type AS sourceType,source_id AS sourceId,revision,entry_kind AS entryKind,
-    occurred_at AS occurredAt,memo,reverses_entry_id AS reversesEntryId,created_at AS createdAt
-    FROM journal_entries ORDER BY occurred_at DESC,created_at DESC LIMIT ? OFFSET ?`).all(safeLimit, (safePage - 1) * safeLimit);
+  const single = String(entryId || '').trim();
+  const total = single
+    ? Number(database.prepare('SELECT COUNT(*) AS count FROM journal_entries WHERE id=?').get(single).count)
+    : database.prepare('SELECT COUNT(*) AS count FROM journal_entries').get().count;
+  const select = `SELECT id,source_type AS sourceType,source_id AS sourceId,revision,entry_kind AS entryKind,
+    occurred_at AS occurredAt,memo,reverses_entry_id AS reversesEntryId,created_at AS createdAt FROM journal_entries`;
+  const entries = single
+    ? database.prepare(`${select} WHERE id=?`).all(single)
+    : database.prepare(`${select} ORDER BY occurred_at DESC,created_at DESC LIMIT ? OFFSET ?`).all(safeLimit, (safePage - 1) * safeLimit);
   const lines = database.prepare(`SELECT journal_lines.account_id AS accountId,ledger_accounts.code,ledger_accounts.name,
-    journal_lines.debit,journal_lines.credit,journal_lines.description FROM journal_lines
-    JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id WHERE journal_lines.entry_id=? ORDER BY journal_lines.rowid`);
+    journal_lines.debit,journal_lines.credit,journal_lines.description,
+    chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
+    journal_lines.analytic_id AS analyticId,analytic_accounts.code AS analyticCode,analytic_accounts.name AS analyticName,
+    journal_lines.cost_center_id AS costCenterId,cost_centers.code AS costCenterCode,cost_centers.name AS costCenterName
+    FROM journal_lines
+    JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+    LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
+    LEFT JOIN cost_centers ON cost_centers.id=journal_lines.cost_center_id
+    WHERE journal_lines.entry_id=? ORDER BY journal_lines.rowid`);
   return { items: entries.map((entry) => ({ ...entry, lines: lines.all(entry.id) })), total, page: safePage, pages: Math.max(1, Math.ceil(total / safeLimit)) };
 }
 
@@ -396,7 +427,8 @@ export function createAdjustingJournal(database, values, { createdBy = null, tim
   assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
   const sourceId = randomUUID();
   const result = insertJournal(database, { sourceType: 'adjustment', sourceId, revision: 1, entryKind: 'adjustment', occurredAt, memo: values.memo || 'سند اصلاحی', createdBy, lines: values.lines });
-  return listJournal(database, { limit: 1 }).items.find((item) => item.id === result.id) || { id: result.id };
+  // سند تازه با شناسهٔ خودش خوانده می‌شود، نه با «آخرین سند»؛ سند با تاریخ گذشته هم باید کامل برگردد.
+  return listJournal(database, { entryId: result.id }).items[0] || { id: result.id };
 }
 
 export function accountingPeriods(database) {

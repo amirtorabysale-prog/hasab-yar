@@ -1,0 +1,669 @@
+// فاز ۲ — کدینگ استاندارد، تفصیلی شناور و مرکز هزینه.
+//
+// حساب‌یار تا پیش از این کد حساب را خودش می‌ساخت (accounting.js:nextCode). هیچ دفتر
+// حسابداری کدینگ خودش را رها نمی‌کند، پس از این پس کدینگ دفتر وارد می‌شود و
+// حساب‌های داخلی حساب‌یار فقط به آن «نگاشت» می‌شوند. کد داخلی حذف نمی‌شود تا
+// اسناد قبلی و ارجاع‌هایشان دست‌نخورده بمانند.
+
+import { randomUUID } from 'node:crypto';
+
+export const CHART_LEVELS = Object.freeze({
+  group: Object.freeze({ id: 'group', label: 'گروه', order: 1 }),
+  general: Object.freeze({ id: 'general', label: 'کل', order: 2 }),
+  subsidiary: Object.freeze({ id: 'subsidiary', label: 'معین', order: 3 }),
+});
+
+export const CHART_TYPES = Object.freeze({
+  asset: Object.freeze({ id: 'asset', label: 'دارایی', normalSide: 'debit' }),
+  liability: Object.freeze({ id: 'liability', label: 'بدهی', normalSide: 'credit' }),
+  equity: Object.freeze({ id: 'equity', label: 'سرمایه', normalSide: 'credit' }),
+  income: Object.freeze({ id: 'income', label: 'درآمد', normalSide: 'credit' }),
+  expense: Object.freeze({ id: 'expense', label: 'هزینه', normalSide: 'debit' }),
+});
+
+// نقش‌ها فقط برای پیشنهاد خودکار نگاشت به کار می‌روند؛ هیچ سندی بر پایهٔ نقش ثبت نمی‌شود.
+export const CHART_ROLES = Object.freeze([
+  'cash', 'bank', 'receivable', 'payable', 'inventory', 'cogs',
+  'sales', 'service-income', 'other-income', 'operating-expense',
+  'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
+]);
+
+export const ANALYTIC_KINDS = Object.freeze({
+  contact: 'طرف حساب',
+  project: 'پروژه',
+  employee: 'پرسنل',
+  custom: 'سایر',
+});
+
+function chartError(message, code = 'CHART_INVALID', status = 400) {
+  return Object.assign(new Error(message), { code, status });
+}
+
+const digitMap = { '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9', '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9' };
+function latin(value) { return String(value ?? '').replace(/[۰-۹٠-٩]/g, (digit) => digitMap[digit]); }
+
+// کد حساب فقط رقم است. جداکننده‌های رایج کدینگ (خط تیره، نقطه، فاصله) پاک می‌شوند
+// تا «۱۱-۰۱» و «1101» یک حساب شناخته شوند، نه دو حساب موازی.
+export function normalizeChartCode(value) {
+  return latin(value).replace(/[\s._-]/g, '').trim();
+}
+
+export function chartCodeIsValid(code) {
+  return /^\d{1,12}$/.test(code);
+}
+
+function cleanName(value, limit = 120) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function ensureColumn(database, table, definition) {
+  try { database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`); }
+  catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
+}
+
+export function ensureChartSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS chart_accounts (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      level TEXT NOT NULL CHECK(level IN ('group','general','subsidiary')),
+      parent_id TEXT REFERENCES chart_accounts(id) ON DELETE RESTRICT,
+      type TEXT NOT NULL CHECK(type IN ('asset','liability','equity','income','expense')),
+      normal_side TEXT NOT NULL CHECK(normal_side IN ('debit','credit')),
+      role TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual','template','import')),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_chart_accounts_parent ON chart_accounts(parent_id,code);
+    CREATE INDEX IF NOT EXISTS idx_chart_accounts_role ON chart_accounts(role) WHERE role<>'';
+
+    CREATE TABLE IF NOT EXISTS analytic_accounts (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'custom' CHECK(kind IN ('contact','project','employee','custom')),
+      source_kind TEXT,
+      source_key TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source_kind,source_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS cost_centers (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      parent_id TEXT REFERENCES cost_centers(id) ON DELETE RESTRICT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  // ابعاد روی آرتیکل سند می‌نشینند، نه روی حساب — این تعریف «شناور» بودن تفصیلی است.
+  ensureColumn(database, 'journal_lines', 'analytic_id TEXT REFERENCES analytic_accounts(id) ON DELETE RESTRICT');
+  ensureColumn(database, 'journal_lines', 'cost_center_id TEXT REFERENCES cost_centers(id) ON DELETE RESTRICT');
+  ensureColumn(database, 'ledger_accounts', 'chart_account_id TEXT REFERENCES chart_accounts(id) ON DELETE RESTRICT');
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_journal_lines_analytic ON journal_lines(analytic_id) WHERE analytic_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_journal_lines_cost_center ON journal_lines(cost_center_id) WHERE cost_center_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_ledger_accounts_chart ON ledger_accounts(chart_account_id);
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// اعتبارسنجی کدینگ — منطق خالص
+// ---------------------------------------------------------------------------
+
+const LEVEL_ALIASES = {
+  group: 'group', گروه: 'group', 'گروه حساب': 'group', 1: 'group', '1': 'group',
+  general: 'general', کل: 'general', 'حساب کل': 'general', 2: 'general', '2': 'general',
+  subsidiary: 'subsidiary', معین: 'subsidiary', 'حساب معین': 'subsidiary', moein: 'subsidiary', 3: 'subsidiary', '3': 'subsidiary',
+};
+
+const TYPE_ALIASES = {
+  asset: 'asset', دارایی: 'asset', داراییها: 'asset', 'دارایی ها': 'asset',
+  liability: 'liability', بدهی: 'liability', بدهیها: 'liability', 'بدهی ها': 'liability',
+  equity: 'equity', سرمایه: 'equity', 'حقوق صاحبان سهام': 'equity',
+  income: 'income', درآمد: 'income', درآمدها: 'income', فروش: 'income',
+  expense: 'expense', هزینه: 'expense', هزینهها: 'expense', 'هزینه ها': 'expense', 'بهای تمام شده': 'expense',
+};
+
+export function normalizeChartLevel(value) {
+  const key = cleanName(latin(value)).toLowerCase();
+  return LEVEL_ALIASES[key] || null;
+}
+
+export function normalizeChartType(value) {
+  const key = cleanName(value).toLowerCase();
+  return TYPE_ALIASES[key] || null;
+}
+
+/**
+ * درخت کدینگ را می‌سنجد. قواعد عمدی و سخت‌گیرانه:
+ * - کد فقط رقم باشد و تکراری نباشد؛
+ * - سطح‌ها گروه ← کل ← معین تو در تو باشند؛
+ * - کد فرزند با کد والد شروع شود و از آن بلندتر باشد (قرارداد کدینگ ایرانی)؛
+ * - نوع حساب فرزند با والد یکی باشد؛
+ * - فقط «معین» قابل ثبت سند است.
+ * هر ایراد با شمارهٔ ردیف برمی‌گردد تا حسابدار دقیقاً بداند کدام سطر فایلش خراب است.
+ */
+export function validateChartRows(rows = []) {
+  const errors = [];
+  const byCode = new Map();
+  const accounts = [];
+
+  rows.forEach((row, index) => {
+    const rowNumber = row.rowNumber || index + 1;
+    const code = normalizeChartCode(row.code);
+    const name = cleanName(row.name);
+    const level = normalizeChartLevel(row.level);
+    const type = normalizeChartType(row.type);
+    const parentCode = row.parentCode == null || row.parentCode === '' ? '' : normalizeChartCode(row.parentCode);
+
+    if (!chartCodeIsValid(code)) { errors.push({ rowNumber, code: row.code, message: 'کد حساب باید فقط رقم و حداکثر ۱۲ رقم باشد.' }); return; }
+    if (!name) { errors.push({ rowNumber, code, message: 'نام حساب خالی است.' }); return; }
+    if (!level) { errors.push({ rowNumber, code, message: 'سطح حساب باید گروه، کل یا معین باشد.' }); return; }
+    if (!type) { errors.push({ rowNumber, code, message: 'نوع حساب باید دارایی، بدهی، سرمایه، درآمد یا هزینه باشد.' }); return; }
+    if (byCode.has(code)) { errors.push({ rowNumber, code, message: `کد ${code} در فایل تکراری است.` }); return; }
+
+    const account = {
+      rowNumber, code, name, level, type,
+      normalSide: CHART_TYPES[type].normalSide,
+      parentCode: parentCode || null,
+      role: CHART_ROLES.includes(String(row.role || '').trim()) ? String(row.role).trim() : '',
+      postable: level === 'subsidiary',
+    };
+    byCode.set(code, account);
+    accounts.push(account);
+  });
+
+  for (const account of accounts) {
+    if (account.level === 'group') {
+      if (account.parentCode) errors.push({ rowNumber: account.rowNumber, code: account.code, message: 'گروه نباید والد داشته باشد.' });
+      continue;
+    }
+    if (!account.parentCode) {
+      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `${CHART_LEVELS[account.level].label} باید کد والد داشته باشد.` });
+      continue;
+    }
+    const parent = byCode.get(account.parentCode);
+    if (!parent) {
+      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `والد با کد ${account.parentCode} در فایل نیست.` });
+      continue;
+    }
+    const expectedParentLevel = account.level === 'general' ? 'group' : 'general';
+    if (parent.level !== expectedParentLevel) {
+      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `والد ${CHART_LEVELS[account.level].label} باید ${CHART_LEVELS[expectedParentLevel].label} باشد.` });
+      continue;
+    }
+    if (!account.code.startsWith(parent.code) || account.code.length <= parent.code.length) {
+      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `کد ${account.code} باید با کد والد ${parent.code} شروع شود و از آن بلندتر باشد.` });
+      continue;
+    }
+    if (parent.type !== account.type) {
+      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `نوع حساب با والد ${parent.code} یکی نیست.` });
+    }
+  }
+
+  // ترتیب درج: والد همیشه پیش از فرزند، وگرنه کلید خارجی می‌شکند.
+  const ordered = [...accounts].sort((first, second) => CHART_LEVELS[first.level].order - CHART_LEVELS[second.level].order || first.code.localeCompare(second.code));
+  return { accounts: ordered, errors };
+}
+
+// ---------------------------------------------------------------------------
+// خواندن فایل کدینگ
+// ---------------------------------------------------------------------------
+
+function splitCsvLine(line, separator) {
+  const cells = [];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"' && quoted && line[index + 1] === '"') { value += '"'; index += 1; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === separator && !quoted) { cells.push(value.trim()); value = ''; }
+    else value += char;
+  }
+  cells.push(value.trim());
+  return cells;
+}
+
+function headerKey(value) {
+  return latin(value).replace(/^﻿/, '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+const COLUMN_ALIASES = {
+  code: ['code', 'accountcode', 'کد', 'کدحساب', 'کدینگ'],
+  name: ['name', 'title', 'accountname', 'نام', 'نامحساب', 'شرح', 'عنوان'],
+  level: ['level', 'سطح', 'نوعسطح', 'ردهحساب'],
+  parentCode: ['parent', 'parentcode', 'کدوالد', 'والد', 'کدبالاسری', 'حسابوالد'],
+  type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
+  role: ['role', 'نقش', 'کاربرد'],
+};
+
+export function parseChartCsv(input) {
+  const text = String(input ?? '').replace(/^﻿/, '');
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length);
+  if (lines.length < 2) throw chartError('فایل کدینگ باید سرستون و حداقل یک ردیف داشته باشد.', 'CHART_FILE_EMPTY');
+
+  const separator = [',', ';', '\t'].reduce((best, candidate) => (
+    splitCsvLine(lines[0], candidate).length > splitCsvLine(lines[0], best).length ? candidate : best
+  ), ',');
+  const headers = splitCsvLine(lines[0], separator).map(headerKey);
+  const columnIndex = {};
+  for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
+    const index = headers.findIndex((header) => aliases.includes(header));
+    if (index >= 0) columnIndex[field] = index;
+  }
+  for (const required of ['code', 'name', 'level', 'type']) {
+    if (columnIndex[required] == null) throw chartError(`ستون «${required}» در فایل کدینگ پیدا نشد. سرستون‌های لازم: کد، نام، سطح، نوع و در صورت وجود کد والد.`, 'CHART_COLUMN_MISSING');
+  }
+
+  const rows = lines.slice(1).map((line, index) => {
+    const cells = splitCsvLine(line, separator);
+    const cell = (field) => (columnIndex[field] == null ? '' : cells[columnIndex[field]] ?? '');
+    return {
+      rowNumber: index + 2,
+      code: cell('code'), name: cell('name'), level: cell('level'),
+      type: cell('type'), parentCode: cell('parentCode'), role: cell('role'),
+    };
+  }).filter((row) => `${row.code}${row.name}`.trim().length);
+
+  return { rows, separator, columnIndex };
+}
+
+// ---------------------------------------------------------------------------
+// کدینگ پیش‌فرض پیشنهادی
+// ---------------------------------------------------------------------------
+
+// کدینگ شروع، نه کدینگ رسمی. دفتر می‌تواند آن را بپذیرد یا کدینگ خودش را وارد کند.
+export const DEFAULT_CHART_TEMPLATE = Object.freeze([
+  ['1', 'دارایی‌های جاری', 'group', '', 'asset', ''],
+  ['11', 'موجودی نقد و بانک', 'general', '1', 'asset', ''],
+  ['1101', 'صندوق', 'subsidiary', '11', 'asset', 'cash'],
+  ['1102', 'بانک', 'subsidiary', '11', 'asset', 'bank'],
+  ['1103', 'تنخواه‌گردان', 'subsidiary', '11', 'asset', ''],
+  ['12', 'حساب‌ها و اسناد دریافتنی', 'general', '1', 'asset', ''],
+  ['1201', 'حساب‌های دریافتنی تجاری', 'subsidiary', '12', 'asset', 'receivable'],
+  ['1202', 'اسناد دریافتنی', 'subsidiary', '12', 'asset', ''],
+  ['13', 'موجودی کالا', 'general', '1', 'asset', ''],
+  ['1301', 'موجودی کالا و مواد', 'subsidiary', '13', 'asset', 'inventory'],
+  ['14', 'پیش‌پرداخت‌ها و مالیات', 'general', '1', 'asset', ''],
+  ['1401', 'پیش‌پرداخت‌ها', 'subsidiary', '14', 'asset', ''],
+  ['1402', 'مالیات و عوارض ارزش افزودهٔ خرید', 'subsidiary', '14', 'asset', 'input-tax'],
+  ['3', 'بدهی‌های جاری', 'group', '', 'liability', ''],
+  ['31', 'حساب‌ها و اسناد پرداختنی', 'general', '3', 'liability', ''],
+  ['3101', 'حساب‌های پرداختنی تجاری', 'subsidiary', '31', 'liability', 'payable'],
+  ['3102', 'اسناد پرداختنی', 'subsidiary', '31', 'liability', ''],
+  ['32', 'مالیات و عوارض پرداختنی', 'general', '3', 'liability', ''],
+  ['3201', 'مالیات و عوارض ارزش افزودهٔ فروش', 'subsidiary', '32', 'liability', 'output-tax'],
+  ['5', 'حقوق صاحبان سرمایه', 'group', '', 'equity', ''],
+  ['51', 'سرمایه', 'general', '5', 'equity', ''],
+  ['5101', 'سرمایه و ماندهٔ افتتاحیه', 'subsidiary', '51', 'equity', 'equity'],
+  ['6', 'درآمدها', 'group', '', 'income', ''],
+  ['61', 'درآمد عملیاتی', 'general', '6', 'income', ''],
+  ['6101', 'فروش کالا', 'subsidiary', '61', 'income', 'sales'],
+  ['6102', 'درآمد خدمات', 'subsidiary', '61', 'income', 'service-income'],
+  ['62', 'درآمد غیرعملیاتی', 'general', '6', 'income', ''],
+  ['6201', 'سایر درآمدها', 'subsidiary', '62', 'income', 'other-income'],
+  ['6202', 'اضافی موجودی و تعدیلات', 'subsidiary', '62', 'income', 'inventory-gain'],
+  ['7', 'بهای تمام‌شده', 'group', '', 'expense', ''],
+  ['71', 'بهای تمام‌شدهٔ فروش', 'general', '7', 'expense', ''],
+  ['7101', 'بهای تمام‌شدهٔ کالای فروش‌رفته', 'subsidiary', '71', 'expense', 'cogs'],
+  ['8', 'هزینه‌ها', 'group', '', 'expense', ''],
+  ['81', 'هزینه‌های عملیاتی', 'general', '8', 'expense', ''],
+  ['8101', 'حقوق و دستمزد', 'subsidiary', '81', 'expense', ''],
+  ['8102', 'اجاره', 'subsidiary', '81', 'expense', ''],
+  ['8103', 'حمل‌ونقل', 'subsidiary', '81', 'expense', ''],
+  ['8104', 'قبوض و انرژی', 'subsidiary', '81', 'expense', ''],
+  ['8105', 'کسری و ضایعات موجودی', 'subsidiary', '81', 'expense', 'inventory-shrinkage'],
+  ['8109', 'سایر هزینه‌های عملیاتی', 'subsidiary', '81', 'expense', 'operating-expense'],
+].map(([code, name, level, parentCode, type, role]) => Object.freeze({ code, name, level, parentCode, type, role })));
+
+// ---------------------------------------------------------------------------
+// نوشتن و خواندن کدینگ
+// ---------------------------------------------------------------------------
+
+export function chartAccountByCode(database, code) {
+  return database.prepare('SELECT * FROM chart_accounts WHERE code=?').get(normalizeChartCode(code)) || null;
+}
+
+export function importChartOfAccounts(database, rows = [], { source = 'import', replace = false } = {}) {
+  ensureChartSchema(database);
+  const { accounts, errors } = validateChartRows(rows);
+  if (errors.length) throw Object.assign(chartError('فایل کدینگ ایراد دارد و هیچ ردیفی وارد نشد.', 'CHART_ROWS_INVALID'), { details: { errors } });
+  if (!accounts.length) throw chartError('هیچ حساب معتبری در فایل نبود.', 'CHART_ROWS_EMPTY');
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    if (replace) {
+      // فقط کدینگی که هنوز به هیچ حساب داخلی و هیچ سندی وصل نشده قابل جایگزینی است.
+      const linked = database.prepare('SELECT COUNT(*) AS count FROM ledger_accounts WHERE chart_account_id IS NOT NULL').get().count;
+      if (linked) throw chartError('کدینگ فعلی به حساب‌های دفتر نگاشت شده است؛ پیش از جایگزینی باید نگاشت‌ها برداشته شوند.', 'CHART_IN_USE', 409);
+      database.prepare('DELETE FROM chart_accounts').run();
+    }
+    const insert = database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,source)
+      VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(code) DO UPDATE SET name=excluded.name,role=excluded.role`);
+    let created = 0;
+    let updated = 0;
+    for (const account of accounts) {
+      const existing = database.prepare('SELECT id,level,type FROM chart_accounts WHERE code=?').get(account.code);
+      if (existing && (existing.level !== account.level || existing.type !== account.type)) {
+        throw chartError(`حساب ${account.code} از قبل با سطح یا نوع دیگری وجود دارد و بی‌سروصدا بازنویسی نمی‌شود.`, 'CHART_CONFLICT', 409);
+      }
+      const parentId = account.parentCode ? database.prepare('SELECT id FROM chart_accounts WHERE code=?').get(account.parentCode)?.id || null : null;
+      if (account.parentCode && !parentId) throw chartError(`والد ${account.parentCode} پیدا نشد.`, 'CHART_PARENT_MISSING');
+      insert.run(existing?.id || randomUUID(), account.code, account.name, account.level, parentId, account.type, account.normalSide, account.role, source);
+      if (existing) updated += 1; else created += 1;
+    }
+    database.exec('COMMIT');
+    return { created, updated, total: accounts.length, source };
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+}
+
+export function installDefaultChartTemplate(database) {
+  return importChartOfAccounts(database, DEFAULT_CHART_TEMPLATE.map((item) => ({ ...item })), { source: 'template' });
+}
+
+export function saveChartAccount(database, values = {}) {
+  ensureChartSchema(database);
+  const code = normalizeChartCode(values.code);
+  const existing = values.id ? database.prepare('SELECT * FROM chart_accounts WHERE id=?').get(values.id) : chartAccountByCode(database, code);
+  const level = normalizeChartLevel(values.level) || existing?.level;
+  const type = normalizeChartType(values.type) || existing?.type;
+  const name = cleanName(values.name) || existing?.name;
+  if (!chartCodeIsValid(code)) throw chartError('کد حساب باید فقط رقم و حداکثر ۱۲ رقم باشد.');
+  if (!name) throw chartError('نام حساب خالی است.');
+  if (!level || !type) throw chartError('سطح و نوع حساب لازم است.');
+
+  const parentCode = values.parentCode == null ? existing?.parent_id && database.prepare('SELECT code FROM chart_accounts WHERE id=?').get(existing.parent_id)?.code : normalizeChartCode(values.parentCode);
+  const siblings = database.prepare('SELECT code,name,level,type,role FROM chart_accounts WHERE code<>?').all(code)
+    .map((row) => ({ ...row, parentCode: null }));
+  const parent = parentCode ? chartAccountByCode(database, parentCode) : null;
+  if (parentCode && !parent) throw chartError(`حساب والد با کد ${parentCode} در کدینگ نیست.`, 'CHART_PARENT_MISSING');
+
+  const { errors } = validateChartRows([
+    ...(parent ? [{ rowNumber: 0, code: parent.code, name: parent.name, level: parent.level, type: parent.type, parentCode: '' }] : []),
+    { rowNumber: 1, code, name, level, type, parentCode: parent ? parent.code : '', role: values.role },
+  ].filter((row, index, all) => all.findIndex((item) => item.code === row.code) === index));
+  // ایراد والد ساختگی (که والد خودش را در این نمونه ندارد) نادیده گرفته می‌شود.
+  const realErrors = errors.filter((item) => item.code === code);
+  if (realErrors.length) throw Object.assign(chartError(realErrors[0].message), { details: { errors: realErrors } });
+  void siblings;
+
+  const role = CHART_ROLES.includes(String(values.role || '').trim()) ? String(values.role).trim() : (existing?.role || '');
+  const id = existing?.id || randomUUID();
+  database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,active,source)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,parent_id=excluded.parent_id,role=excluded.role,active=excluded.active`)
+    .run(id, code, name, level, parent?.id || null, type, CHART_TYPES[type].normalSide, role,
+      values.active === false ? 0 : (existing?.active ?? 1), existing?.source || 'manual');
+  return database.prepare('SELECT * FROM chart_accounts WHERE id=?').get(id);
+}
+
+export function listChartAccounts(database, { includeInactive = false } = {}) {
+  ensureChartSchema(database);
+  const rows = database.prepare(`SELECT chart_accounts.id,chart_accounts.code,chart_accounts.name,chart_accounts.level,
+    chart_accounts.type,chart_accounts.normal_side AS normalSide,chart_accounts.role,chart_accounts.active,chart_accounts.source,
+    parent.code AS parentCode,parent.name AS parentName,
+    (SELECT COUNT(*) FROM ledger_accounts WHERE ledger_accounts.chart_account_id=chart_accounts.id) AS mappedAccounts
+    FROM chart_accounts LEFT JOIN chart_accounts AS parent ON parent.id=chart_accounts.parent_id
+    ${includeInactive ? '' : 'WHERE chart_accounts.active=1'}
+    ORDER BY chart_accounts.code`).all();
+  return rows.map((row) => ({
+    ...row,
+    active: Boolean(row.active),
+    levelLabel: CHART_LEVELS[row.level].label,
+    typeLabel: CHART_TYPES[row.type].label,
+    postable: row.level === 'subsidiary',
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// نگاشت حساب‌های داخلی حساب‌یار به کدینگ دفتر
+// ---------------------------------------------------------------------------
+
+// حساب داخلی حساب‌یار از روی منبعش شناخته می‌شود؛ این جدول می‌گوید هر منبع
+// طبیعتاً به کدام نقش کدینگ می‌نشیند. پیشنهاد است، نه تصمیم قطعی.
+const ROLE_BY_SOURCE_KIND = {
+  'customer-receivable': ['receivable'],
+  'vendor-payable': ['payable'],
+  'inventory-product': ['inventory'],
+  'cogs-product': ['cogs'],
+  'income-category': ['sales', 'service-income', 'other-income'],
+  'expense-category': ['operating-expense'],
+  'operational-account': ['cash', 'bank'],
+};
+
+const ROLE_BY_SOURCE_KEY = {
+  'output-tax': 'output-tax',
+  'input-tax': 'input-tax',
+  'opening-equity': 'equity',
+  'inventory-gain': 'inventory-gain',
+  'inventory-shrinkage': 'inventory-shrinkage',
+};
+
+/**
+ * برای یک حساب داخلی، مناسب‌ترین معین کدینگ را پیشنهاد می‌دهد.
+ * اگر نقش دقیق پیدا نشود، اولین معین هم‌نوع پیشنهاد می‌شود و اگر آن هم نبود null.
+ */
+export function suggestChartAccount(ledgerAccount, chartAccounts = []) {
+  const postable = chartAccounts.filter((item) => item.postable !== false && item.level === 'subsidiary' && item.active !== false);
+  const byRole = (role) => postable.find((item) => item.role === role) || null;
+
+  const keyRole = ROLE_BY_SOURCE_KEY[ledgerAccount.sourceKey || ledgerAccount.source_key];
+  if (keyRole) return byRole(keyRole);
+
+  const sourceKind = ledgerAccount.sourceKind || ledgerAccount.source_kind;
+  if (sourceKind === 'operational-account') {
+    const name = String(ledgerAccount.name || '');
+    const wantsBank = /بانک|کارت|شبا|حساب جاری/.test(name);
+    return byRole(wantsBank ? 'bank' : 'cash') || byRole(wantsBank ? 'cash' : 'bank');
+  }
+  for (const role of ROLE_BY_SOURCE_KIND[sourceKind] || []) {
+    const match = byRole(role);
+    if (match) return match;
+  }
+  return postable.find((item) => item.type === ledgerAccount.type) || null;
+}
+
+export function mapLedgerAccountToChart(database, ledgerAccountId, chartAccountId) {
+  ensureChartSchema(database);
+  const ledger = database.prepare('SELECT id,type,name FROM ledger_accounts WHERE id=?').get(String(ledgerAccountId || ''));
+  if (!ledger) throw chartError('حساب دفتر کل پیدا نشد.', 'LEDGER_ACCOUNT_MISSING', 404);
+  if (!chartAccountId) {
+    database.prepare('UPDATE ledger_accounts SET chart_account_id=NULL WHERE id=?').run(ledger.id);
+    return { ledgerAccountId: ledger.id, chartAccount: null };
+  }
+  const chart = database.prepare('SELECT * FROM chart_accounts WHERE id=? OR code=?').get(String(chartAccountId), normalizeChartCode(chartAccountId));
+  if (!chart) throw chartError('حساب کدینگ پیدا نشد.', 'CHART_ACCOUNT_MISSING', 404);
+  if (chart.level !== 'subsidiary') throw chartError('فقط حساب معین قابل نگاشت است؛ گروه و کل سند نمی‌پذیرند.', 'CHART_NOT_POSTABLE');
+  if (!chart.active) throw chartError('حساب کدینگ غیرفعال است.', 'CHART_ACCOUNT_INACTIVE');
+  if (chart.type !== ledger.type) throw chartError(`نوع حساب «${ledger.name}» با معین ${chart.code} یکی نیست.`, 'CHART_TYPE_MISMATCH');
+  database.prepare('UPDATE ledger_accounts SET chart_account_id=? WHERE id=?').run(chart.id, ledger.id);
+  return { ledgerAccountId: ledger.id, chartAccount: chart };
+}
+
+/**
+ * وضعیت نگاشت: چه چیزی نگاشت شده، چه چیزی نشده و برای نشده‌ها چه پیشنهادی هست.
+ * این خروجی هم صفحهٔ کدینگ را می‌سازد و هم دروازهٔ آمادگی خروجی را تغذیه می‌کند.
+ */
+export function chartMappingOverview(database) {
+  ensureChartSchema(database);
+  const chartAccounts = listChartAccounts(database);
+  const ledgerAccounts = database.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,ledger_accounts.type,
+    ledger_accounts.source_kind AS sourceKind,ledger_accounts.source_key AS sourceKey,ledger_accounts.active,
+    ledger_accounts.chart_account_id AS chartAccountId,
+    chart_accounts.code AS chartCode,chart_accounts.name AS chartName
+    FROM ledger_accounts LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+    WHERE ledger_accounts.active=1 ORDER BY CAST(ledger_accounts.code AS INTEGER)`).all();
+
+  const items = ledgerAccounts.map((account) => {
+    const suggestion = account.chartAccountId ? null : suggestChartAccount(account, chartAccounts);
+    return {
+      ...account,
+      mapped: Boolean(account.chartAccountId),
+      typeLabel: CHART_TYPES[account.type]?.label || account.type,
+      suggestion: suggestion ? { id: suggestion.id, code: suggestion.code, name: suggestion.name } : null,
+    };
+  });
+  const unmapped = items.filter((item) => !item.mapped);
+  return {
+    chartInstalled: chartAccounts.length > 0,
+    chartAccountCount: chartAccounts.length,
+    postableCount: chartAccounts.filter((item) => item.postable).length,
+    items,
+    mappedCount: items.length - unmapped.length,
+    unmappedCount: unmapped.length,
+    // کدینگ وقتی «کامل» است که هیچ حساب فعالی بدون معین مقصد نمانده باشد.
+    complete: chartAccounts.length > 0 && unmapped.length === 0,
+    suggestionsAvailable: unmapped.filter((item) => item.suggestion).length,
+  };
+}
+
+export function applySuggestedChartMappings(database) {
+  const overview = chartMappingOverview(database);
+  if (!overview.chartInstalled) throw chartError('ابتدا کدینگ را وارد کن یا کدینگ پیش‌فرض را نصب کن.', 'CHART_NOT_INSTALLED');
+  let applied = 0;
+  for (const item of overview.items) {
+    if (item.mapped || !item.suggestion) continue;
+    mapLedgerAccountToChart(database, item.id, item.suggestion.id);
+    applied += 1;
+  }
+  return { applied, ...chartMappingOverview(database) };
+}
+
+// ---------------------------------------------------------------------------
+// تفصیلی شناور و مرکز هزینه
+// ---------------------------------------------------------------------------
+
+function nextDimensionCode(database, table, prefix) {
+  const rows = database.prepare(`SELECT code FROM ${table} WHERE code LIKE ?`).all(`${prefix}%`);
+  const used = new Set(rows.map((row) => Number(String(row.code).slice(prefix.length))).filter(Number.isFinite));
+  let index = 1;
+  while (used.has(index)) index += 1;
+  return `${prefix}${String(index).padStart(4, '0')}`;
+}
+
+export function saveAnalyticAccount(database, values = {}) {
+  ensureChartSchema(database);
+  const name = cleanName(values.name);
+  if (!name) throw chartError('نام تفصیلی خالی است.');
+  const kind = Object.hasOwn(ANALYTIC_KINDS, values.kind) ? values.kind : 'custom';
+  const sourceKind = values.sourceKind ? String(values.sourceKind).slice(0, 40) : null;
+  const sourceKey = values.sourceKey ? String(values.sourceKey).slice(0, 120) : null;
+  const existing = values.id
+    ? database.prepare('SELECT * FROM analytic_accounts WHERE id=?').get(values.id)
+    : (sourceKind && sourceKey ? database.prepare('SELECT * FROM analytic_accounts WHERE source_kind=? AND source_key=?').get(sourceKind, sourceKey) : null);
+  const code = normalizeChartCode(values.code) || existing?.code || nextDimensionCode(database, 'analytic_accounts', '');
+  if (!chartCodeIsValid(code)) throw chartError('کد تفصیلی باید فقط رقم باشد.');
+  const id = existing?.id || randomUUID();
+  database.prepare(`INSERT INTO analytic_accounts (id,code,name,kind,source_kind,source_key,active) VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,kind=excluded.kind,active=excluded.active`)
+    .run(id, code, name, kind, sourceKind, sourceKey, values.active === false ? 0 : 1);
+  return database.prepare('SELECT * FROM analytic_accounts WHERE id=?').get(id);
+}
+
+// طرف حساب دفتر به‌طور خودکار یک تفصیلی می‌گیرد؛ این همان چیزی است که حسابدار
+// انتظار دارد: یک معین «حساب‌های دریافتنی» و مشتری‌ها به‌عنوان تفصیلی زیر آن.
+export function analyticForContact(database, contactId, name) {
+  if (!contactId && !name) return null;
+  const key = String(contactId || name).slice(0, 120);
+  return saveAnalyticAccount(database, { name: name || 'طرف حساب', kind: 'contact', sourceKind: 'contact', sourceKey: key });
+}
+
+export function listAnalyticAccounts(database, { includeInactive = false } = {}) {
+  ensureChartSchema(database);
+  return database.prepare(`SELECT id,code,name,kind,source_kind AS sourceKind,source_key AS sourceKey,active
+    FROM analytic_accounts ${includeInactive ? '' : 'WHERE active=1'} ORDER BY code`).all()
+    .map((row) => ({ ...row, active: Boolean(row.active), kindLabel: ANALYTIC_KINDS[row.kind] || ANALYTIC_KINDS.custom }));
+}
+
+export function saveCostCenter(database, values = {}) {
+  ensureChartSchema(database);
+  const name = cleanName(values.name);
+  if (!name) throw chartError('نام مرکز هزینه خالی است.');
+  const existing = values.id ? database.prepare('SELECT * FROM cost_centers WHERE id=?').get(values.id) : null;
+  const code = normalizeChartCode(values.code) || existing?.code || nextDimensionCode(database, 'cost_centers', '');
+  if (!chartCodeIsValid(code)) throw chartError('کد مرکز هزینه باید فقط رقم باشد.');
+  let parentId = null;
+  if (values.parentId) {
+    const parent = database.prepare('SELECT id FROM cost_centers WHERE id=?').get(values.parentId);
+    if (!parent) throw chartError('مرکز هزینهٔ والد پیدا نشد.', 'COST_CENTER_PARENT_MISSING');
+    if (existing && parent.id === existing.id) throw chartError('مرکز هزینه نمی‌تواند والد خودش باشد.');
+    parentId = parent.id;
+  }
+  const id = existing?.id || randomUUID();
+  database.prepare(`INSERT INTO cost_centers (id,code,name,parent_id,active) VALUES (?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,parent_id=excluded.parent_id,active=excluded.active`)
+    .run(id, code, name, parentId, values.active === false ? 0 : 1);
+  return database.prepare('SELECT * FROM cost_centers WHERE id=?').get(id);
+}
+
+export function listCostCenters(database, { includeInactive = false } = {}) {
+  ensureChartSchema(database);
+  return database.prepare(`SELECT cost_centers.id,cost_centers.code,cost_centers.name,cost_centers.active,
+    parent.code AS parentCode,parent.name AS parentName FROM cost_centers
+    LEFT JOIN cost_centers AS parent ON parent.id=cost_centers.parent_id
+    ${includeInactive ? '' : 'WHERE cost_centers.active=1'} ORDER BY cost_centers.code`).all()
+    .map((row) => ({ ...row, active: Boolean(row.active) }));
+}
+
+/**
+ * آرتیکل سند را برای ابعاد می‌سنجد. بعد فقط وقتی پذیرفته می‌شود که واقعاً وجود
+ * داشته باشد و فعال باشد؛ شناسهٔ دلخواه ساکت نادیده گرفته نمی‌شود.
+ */
+export function resolveLineDimensions(database, line = {}) {
+  const analyticId = String(line.analyticId || '').trim() || null;
+  const costCenterId = String(line.costCenterId || '').trim() || null;
+  if (analyticId && !database.prepare('SELECT 1 FROM analytic_accounts WHERE id=? AND active=1').get(analyticId)) {
+    throw chartError('تفصیلی انتخاب‌شده معتبر یا فعال نیست.', 'ANALYTIC_INVALID');
+  }
+  if (costCenterId && !database.prepare('SELECT 1 FROM cost_centers WHERE id=? AND active=1').get(costCenterId)) {
+    throw chartError('مرکز هزینهٔ انتخاب‌شده معتبر یا فعال نیست.', 'COST_CENTER_INVALID');
+  }
+  return { analyticId, costCenterId };
+}
+
+/**
+ * گردش و ماندهٔ هر بعد در یک بازه. این گزارش تنها دلیل واقعی داشتن تفصیلی و
+ * مرکز هزینه است: «این پروژه/این شعبه چقدر خرج برداشت؟»
+ */
+export function dimensionBalance(database, { dimension = 'costCenter', from = '', to = '' } = {}) {
+  ensureChartSchema(database);
+  const isAnalytic = dimension === 'analytic';
+  const table = isAnalytic ? 'analytic_accounts' : 'cost_centers';
+  const column = isAnalytic ? 'analytic_id' : 'cost_center_id';
+  const conditions = [];
+  const params = [];
+  if (from) { conditions.push('journal_entries.occurred_at>=?'); params.push(new Date(from).toISOString()); }
+  if (to) { conditions.push('journal_entries.occurred_at<=?'); params.push(new Date(to).toISOString()); }
+  const where = conditions.length ? `AND ${conditions.join(' AND ')}` : '';
+
+  const rows = database.prepare(`SELECT ${table}.id,${table}.code,${table}.name,
+    COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit,
+    COUNT(journal_lines.id) AS lineCount
+    FROM ${table}
+    LEFT JOIN journal_lines ON journal_lines.${column}=${table}.id
+    LEFT JOIN journal_entries ON journal_entries.id=journal_lines.entry_id ${where}
+    GROUP BY ${table}.id ORDER BY ${table}.code`).all(...params)
+    .map((row) => ({ ...row, balance: Number(row.debit) - Number(row.credit) }));
+
+  const unassigned = database.prepare(`SELECT COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit,
+    COUNT(journal_lines.id) AS lineCount FROM journal_lines
+    JOIN journal_entries ON journal_entries.id=journal_lines.entry_id
+    WHERE journal_lines.${column} IS NULL ${where.replace(/^AND /, 'AND ')}`).get(...params);
+
+  return {
+    dimension: isAnalytic ? 'analytic' : 'costCenter',
+    dimensionLabel: isAnalytic ? 'تفصیلی شناور' : 'مرکز هزینه',
+    unit: 'IRT',
+    rows,
+    // ردیف‌های بدون بعد پنهان نمی‌شوند؛ حسابدار باید بداند چه بخشی تخصیص نیافته.
+    unassigned: { debit: Number(unassigned?.debit || 0), credit: Number(unassigned?.credit || 0), lineCount: Number(unassigned?.lineCount || 0) },
+    generatedAt: new Date().toISOString(),
+  };
+}
