@@ -29,6 +29,10 @@ export function amountUnitLabel(value) {
 export const TRANSFER_FIELDS = Object.freeze([
   Object.freeze({ id: 'entryId', label: 'شناسه سند حساب‌یار', kind: 'text' }),
   Object.freeze({ id: 'lineNumber', label: 'ردیف سند', kind: 'text' }),
+  // پارسیان موقع ورود شمارهٔ سند فایل را دور می‌ریزد و خودش شماره می‌دهد، پس
+  // شمارهٔ سند حساب‌یار فقط از راه شرح قابل ردیابی می‌ماند.
+  Object.freeze({ id: 'documentNumber', label: 'شماره سند حساب‌یار', kind: 'text' }),
+  Object.freeze({ id: 'fiscalYear', label: 'سال مالی', kind: 'text' }),
   Object.freeze({ id: 'period', label: 'دوره شمسی', kind: 'text' }),
   Object.freeze({ id: 'dateJalali', label: 'تاریخ شمسی', kind: 'text' }),
   Object.freeze({ id: 'dateIso', label: 'تاریخ میلادی', kind: 'text' }),
@@ -152,6 +156,7 @@ export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amou
     const mapping = mappingByAccount.get(item.accountId) || {};
     const source = {
       entryId: item.entryId, lineNumber, period,
+      documentNumber: item.documentNumber ?? '', fiscalYear: item.fiscalYear ?? '',
       dateJalali: persianDate(item.occurredAt), dateIso: item.occurredAt,
       entryKind: item.entryKind, sourceType: item.sourceType, sourceId: item.sourceId,
       memo: item.memo || '', lineDescription: item.lineDescription || '',

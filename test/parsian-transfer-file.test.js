@@ -94,3 +94,78 @@ test('the seventeen transfer columns are the ones the schema already carries', (
     assert.ok(TRANSFER_COLUMNS.includes(name));
   }
 });
+
+// ---------------------------------------------------------------------------
+// آنچه از اجرای واقعی «انتقال اسناد از فایل» روی همان فایل خروجی معلوم شد.
+// فهرست «جستجوی اسناد حسابداری» بعد از دو بار ورود این را نشان داد:
+//
+//   سند ۴  1402/06/05  (تایپ دستی)  زمان ثبت: 1405/06/05 10:27:04 کاربر ارشد
+//   سند ۵  1402/06/05  (وارد شده)   زمان ثبت: خالی
+//   سند ۶  1402/06/05  (وارد شده)   زمان ثبت: خالی
+//
+// یعنی: شمارهٔ سند فایل دور ریخته می‌شود، تاریخ حفظ می‌شود، ورود دوباره سند
+// تکراری می‌سازد، و سند وارد شده تاریخچهٔ ثبت ندارد.
+
+const IMPORT_RESULT = Object.freeze([
+  { sanad: 4, date: '1402/06/05', origin: 'typed', registeredBy: 'کاربر ارشد' },
+  { sanad: 5, date: '1402/06/05', origin: 'imported', registeredBy: '' },
+  { sanad: 6, date: '1402/06/05', origin: 'imported', registeredBy: '' },
+]);
+
+test('Parsian assigns its own document number and ignores the one in the file', () => {
+  const imported = IMPORT_RESULT.filter((row) => row.origin === 'imported');
+  // فایل شمارهٔ ۴ را حمل می‌کرد؛ پارسیان ۵ و ۶ ساخت.
+  assert.deepEqual(imported.map((row) => row.sanad), [5, 6]);
+  assert.ok(imported.every((row) => row.sanad !== REAL_EXPORT_ROWS[0].Sanad_Num));
+});
+
+test('the document date survives the import unchanged', () => {
+  for (const row of IMPORT_RESULT) assert.equal(row.date, REAL_EXPORT_ROWS[0].SanadDate);
+});
+
+test('importing the same file twice silently duplicates the document', () => {
+  const imported = IMPORT_RESULT.filter((row) => row.origin === 'imported');
+  assert.equal(imported.length, 2, 'یک فایل، دو بار ورود، دو سند — بدون هیچ هشداری');
+  // پس جلوگیری از ارسال دوباره کاملاً وظیفهٔ حساب‌یار است.
+});
+
+test('an imported document has no registration history, so it is recognisable', () => {
+  const typed = IMPORT_RESULT.find((row) => row.origin === 'typed');
+  const imported = IMPORT_RESULT.filter((row) => row.origin === 'imported');
+  assert.ok(typed.registeredBy);
+  assert.ok(imported.every((row) => !row.registeredBy));
+});
+
+test('the hesab-yar document number can ride along in a column of its own', () => {
+  // چون Sanad_Num زنده نمی‌ماند، تنها راه ردیابی این است که شمارهٔ سند
+  // حساب‌یار داخل شرح برود.
+  const { headers, rows } = applyTransferTemplate({
+    columns: [
+      { field: 'documentNumber', header: 'شماره سند حساب‌یار' },
+      { field: 'lineDescription', header: 'Comment' },
+      { field: 'kolCode', header: 'KolCode' },
+      { field: 'debitToman', header: 'Bed' },
+      { field: 'creditToman', header: 'Bes' },
+    ],
+    journalRows: [
+      { entryId: 'e1', documentNumber: 117, fiscalYear: '1402', kolCode: '10', lineDescription: 'حساب‌یار ۱۱۷', debit: 20000000, credit: 0 },
+      { entryId: 'e1', documentNumber: 117, fiscalYear: '1402', kolCode: '12', lineDescription: 'حساب‌یار ۱۱۷', debit: 0, credit: 20000000 },
+    ],
+  });
+  assert.equal(headers[0], 'شماره سند حساب‌یار');
+  assert.deepEqual(rows.map((row) => row[0]), [117, 117]);
+});
+
+test('a journal row without a document number leaves the column empty, not zero', () => {
+  const { rows } = applyTransferTemplate({
+    columns: [
+      { field: 'documentNumber', header: 'سند' },
+      { field: 'fiscalYear', header: 'سال مالی' },
+      { field: 'kolCode', header: 'KolCode' },
+      { field: 'debitToman', header: 'Bed' },
+      { field: 'creditToman', header: 'Bes' },
+    ],
+    journalRows: [{ entryId: 'e1', kolCode: '10', debit: 1, credit: 0 }],
+  });
+  assert.deepEqual(rows[0].slice(0, 2), ['', ''], 'صفر جعلی یعنی سند شمارهٔ صفر');
+});

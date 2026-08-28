@@ -1574,6 +1574,7 @@ function accountingTransferJournalRows(range) {
   return db.prepare(`SELECT journal_entries.id AS entryId,journal_entries.occurred_at AS occurredAt,
     journal_entries.memo,journal_entries.entry_kind AS entryKind,journal_entries.source_type AS sourceType,
     journal_entries.source_id AS sourceId,journal_entries.revision,journal_lines.account_id AS accountId,
+    journal_entries.document_number AS documentNumber,journal_entries.fiscal_year AS fiscalYear,
     ledger_accounts.code AS accountCode,ledger_accounts.name AS accountName,journal_lines.debit,journal_lines.credit,
     journal_lines.description AS lineDescription,
     chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
