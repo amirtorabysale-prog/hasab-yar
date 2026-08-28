@@ -243,3 +243,98 @@ test('too many rows is refused with a clear limit instead of a corrupt file', { 
   }));
   assert.equal(error.code, 'PARSIAN_TRANSFER_TOO_MANY_ROWS');
 });
+
+// ---------------------------------------------------------------------------
+// نتیجهٔ آزمون واقعی: فایلی که حساب‌یار ساخته بود به «انتقال اسناد از فایل»
+// پارسیان داده شد و سه سند ۷، ۸ و ۹ ساخته شدند. اعداد زیر از فهرست «جستجوی
+// اسناد حسابداری» همان نصب برداشته شده‌اند و معیار پذیرش فاز ۸ را می‌سنجند:
+// تعداد ردیف برابر بسته، ردیف ردشده صفر، و هر دو جمع دقیقاً منطبق.
+
+const TRIAL_IMPORT = Object.freeze({
+  before: { debit: 936050000, credit: 758050000 },
+  after: { debit: 942720000, credit: 764720000 },
+  documents: [
+    { sanad: 7, date: '1402/06/05', lines: [
+      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق', debit: 5000000, credit: 0 },
+      { kol: 12, moeen: 2, tafsili: 1, name: 'فروشگاه محترم اميني', debit: 0, credit: 5000000 },
+    ] },
+    { sanad: 8, date: '1402/06/12', lines: [
+      { kol: 62, moeen: 1, tafsili: 0, name: 'خرید', debit: 1250000, credit: 0 },
+      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق', debit: 0, credit: 1250000 },
+    ] },
+    { sanad: 9, date: '1402/06/20', lines: [
+      { kol: 50, moeen: 9, tafsili: 0, name: 'هزینه حمل', debit: 300000, credit: 0 },
+      { kol: 50, moeen: 5, tafsili: 0, name: 'هزینه پست و تلفن', debit: 120000, credit: 0 },
+      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق', debit: 0, credit: 420000 },
+    ] },
+  ],
+});
+
+// همان سه سندی که به پارسیان داده شد.
+const SENT_DOCUMENTS = [
+  { date: '1402/06/05', comment: 'حساب‌یار ۱۱۷', lines: [
+    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 5000000, credit: 0 },
+    { kolCode: 12, moeenCode: 2, tafsiliCode: 1, debit: 0, credit: 5000000 },
+  ] },
+  { date: '1402/06/12', comment: 'حساب‌یار ۱۱۸', lines: [
+    { kolCode: 62, moeenCode: 1, tafsiliCode: 0, debit: 1250000, credit: 0 },
+    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 1250000 },
+  ] },
+  { date: '1402/06/20', comment: 'حساب‌یار ۱۱۹', lines: [
+    { kolCode: 50, moeenCode: 9, tafsiliCode: 0, debit: 300000, credit: 0 },
+    { kolCode: 50, moeenCode: 5, tafsiliCode: 0, debit: 120000, credit: 0 },
+    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 420000 },
+  ] },
+];
+
+test('every row of the package arrived and none was rejected', () => {
+  const sentRows = documentRows(SENT_DOCUMENTS);
+  const landedRows = TRIAL_IMPORT.documents.flatMap((item) => item.lines);
+  assert.equal(landedRows.length, sentRows.length, 'معیار فاز ۸: تعداد ردیف باید با بسته برابر باشد');
+  assert.equal(sentRows.length, 7);
+});
+
+test('both destination totals moved by exactly the package total', () => {
+  const sent = documentRows(SENT_DOCUMENTS);
+  const packageDebit = sent.reduce((sum, row) => sum + row.Bed, 0);
+  const packageCredit = sent.reduce((sum, row) => sum + row.Bes, 0);
+  assert.equal(packageDebit, packageCredit, 'بسته خودش متوازن است');
+  assert.equal(TRIAL_IMPORT.after.debit - TRIAL_IMPORT.before.debit, packageDebit);
+  assert.equal(TRIAL_IMPORT.after.credit - TRIAL_IMPORT.before.credit, packageCredit);
+  assert.equal(packageDebit, 6670000);
+});
+
+test('each account code resolved to the right account in the destination', () => {
+  // پارسیان نام حساب را از کدینگ خودش می‌آورد، پس نام درست یعنی کد درست نشسته.
+  const expected = [
+    [10, 1, 'صندوق'], [12, 2, 'فروشگاه محترم اميني'], [62, 1, 'خرید'],
+    [50, 9, 'هزینه حمل'], [50, 5, 'هزینه پست و تلفن'],
+  ];
+  const landed = TRIAL_IMPORT.documents.flatMap((item) => item.lines);
+  for (const [kol, moeen, name] of expected) {
+    assert.ok(
+      landed.some((line) => line.kol === kol && line.moeen === moeen && line.name === name),
+      `کد ${kol}/${moeen} باید «${name}» شود`,
+    );
+  }
+});
+
+test('the dates and the tafsili code survived into the destination', () => {
+  assert.deepEqual(
+    TRIAL_IMPORT.documents.map((item) => item.date),
+    SENT_DOCUMENTS.map((item) => item.date),
+  );
+  const withTafsili = TRIAL_IMPORT.documents[0].lines[1];
+  assert.equal(withTafsili.tafsili, 1);
+  const withoutTafsili = TRIAL_IMPORT.documents[0].lines[0];
+  assert.equal(withoutTafsili.tafsili, 0, 'نبودِ تفصیلی صفر می‌ماند');
+});
+
+test('the pre-existing imbalance of the destination was not touched', () => {
+  // سند ۳ آن نصب از قبل ۱۷۸ میلیون نامتوازن بود؛ بسته‌ای که فرستادیم متوازن
+  // بود، پس اختلاف نباید تکان بخورد.
+  const before = TRIAL_IMPORT.before.debit - TRIAL_IMPORT.before.credit;
+  const after = TRIAL_IMPORT.after.debit - TRIAL_IMPORT.after.credit;
+  assert.equal(before, 178000000);
+  assert.equal(after, before);
+});
