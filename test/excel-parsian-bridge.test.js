@@ -225,5 +225,7 @@ test('the export field catalogue is offered so the office can build its own layo
   const catalogue = database.transferFieldCatalog();
   assert.ok(catalogue.fields.some((item) => item.id === 'chartCode'));
   assert.ok(catalogue.fields.some((item) => item.id === 'analyticCode'));
-  assert.deepEqual(catalogue.formats.map((item) => item.id).sort(), ['csv', 'xlsx']);
+  // mdb فایل انتقال واقعی پارسیان است و برخلاف دو تای دیگر الگو لازم دارد.
+  assert.deepEqual(catalogue.formats.map((item) => item.id).sort(), ['csv', 'mdb', 'xlsx']);
+  assert.equal(catalogue.formats.find((item) => item.id === 'mdb').requiresTemplate, true);
 });

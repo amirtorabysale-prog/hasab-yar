@@ -11,6 +11,7 @@ import {
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
+  saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
   saveJournalTemplate, submitJournalApproval,
@@ -42,6 +43,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 *
 const backupUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
 const statementUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 const chartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
+// الگوی انتقال پارسیان یک دیتابیس Access کامل است و چند مگابایت می‌شود.
+const transferTemplateUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 32 * 1024 * 1024, files: 1 } });
 const adminState = ensureAdmin();
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
@@ -533,6 +536,14 @@ app.get('/api/accountant-transfer/overview', (request, response, next) => {
 app.put('/api/accountant-transfer/settings', (request, response, next) => {
   try { return response.json({ item: saveAccountingTransferSettings(request.body || {}) }); }
   catch (error) { return next(error); }
+});
+app.post('/api/accountant-transfer/template', transferTemplateUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.status(201).json({
+      item: saveAccountingTransferTemplate(request.body?.targetSystem, request.file.buffer, request.file.originalname),
+    });
+  } catch (error) { return next(error); }
 });
 app.post('/api/accountant-transfer/mappings/from-chart', (request, response, next) => {
   try {

@@ -41,6 +41,7 @@ import {
   DEFAULT_TRANSFER_COLUMNS, TRANSFER_FIELDS, amountUnitLabel, normalizeAmountUnit, normalizeTransferColumns,
 } from './transferTemplates.js';
 import { buildWorkbook, readTabularFile } from './spreadsheet.js';
+import { readParsianTemplate } from './parsianAccessFile.js';
 import { normalizeTemplateLines } from './journalWorkflow.js';
 import {
   importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows, tableFromSheet,
@@ -514,6 +515,9 @@ function ensureAccountingTransferSchema(database) {
   ensureColumnOn(database, 'accounting_transfer_settings', "file_format TEXT NOT NULL DEFAULT 'csv'");
   ensureColumnOn(database, 'accounting_transfer_settings', "amount_unit TEXT NOT NULL DEFAULT 'toman'");
   ensureColumnOn(database, 'accounting_transfer_settings', "columns_json TEXT NOT NULL DEFAULT '[]'");
+  // الگوی فایل انتقال پارسیان: خود دفتر یک بار از نصبش می‌گیرد و اینجا می‌ماند.
+  ensureColumnOn(database, 'accounting_transfer_settings', 'transfer_template BLOB');
+  ensureColumnOn(database, 'accounting_transfer_settings', "transfer_template_name TEXT NOT NULL DEFAULT ''");
   ensureColumnOn(database, 'accounting_transfer_batches', "file_format TEXT NOT NULL DEFAULT 'csv'");
   ensureColumnOn(database, 'accounting_transfer_batches', "amount_unit TEXT NOT NULL DEFAULT 'toman'");
 }
@@ -1543,7 +1547,9 @@ function accountingTransferSettings(targetSystem = 'generic-csv') {
   const target = normalizeAccountingTransferTarget(targetSystem);
   const row = db.prepare(`SELECT target_system AS targetSystem,template_name AS templateName,
     template_verified AS templateVerified,note,updated_at AS updatedAt,
-    file_format AS fileFormat,amount_unit AS amountUnit,columns_json AS columnsJson
+    file_format AS fileFormat,amount_unit AS amountUnit,columns_json AS columnsJson,
+    transfer_template_name AS transferTemplateName,
+    LENGTH(transfer_template) AS transferTemplateSize
     FROM accounting_transfer_settings WHERE target_system=?`).get(target);
   const stored = parseStoredJson(row?.columnsJson, []);
   const columns = Array.isArray(stored) && stored.length ? stored : [...DEFAULT_TRANSFER_COLUMNS];
@@ -1557,7 +1563,40 @@ function accountingTransferSettings(targetSystem = 'generic-csv') {
     amountUnit: normalizeAmountUnit(row?.amountUnit),
     columns,
     usingDefaultColumns: !(Array.isArray(stored) && stored.length),
+    // خود بلاب الگو هرگز به کلاینت نمی‌رود؛ فقط اینکه هست و چقدر است.
+    hasTransferTemplate: Number(row?.transferTemplateSize || 0) > 0,
+    transferTemplateName: row?.transferTemplateName || '',
+    transferTemplateSize: Number(row?.transferTemplateSize || 0),
   };
+}
+
+function accountingTransferTemplate(targetSystem = 'generic-csv') {
+  const row = db.prepare('SELECT transfer_template AS template FROM accounting_transfer_settings WHERE target_system=?')
+    .get(normalizeAccountingTransferTarget(targetSystem));
+  return row?.template ? Buffer.from(row.template) : null;
+}
+
+/**
+ * الگوی فایل انتقال پارسیان را ذخیره می‌کند.
+ *
+ * الگو باید خروجی واقعی «انتقال اسناد به فایل» همان نصب باشد. اینجا قبل از
+ * ذخیره خوانده و سنجیده می‌شود تا فایل اشتباه ماه‌ها بعد سر بزنگاه لو نرود.
+ */
+export function saveAccountingTransferTemplate(targetSystem, buffer, fileName = '') {
+  const target = normalizeAccountingTransferTarget(targetSystem);
+  const data = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  if (!data.length) throw Object.assign(new Error('فایل الگو خالی است.'), { status: 400, code: 'TRANSFER_TEMPLATE_EMPTY' });
+  if (data.length > 32 * 1024 * 1024) throw Object.assign(new Error('فایل الگو بیش از ۳۲ مگابایت است.'), { status: 413, code: 'TRANSFER_TEMPLATE_TOO_LARGE' });
+  const info = readParsianTemplate(data); // خطای گویا می‌دهد اگر فایل پارسیان نباشد
+  const name = String(fileName || '').trim().slice(0, 160);
+  db.prepare(`INSERT INTO accounting_transfer_settings (target_system,transfer_template,transfer_template_name)
+    VALUES (?,?,?) ON CONFLICT(target_system) DO UPDATE SET transfer_template=excluded.transfer_template,
+    transfer_template_name=excluded.transfer_template_name,updated_at=CURRENT_TIMESTAMP`)
+    .run(target, data, name);
+  audit('save-transfer-template', 'accounting_transfer_settings', target, {
+    fileName: name, size: data.length, existingRows: info.rowCount,
+  });
+  return accountingTransferSettings(target);
 }
 
 function accountingTransferMappings(targetSystem = 'generic-csv') {
@@ -1758,6 +1797,7 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
     mappings: state.mappings, timeZone: state.packageData.scope.timeZone,
     fileFormat, columns: state.settings.columns, amountUnit: state.settings.amountUnit,
     targetLabel: state.readiness.target?.label || '',
+    template: fileFormat === 'mdb' ? accountingTransferTemplate(targetSystem) : null,
   });
   const fileData = built.buffer;
   const digest = createHash('sha256').update(fileData).digest('hex');

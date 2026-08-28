@@ -1,5 +1,6 @@
 import { buildWorkbook } from './spreadsheet.js';
 import { DEFAULT_TRANSFER_COLUMNS, applyTransferTemplate } from './transferTemplates.js';
+import { buildParsianTransfer, readParsianTemplate } from './parsianAccessFile.js';
 
 const TARGET_CATALOG = Object.freeze({
   'generic-csv': Object.freeze({
@@ -11,8 +12,8 @@ const TARGET_CATALOG = Object.freeze({
   }),
   'parsian-review-csv': Object.freeze({
     id: 'parsian-review-csv',
-    label: 'پارسیان — فایل آمادهٔ نگاشت',
-    description: 'خروجی کنترل‌شده با کد حساب مقصد؛ فایل بکاپ SQL Server یا قالب تأییدشدهٔ مستقیم پارسیان نیست.',
+    label: 'پارسیان',
+    description: 'خروجی کنترل‌شده برای نگاشت، یا فایل انتقال واقعی پارسیان روی الگویی که خود دفتر از نصبش گرفته است. فایل بکاپ SQL Server ساخته نمی‌شود.',
     templateRequired: true,
     directImportCertified: false,
   }),
@@ -95,6 +96,22 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
     ? { id: 'chart', label: 'هر حساب استفاده‌شده به معین کدینگ دفتر نگاشت شده', count: unmappedUsedAccounts.length, passed: unmappedUsedAccounts.length === 0, severity: 'blocker' }
     : { id: 'chart', label: 'کدینگ دفتر حسابداری هنوز وارد نشده است', count: 1, passed: false, severity: 'advisory' });
 
+  // فایل انتقال پارسیان بدون الگو ساخته نمی‌شود، و بدون کد کل/معین روی هر ردیف
+  // هم نه — چون فایل انتقال حساب نمی‌سازد و کد باید از قبل در مقصد باشد.
+  if (normalizeTransferFileFormat(settings.fileFormat) === 'mdb') {
+    checks.push({
+      id: 'parsian-template', label: 'الگوی فایل انتقال پارسیان بارگذاری شده', count: settings.hasTransferTemplate ? 0 : 1,
+      passed: Boolean(settings.hasTransferTemplate), severity: 'blocker',
+    });
+    const missingSegments = [...new Map(journalRows
+      .filter((item) => !/^\d+$/.test(String(item.kolCode ?? '')) || !/^\d+$/.test(String(item.moeenCode ?? '')))
+      .map((item) => [item.accountId, { id: item.accountId, code: item.accountCode, name: item.accountName }])).values()];
+    checks.push({
+      id: 'parsian-segments', label: 'هر حساب استفاده‌شده کد کل و معین عددی دارد', count: missingSegments.length,
+      passed: missingSegments.length === 0, severity: 'blocker',
+    });
+  }
+
   // سند کنترل‌نشده نباید تحویل دفتر شود؛ گردش ثبت‌کننده/کنترل‌کننده وقتی معنا
   // دارد که خروجی هم به آن پایبند باشد.
   const pendingApproval = Number(workflow.pendingInPeriod || 0);
@@ -119,6 +136,10 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
 export const TRANSFER_FILE_FORMATS = Object.freeze({
   csv: Object.freeze({ id: 'csv', label: 'CSV برای اکسل', extension: 'csv', mimeType: 'text/csv; charset=utf-8' }),
   xlsx: Object.freeze({ id: 'xlsx', label: 'اکسل (xlsx)', extension: 'xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+  // فایل «انتقال اسناد» خود پارسیان. برخلاف دو قالب بالا این یکی برای خواندن
+  // آدم نیست؛ مستقیم به «انتقال اسناد از فایل» پارسیان داده می‌شود و نیاز به
+  // الگویی دارد که دفتر یک بار از نصب خودش گرفته باشد.
+  mdb: Object.freeze({ id: 'mdb', label: 'فایل انتقال پارسیان', extension: 'mdb', mimeType: 'application/x-msaccess', requiresTemplate: true }),
 });
 
 export function normalizeTransferFileFormat(value) {
@@ -126,19 +147,88 @@ export function normalizeTransferFileFormat(value) {
 }
 
 /**
- * خروجی را طبق قالب ستونی دفتر می‌سازد — CSV یا اکسل واقعی.
- * شیت دوم عمداً «شناسنامهٔ فایل» است: واحد مبلغ، دوره، جمع‌ها و مرز صراحت
- * محصول، تا کسی فایل را بدون دانستن واحدش وارد نرم‌افزار نکند.
+ * ردیف‌های دفتر کل را به سندهای پارسیان تبدیل می‌کند.
+ *
+ * گروه‌بندی با شناسهٔ سند حساب‌یار است، چون فایل انتقال پارسیان سرصفحه ندارد و
+ * فقط از روی تکرار شمارهٔ سند روی ردیف‌ها می‌فهمد کدام ردیف‌ها یک سندند.
+ *
+ * شمارهٔ سند حساب‌یار در شرح سند می‌رود، چون پارسیان موقع ورود شمارهٔ فایل را
+ * دور می‌ریزد و خودش شماره می‌دهد؛ بدون این، سند پارسیان به سند حساب‌یار قابل
+ * ردیابی نیست.
  */
-export function buildAccountingTransferFile({ period, journalRows = [], settings = {}, mappings = [], timeZone = 'Asia/Tehran', fileFormat = 'csv', columns, amountUnit = 'toman', targetLabel = '' } = {}) {
+export function parsianDocumentsFromJournal({ journalRows = [], timeZone = 'Asia/Tehran', amountUnit = 'toman' } = {}) {
+  const multiplier = amountUnit === 'rial' ? 10 : 1;
+  const errors = [];
+  const order = [];
+  const byEntry = new Map();
+
+  journalRows.forEach((item, index) => {
+    if (!byEntry.has(item.entryId)) {
+      const documentNumber = item.documentNumber == null ? '' : String(item.documentNumber);
+      byEntry.set(item.entryId, {
+        date: persianDateToken(item.occurredAt, timeZone),
+        comment: [documentNumber ? `حساب‌یار ${documentNumber}` : '', item.memo || ''].filter(Boolean).join(' — ').slice(0, 250),
+        lines: [],
+      });
+      order.push(item.entryId);
+    }
+    const position = `ردیف ${index + 1}`;
+    // کد کل و معین از کدینگ دفتر می‌آیند. پارسیان آن‌ها را عدد می‌خواهد و
+    // حسابی که در مقصد نباشد ساخته نمی‌شود، پس نبودشان بازدارنده است.
+    const kolCode = Number(item.kolCode);
+    const moeenCode = Number(item.moeenCode);
+    if (!Number.isInteger(kolCode) || kolCode <= 0) errors.push(`${position}: حساب «${item.accountName || item.accountCode || '—'}» کد کل ندارد؛ نگاشت کدینگ را کامل کن.`);
+    if (!Number.isInteger(moeenCode) || moeenCode <= 0) errors.push(`${position}: حساب «${item.accountName || item.accountCode || '—'}» کد معین ندارد؛ نگاشت کدینگ را کامل کن.`);
+
+    // تفصیلی اگر هست باید عدد باشد. تبدیل بی‌صدا به صفر یعنی ردیف روی معین
+    // می‌نشیند و طرف‌حساب گم می‌شود، پس به‌جای حدس، خطا می‌دهیم.
+    let tafsiliCode = 0;
+    const rawTafsili = String(item.tafsiliCode ?? '').trim();
+    if (rawTafsili) {
+      if (!/^\d+$/.test(rawTafsili)) errors.push(`${position}: کد تفصیلی «${rawTafsili}» عدد نیست و پارسیان آن را نمی‌پذیرد.`);
+      else tafsiliCode = Number(rawTafsili);
+    }
+
+    byEntry.get(item.entryId).lines.push({
+      kolCode, moeenCode, tafsiliCode,
+      debit: Number(item.debit || 0) * multiplier,
+      credit: Number(item.credit || 0) * multiplier,
+      comment: String(item.lineDescription || item.memo || '').slice(0, 100),
+    });
+  });
+
+  if (errors.length) {
+    throw Object.assign(new Error('ردیف‌های دفتر برای ساخت فایل پارسیان آماده نیستند.'), {
+      status: 400, code: 'PARSIAN_JOURNAL_NOT_READY', details: { errors: errors.slice(0, 40) },
+    });
+  }
+  return order.map((entryId) => byEntry.get(entryId));
+}
+
+/**
+ * خروجی را طبق قالب ستونی دفتر می‌سازد — CSV، اکسل واقعی، یا فایل انتقال پارسیان.
+ * در اکسل، شیت دوم عمداً «شناسنامهٔ فایل» است: واحد مبلغ، دوره، جمع‌ها و مرز
+ * صراحت محصول، تا کسی فایل را بدون دانستن واحدش وارد نرم‌افزار نکند.
+ */
+export function buildAccountingTransferFile({ period, journalRows = [], settings = {}, mappings = [], timeZone = 'Asia/Tehran', fileFormat = 'csv', columns, amountUnit = 'toman', targetLabel = '', template = null } = {}) {
   const table = applyTransferTemplate({
     columns: columns && columns.length ? columns : DEFAULT_TRANSFER_COLUMNS,
     amountUnit, journalRows, period, mappings,
     persianDate: (value) => persianDateToken(value, timeZone),
   });
-  if (normalizeTransferFileFormat(fileFormat) === 'csv') {
+  const format = normalizeTransferFileFormat(fileFormat);
+  if (format === 'csv') {
     const body = [table.headers, ...table.rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
     return { buffer: Buffer.from(`﻿${body}\r\n`, 'utf8'), table };
+  }
+  if (format === 'mdb') {
+    if (!template || !template.length) {
+      throw Object.assign(new Error('برای ساخت فایل انتقال پارسیان اول باید الگو را بارگذاری کنی: یک بار در پارسیان خودت «انتقال اسناد به فایل» بگیر و همان فایل را اینجا بده.'), {
+        status: 409, code: 'PARSIAN_TEMPLATE_MISSING',
+      });
+    }
+    const documents = parsianDocumentsFromJournal({ journalRows, timeZone, amountUnit });
+    return { buffer: buildParsianTransfer({ template, documents }), table, documentCount: documents.length };
   }
   const manifest = [
     ['شناسنامهٔ فایل انتقال حساب‌یار'],

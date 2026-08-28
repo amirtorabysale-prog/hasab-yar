@@ -234,6 +234,7 @@ export const api = {
   monthlyAccountantPackage: (month = '') => request(`/api/collaboration/monthly-package${month ? `?month=${encodeURIComponent(month)}` : ''}`),
   accountingTransferOverview: (month = '', target = 'generic-csv') => request(`/api/accountant-transfer/overview?${new URLSearchParams({ month, target })}`),
   saveAccountingTransferSettings: (payload) => request('/api/accountant-transfer/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  saveTransferTemplate: (targetSystem, file) => { const form = new FormData(); form.append('file', file); form.append('targetSystem', targetSystem); return request('/api/accountant-transfer/template', { method: 'POST', body: form }); },
   fillTransferMappingsFromChart: (targetSystem, overwrite = false) => request('/api/accountant-transfer/mappings/from-chart', { method: 'POST', body: JSON.stringify({ targetSystem, overwrite }) }),
   saveAccountingTransferMapping: (ledgerAccountId, payload) => request(`/api/accountant-transfer/mappings/${encodeURIComponent(ledgerAccountId)}`, { method: 'PUT', body: JSON.stringify(payload) }),
   createAccountingTransferBatch: (payload) => request('/api/accountant-transfer/batches', { method: 'POST', body: JSON.stringify(payload) }),

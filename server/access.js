@@ -13,6 +13,9 @@ export function minimumRoleForRequest(method, path) {
   const normalizedPath = String(path || '');
   if (normalizedPath.startsWith('/collaboration/requests/') && normalizedPath.endsWith('/answer')) return 'manager';
   if (normalizedPath.startsWith('/collaboration/')) return 'accountant';
+  // الگوی انتقال تعیین می‌کند هر فایل بعدی روی چه ساختاری نوشته شود؛ مثل
+  // کدینگ، تغییرش کار مدیر دفتر است نه کمک‌حسابدار.
+  if (normalizedPath === '/accountant-transfer/template') return 'manager';
   if (normalizedPath.startsWith('/accountant-transfer/')) return 'accountant';
   // میز کار دفتر: خروجی به عضویت‌های خود کاربر محدود است، پس نقش دفتر فعال آن را محدود نمی‌کند.
   if (normalizedPath.startsWith('/firm/')) return 'viewer';

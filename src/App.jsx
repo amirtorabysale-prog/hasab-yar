@@ -2321,6 +2321,38 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
       </label>
     </div>
 
+    {fileFormat === 'mdb' && <div className="mt-4 rounded-lg border border-line bg-paper p-3">
+      <p className="text-[13px] font-bold">الگوی فایل انتقال پارسیان</p>
+      <p className="mt-1 max-w-2xl text-[12px] leading-6 text-muted">
+        این قالب، فایل انتقال خودِ پارسیان است و روی یک الگو نوشته می‌شود. یک بار در پارسیان خودت
+        <b> امکانات ← سامانه تبادل اطلاعات ← سامانه تبادل اطلاعات اسناد ← انتقال اسناد به فایل </b>
+        را بزن و همان فایل را اینجا بده. از آن به بعد حساب‌یار فقط سندها را داخل همان الگو می‌نویسد،
+        پس ساختار فایل دقیقاً همانی می‌ماند که نرم‌افزار خودت ساخته است.
+      </p>
+      {settings?.hasTransferTemplate
+        ? <p className="mt-2 text-[12px] text-ok">الگو بارگذاری شده{settings.transferTemplateName ? `: ${settings.transferTemplateName}` : ''}. با فایل تازه جایگزین می‌شود.</p>
+        : <p className="mt-2 text-[12px] text-danger">هنوز الگویی بارگذاری نشده؛ تا آن موقع فایل انتقال ساخته نمی‌شود.</p>}
+      <input
+        type="file" className="mt-2 w-full text-[12px]" disabled={busy === 'template'}
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (!file) return;
+          setBusy('template');
+          try {
+            await api.saveTransferTemplate(target, file);
+            await refresh();
+            notify('الگوی انتقال پارسیان ذخیره شد.');
+          } catch (error) { notify(error.message); }
+          setBusy(false);
+        }}
+      />
+      <p className="mt-2 text-[11px] leading-5 text-muted">
+        تاریخ سندها باید داخل سال مالی بازِ پارسیان مقصد باشد، وگرنه ورود انجام نمی‌شود. ورود دوبارهٔ یک
+        فایل هم سند تکراری می‌سازد، چون پارسیان تکراری را تشخیص نمی‌دهد.
+      </p>
+    </div>}
+
     <div className="mt-3 overflow-x-auto">
       <table className="w-full min-w-[560px] text-right text-[13px]">
         <thead className="border-b border-line text-[12px] text-muted"><tr><th className="pb-2 pl-2 font-bold">#</th><th className="pb-2 pl-2 font-bold">عنوان ستون در فایل مقصد</th><th className="pb-2 pl-2 font-bold">دادهٔ حساب‌یار</th><th className="pb-2 font-bold">ترتیب</th></tr></thead>
@@ -2444,7 +2476,7 @@ function AccountingTransferPanel({ month, target, setTarget, overview, notify, r
     <div className="mt-4 grid gap-4 lg:grid-cols-[.9fr_1.1fr]">
       <div><div className="divide-y divide-line rounded-lg border border-line px-3">{(readiness.checks || []).map((item) => <div key={item.id} className="flex min-h-11 items-center gap-2 py-2 text-xs"><span className={`grid h-5 w-5 place-items-center rounded-full ${item.passed ? 'bg-income/10 text-income' : 'bg-expense/10 text-expense'}`}>{item.passed ? <Check size={14} /> : <CircleAlert size={14} />}</span><span className="flex-1 font-bold">{item.label}</span>{!item.passed && <b className="numbers text-expense">{toPersianDigits(item.count || 0)}</b>}</div>)}</div>
       <ReadinessFixHints readiness={readiness} navigate={navigate} notify={notify} refresh={refresh} />
-      <div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">سند</span><b className="numbers mt-1 block">{toPersianDigits(readiness.entryCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">ردیف</span><b className="numbers mt-1 block">{toPersianDigits(readiness.rowCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">جمع بدهکار</span><b className="numbers mt-1 block text-[11px]">{formatAmount(readiness.debitTotal || 0)}</b></div></div><button disabled={!readiness.ready || busy === 'batch'} onClick={createBatch} className="tap mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-ink font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Download size={17} />{busy === 'batch' ? 'در حال ساخت…' : `ساخت و دریافت ${overview?.settings?.fileFormat === 'xlsx' ? 'اکسل' : 'CSV'}`}</button><p className="mt-2 text-[10px] leading-5 text-muted">{readiness.disclaimer}</p></div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">سند</span><b className="numbers mt-1 block">{toPersianDigits(readiness.entryCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">ردیف</span><b className="numbers mt-1 block">{toPersianDigits(readiness.rowCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[10px] text-muted">جمع بدهکار</span><b className="numbers mt-1 block text-[11px]">{formatAmount(readiness.debitTotal || 0)}</b></div></div><button disabled={!readiness.ready || busy === 'batch'} onClick={createBatch} className="tap mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-ink font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Download size={17} />{busy === 'batch' ? 'در حال ساخت…' : `ساخت و دریافت ${{ xlsx: 'اکسل', mdb: 'فایل انتقال پارسیان' }[overview?.settings?.fileFormat] || 'CSV'}`}</button><p className="mt-2 text-[10px] leading-5 text-muted">{readiness.disclaimer}</p></div>
 
       <div>{target === 'parsian-review-csv' ? <><div className="rounded-lg border border-line bg-paper p-3"><label className="text-xs text-muted">نام یا نسخهٔ قالب کنترل‌شده<input value={settingsDraft.templateName} onChange={(event) => setSettingsDraft({ ...settingsDraft, templateName: event.target.value })} placeholder="مثلاً خروجی نمونه پارسیان شرکت آزمایشی" className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3" /></label><label className="mt-3 flex items-start gap-2 text-xs leading-6"><input type="checkbox" checked={settingsDraft.templateVerified} onChange={(event) => setSettingsDraft({ ...settingsDraft, templateVerified: event.target.checked })} className="mt-1" /><span>حسابدار ستون‌ها و واحد پول را با یک شرکت آزمایشی کنترل کرده است؛ این تأیید به معنی پشتیبانی رسمی سازنده نیست.</span></label><button disabled={busy === 'settings'} onClick={saveSettings} className="tap mt-3 rounded-lg border border-ink px-3 text-xs font-bold">ذخیره کنترل قالب</button></div><div className="mt-3 space-y-2">{(readiness.accounts || []).map((account) => { const draft = mappingDrafts[account.id] || { targetCode: '', targetName: '' }; return <div key={account.id} className="grid gap-2 rounded-lg border border-line p-3 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,1fr)_70px]"><div><b className="text-xs">{account.name}</b><p className="numbers mt-1 text-[10px] text-muted">{account.code}</p></div><input value={draft.targetCode} onChange={(event) => setMappingDrafts({ ...mappingDrafts, [account.id]: { ...draft, targetCode: event.target.value } })} placeholder="کد مقصد" dir="ltr" className="tap rounded-lg border border-line px-2 text-left text-xs" /><input value={draft.targetName} onChange={(event) => setMappingDrafts({ ...mappingDrafts, [account.id]: { ...draft, targetName: event.target.value } })} placeholder="نام حساب مقصد" className="tap rounded-lg border border-line px-2 text-xs" /><button disabled={!draft.targetCode || busy === `mapping-${account.id}`} onClick={() => saveMapping(account.id)} className="tap rounded-lg bg-accent px-2 text-xs font-bold text-white disabled:opacity-40">ذخیره</button></div>; })}</div></> : <div className="rounded-lg bg-paper p-4 text-xs leading-6 text-muted"><b className="text-ink">قالب استاندارد حساب‌یار</b><p className="mt-2">هر ردیف دفتر کل با بدهکار/بستانکار تومان و ریال، کد و نام حساب، نوع و شناسهٔ منبع و تاریخ شمسی/ISO صادر می‌شود. متن‌های خطرناک برای Formula Injection خنثی می‌شوند.</p></div>}</div>
     </div>
