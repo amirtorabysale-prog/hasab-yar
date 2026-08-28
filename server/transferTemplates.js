@@ -48,6 +48,9 @@ export const TRANSFER_FIELDS = Object.freeze([
   Object.freeze({ id: 'moeenName', label: 'نام معین', kind: 'text' }),
   Object.freeze({ id: 'tafsiliCode', label: 'کد تفصیلی (پارسیان)', kind: 'text' }),
   Object.freeze({ id: 'tafsiliName', label: 'نام تفصیلی (پارسیان)', kind: 'text' }),
+  // کدی که اپراتور پارسیان روی صفحه می‌بیند: تفصیلی-معین-کل، برعکسِ ترتیب
+  // معمول کدینگ. برخاسته از VW_HCode در خود پارسیان.
+  Object.freeze({ id: 'parsianHCode', label: 'کد حساب پارسیان (تفصیلی-معین-کل)', kind: 'text' }),
   Object.freeze({ id: 'analyticCode', label: 'کد تفصیلی', kind: 'text' }),
   Object.freeze({ id: 'analyticName', label: 'نام تفصیلی', kind: 'text' }),
   Object.freeze({ id: 'costCenterCode', label: 'کد مرکز هزینه', kind: 'text' }),
@@ -107,6 +110,25 @@ export function normalizeTransferColumns(columns = []) {
   return { columns: normalized, errors: [] };
 }
 
+/**
+ * کد حسابی که اپراتور پارسیان می‌بیند و می‌شناسد.
+ *
+ * پارسیان در VW_HCode آن را این‌طور می‌سازد:
+ *   cast(TafsiliCode) + '-' + cast(MoeenCode) + '-' + cast(KolCode)
+ * و برای معینی که تفصیلی ندارد تفصیلی را صفر می‌گذارد. یعنی ترتیب برعکس
+ * کدینگ است و صندوق «۰-۱-۱۰» دیده می‌شود، نه «۱۰۰۱».
+ *
+ * بدون کل و معین کدی وجود ندارد؛ در آن حالت رشتهٔ خالی برمی‌گردد تا ستون
+ * ناقص، عدد نادرست به نرم‌افزار مقصد ندهد.
+ */
+export function parsianHCode({ kolCode = '', moeenCode = '', tafsiliCode = '' } = {}) {
+  const segment = (value) => String(value ?? '').trim();
+  const kol = segment(kolCode);
+  const moeen = segment(moeenCode);
+  if (!kol || !moeen) return '';
+  return `${segment(tafsiliCode) || '0'}-${moeen}-${kol}`;
+}
+
 function amountFor(field, row, unit) {
   const toman = Number((field.startsWith('debit') ? row.debit : row.credit) || 0);
   const multiplier = field === 'debit' || field === 'credit'
@@ -138,6 +160,7 @@ export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amou
       kolCode: item.kolCode || '', kolName: item.kolName || '',
       moeenCode: item.moeenCode || '', moeenName: item.moeenName || '',
       tafsiliCode: item.tafsiliCode || '', tafsiliName: item.tafsiliName || '',
+      parsianHCode: parsianHCode(item),
       analyticCode: item.analyticCode || '', analyticName: item.analyticName || '',
       costCenterCode: item.costCenterCode || '', costCenterName: item.costCenterName || '',
       targetCode: mapping.targetCode || '', targetName: mapping.targetName || '',
