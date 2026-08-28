@@ -106,11 +106,41 @@ export function ensureChartSchema(database) {
   ensureColumn(database, 'journal_lines', 'cost_center_id TEXT REFERENCES cost_centers(id) ON DELETE RESTRICT');
   ensureColumn(database, 'chart_accounts', "level_code TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'ledger_accounts', 'chart_account_id TEXT REFERENCES chart_accounts(id) ON DELETE RESTRICT');
+  backfillLevelCodes(database);
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_journal_lines_analytic ON journal_lines(analytic_id) WHERE analytic_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_journal_lines_cost_center ON journal_lines(cost_center_id) WHERE cost_center_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_ledger_accounts_chart ON ledger_accounts(chart_account_id);
   `);
+}
+
+/**
+ * کد سطح را برای کدینگ‌هایی که پیش از افزودن این ستون نصب شده‌اند پر می‌کند.
+ *
+ * ستون `level_code` با پیش‌فرض خالی اضافه شد، پس هر کدینگی که از قبل نصب بود
+ * کد سطح نداشت. این تا وقتی خروجی فقط کد کامل می‌داد بی‌ضرر بود، ولی از وقتی
+ * فایل انتقال پارسیان کد کل و معین را جدا می‌خواهد، خالی‌بودنش یعنی خروجی
+ * ساخته نمی‌شود. قاعده همان قاعدهٔ سبک پیشوندی است: کد سطح، تفاضل کد فرزند و
+ * کد والد؛ و برای ریشه، خود کد.
+ */
+export function backfillLevelCodes(database) {
+  const rows = database.prepare(`SELECT chart_accounts.id,chart_accounts.code,parent.code AS parentCode
+    FROM chart_accounts LEFT JOIN chart_accounts AS parent ON parent.id=chart_accounts.parent_id
+    WHERE chart_accounts.level_code=''`).all();
+  if (!rows.length) return 0;
+  const update = database.prepare('UPDATE chart_accounts SET level_code=? WHERE id=?');
+  let filled = 0;
+  for (const row of rows) {
+    const code = String(row.code || '');
+    const parentCode = String(row.parentCode || '');
+    const derived = parentCode && code.startsWith(parentCode) && code.length > parentCode.length
+      ? code.slice(parentCode.length)
+      : code;
+    if (!derived) continue;
+    update.run(derived, row.id);
+    filled += 1;
+  }
+  return filled;
 }
 
 // ---------------------------------------------------------------------------
