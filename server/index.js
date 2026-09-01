@@ -36,6 +36,7 @@ import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
 import { voiceProviderStatus } from './voiceProviderState.js';
 import { extractReceiptData, receiptOcrConfigured } from './receiptOcr.js';
 import { audioDurationMs } from './collaboration.js';
+import { healthPayload } from './release.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -92,7 +93,7 @@ app.use((request, response, next) => {
 });
 app.use(express.json({ limit: '256kb' }));
 
-app.get('/api/health', (_request, response) => response.json({ ok: true, voicePipeline: 'openai-transcribe+deterministic-parser+gemini-fallback-v2' }));
+app.get('/api/health', (_request, response) => response.json(healthPayload()));
 app.get('/api/auth/status', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'رمز مالک روی سرور تنظیم نشده است.' });
   const sessionToken = cookies(request).hy_session;
