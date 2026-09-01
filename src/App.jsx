@@ -2423,18 +2423,37 @@ function AccountingTransferPanel({ month, target, setTarget, overview, notify, r
     } catch (error) { notify(error.message); }
     finally { setBusy(''); }
   };
+  const redownloadOptions = (item) => {
+    if (!item?.redownloadRequired) return {};
+    const confirmed = window.confirm(`این بسته قبلاً ${toPersianDigits(item.downloadCount || 1)} بار دریافت شده است. پارسیان فایل تکراری را بدون هشدار دوباره وارد می‌کند. دریافت دوباره را تأیید می‌کنی؟`);
+    if (!confirmed) return null;
+    const reason = String(window.prompt('علت دریافت دوباره را بنویس؛ این متن در سابقهٔ حسابرسی ذخیره می‌شود:') || '').trim();
+    if (reason.length < 8) {
+      notify('برای دریافت دوباره، علت را حداقل در ۸ نویسه بنویس.');
+      return null;
+    }
+    return { confirmRedownload: true, reason };
+  };
   const createBatch = async () => {
     setBusy('batch');
     try {
       const result = await api.createAccountingTransferBatch({ month, targetSystem: target });
-      const downloaded = await api.downloadAccountingTransferBatch(result.item.id, result.item.fileName);
+      const options = redownloadOptions(result.item);
+      if (options === null) return;
+      const downloaded = await api.downloadAccountingTransferBatch(result.item.id, result.item.fileName, options);
       await refresh();
-      notify(`خروجی ${downloaded.fileName} ساخته و دریافت شد.`);
+      notify(`خروجی ${downloaded.fileName} دریافت و سابقهٔ تحویل ثبت شد.`);
     } catch (error) { notify(error.message); }
     finally { setBusy(''); }
   };
   const downloadBatch = async (item) => {
-    try { const result = await api.downloadAccountingTransferBatch(item.id, item.fileName); notify(`فایل ${result.fileName} دریافت شد.`); }
+    const options = redownloadOptions(item);
+    if (options === null) return;
+    try {
+      const result = await api.downloadAccountingTransferBatch(item.id, item.fileName, options);
+      await refresh();
+      notify(`فایل ${result.fileName} دریافت شد؛ نوبت دریافت: ${toPersianDigits(result.downloadCount)}.`);
+    }
     catch (error) { notify(error.message); }
   };
   const updateStatus = async (item, status) => {
@@ -2467,7 +2486,7 @@ function AccountingTransferPanel({ month, target, setTarget, overview, notify, r
     } catch (error) { notify(error.message); }
     finally { setBusy(''); }
   };
-  const statusLabel = { generated: 'ساخته‌شده', delivered: 'تحویل حسابدار', accepted: 'ورود تأیید شد', rejected: 'رد شده' };
+  const statusLabel = { generated: 'ساخته‌شده', delivered: 'فایل دریافت شده', accepted: 'ورود تأیید شد', rejected: 'رد شده' };
   const validationLabel = { 'dry-run': 'Dry Run', 'trial-import': 'ورود آزمایشی', passed: 'موفق', failed: 'ناموفق' };
 
   return <section className="mt-4 rounded-[12px] border border-line bg-surface p-4">
@@ -2482,7 +2501,18 @@ function AccountingTransferPanel({ month, target, setTarget, overview, notify, r
     </div>
 
     <div className="mt-4 border-t border-line pt-4"><h3 className="text-sm font-extrabold">سابقهٔ بسته‌ها و آزمون انتقال</h3><div className="mt-3 space-y-2">{overview?.batches?.length ? overview.batches.map((item) => <article key={item.id} className="rounded-lg bg-paper p-3 text-xs">
-      <div className="flex flex-wrap items-center gap-2"><div className="min-w-0 flex-1"><b>{item.fileName}</b><p className="mt-1 text-[10px] text-muted">SHA-256: <span dir="ltr">{item.digest.slice(0, 16)}…</span> · {toPersianDigits(item.entryCount)} سند · {toPersianDigits(item.rowCount)} ردیف</p>{item.latestValidation && <p className={`mt-2 text-[11px] font-bold ${item.latestValidation.outcome === 'passed' ? 'text-income' : 'text-expense'}`}>آخرین آزمون: {validationLabel[item.latestValidation.attemptType]} {validationLabel[item.latestValidation.outcome]} · {item.latestValidation.softwareName} {item.latestValidation.softwareVersion}</p>}</div><span className={`rounded-md px-2 py-1 font-bold ${item.status === 'accepted' ? 'bg-income/10 text-income' : item.status === 'rejected' ? 'bg-expense/10 text-expense' : 'bg-surface text-muted'}`}>{statusLabel[item.status]}</span><button onClick={() => downloadBatch(item)} className="tap rounded-lg border border-line px-2 text-[11px] font-bold">دریافت</button>{item.status === 'generated' && <button onClick={() => updateStatus(item, 'delivered')} className="tap rounded-lg border border-accent px-2 text-[11px] font-bold text-accent">تحویل شد</button>}{!['accepted', 'rejected'].includes(item.status) && <button onClick={() => openValidation(item)} className="tap rounded-lg border border-ink px-2 text-[11px] font-bold">ثبت آزمون</button>}{!['accepted', 'rejected'].includes(item.status) && <button disabled={!item.acceptanceReady} onClick={() => updateStatus(item, 'accepted')} className="tap rounded-lg border border-income/30 px-2 text-[11px] font-bold text-income disabled:cursor-not-allowed disabled:opacity-35">ورود تأیید شد</button>}{!['accepted', 'rejected'].includes(item.status) && <button onClick={() => updateStatus(item, 'rejected')} className="tap rounded-lg border border-expense/30 px-2 text-[11px] font-bold text-expense">رد</button>}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <b>{item.fileName}</b>
+          <p className="mt-1 text-[10px] text-muted">SHA-256: <span dir="ltr">{item.digest.slice(0, 16)}…</span> · {toPersianDigits(item.entryCount)} سند · {toPersianDigits(item.rowCount)} ردیف · {toPersianDigits(item.downloadCount || 0)} بار دریافت</p>
+          {item.latestValidation && <p className={`mt-2 text-[11px] font-bold ${item.latestValidation.outcome === 'passed' ? 'text-income' : 'text-expense'}`}>آخرین آزمون: {validationLabel[item.latestValidation.attemptType]} {validationLabel[item.latestValidation.outcome]} · {item.latestValidation.softwareName} {item.latestValidation.softwareVersion}</p>}
+        </div>
+        <span className={`rounded-md px-2 py-1 font-bold ${item.status === 'accepted' ? 'bg-income/10 text-income' : item.status === 'rejected' ? 'bg-expense/10 text-expense' : 'bg-surface text-muted'}`}>{statusLabel[item.status]}</span>
+        <button onClick={() => downloadBatch(item)} className={`tap rounded-lg border px-2 text-[11px] font-bold ${item.redownloadRequired ? 'border-expense/30 text-expense' : 'border-line'}`}>{item.redownloadRequired ? 'دریافت دوباره' : 'دریافت'}</button>
+        {!['accepted', 'rejected'].includes(item.status) && <button onClick={() => openValidation(item)} className="tap rounded-lg border border-ink px-2 text-[11px] font-bold">ثبت آزمون</button>}
+        {!['accepted', 'rejected'].includes(item.status) && <button disabled={!item.acceptanceReady} onClick={() => updateStatus(item, 'accepted')} className="tap rounded-lg border border-income/30 px-2 text-[11px] font-bold text-income disabled:cursor-not-allowed disabled:opacity-35">ورود تأیید شد</button>}
+        {!['accepted', 'rejected'].includes(item.status) && <button onClick={() => updateStatus(item, 'rejected')} className="tap rounded-lg border border-expense/30 px-2 text-[11px] font-bold text-expense">رد</button>}
+      </div>
       {validationBatchId === item.id && <form onSubmit={(event) => saveValidation(event, item)} className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-2 lg:grid-cols-4"><input required value={validationDraft.softwareName} onChange={(event) => setValidationDraft({ ...validationDraft, softwareName: event.target.value })} placeholder="نام نرم‌افزار" className="tap rounded-lg border border-line px-2" /><input required value={validationDraft.softwareVersion} onChange={(event) => setValidationDraft({ ...validationDraft, softwareVersion: event.target.value })} placeholder="نسخه دقیق پارسیان" dir="ltr" className="tap rounded-lg border border-line px-2 text-left" /><input required value={validationDraft.testCompanyLabel} onChange={(event) => setValidationDraft({ ...validationDraft, testCompanyLabel: event.target.value })} placeholder="برچسب شرکت آزمایشی" className="tap rounded-lg border border-line px-2" /><select value={validationDraft.attemptType} onChange={(event) => setValidationDraft({ ...validationDraft, attemptType: event.target.value })} className="tap rounded-lg border border-line px-2"><option value="dry-run">Dry Run</option><option value="trial-import">ورود آزمایشی واقعی</option></select><select value={validationDraft.outcome} onChange={(event) => setValidationDraft({ ...validationDraft, outcome: event.target.value })} className="tap rounded-lg border border-line px-2"><option value="failed">ناموفق</option><option value="passed">موفق</option></select><select value={validationDraft.amountUnit} onChange={(event) => { const amountUnit = event.target.value; const multiplier = amountUnit === 'rial' ? 10 : 1; setValidationDraft({ ...validationDraft, amountUnit, importedDebitTotal: String(Number(item.debitTotal) * multiplier), importedCreditTotal: String(Number(item.creditTotal) * multiplier) }); }} className="tap rounded-lg border border-line px-2"><option value="rial">جمع مقصد به ریال</option><option value="toman">جمع مقصد به تومان</option></select><input required inputMode="numeric" value={validationDraft.importedRows} onChange={(event) => setValidationDraft({ ...validationDraft, importedRows: event.target.value.replace(/\D/g, '') })} placeholder="ردیف واردشده" className="tap numbers rounded-lg border border-line px-2" /><input required inputMode="numeric" value={validationDraft.rejectedRows} onChange={(event) => setValidationDraft({ ...validationDraft, rejectedRows: event.target.value.replace(/\D/g, '') })} placeholder="ردیف ردشده" className="tap numbers rounded-lg border border-line px-2" /><input required inputMode="numeric" value={validationDraft.importedDebitTotal} onChange={(event) => setValidationDraft({ ...validationDraft, importedDebitTotal: event.target.value.replace(/\D/g, '') })} placeholder="جمع بدهکار مقصد" className="tap numbers rounded-lg border border-line px-2" /><input required inputMode="numeric" value={validationDraft.importedCreditTotal} onChange={(event) => setValidationDraft({ ...validationDraft, importedCreditTotal: event.target.value.replace(/\D/g, '') })} placeholder="جمع بستانکار مقصد" className="tap numbers rounded-lg border border-line px-2" /><input value={validationDraft.errorSummary} onChange={(event) => setValidationDraft({ ...validationDraft, errorSummary: event.target.value })} placeholder="خطاهای مشاهده‌شده؛ برای ناموفق الزامی" className="tap rounded-lg border border-line px-2 lg:col-span-2" /><textarea value={validationDraft.note} onChange={(event) => setValidationDraft({ ...validationDraft, note: event.target.value })} placeholder="یادداشت و مدرک آزمون؛ بدون اطلاعات محرمانه" className="min-h-16 rounded-lg border border-line p-2 sm:col-span-2 lg:col-span-3" /><button disabled={busy === `validation-${item.id}`} className="tap rounded-lg bg-ink px-3 font-bold text-white">ثبت نتیجه آزمون</button><p className="text-[10px] leading-5 text-muted sm:col-span-2 lg:col-span-4">برای نتیجهٔ موفق، تعداد ردیف باید دقیقاً {toPersianDigits(item.rowCount)}، ردیف ردشده صفر و جمع بدهکار و بستانکار برابر هش/مبالغ همین بسته باشد.</p></form>}
     </article>) : <p className="rounded-lg bg-paper px-3 py-4 text-center text-xs text-muted">هنوز خروجی ثابتی ساخته نشده است.</p>}</div></div>
   </section>;

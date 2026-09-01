@@ -24,27 +24,29 @@ PowerShell را با دسترسی معمولی باز کن و وارد پوشه�
 ### ۱. بررسی بکاپ بدون Restore
 
 ```powershell
-.\01-Inspect-ParsianBackup.ps1 -BackupPath "C:\ParsianPilot\db_1402.bak" -ServerInstance ".\SQLEXPRESS"
+.\01-Inspect-ParsianBackup.ps1 -BackupPath "C:\ParsianPilot\parsian-sample.bak" -ServerInstance ".\SQLEXPRESS"
 ```
 
 خروجی‌های `VERIFYONLY`، `HEADERONLY` و `FILELISTONLY` در پوشهٔ `evidence` ذخیره می‌شوند. اگر `VERIFYONLY` موفق نشد، ادامه نده.
 
 ### ۲. Restore ایزوله
 
-نام‌های منطقی پیش‌فرض از فایل نمونه استخراج شده‌اند: `db_13851_Data` و `db_13851_Log`. اگر `FILELISTONLY` نام دیگری نشان داد، پارامترها را عوض کن.
+نام منطقی فایل داده و لاگ در هر بکاپ متفاوت است و پیش‌فرض امنی ندارد. مقدارهای دقیق `LogicalName` را از خروجی `FILELISTONLY` مرحلهٔ قبل بردار و صریح وارد کن.
 
 ```powershell
 .\02-Restore-ParsianSandbox.ps1 `
-  -BackupPath "C:\ParsianPilot\db_1402.bak" `
+  -BackupPath "C:\ParsianPilot\parsian-sample.bak" `
   -ServerInstance ".\SQLEXPRESS" `
-  -DatabaseName "ParsianPilot_1402" `
+  -DatabaseName "ParsianPilot_Sample" `
+  -LogicalDataName "YOUR_LOGICAL_DATA_NAME" `
+  -LogicalLogName "YOUR_LOGICAL_LOG_NAME" `
   -IUnderstandThisCreatesDatabase
 ```
 
 ### ۳. استخراج Schema بدون دادهٔ مالی
 
 ```powershell
-.\03-Export-ParsianSchema.ps1 -ServerInstance ".\SQLEXPRESS" -DatabaseName "ParsianPilot_1402"
+.\03-Export-ParsianSchema.ps1 -ServerInstance ".\SQLEXPRESS" -DatabaseName "ParsianPilot_Sample"
 ```
 
 فایل‌های خروجی فقط نام جدول، ستون، نوع داده و کلیدها را نگه می‌دارند؛ مقادیر تراکنش‌ها صادر نمی‌شوند.
@@ -77,4 +79,3 @@ CSV حساب‌یار را ابتدا روی شرکت آزمایشی وارد ی
 - جمع بدهکار و بستانکار مقصد دقیقاً برابر CSV با واحد یکسان؛
 - فایل evidence و SHA-256 خروجی نگه‌داری‌شده؛
 - پذیرش نهایی فقط بعد از Trial Import موفق.
-

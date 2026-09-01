@@ -266,13 +266,21 @@ export const api = {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     return { fileName, bytes: blob.size };
   },
-  downloadAccountingTransferBatch: async (id, fallbackFileName = '') => {
+  downloadAccountingTransferBatch: async (id, fallbackFileName = '', options = {}) => {
     const response = await fetch(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/download`, {
-      credentials: 'same-origin', headers: protectedHeaders(false),
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: protectedHeaders(true, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        confirmRedownload: options.confirmRedownload === true,
+        reason: String(options.reason || ''),
+      }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw Object.assign(new Error(body.message || 'دریافت خروجی حسابداری انجام نشد.'), { status: response.status, code: body.code });
+      throw Object.assign(new Error(body.message || 'دریافت خروجی حسابداری انجام نشد.'), {
+        status: response.status, code: body.code, details: body.details,
+      });
     }
     const blob = await response.blob();
     const disposition = response.headers.get('content-disposition') || '';
@@ -283,7 +291,11 @@ export const api = {
     anchor.download = fileName;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return { fileName, bytes: blob.size };
+    return {
+      fileName, bytes: blob.size,
+      batchId: response.headers.get('x-hasabyar-batch-id') || id,
+      downloadCount: Number(response.headers.get('x-hasabyar-download-count') || 0),
+    };
   },
   voiceStats: () => request('/api/voice/stats'),
   voiceStatus: () => request('/api/voice/status'),

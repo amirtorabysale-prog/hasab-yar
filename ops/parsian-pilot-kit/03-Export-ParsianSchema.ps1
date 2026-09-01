@@ -39,4 +39,3 @@ foreach ($item in $queries) {
 }
 
 Write-Host "Schema بدون دادهٔ مالی در $resolvedOutput ذخیره شد."
-
