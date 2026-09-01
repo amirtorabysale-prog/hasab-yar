@@ -10,6 +10,18 @@
 
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 
+export const SPREADSHEET_LIMITS = Object.freeze({
+  maxCompressedBytes: 2 * 1024 * 1024,
+  maxEntries: 128,
+  maxEntryBytes: 8 * 1024 * 1024,
+  maxUncompressedBytes: 16 * 1024 * 1024,
+  maxCompressionRatio: 100,
+  maxSheets: 20,
+  maxRows: 50_000,
+  maxColumns: 256,
+  maxCells: 500_000,
+});
+
 function spreadsheetError(message, code = 'SPREADSHEET_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
 }
@@ -105,6 +117,9 @@ function buildZip(files) {
 
 function readZip(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 22) throw spreadsheetError('فایل اکسل خوانده نشد؛ محتوا خالی یا ناقص است.', 'SPREADSHEET_EMPTY');
+  if (buffer.length > SPREADSHEET_LIMITS.maxCompressedBytes) {
+    throw spreadsheetError('حجم فایل اکسل بیش از سقف ۲ مگابایت است.', 'SPREADSHEET_COMPRESSED_TOO_LARGE', 413);
+  }
   let endOffset = -1;
   for (let index = buffer.length - 22; index >= 0 && index >= buffer.length - 66_000; index -= 1) {
     if (buffer.readUInt32LE(index) === 0x06054b50) { endOffset = index; break; }
@@ -112,24 +127,55 @@ function readZip(buffer) {
   if (endOffset < 0) throw spreadsheetError('این فایل یک فایل اکسل (xlsx) معتبر نیست.', 'SPREADSHEET_NOT_XLSX');
 
   const count = buffer.readUInt16LE(endOffset + 10);
+  if (count > SPREADSHEET_LIMITS.maxEntries) {
+    throw spreadsheetError(`تعداد فایل‌های داخلی اکسل بیش از سقف ${SPREADSHEET_LIMITS.maxEntries} است.`, 'SPREADSHEET_TOO_MANY_ENTRIES', 413);
+  }
   let pointer = buffer.readUInt32LE(endOffset + 16);
   const files = new Map();
+  let totalUncompressed = 0;
   for (let index = 0; index < count; index += 1) {
+    if (pointer < 0 || pointer + 46 > endOffset) throw spreadsheetError('ساختار داخلی فایل اکسل ناقص است.', 'SPREADSHEET_CORRUPT');
     if (buffer.readUInt32LE(pointer) !== 0x02014b50) throw spreadsheetError('ساختار داخلی فایل اکسل خراب است.', 'SPREADSHEET_CORRUPT');
     const method = buffer.readUInt16LE(pointer + 10);
     const compressedSize = buffer.readUInt32LE(pointer + 20);
+    const uncompressedSize = buffer.readUInt32LE(pointer + 24);
     const nameLength = buffer.readUInt16LE(pointer + 28);
     const extraLength = buffer.readUInt16LE(pointer + 30);
     const commentLength = buffer.readUInt16LE(pointer + 32);
     const localOffset = buffer.readUInt32LE(pointer + 42);
+    if (pointer + 46 + nameLength + extraLength + commentLength > endOffset) throw spreadsheetError('فهرست داخلی فایل اکسل ناقص است.', 'SPREADSHEET_CORRUPT');
     const name = buffer.toString('utf8', pointer + 46, pointer + 46 + nameLength);
+    if (!name || files.has(name)) throw spreadsheetError('نام بخش‌های داخلی فایل اکسل خالی یا تکراری است.', 'SPREADSHEET_CORRUPT');
 
+    if (uncompressedSize > SPREADSHEET_LIMITS.maxEntryBytes) {
+      throw spreadsheetError(`بخش «${name}» پس از بازشدن بیش از سقف مجاز است.`, 'SPREADSHEET_ENTRY_TOO_LARGE', 413);
+    }
+    totalUncompressed += uncompressedSize;
+    if (totalUncompressed > SPREADSHEET_LIMITS.maxUncompressedBytes) {
+      throw spreadsheetError('حجم بازشدهٔ فایل اکسل بیش از سقف ۱۶ مگابایت است.', 'SPREADSHEET_UNCOMPRESSED_TOO_LARGE', 413);
+    }
+    if (uncompressedSize > 0 && (compressedSize === 0 || uncompressedSize / compressedSize > SPREADSHEET_LIMITS.maxCompressionRatio)) {
+      throw spreadsheetError(`نسبت فشرده‌سازی بخش «${name}» مشکوک است.`, 'SPREADSHEET_COMPRESSION_RATIO', 413);
+    }
+
+    if (localOffset + 30 > buffer.length || buffer.readUInt32LE(localOffset) !== 0x04034b50) throw spreadsheetError('آدرس بخش داخلی اکسل معتبر نیست.', 'SPREADSHEET_CORRUPT');
     const localNameLength = buffer.readUInt16LE(localOffset + 26);
     const localExtraLength = buffer.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataStart + compressedSize > buffer.length) throw spreadsheetError('دادهٔ داخلی فایل اکسل ناقص است.', 'SPREADSHEET_CORRUPT');
     const slice = buffer.subarray(dataStart, dataStart + compressedSize);
     if (method !== 0 && method !== 8) throw spreadsheetError('روش فشرده‌سازی این فایل اکسل پشتیبانی نمی‌شود.', 'SPREADSHEET_COMPRESSION');
-    files.set(name, method === 8 ? inflateRawSync(slice) : Buffer.from(slice));
+    let content;
+    try {
+      content = method === 8 ? inflateRawSync(slice, { maxOutputLength: SPREADSHEET_LIMITS.maxEntryBytes }) : Buffer.from(slice);
+    } catch (error) {
+      if (error?.code === 'ERR_BUFFER_TOO_LARGE' || /larger than/i.test(error?.message || '')) {
+        throw spreadsheetError(`بخش «${name}» هنگام بازشدن از سقف مجاز عبور کرد.`, 'SPREADSHEET_ENTRY_TOO_LARGE', 413);
+      }
+      throw spreadsheetError(`بخش «${name}» قابل بازشدن نیست.`, 'SPREADSHEET_CORRUPT');
+    }
+    if (content.length !== uncompressedSize) throw spreadsheetError(`اندازهٔ بخش «${name}» با فهرست فایل سازگار نیست.`, 'SPREADSHEET_CORRUPT');
+    files.set(name, content);
 
     pointer += 46 + nameLength + extraLength + commentLength;
   }
@@ -248,10 +294,13 @@ function parseSharedStrings(xml) {
   ));
 }
 
-function parseSheet(xml, sharedStrings) {
+function parseSheet(xml, sharedStrings, budget) {
   const rows = [];
   for (const rowMatch of xml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
     const rowNumber = Number(rowMatch[1]);
+    if (!Number.isSafeInteger(rowNumber) || rowNumber < 1 || rowNumber > SPREADSHEET_LIMITS.maxRows) {
+      throw spreadsheetError(`شمارهٔ ردیف اکسل بیش از سقف ${SPREADSHEET_LIMITS.maxRows} است.`, 'SPREADSHEET_TOO_MANY_ROWS', 413);
+    }
     const cells = [];
     for (const cellMatch of rowMatch[2].matchAll(/<c([^>]*)\/>|<c([^>]*)>([\s\S]*?)<\/c>/g)) {
       const attributes = cellMatch[1] ?? cellMatch[2] ?? '';
@@ -264,6 +313,13 @@ function parseSheet(xml, sharedStrings) {
       else if (type === 'str' || type === 'e') value = unescapeXml(body.match(/<v>([\s\S]*?)<\/v>/)?.[1] || '');
       else value = unescapeXml(body.match(/<v>([\s\S]*?)<\/v>/)?.[1] || '');
       const target = reference ? columnIndex(reference) : cells.length;
+      if (target < 0 || target >= SPREADSHEET_LIMITS.maxColumns) {
+        throw spreadsheetError(`تعداد ستون‌های اکسل بیش از سقف ${SPREADSHEET_LIMITS.maxColumns} است.`, 'SPREADSHEET_TOO_MANY_COLUMNS', 413);
+      }
+      budget.cells += 1;
+      if (budget.cells > SPREADSHEET_LIMITS.maxCells) {
+        throw spreadsheetError(`تعداد سلول‌های اکسل بیش از سقف ${SPREADSHEET_LIMITS.maxCells} است.`, 'SPREADSHEET_TOO_MANY_CELLS', 413);
+      }
       while (cells.length < target) cells.push('');
       cells[target] = value;
     }
@@ -289,13 +345,17 @@ export function readWorkbook(buffer) {
     .map((match) => [match[1], match[2].replace(/^\/?xl\//, '').replace(/^\//, '')]));
 
   const sheets = [];
+  const budget = { cells: 0 };
   let fallbackIndex = 0;
   for (const match of workbook.matchAll(/<sheet\s[^>]*?name="([^"]*)"[^>]*?(?:r:id="([^"]+)")?[^>]*\/>/g)) {
     fallbackIndex += 1;
+    if (fallbackIndex > SPREADSHEET_LIMITS.maxSheets) {
+      throw spreadsheetError(`تعداد شیت‌های اکسل بیش از سقف ${SPREADSHEET_LIMITS.maxSheets} است.`, 'SPREADSHEET_TOO_MANY_SHEETS', 413);
+    }
     const target = (match[2] && relationships.get(match[2])) || `worksheets/sheet${fallbackIndex}.xml`;
     const xml = files.get(`xl/${target}`)?.toString('utf8');
     if (!xml) continue;
-    sheets.push({ name: unescapeXml(match[1]), rows: parseSheet(xml, sharedStrings) });
+    sheets.push({ name: unescapeXml(match[1]), rows: parseSheet(xml, sharedStrings, budget) });
   }
   if (!sheets.length) throw spreadsheetError('هیچ شیت قابل خواندنی در فایل پیدا نشد.', 'SPREADSHEET_NO_SHEET');
   return sheets;
@@ -326,12 +386,25 @@ function splitCsvLine(line, separator) {
 
 export function readDelimitedText(input, sheetName = 'Sheet1') {
   const text = String(input ?? '').replace(/^﻿/, '');
+  if (Buffer.byteLength(text, 'utf8') > SPREADSHEET_LIMITS.maxCompressedBytes) {
+    throw spreadsheetError('حجم فایل متنی بیش از سقف ۲ مگابایت است.', 'SPREADSHEET_COMPRESSED_TOO_LARGE', 413);
+  }
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length);
   if (!lines.length) throw spreadsheetError('فایل خالی است.', 'SPREADSHEET_EMPTY');
+  if (lines.length > SPREADSHEET_LIMITS.maxRows) {
+    throw spreadsheetError(`تعداد ردیف‌ها بیش از سقف ${SPREADSHEET_LIMITS.maxRows} است.`, 'SPREADSHEET_TOO_MANY_ROWS', 413);
+  }
   const separator = [',', ';', '\t'].reduce((best, candidate) => (
     splitCsvLine(lines[0], candidate).length > splitCsvLine(lines[0], best).length ? candidate : best
   ), ',');
-  return [{ name: sheetName, rows: lines.map((line) => splitCsvLine(line, separator)) }];
+  const rows = lines.map((line) => splitCsvLine(line, separator));
+  if (rows.some((row) => row.length > SPREADSHEET_LIMITS.maxColumns)) {
+    throw spreadsheetError(`تعداد ستون‌ها بیش از سقف ${SPREADSHEET_LIMITS.maxColumns} است.`, 'SPREADSHEET_TOO_MANY_COLUMNS', 413);
+  }
+  if (rows.reduce((total, row) => total + row.length, 0) > SPREADSHEET_LIMITS.maxCells) {
+    throw spreadsheetError(`تعداد سلول‌ها بیش از سقف ${SPREADSHEET_LIMITS.maxCells} است.`, 'SPREADSHEET_TOO_MANY_CELLS', 413);
+  }
+  return [{ name: sheetName, rows }];
 }
 
 /**

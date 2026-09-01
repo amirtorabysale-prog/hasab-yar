@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildWorkbook, columnIndex, columnName, isXlsxBuffer, readDelimitedText, readTabularFile, readWorkbook,
+  SPREADSHEET_LIMITS,
 } from '../server/spreadsheet.js';
 import {
   DEFAULT_TRANSFER_COLUMNS, applyTransferTemplate, normalizeAmountUnit, normalizeTransferColumns,
@@ -51,6 +52,46 @@ test('unsafe sheet names are cleaned instead of producing a broken file', () => 
 test('a non-xlsx buffer is refused with a clear message', () => {
   assert.throws(() => readWorkbook(Buffer.from('این یک فایل اکسل نیست')), (error) => error.code === 'SPREADSHEET_NOT_XLSX');
   assert.throws(() => buildWorkbook([]), (error) => error.code === 'SPREADSHEET_NO_SHEET');
+});
+
+test('xlsx limits are enforced before a suspicious ZIP entry is inflated', () => {
+  const workbook = buildWorkbook([{ name: 'x', rows: [['a']] }]);
+  const endOffset = workbook.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const centralOffset = workbook.readUInt32LE(endOffset + 16);
+
+  const oversized = Buffer.from(workbook);
+  oversized.writeUInt32LE(SPREADSHEET_LIMITS.maxEntryBytes + 1, centralOffset + 24);
+  assert.throws(() => readWorkbook(oversized), (error) => error.code === 'SPREADSHEET_ENTRY_TOO_LARGE' && error.status === 413);
+
+  const bombRatio = Buffer.from(workbook);
+  const compressedSize = bombRatio.readUInt32LE(centralOffset + 20);
+  bombRatio.writeUInt32LE(compressedSize * (SPREADSHEET_LIMITS.maxCompressionRatio + 1), centralOffset + 24);
+  assert.throws(() => readWorkbook(bombRatio), (error) => error.code === 'SPREADSHEET_COMPRESSION_RATIO' && error.status === 413);
+});
+
+test('corrupt ZIP offsets are rejected without reading outside the upload buffer', () => {
+  const workbook = buildWorkbook([{ name: 'x', rows: [['a']] }]);
+  const endOffset = workbook.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const centralOffset = workbook.readUInt32LE(endOffset + 16);
+  const corrupt = Buffer.from(workbook);
+  corrupt.writeUInt32LE(corrupt.length + 100, centralOffset + 42);
+  assert.throws(() => readWorkbook(corrupt), (error) => error.code === 'SPREADSHEET_CORRUPT');
+});
+
+test('row, column and cell ceilings also protect CSV imports', () => {
+  const tooManyRows = Array.from({ length: SPREADSHEET_LIMITS.maxRows + 1 }, () => 'a').join('\n');
+  assert.throws(() => readDelimitedText(tooManyRows), (error) => error.code === 'SPREADSHEET_TOO_MANY_ROWS' && error.status === 413);
+
+  const tooManyColumns = Array.from({ length: SPREADSHEET_LIMITS.maxColumns + 1 }, () => 'a').join(',');
+  assert.throws(() => readDelimitedText(tooManyColumns), (error) => error.code === 'SPREADSHEET_TOO_MANY_COLUMNS' && error.status === 413);
+});
+
+test('a valid workbook at ordinary office scale still reads normally', () => {
+  const rows = Array.from({ length: 2_000 }, (_item, index) => [String(index + 1), `حساب ${index + 1}`, index]);
+  const workbook = buildWorkbook([{ name: 'کدینگ', rows }]);
+  const parsed = readWorkbook(workbook);
+  assert.equal(parsed[0].rows.length, 2_000);
+  assert.equal(parsed[0].rows[1][1], 'حساب 2');
 });
 
 test('csv is detected by content, not by file extension', () => {

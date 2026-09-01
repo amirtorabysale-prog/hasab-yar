@@ -722,7 +722,10 @@ if (existsSync(dist)) {
 }
 
 app.use((error, _request, response, _next) => {
-  if (error instanceof multer.MulterError) return response.status(400).json({ code: 'UPLOAD_TOO_LARGE', message: 'فایل انتخاب‌شده بیش از حد بزرگ است.' });
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') return response.status(413).json({ code: 'UPLOAD_TOO_LARGE', message: 'فایل انتخاب‌شده بیش از سقف مجاز است.' });
+    return response.status(400).json({ code: 'UPLOAD_INVALID', message: 'فایل بارگذاری‌شده معتبر نیست.' });
+  }
   console.error(error);
   if (error.retryAfterSeconds) response.setHeader('Retry-After', String(error.retryAfterSeconds));
   return response.status(error.status || 500).json({
