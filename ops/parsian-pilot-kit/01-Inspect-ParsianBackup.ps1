@@ -49,4 +49,3 @@ foreach ($check in $checks) {
 }
 
 Write-Host "بررسی بکاپ موفق بود. خروجی‌ها: $resolvedOutput"
-

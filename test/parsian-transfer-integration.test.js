@@ -8,7 +8,7 @@ const JOURNAL_ROWS = [
     lineDescription: 'دریافت نقدی', debit: 500000, credit: 0 },
   { entryId: 'e1', occurredAt: '2023-08-27T09:00:00.000Z', documentNumber: 117, memo: 'دریافت از مشتری',
     accountId: 'a2', accountCode: '1301', accountName: 'مشتریان', kolCode: '12', moeenCode: '2', tafsiliCode: '1',
-    lineDescription: 'فروشگاه اميني', debit: 0, credit: 500000 },
+    lineDescription: 'طرف حساب نمونه', debit: 0, credit: 500000 },
 ];
 
 test('journal rows become one Parsian document grouped by the hesab-yar entry', () => {
@@ -44,7 +44,7 @@ test('a non numeric tafsili code is refused instead of silently becoming zero', 
   try {
     parsianDocumentsFromJournal({ journalRows: [
       JOURNAL_ROWS[0],
-      { ...JOURNAL_ROWS[1], tafsiliCode: 'AMINI-01' },
+      { ...JOURNAL_ROWS[1], tafsiliCode: 'SAMPLE-01' },
     ] });
   } catch (caught) { error = caught; }
   assert.equal(error.code, 'PARSIAN_JOURNAL_NOT_READY');

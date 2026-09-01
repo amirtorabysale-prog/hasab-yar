@@ -4,7 +4,7 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
+  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
@@ -562,12 +562,23 @@ app.post('/api/accountant-transfer/batches', (request, response, next) => {
   catch (error) { return next(error); }
 });
 app.get('/api/accountant-transfer/batches/:id/download', (request, response) => {
-  const item = accountingTransferBatchFile(request.params.id);
-  if (!item) return response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
-  response.setHeader('Content-Type', item.mimeType || 'text/csv; charset=utf-8');
-  response.setHeader('Content-Disposition', `attachment; filename="${item.fileName}"`);
-  response.setHeader('X-Content-SHA256', item.digest);
-  return response.send(item.fileData);
+  response.setHeader('Allow', 'POST');
+  return response.status(405).json({
+    code: 'TRANSFER_DOWNLOAD_POST_REQUIRED',
+    message: 'برای ثبت امن سابقهٔ تحویل، دریافت فایل باید از دکمهٔ داخل حساب‌یار انجام شود.',
+  });
+});
+app.post('/api/accountant-transfer/batches/:id/download', (request, response, next) => {
+  try {
+    const item = claimAccountingTransferBatchDownload(request.params.id, request.body || {});
+    if (!item) return response.status(404).json({ code: 'TRANSFER_BATCH_NOT_FOUND', message: 'بستهٔ خروجی پیدا نشد.' });
+    response.setHeader('Content-Type', item.mimeType || 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', `attachment; filename="${item.fileName}"`);
+    response.setHeader('X-Content-SHA256', item.digest);
+    response.setHeader('X-HasabYar-Batch-ID', item.id);
+    response.setHeader('X-HasabYar-Download-Count', String(item.downloadCount));
+    return response.send(item.fileData);
+  } catch (error) { return next(error); }
 });
 app.post('/api/accountant-transfer/batches/:id/status', (request, response, next) => {
   try {

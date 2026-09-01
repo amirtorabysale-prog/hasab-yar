@@ -479,6 +479,11 @@ function ensureAccountingTransferSchema(database) {
       digest TEXT NOT NULL,
       readiness_snapshot TEXT NOT NULL,
       file_data BLOB NOT NULL,
+      download_count INTEGER NOT NULL DEFAULT 0,
+      first_downloaded_at TEXT,
+      last_downloaded_at TEXT,
+      last_downloaded_by TEXT,
+      last_download_reason TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'generated' CHECK(status IN ('generated','delivered','accepted','rejected')),
       status_note TEXT NOT NULL DEFAULT '',
       generated_by TEXT,
@@ -520,6 +525,11 @@ function ensureAccountingTransferSchema(database) {
   ensureColumnOn(database, 'accounting_transfer_settings', "transfer_template_name TEXT NOT NULL DEFAULT ''");
   ensureColumnOn(database, 'accounting_transfer_batches', "file_format TEXT NOT NULL DEFAULT 'csv'");
   ensureColumnOn(database, 'accounting_transfer_batches', "amount_unit TEXT NOT NULL DEFAULT 'toman'");
+  ensureColumnOn(database, 'accounting_transfer_batches', 'download_count INTEGER NOT NULL DEFAULT 0');
+  ensureColumnOn(database, 'accounting_transfer_batches', 'first_downloaded_at TEXT');
+  ensureColumnOn(database, 'accounting_transfer_batches', 'last_downloaded_at TEXT');
+  ensureColumnOn(database, 'accounting_transfer_batches', 'last_downloaded_by TEXT');
+  ensureColumnOn(database, 'accounting_transfer_batches', "last_download_reason TEXT NOT NULL DEFAULT ''");
 }
 
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
@@ -1672,6 +1682,12 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
     mimeType: TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].mimeType,
     amountUnit: normalizeAmountUnit(row.amountUnit),
     amountUnitLabel: amountUnitLabel(row.amountUnit),
+    downloadCount: Number(row.downloadCount || 0),
+    firstDownloadedAt: row.firstDownloadedAt || null,
+    lastDownloadedAt: row.lastDownloadedAt || null,
+    lastDownloadedBy: userIdentity(row.lastDownloadedBy),
+    lastDownloadReason: row.lastDownloadReason || '',
+    redownloadRequired: Number(row.downloadCount || 0) > 0,
     latestValidation: latestValidation ? { ...latestValidation, testedBy: userIdentity(latestValidation.testedBy) } : null,
     acceptanceReady: row.targetSystem !== 'parsian-review-csv' || Boolean(passedTrial),
   };
@@ -1682,7 +1698,9 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
 const accountingTransferBatchColumns = `id,period,target_system AS targetSystem,file_name AS fileName,
   row_count AS rowCount,entry_count AS entryCount,debit_total AS debitTotal,credit_total AS creditTotal,digest,status,
   status_note AS statusNote,generated_by AS generatedBy,reviewed_by AS reviewedBy,created_at AS createdAt,
-  updated_at AS updatedAt,file_format AS fileFormat,amount_unit AS amountUnit`;
+  updated_at AS updatedAt,file_format AS fileFormat,amount_unit AS amountUnit,download_count AS downloadCount,
+  first_downloaded_at AS firstDownloadedAt,last_downloaded_at AS lastDownloadedAt,
+  last_downloaded_by AS lastDownloadedBy,last_download_reason AS lastDownloadReason`;
 const accountingTransferBatchSelect = `SELECT ${accountingTransferBatchColumns} FROM accounting_transfer_batches`;
 const accountingTransferBatchFileSelect = `SELECT ${accountingTransferBatchColumns},file_data AS fileData FROM accounting_transfer_batches`;
 
@@ -1806,7 +1824,9 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
   if (existing) return hydrateAccountingTransferBatch(existing);
   const id = randomUUID();
   const workspaceId = String(currentWorkspace()?.id || 'primary').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'primary';
-  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}.${TRANSFER_FILE_FORMATS[fileFormat].extension}`;
+  // هش کوتاه در نام فایل، دو بستهٔ یک ماه را در پوشهٔ دانلود از هم متمایز
+  // می‌کند. پارسیان محتوای تکراری را تشخیص نمی‌دهد و نام مبهم خطر ورود دوباره را بالا می‌برد.
+  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}-${digest.slice(0, 12)}.${TRANSFER_FILE_FORMATS[fileFormat].extension}`;
   db.prepare(`INSERT INTO accounting_transfer_batches (id,period,target_system,file_name,row_count,entry_count,debit_total,
     credit_total,digest,readiness_snapshot,file_data,generated_by,file_format,amount_unit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, state.packageData.scope.period, targetSystem, fileName, state.readiness.rowCount, state.readiness.entryCount,
@@ -1821,6 +1841,63 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
 
 export function accountingTransferBatchFile(id) {
   return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchFileSelect} WHERE id=?`).get(id), true);
+}
+
+/**
+ * یک دریافت قابل‌ردیابی از فایل انتقال ثبت می‌کند.
+ *
+ * اولین دریافت برای حسابدار مجاز است و بسته را به «تحویل‌شده» می‌برد. هر
+ * دریافت بعدی، چون پارسیان فایل تکراری را بی‌هشدار دوباره وارد می‌کند، فقط با
+ * نقش مدیر/مالک، تأیید صریح و علت ثبت‌شده ممکن است.
+ */
+export function claimAccountingTransferBatchDownload(id, values = {}) {
+  const batchId = String(id || '').trim();
+  const confirmRedownload = values.confirmRedownload === true;
+  const reason = String(values.reason || '').trim().slice(0, 600);
+  const actor = currentWorkspace() || {};
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = db.prepare(`${accountingTransferBatchFileSelect} WHERE id=?`).get(batchId);
+    if (!current) {
+      db.exec('ROLLBACK');
+      return null;
+    }
+    const previousDownloads = Number(current.downloadCount || 0);
+    if (previousDownloads > 0) {
+      if (!['manager', 'owner'].includes(actor.role)) {
+        throw Object.assign(new Error('این بسته قبلاً دریافت شده است؛ دریافت دوباره فقط با تأیید مدیر یا مالک دفتر ممکن است.'), {
+          status: 403, code: 'TRANSFER_REDOWNLOAD_MANAGER_REQUIRED',
+          details: { downloadCount: previousDownloads, lastDownloadedAt: current.lastDownloadedAt || null },
+        });
+      }
+      if (!confirmRedownload) {
+        throw Object.assign(new Error('این بسته قبلاً دریافت شده است. برای جلوگیری از ثبت تکراری در پارسیان، دریافت دوباره را صریحاً تأیید کن.'), {
+          status: 409, code: 'TRANSFER_REDOWNLOAD_CONFIRM_REQUIRED',
+          details: { downloadCount: previousDownloads, lastDownloadedAt: current.lastDownloadedAt || null },
+        });
+      }
+      if (reason.length < 8) {
+        throw Object.assign(new Error('علت دریافت دوباره را حداقل در ۸ نویسه بنویس تا در سابقهٔ حسابرسی بماند.'), {
+          status: 400, code: 'TRANSFER_REDOWNLOAD_REASON_REQUIRED',
+        });
+      }
+    }
+    db.prepare(`UPDATE accounting_transfer_batches SET download_count=download_count+1,
+      first_downloaded_at=COALESCE(first_downloaded_at,CURRENT_TIMESTAMP),last_downloaded_at=CURRENT_TIMESTAMP,
+      last_downloaded_by=?,last_download_reason=?,status=CASE WHEN status='generated' THEN 'delivered' ELSE status END,
+      reviewed_by=CASE WHEN status='generated' THEN ? ELSE reviewed_by END,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(actor.userId || null, previousDownloads > 0 ? reason : '', actor.userId || null, batchId);
+    audit(previousDownloads > 0 ? 'redownload-transfer-batch' : 'download-transfer-batch', 'accounting_transfer_batch', batchId, {
+      downloadCount: previousDownloads + 1,
+      reason: previousDownloads > 0 ? reason : undefined,
+      digest: current.digest,
+    });
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* transaction may already be closed */ }
+    throw error;
+  }
+  return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchFileSelect} WHERE id=?`).get(batchId), true);
 }
 
 export function listAccountingTransferValidations(batchId) {

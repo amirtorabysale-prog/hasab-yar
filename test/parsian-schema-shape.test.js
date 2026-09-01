@@ -2,9 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeCodingStyle, validateChartRows } from '../server/chartOfAccounts.js';
 
-// این تست بر پایهٔ schema و دادهٔ واقعی خوانده‌شده از یک نصب پارسیان نوشته شده
-// (SQL Server 2000، دیتابیس db_1402). دو واقعیتی که مدل اولیهٔ ما نمی‌توانست
-// نمایش دهد:
+// این تست قرارداد schema پارسیان را با یک کدینگ ساختگی نمایش می‌دهد؛ هیچ
+// شناسه یا دادهٔ نصب مشتری در fixture نگه‌داری نمی‌شود. دو واقعیت مهم:
 //   ۱. کد کل هیچ ربطی به کد گروهش ندارد — کل ۱۰ زیر گروه ۱۱ می‌نشیند؛
 //   ۲. بعضی کل‌ها اصلاً گروه ندارند (مثل «تراز افتتاحیه»).
 
@@ -16,7 +15,7 @@ const PARSIAN_ROWS = [
   { rowNumber: 6, code: '111202', levelCode: '2', name: 'مشتریان', level: 'معین', parentCode: '1112', type: 'دارایی' },
 ];
 
-test('the real Parsian chart is rejected by the prefix rule', () => {
+test('the segmented Parsian-shaped chart is rejected by the prefix rule', () => {
   const { errors } = validateChartRows(PARSIAN_ROWS, { codingStyle: 'prefix' });
   // کل ۱۱۱۰ با کد والد ۱۱ شروع می‌شود، اما این فقط اتفاقی است؛ نکته این است که
   // در سبک پیشوندی، کد سطح مستقل اصلاً پذیرفته نمی‌شود وقتی هم‌خوان نباشد.

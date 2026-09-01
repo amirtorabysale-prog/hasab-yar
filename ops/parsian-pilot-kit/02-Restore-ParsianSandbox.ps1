@@ -6,9 +6,11 @@ param(
 
     [string]$ServerInstance = ".\SQLEXPRESS",
     [ValidatePattern('^[A-Za-z][A-Za-z0-9_]{2,80}$')]
-    [string]$DatabaseName = "ParsianPilot_1402",
-    [string]$LogicalDataName = "db_13851_Data",
-    [string]$LogicalLogName = "db_13851_Log",
+    [string]$DatabaseName = "ParsianPilot_Sample",
+    [Parameter(Mandatory = $true)]
+    [string]$LogicalDataName,
+    [Parameter(Mandatory = $true)]
+    [string]$LogicalLogName,
     [string]$DataDirectory = "C:\ParsianPilot\SqlData",
     [Parameter(Mandatory = $true)]
     [switch]$IUnderstandThisCreatesDatabase

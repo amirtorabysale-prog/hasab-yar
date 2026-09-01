@@ -5,12 +5,15 @@ import { dirname, resolve } from 'node:path';
 
 const databasePath = `/tmp/hesab-yar-transfer-${process.pid}.sqlite`;
 process.env.DATABASE_PATH = databasePath;
-process.env.ADMIN_USERNAME = 'transfer-owner';
-process.env.ADMIN_PASSWORD = 'transfer-safe-password-4829';
+const testAdminUsername = 'transfer-owner';
+const testAdminPassword = `transfer-test-${crypto.randomUUID()}`;
+
+process.env.ADMIN_USERNAME = testAdminUsername;
+process.env.ADMIN_PASSWORD = testAdminPassword;
 
 const database = await import(`../server/db.js?transfer=${process.pid}`);
 database.ensureAdmin();
-const owner = database.authenticateUser('transfer-owner', 'transfer-safe-password-4829');
+const owner = database.authenticateUser(testAdminUsername, testAdminPassword);
 let secondWorkspace;
 
 function inPrimary(callback) {
@@ -42,6 +45,28 @@ test('builds an immutable balanced CSV batch with both toman and rial', () => in
   assert.match(csv, /بدهکار ریال/);
   assert.match(csv, /12000000/);
   assert.match(csv, /'=فروش پروژه/);
+  assert.match(first.fileName, new RegExp(`${first.digest.slice(0, 12)}\\.csv$`));
+  const firstDownload = database.runInWorkspace('primary', { role: 'accountant', userId: owner.id }, () => (
+    database.claimAccountingTransferBatchDownload(first.id)
+  ));
+  assert.equal(firstDownload.downloadCount, 1);
+  assert.equal(firstDownload.status, 'delivered', 'اولین دریافت خودش سابقهٔ تحویل را ثبت می‌کند');
+  assert.equal(firstDownload.fileData.equals(file.fileData), true);
+  assert.throws(() => database.runInWorkspace('primary', { role: 'accountant', userId: owner.id }, () => (
+    database.claimAccountingTransferBatchDownload(first.id, { confirmRedownload: true, reason: 'بازیابی فایل حذف‌شده' })
+  )), (error) => error.code === 'TRANSFER_REDOWNLOAD_MANAGER_REQUIRED');
+  assert.throws(() => database.claimAccountingTransferBatchDownload(first.id),
+    (error) => error.code === 'TRANSFER_REDOWNLOAD_CONFIRM_REQUIRED');
+  assert.throws(() => database.claimAccountingTransferBatchDownload(first.id, { confirmRedownload: true, reason: 'کوتاه' }),
+    (error) => error.code === 'TRANSFER_REDOWNLOAD_REASON_REQUIRED');
+  const secondDownload = database.claimAccountingTransferBatchDownload(first.id, {
+    confirmRedownload: true, reason: 'نسخهٔ محلی پیش از ورود پاک شده بود',
+  });
+  assert.equal(secondDownload.downloadCount, 2);
+  assert.equal(secondDownload.lastDownloadReason, 'نسخهٔ محلی پیش از ورود پاک شده بود');
+  const downloadAudits = database.financialBackupSnapshot({ id: 'primary' }).tables.audit_log
+    .filter((item) => item.entity_id === first.id && ['download-transfer-batch', 'redownload-transfer-batch'].includes(item.action));
+  assert.deepEqual(downloadAudits.map((item) => item.action), ['download-transfer-batch', 'redownload-transfer-batch']);
   assert.equal(database.updateAccountingTransferBatchStatus(first.id, { status: 'delivered' }).status, 'delivered');
   assert.equal(database.updateAccountingTransferBatchStatus(first.id, { status: 'accepted' }).status, 'accepted');
   assert.throws(() => database.updateAccountingTransferBatchStatus(first.id, { status: 'rejected', note: 'نیاز به اصلاح دارد' }), (error) => error.code === 'TRANSFER_BATCH_FINAL');
@@ -126,6 +151,11 @@ test('includes transfer settings, mappings and immutable files in encrypted-back
   assert.ok(snapshot.tables.accounting_transfer_batches.length >= 2);
   assert.ok(snapshot.tables.accounting_transfer_validations.length >= 3);
   assert.ok(Buffer.from(snapshot.tables.accounting_transfer_batches[0].file_data).length > 100);
+  const downloaded = snapshot.tables.accounting_transfer_batches.find((item) => Number(item.download_count) >= 2);
+  assert.ok(downloaded, 'شمارندهٔ دریافت داخل نسخهٔ پشتیبان می‌ماند');
+  assert.ok(downloaded.first_downloaded_at);
+  assert.ok(downloaded.last_downloaded_at);
+  assert.match(downloaded.last_download_reason, /نسخهٔ محلی/);
 }));
 
 test.after(() => {

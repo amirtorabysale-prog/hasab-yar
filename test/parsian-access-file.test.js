@@ -7,9 +7,9 @@ import {
   PARSIAN_TRANSFER_LIMITS,
 } from '../server/parsianAccessFile.js';
 
-// چیدمان واقعی ستون‌های tbl_Document، خوانده‌شده از یک فایل انتقال که خود
-// پارسیان ساخته بود. این جدول قفلِ همهٔ آفست‌هاست: اگر کسی آن‌ها را عوض کند،
-// تست زیر با بایت‌های واقعی همان فایل نمی‌خواند.
+// چیدمان ستون‌های tbl_Document از یک قالب تولیدشده توسط خود پارسیان استخراج
+// شده است. fixtureهای این فایل عمداً ساختگی‌اند و هیچ نام یا مبلغ مشتری را
+// نگه نمی‌دارند؛ فقط قرارداد بایتی قالب را قفل می‌کنند.
 const COLUMNS = [
   { name: 'ID', type: 0x04, varIndex: 0, colId: 1, fixedOffset: 0, length: 4 },
   { name: 'Sanad_Num', type: 0x04, varIndex: 0, colId: 2, fixedOffset: 4, length: 4 },
@@ -36,18 +36,18 @@ function thrown(run) {
   throw new assert.AssertionError({ message: 'انتظار خطا بود ولی خطایی رخ نداد' });
 }
 
-// ردیف اول واقعی فایل انتقال پارسیان (سند ۴، صندوق، بدهکار ۲۰٬۰۰۰٬۰۰۰).
-// بایت‌های ستون‌های NULL — یعنی ۳۴ تا ۵۳ — در فایل اصلی آشغال کهنه دارند
+// یک ردیف ساختگی سازگار با فایل انتقال پارسیان.
+// بایت‌های ستون‌های NULL — یعنی ۳۴ تا ۵۳ — در بعضی فایل‌های Jet آشغال کهنه دارند
 // (رشتهٔ «PrimaryKey» از یک رکورد قبلی) چون Jet فضای آزاد را صفر نمی‌کند.
 // اینجا صفر شده‌اند، دقیقاً همان چیزی که ما می‌نویسیم.
 const REAL_ROW_HEX = [
   '1100',                       // تعداد ستون = ۱۷
   '01000000',                   // ID = 1
-  '04000000',                   // Sanad_Num = 4
+  '04000000',                   // Sanad_Num = 4 (شمارهٔ محلی fixture)
   '0a00',                       // KolCode = 10
   '0100',                       // MoeenCode = 1
   '00000000',                   // TafsiliCode = 0
-  '00000000d0127341',           // Bed = 20000000
+  '000000000024fe40',           // Bed = 123456
   '0000000000000000',           // Bes = 0
   '0000000000000000000000000000000000000000', // Factor_Num/Remain/ChkNum/CostCenterCode = NULL
   '31003400300032002f00300036002f0030003500', // SanadDate = "1402/06/05"
@@ -56,14 +56,14 @@ const REAL_ROW_HEX = [
   'ff2100',                     // ماسک null
 ].join('');
 
-test('the encoder reproduces a real Parsian row byte for byte', () => {
+test('the encoder reproduces a sanitized Parsian-compatible row byte for byte', () => {
   const encoded = encodeRow(TEMPLATE, {
     ID: 1, Sanad_Num: 4, SanadDate: '1402/06/05',
     KolCode: 10, MoeenCode: 1, TafsiliCode: 0,
-    Comment: '', Bed: 20000000, Bes: 0,
+    Comment: '', Bed: 123456, Bes: 0,
     IsNote: false, Tick: false, SanadComment: '',
   });
-  assert.equal(encoded.length, 87, 'ردیف واقعی پارسیان ۸۷ بایت است');
+  assert.equal(encoded.length, 87, 'ردیف سازگار با قالب پارسیان ۸۷ بایت است');
   assert.equal(encoded.toString('hex'), REAL_ROW_HEX);
 });
 
@@ -177,8 +177,8 @@ test('an empty document list is refused', () => {
 });
 
 // ---------------------------------------------------------------------------
-// رفت‌وبرگشت کامل روی یک الگوی واقعی. الگو دادهٔ مشتری است و در مخزن نیست، پس
-// این تست فقط وقتی اجرا می‌شود که فایل کنار دست باشد.
+// رفت‌وبرگشت کامل روی الگوی محلی پارسیان. الگو ممکن است اطلاعات نصب را حمل کند
+// و در مخزن نیست؛ این تست فقط وقتی اجرا می‌شود که فایل کنار دست باشد.
 
 const TEMPLATE_PATH = 'parsian/parsian-document-export.mdb';
 const hasTemplate = fs.existsSync(TEMPLATE_PATH);
@@ -187,13 +187,13 @@ test('a built file round-trips through an independent reader', { skip: hasTempla
   const template = fs.readFileSync(TEMPLATE_PATH);
   const documents = [
     { date: '1402/06/05', comment: 'حساب‌یار ۱۱۷', lines: [
-      { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 5000000, credit: 0, comment: 'دریافت نقدی' },
-      { kolCode: 12, moeenCode: 2, tafsiliCode: 1, debit: 0, credit: 5000000, comment: 'فروشگاه محترم اميني' },
+      { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 123000, credit: 0, comment: 'دریافت نمونه' },
+      { kolCode: 12, moeenCode: 2, tafsiliCode: 1, debit: 0, credit: 123000, comment: 'طرف حساب نمونه' },
     ] },
     { date: '1402/06/20', comment: 'حساب‌یار ۱۱۸', lines: [
-      { kolCode: 50, moeenCode: 9, tafsiliCode: 0, debit: 300000, credit: 0, comment: 'هزینه حمل' },
-      { kolCode: 50, moeenCode: 5, tafsiliCode: 0, debit: 120000, credit: 0, comment: 'هزینه پست و تلفن' },
-      { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 420000, comment: 'پرداخت از صندوق' },
+      { kolCode: 50, moeenCode: 9, tafsiliCode: 0, debit: 45000, credit: 0, comment: 'هزینه حمل نمونه' },
+      { kolCode: 50, moeenCode: 5, tafsiliCode: 0, debit: 7000, credit: 0, comment: 'هزینه ارتباطات نمونه' },
+      { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 52000, comment: 'پرداخت نمونه' },
     ] },
   ];
 
@@ -206,8 +206,8 @@ test('a built file round-trips through an independent reader', { skip: hasTempla
   assert.deepEqual(back.documents.map((item) => item.date), ['1402/06/05', '1402/06/20']);
   assert.deepEqual(back.documents.map((item) => item.lines.length), [2, 3]);
   // فارسی سالم برمی‌گردد و مبلغ هیچ تبدیلی نمی‌خورد.
-  assert.equal(back.rows[1].Comment, 'فروشگاه محترم اميني');
-  assert.equal(back.rows[0].Bed, 5000000);
+  assert.equal(back.rows[1].Comment, 'طرف حساب نمونه');
+  assert.equal(back.rows[0].Bed, 123000);
   for (const document of back.documents) {
     const debit = document.lines.reduce((sum, line) => sum + line.debit, 0);
     const credit = document.lines.reduce((sum, line) => sum + line.credit, 0);
@@ -245,45 +245,43 @@ test('too many rows is refused with a clear limit instead of a corrupt file', { 
 });
 
 // ---------------------------------------------------------------------------
-// نتیجهٔ آزمون واقعی: فایلی که حساب‌یار ساخته بود به «انتقال اسناد از فایل»
-// پارسیان داده شد و سه سند ۷، ۸ و ۹ ساخته شدند. اعداد زیر از فهرست «جستجوی
-// اسناد حسابداری» همان نصب برداشته شده‌اند و معیار پذیرش فاز ۸ را می‌سنجند:
-// تعداد ردیف برابر بسته، ردیف ردشده صفر، و هر دو جمع دقیقاً منطبق.
+// fixture ساختگیِ معیار پذیرش آزمون میدانی. مدرک واقعی خارج از Git نگه‌داری
+// می‌شود؛ اینجا فقط منطق «تعداد ردیف برابر و جابه‌جایی دقیق دو جمع» آزموده می‌شود.
 
 const TRIAL_IMPORT = Object.freeze({
-  before: { debit: 936050000, credit: 758050000 },
-  after: { debit: 942720000, credit: 764720000 },
+  before: { debit: 100000000, credit: 90000000 },
+  after: { debit: 101111000, credit: 91111000 },
   documents: [
-    { sanad: 7, date: '1402/06/05', lines: [
-      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق', debit: 5000000, credit: 0 },
-      { kol: 12, moeen: 2, tafsili: 1, name: 'فروشگاه محترم اميني', debit: 0, credit: 5000000 },
+    { sanad: 1, date: '1402/06/05', lines: [
+      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق نمونه', debit: 700000, credit: 0 },
+      { kol: 12, moeen: 2, tafsili: 1, name: 'طرف حساب نمونه', debit: 0, credit: 700000 },
     ] },
-    { sanad: 8, date: '1402/06/12', lines: [
-      { kol: 62, moeen: 1, tafsili: 0, name: 'خرید', debit: 1250000, credit: 0 },
-      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق', debit: 0, credit: 1250000 },
+    { sanad: 2, date: '1402/06/12', lines: [
+      { kol: 62, moeen: 1, tafsili: 0, name: 'خرید نمونه', debit: 300000, credit: 0 },
+      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق نمونه', debit: 0, credit: 300000 },
     ] },
-    { sanad: 9, date: '1402/06/20', lines: [
-      { kol: 50, moeen: 9, tafsili: 0, name: 'هزینه حمل', debit: 300000, credit: 0 },
-      { kol: 50, moeen: 5, tafsili: 0, name: 'هزینه پست و تلفن', debit: 120000, credit: 0 },
-      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق', debit: 0, credit: 420000 },
+    { sanad: 3, date: '1402/06/20', lines: [
+      { kol: 50, moeen: 9, tafsili: 0, name: 'هزینه حمل نمونه', debit: 80000, credit: 0 },
+      { kol: 50, moeen: 5, tafsili: 0, name: 'هزینه ارتباطات نمونه', debit: 31000, credit: 0 },
+      { kol: 10, moeen: 1, tafsili: 0, name: 'صندوق نمونه', debit: 0, credit: 111000 },
     ] },
   ],
 });
 
-// همان سه سندی که به پارسیان داده شد.
+// بستهٔ ساختگی متناظر با fixture مقصد.
 const SENT_DOCUMENTS = [
   { date: '1402/06/05', comment: 'حساب‌یار ۱۱۷', lines: [
-    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 5000000, credit: 0 },
-    { kolCode: 12, moeenCode: 2, tafsiliCode: 1, debit: 0, credit: 5000000 },
+    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 700000, credit: 0 },
+    { kolCode: 12, moeenCode: 2, tafsiliCode: 1, debit: 0, credit: 700000 },
   ] },
   { date: '1402/06/12', comment: 'حساب‌یار ۱۱۸', lines: [
-    { kolCode: 62, moeenCode: 1, tafsiliCode: 0, debit: 1250000, credit: 0 },
-    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 1250000 },
+    { kolCode: 62, moeenCode: 1, tafsiliCode: 0, debit: 300000, credit: 0 },
+    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 300000 },
   ] },
   { date: '1402/06/20', comment: 'حساب‌یار ۱۱۹', lines: [
-    { kolCode: 50, moeenCode: 9, tafsiliCode: 0, debit: 300000, credit: 0 },
-    { kolCode: 50, moeenCode: 5, tafsiliCode: 0, debit: 120000, credit: 0 },
-    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 420000 },
+    { kolCode: 50, moeenCode: 9, tafsiliCode: 0, debit: 80000, credit: 0 },
+    { kolCode: 50, moeenCode: 5, tafsiliCode: 0, debit: 31000, credit: 0 },
+    { kolCode: 10, moeenCode: 1, tafsiliCode: 0, debit: 0, credit: 111000 },
   ] },
 ];
 
@@ -301,14 +299,14 @@ test('both destination totals moved by exactly the package total', () => {
   assert.equal(packageDebit, packageCredit, 'بسته خودش متوازن است');
   assert.equal(TRIAL_IMPORT.after.debit - TRIAL_IMPORT.before.debit, packageDebit);
   assert.equal(TRIAL_IMPORT.after.credit - TRIAL_IMPORT.before.credit, packageCredit);
-  assert.equal(packageDebit, 6670000);
+  assert.equal(packageDebit, 1111000);
 });
 
 test('each account code resolved to the right account in the destination', () => {
   // پارسیان نام حساب را از کدینگ خودش می‌آورد، پس نام درست یعنی کد درست نشسته.
   const expected = [
-    [10, 1, 'صندوق'], [12, 2, 'فروشگاه محترم اميني'], [62, 1, 'خرید'],
-    [50, 9, 'هزینه حمل'], [50, 5, 'هزینه پست و تلفن'],
+    [10, 1, 'صندوق نمونه'], [12, 2, 'طرف حساب نمونه'], [62, 1, 'خرید نمونه'],
+    [50, 9, 'هزینه حمل نمونه'], [50, 5, 'هزینه ارتباطات نمونه'],
   ];
   const landed = TRIAL_IMPORT.documents.flatMap((item) => item.lines);
   for (const [kol, moeen, name] of expected) {
@@ -331,10 +329,9 @@ test('the dates and the tafsili code survived into the destination', () => {
 });
 
 test('the pre-existing imbalance of the destination was not touched', () => {
-  // سند ۳ آن نصب از قبل ۱۷۸ میلیون نامتوازن بود؛ بسته‌ای که فرستادیم متوازن
-  // بود، پس اختلاف نباید تکان بخورد.
+  // fixture مقصد از قبل یک اختلاف ساختگی دارد؛ بستهٔ متوازن نباید آن را تغییر دهد.
   const before = TRIAL_IMPORT.before.debit - TRIAL_IMPORT.before.credit;
   const after = TRIAL_IMPORT.after.debit - TRIAL_IMPORT.after.credit;
-  assert.equal(before, 178000000);
+  assert.equal(before, 10000000);
   assert.equal(after, before);
 });
