@@ -1798,7 +1798,7 @@ function ExcelImportPanel({ canManage, notify, refresh }) {
         <p className="font-bold">ورود از اکسل یا پارسیان</p>
         <p className="mt-1 max-w-xl text-[12px] leading-6 text-muted">
           فایل اکسل (xlsx) یا CSV را مستقیم بارگذاری کن. نوع فایل از محتوایش تشخیص داده می‌شود، نه از پسوند.
-          اگر یک ردیف ایراد داشته باشد هیچ ردیفی وارد نمی‌شود.
+          اگر یک ردیف ایراد داشته باشد هیچ ردیفی وارد نمی‌شود. سقف امن: ۲ مگابایت، ۲۰ شیت، ۵۰ هزار ردیف و ۵۰۰ هزار سلول.
         </p>
       </div>
       <button type="button" onClick={download} className="tap flex items-center gap-2 rounded-lg border border-line bg-paper px-3 text-[13px] font-bold"><Download size={16} />الگوی خالی اکسل</button>
