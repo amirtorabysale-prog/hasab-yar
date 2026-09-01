@@ -2374,6 +2374,7 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
         </label>
       </div>
       <p className="mt-2 text-[11px] leading-5 text-muted">این بازه باید دقیقاً با شرکت مقصد در پارسیان یکی باشد. حساب‌یار فایل دارای سند خارج از این بازه را تولید یا تحویل نمی‌دهد.</p>
+      <p className="mt-2 text-[11px] leading-5 text-muted">اگر بسته بیشتر از ۴۰۱ ردیف داشته باشد، حساب‌یار بدون شکستن هیچ سندی آن را به چند فایل تقسیم می‌کند و یک ZIP شامل ترتیب ورود، جمع‌ها و هش هر بخش می‌سازد.</p>
     </div>}
 
     <div className="mt-3 overflow-x-auto">

@@ -1684,8 +1684,8 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
     generatedBy: userIdentity(row.generatedBy), reviewedBy: userIdentity(row.reviewedBy),
     createdAt: row.createdAt, updatedAt: row.updatedAt,
     fileFormat: normalizeTransferFileFormat(row.fileFormat),
-    fileFormatLabel: TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].label,
-    mimeType: TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].mimeType,
+    fileFormatLabel: String(row.fileName || '').endsWith('.zip') ? 'بستهٔ چندبخشی پارسیان (ZIP)' : TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].label,
+    mimeType: String(row.fileName || '').endsWith('.zip') ? 'application/zip' : TRANSFER_FILE_FORMATS[normalizeTransferFileFormat(row.fileFormat)].mimeType,
     amountUnit: normalizeAmountUnit(row.amountUnit),
     amountUnitLabel: amountUnitLabel(row.amountUnit),
     downloadCount: Number(row.downloadCount || 0),
@@ -1854,7 +1854,8 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
   const workspaceId = String(currentWorkspace()?.id || 'primary').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'primary';
   // هش کوتاه در نام فایل، دو بستهٔ یک ماه را در پوشهٔ دانلود از هم متمایز
   // می‌کند. پارسیان محتوای تکراری را تشخیص نمی‌دهد و نام مبهم خطر ورود دوباره را بالا می‌برد.
-  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}-${digest.slice(0, 12)}.${TRANSFER_FILE_FORMATS[fileFormat].extension}`;
+  const extension = built.extension || TRANSFER_FILE_FORMATS[fileFormat].extension;
+  const fileName = `hesab-yar-ledger-${workspaceId}-${state.packageData.scope.period}-${targetSystem}-${digest.slice(0, 12)}.${extension}`;
   db.prepare(`INSERT INTO accounting_transfer_batches (id,period,target_system,file_name,row_count,entry_count,debit_total,
     credit_total,digest,readiness_snapshot,file_data,generated_by,file_format,amount_unit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, state.packageData.scope.period, targetSystem, fileName, state.readiness.rowCount, state.readiness.entryCount,
@@ -1862,7 +1863,8 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
       currentWorkspace()?.userId || null, fileFormat, state.settings.amountUnit);
   audit('generate-transfer-batch', 'accounting_transfer_batch', id, {
     period: state.packageData.scope.period, targetSystem, digest, rowCount: state.readiness.rowCount, fileFormat,
-    amountUnit: state.settings.amountUnit,
+    amountUnit: state.settings.amountUnit, multipart: Boolean(built.multipart),
+    partCount: built.manifest?.totals?.partCount || 1,
   });
   return hydrateAccountingTransferBatch(db.prepare(`${accountingTransferBatchSelect} WHERE id=?`).get(id));
 }
