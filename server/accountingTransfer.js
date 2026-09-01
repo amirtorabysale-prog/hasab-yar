@@ -1,6 +1,8 @@
 import { buildWorkbook } from './spreadsheet.js';
 import { DEFAULT_TRANSFER_COLUMNS, applyTransferTemplate } from './transferTemplates.js';
-import { buildParsianTransfer, readParsianTemplate } from './parsianAccessFile.js';
+import { createHash } from 'node:crypto';
+import { buildZipArchive } from './archive.js';
+import { buildParsianTransfer, PARSIAN_TRANSFER_LIMITS, readParsianTemplate } from './parsianAccessFile.js';
 
 const TARGET_CATALOG = Object.freeze({
   'generic-csv': Object.freeze({
@@ -230,6 +232,62 @@ export function parsianDocumentsFromJournal({ journalRows = [], timeZone = 'Asia
   return order.map((entryId) => byEntry.get(entryId));
 }
 
+export function splitParsianDocuments(documents = [], maxRows = PARSIAN_TRANSFER_LIMITS.maxRows) {
+  const parts = [];
+  let current = [];
+  let currentRows = 0;
+  for (const document of documents) {
+    const rows = Array.isArray(document?.lines) ? document.lines.length : 0;
+    if (rows > maxRows) {
+      throw Object.assign(new Error(`یک سند ${rows} ردیف دارد و از سقف ${maxRows} ردیف یک فایل پارسیان بزرگ‌تر است؛ سند را نمی‌توان بین دو فایل شکست.`), {
+        status: 409, code: 'PARSIAN_DOCUMENT_TOO_LARGE', details: { rowCount: rows, maxRows },
+      });
+    }
+    if (current.length && currentRows + rows > maxRows) {
+      parts.push(current); current = []; currentRows = 0;
+    }
+    current.push(document); currentRows += rows;
+  }
+  if (current.length) parts.push(current);
+  return parts;
+}
+
+export function buildParsianMultipartPackage({ template, documents, period, buildPart = null }) {
+  const groups = splitParsianDocuments(documents);
+  const width = Math.max(3, String(groups.length).length);
+  const parts = groups.map((group, index) => {
+    const buffer = buildPart ? buildPart(group, index) : buildParsianTransfer({ template, documents: group });
+    const rowCount = group.reduce((sum, document) => sum + document.lines.length, 0);
+    const debitTotal = group.reduce((sum, document) => sum + document.lines.reduce((value, line) => value + Number(line.debit || 0), 0), 0);
+    const creditTotal = group.reduce((sum, document) => sum + document.lines.reduce((value, line) => value + Number(line.credit || 0), 0), 0);
+    return {
+      name: `parsian-${period}-part-${String(index + 1).padStart(width, '0')}-of-${String(groups.length).padStart(width, '0')}.mdb`,
+      buffer, rowCount, documentCount: group.length, debitTotal, creditTotal,
+      sha256: createHash('sha256').update(buffer).digest('hex'),
+    };
+  });
+  const manifest = {
+    schema: 'hasab-yar-parsian-multipart-v1', period, importOrder: parts.map((item) => item.name),
+    warning: 'هر فایل را دقیقاً یک بار و به ترتیب فهرست‌شده وارد پارسیان کنید.',
+    totals: {
+      partCount: parts.length,
+      rowCount: parts.reduce((sum, item) => sum + item.rowCount, 0),
+      documentCount: parts.reduce((sum, item) => sum + item.documentCount, 0),
+      debit: parts.reduce((sum, item) => sum + item.debitTotal, 0),
+      credit: parts.reduce((sum, item) => sum + item.creditTotal, 0),
+    },
+    parts: parts.map(({ name, rowCount, documentCount, debitTotal, creditTotal, sha256 }) => (
+      { name, rowCount, documentCount, debitTotal, creditTotal, sha256 }
+    )),
+  };
+  const archive = buildZipArchive([
+    { name: 'manifest.json', content: `${JSON.stringify(manifest, null, 2)}\n` },
+    { name: 'README-FA.txt', content: 'فایل‌ها را دقیقاً به ترتیب manifest.json و هرکدام فقط یک بار در پارسیان وارد کنید. هش SHA-256 هر بخش پیش از ورود قابل کنترل است.\n' },
+    ...parts.map((item) => ({ name: item.name, content: item.buffer })),
+  ]);
+  return { archive, manifest };
+}
+
 /**
  * خروجی را طبق قالب ستونی دفتر می‌سازد — CSV، اکسل واقعی، یا فایل انتقال پارسیان.
  * در اکسل، شیت دوم عمداً «شناسنامهٔ فایل» است: واحد مبلغ، دوره، جمع‌ها و مرز
@@ -253,7 +311,14 @@ export function buildAccountingTransferFile({ period, journalRows = [], settings
       });
     }
     const documents = parsianDocumentsFromJournal({ journalRows, timeZone, amountUnit });
-    return { buffer: buildParsianTransfer({ template, documents }), table, documentCount: documents.length };
+    const groups = splitParsianDocuments(documents);
+    if (groups.length === 1) {
+      return { buffer: buildParsianTransfer({ template, documents }), table, documentCount: documents.length,
+        extension: 'mdb', mimeType: TRANSFER_FILE_FORMATS.mdb.mimeType, multipart: false };
+    }
+    const multipart = buildParsianMultipartPackage({ template, documents, period });
+    return { buffer: multipart.archive, table, documentCount: documents.length, extension: 'zip', mimeType: 'application/zip',
+      multipart: true, manifest: multipart.manifest };
   }
   const manifest = [
     ['شناسنامهٔ فایل انتقال حساب‌یار'],

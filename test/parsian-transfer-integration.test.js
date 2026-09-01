@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parsianDocumentsFromJournal, accountingTransferReadiness, buildAccountingTransferFile, TRANSFER_FILE_FORMATS } from '../server/accountingTransfer.js';
+import { parsianDocumentsFromJournal, accountingTransferReadiness, buildAccountingTransferFile,
+  buildParsianMultipartPackage, splitParsianDocuments, TRANSFER_FILE_FORMATS } from '../server/accountingTransfer.js';
+import { readZipArchive } from '../server/archive.js';
 
 const JOURNAL_ROWS = [
   { entryId: 'e1', occurredAt: '2023-08-27T09:00:00.000Z', documentNumber: 117, memo: 'دریافت از مشتری',
@@ -129,4 +131,42 @@ test('the two human readable formats are unaffected by the Parsian format', () =
   assert.equal(TRANSFER_FILE_FORMATS.mdb.requiresTemplate, true);
   const csv = buildAccountingTransferFile({ period: '1402-06', journalRows: JOURNAL_ROWS, fileFormat: 'csv' });
   assert.ok(csv.buffer.length > 0);
+});
+
+test('large Parsian packages split between documents and never through one', () => {
+  const documents = Array.from({ length: 205 }, (_unused, index) => ({
+    date: '1402/06/05', comment: `سند ${index + 1}`, lines: [
+      { kolCode: 10, moeenCode: 1, debit: 1, credit: 0 },
+      { kolCode: 12, moeenCode: 2, debit: 0, credit: 1 },
+    ],
+  }));
+  const parts = splitParsianDocuments(documents, 401);
+  assert.equal(parts.length, 2);
+  assert.equal(parts[0].length, 200);
+  assert.equal(parts[0].reduce((sum, item) => sum + item.lines.length, 0), 400);
+  assert.equal(parts[1].length, 5);
+  assert.throws(() => splitParsianDocuments([{ date: '1402/06/05', lines: Array(402).fill({}) }]),
+    (error) => error.code === 'PARSIAN_DOCUMENT_TOO_LARGE');
+});
+
+test('multipart Parsian ZIP carries ordered files, hashes and exact totals', () => {
+  const documents = Array.from({ length: 205 }, (_unused, index) => ({
+    date: '1402/06/05', comment: `سند ${index + 1}`, lines: [
+      { kolCode: 10, moeenCode: 1, debit: index + 1, credit: 0 },
+      { kolCode: 12, moeenCode: 2, debit: 0, credit: index + 1 },
+    ],
+  }));
+  const built = buildParsianMultipartPackage({ documents, period: '1402-06',
+    buildPart: (group, index) => Buffer.from(`part-${index + 1}-documents-${group.length}`) });
+  assert.equal(built.manifest.totals.partCount, 2);
+  assert.equal(built.manifest.totals.rowCount, 410);
+  assert.equal(built.manifest.totals.documentCount, 205);
+  assert.equal(built.manifest.totals.debit, built.manifest.totals.credit);
+  assert.deepEqual(built.manifest.importOrder, built.manifest.parts.map((item) => item.name));
+  assert.ok(built.manifest.parts.every((item) => item.sha256.length === 64 && item.rowCount <= 401));
+  const files = readZipArchive(built.archive);
+  assert.ok(files.has('manifest.json'));
+  assert.ok(files.has('README-FA.txt'));
+  assert.ok(built.manifest.parts.every((item) => files.has(item.name)));
+  assert.deepEqual(JSON.parse(files.get('manifest.json').toString('utf8')), built.manifest);
 });
