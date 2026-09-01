@@ -40,12 +40,11 @@ import {
 import {
   DEFAULT_TRANSFER_COLUMNS, TRANSFER_FIELDS, amountUnitLabel, normalizeAmountUnit, normalizeTransferColumns,
 } from './transferTemplates.js';
-import { buildWorkbook, readTabularFile } from './spreadsheet.js';
+import { buildWorkbook } from './spreadsheet.js';
 import { readParsianTemplate } from './parsianAccessFile.js';
 import { normalizeTemplateLines } from './journalWorkflow.js';
-import {
-  importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows, tableFromSheet,
-} from './ledgerImport.js';
+import { importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows } from './ledgerImport.js';
+import { analyticRowsFromFile, chartRowsFromFile, openingRowsFromFile } from './spreadsheetImport.js';
 import { buildFirmPortfolio, parseStoredMoment } from './firm.js';
 import {
   DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
@@ -1380,40 +1379,9 @@ export function saveCostCenterEntry(values = {}) {
 // ورود داده از اکسل و پارسیان
 // ---------------------------------------------------------------------------
 
-const CHART_SHEET_ALIASES = {
-  code: ['code', 'accountcode', 'کد', 'کدحساب', 'کدینگ'],
-  name: ['name', 'title', 'accountname', 'نام', 'نامحساب', 'شرح', 'عنوان'],
-  level: ['level', 'سطح', 'نوعسطح', 'ردهحساب'],
-  parentCode: ['parent', 'parentcode', 'کدوالد', 'والد', 'کدبالاسری', 'حسابوالد'],
-  type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
-  role: ['role', 'نقش', 'کاربرد'],
-};
-
-const ANALYTIC_SHEET_ALIASES = {
-  code: ['code', 'کد', 'کدتفصیلی', 'کدطرفحساب', 'کدشناور'],
-  name: ['name', 'title', 'نام', 'نامتفصیلی', 'شرح', 'عنوان', 'نامطرفحساب'],
-  kind: ['kind', 'type', 'نوع', 'گروه', 'نوعتفصیلی'],
-};
-
-const OPENING_SHEET_ALIASES = {
-  code: ['code', 'accountcode', 'کد', 'کدحساب', 'کدمعین', 'کدینگ'],
-  name: ['name', 'accountname', 'نام', 'نامحساب', 'شرححساب', 'عنوان'],
-  debit: ['debit', 'بدهکار', 'ماندهبدهکار', 'گردشبدهکار', 'بدهکارریال', 'بدهکارتومان'],
-  credit: ['credit', 'بستانکار', 'ماندهبستانکار', 'گردشبستانکار', 'بستانکارریال', 'بستانکارتومان'],
-  analyticCode: ['analytic', 'analyticcode', 'کدتفصیلی', 'تفصیلی', 'شناور'],
-};
-
-function firstSheet(buffer, fileName) {
-  const sheets = readTabularFile(buffer, fileName);
-  return sheets[0];
-}
-
 /** ورود کدینگ از اکسل یا CSV — همان قواعد اعتبارسنجی فاز کدینگ. */
 export function importChartFile(buffer, fileName = '', { replace = false } = {}) {
-  const rows = tableFromSheet(firstSheet(buffer, fileName), {
-    aliases: CHART_SHEET_ALIASES, required: ['code', 'name', 'level', 'type'], label: 'فایل کدینگ',
-    labels: { code: 'کد', name: 'نام', level: 'سطح', type: 'نوع', parentCode: 'کد والد' },
-  });
+  const rows = chartRowsFromFile(buffer, fileName);
   const result = importChartOfAccounts(activeWorkspaceDatabase(), rows, { source: 'import', replace });
   audit('import', 'chart_of_accounts', 'chart', { ...result, fileName });
   return { ...result, ...chartOverview() };
@@ -1421,10 +1389,7 @@ export function importChartFile(buffer, fileName = '', { replace = false } = {})
 
 /** ورود تفصیلی و طرف حساب از اکسل یا CSV. */
 export function importAnalyticsFile(buffer, fileName = '') {
-  const rows = tableFromSheet(firstSheet(buffer, fileName), {
-    aliases: ANALYTIC_SHEET_ALIASES, required: ['name'], label: 'فایل تفصیلی',
-    labels: { code: 'کد', name: 'نام', kind: 'نوع' },
-  });
+  const rows = analyticRowsFromFile(buffer, fileName);
   const result = importAnalyticRows(activeWorkspaceDatabase(), rows);
   audit('import', 'analytic_accounts', 'analytics', { ...result, fileName });
   return { ...result, ...chartOverview() };
@@ -1436,10 +1401,7 @@ export function importAnalyticsFile(buffer, fileName = '') {
  */
 export function importOpeningBalanceFile(buffer, fileName = '', { amountUnit = 'toman', replace = false, occurredAt = '' } = {}) {
   const database = activeWorkspaceDatabase();
-  const rows = tableFromSheet(firstSheet(buffer, fileName), {
-    aliases: OPENING_SHEET_ALIASES, required: ['code', 'debit', 'credit'], label: 'فایل ماندهٔ افتتاحیه',
-    labels: { code: 'کد حساب', debit: 'بدهکار', credit: 'بستانکار', analyticCode: 'کد تفصیلی' },
-  });
+  const rows = openingRowsFromFile(buffer, fileName);
   const prepared = prepareOpeningBalanceRows(database, rows, { amountUnit: normalizeAmountUnit(amountUnit) === 'rial' ? 'rial' : 'toman' });
 
   database.exec('BEGIN IMMEDIATE');

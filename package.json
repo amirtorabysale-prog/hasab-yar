@@ -11,6 +11,7 @@
     "build": "vite build",
     "start": "node server/index.js",
     "test": "node --test",
+    "smoke:production": "node scripts/production-smoke.mjs",
     "seed": "node server/seed.js"
   },
   "dependencies": {

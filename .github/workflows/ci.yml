@@ -1,4 +1,9 @@
 name: بررسی کیفیت
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 on:
   pull_request:
   push:

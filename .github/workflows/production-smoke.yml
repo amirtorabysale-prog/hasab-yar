@@ -1,0 +1,27 @@
+name: کنترل Production
+on:
+  workflow_dispatch:
+    inputs:
+      production_url:
+        description: نشانی Production بدون اسلش پایانی
+        required: true
+        default: https://hasab-yar-production.up.railway.app
+      expected_sha:
+        description: SHA مورد انتظار main
+        required: true
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: تطبیق SHA، health و JavaScript فعال
+        env:
+          PRODUCTION_URL: ${{ inputs.production_url }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_MARKERS: بسته بیشتر از ۴۰۱ ردیف,سقف امن
+        run: npm run smoke:production
