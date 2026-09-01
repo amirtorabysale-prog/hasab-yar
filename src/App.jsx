@@ -2191,6 +2191,7 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   const approvalCheck = failed.find((item) => item.id === 'approval');
   const mappingCheck = failed.find((item) => item.id === 'mappings');
   const templateCheck = failed.find((item) => item.id === 'template');
+  const fiscalCheck = failed.find((item) => item.id === 'parsian-fiscal-year');
   const missing = readiness?.missingMappings || [];
 
   const fillFromChart = async () => {
@@ -2216,6 +2217,15 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   };
 
   return <div className="mt-3 space-y-2">
+    {fiscalCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+      <p className="font-bold text-expense">سال مالی مقصد با سندهای این بسته سازگار نیست</p>
+      {fiscalCheck.fiscalYearStart && <p className="mt-1 text-muted">بازهٔ ثبت‌شده: <span dir="ltr" className="numbers">{fiscalCheck.fiscalYearStart} تا {fiscalCheck.fiscalYearEnd}</span></p>}
+      {(fiscalCheck.outsideDocuments || []).length > 0 && <ul className="mt-2 space-y-0.5">
+        {fiscalCheck.outsideDocuments.slice(0, 8).map((item) => <li key={item.entryId}>سند {toPersianDigits(item.documentNumber || '—')} · <span dir="ltr" className="numbers">{item.date || 'تاریخ نامعتبر'}</span>{item.memo ? ` · ${item.memo}` : ''}</li>)}
+        {fiscalCheck.outsideDocuments.length > 8 && <li className="text-muted">و {toPersianDigits(fiscalCheck.outsideDocuments.length - 8)} سند دیگر…</li>}
+      </ul>}
+      <p className="mt-2 text-[11px] text-muted">بازهٔ صحیح را در بخش «قالب ستونی فایل خروجی» ثبت کن یا اسناد را به دورهٔ درست منتقل کن. تا آن زمان فایل ساخته و تحویل نمی‌شود.</p>
+    </div>}
     {chartCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
       <p className="font-bold text-expense">این حساب‌ها هنوز معین مقصد ندارند</p>
       {unmapped.length > 0 && <ul className="mt-2 space-y-0.5">
@@ -2268,6 +2278,8 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
   const [columns, setColumns] = useState([]);
   const [fileFormat, setFileFormat] = useState('csv');
   const [amountUnit, setAmountUnit] = useState('toman');
+  const [fiscalYearStart, setFiscalYearStart] = useState('');
+  const [fiscalYearEnd, setFiscalYearEnd] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -2278,6 +2290,8 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
     setColumns(settings?.columns || []);
     setFileFormat(settings?.fileFormat || 'csv');
     setAmountUnit(settings?.amountUnit || 'toman');
+    setFiscalYearStart(settings?.fiscalYearStart || '');
+    setFiscalYearEnd(settings?.fiscalYearEnd || '');
   }, [settings]);
 
   const move = (index, step) => {
@@ -2291,7 +2305,7 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
   const save = async () => {
     setBusy(true);
     try {
-      await api.saveAccountingTransferSettings({ targetSystem: target, fileFormat, amountUnit, columns });
+      await api.saveAccountingTransferSettings({ targetSystem: target, fileFormat, amountUnit, columns, fiscalYearStart, fiscalYearEnd });
       await refresh();
       notify('قالب ستونی خروجی ذخیره شد.');
     } catch (error) {
@@ -2351,6 +2365,15 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
         تاریخ سندها باید داخل سال مالی بازِ پارسیان مقصد باشد، وگرنه ورود انجام نمی‌شود. ورود دوبارهٔ یک
         فایل هم سند تکراری می‌سازد، چون پارسیان تکراری را تشخیص نمی‌دهد.
       </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <label className="text-[12px] font-bold">شروع سال مالی باز
+          <input dir="ltr" inputMode="numeric" value={fiscalYearStart} onChange={(event) => setFiscalYearStart(event.target.value)} placeholder="1405/01/01" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left numbers" />
+        </label>
+        <label className="text-[12px] font-bold">پایان سال مالی باز
+          <input dir="ltr" inputMode="numeric" value={fiscalYearEnd} onChange={(event) => setFiscalYearEnd(event.target.value)} placeholder="1405/12/29" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left numbers" />
+        </label>
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-muted">این بازه باید دقیقاً با شرکت مقصد در پارسیان یکی باشد. حساب‌یار فایل دارای سند خارج از این بازه را تولید یا تحویل نمی‌دهد.</p>
     </div>}
 
     <div className="mt-3 overflow-x-auto">

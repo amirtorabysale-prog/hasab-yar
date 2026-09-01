@@ -523,6 +523,8 @@ function ensureAccountingTransferSchema(database) {
   // الگوی فایل انتقال پارسیان: خود دفتر یک بار از نصبش می‌گیرد و اینجا می‌ماند.
   ensureColumnOn(database, 'accounting_transfer_settings', 'transfer_template BLOB');
   ensureColumnOn(database, 'accounting_transfer_settings', "transfer_template_name TEXT NOT NULL DEFAULT ''");
+  ensureColumnOn(database, 'accounting_transfer_settings', "fiscal_year_start TEXT NOT NULL DEFAULT ''");
+  ensureColumnOn(database, 'accounting_transfer_settings', "fiscal_year_end TEXT NOT NULL DEFAULT ''");
   ensureColumnOn(database, 'accounting_transfer_batches', "file_format TEXT NOT NULL DEFAULT 'csv'");
   ensureColumnOn(database, 'accounting_transfer_batches', "amount_unit TEXT NOT NULL DEFAULT 'toman'");
   ensureColumnOn(database, 'accounting_transfer_batches', 'download_count INTEGER NOT NULL DEFAULT 0');
@@ -1559,6 +1561,7 @@ function accountingTransferSettings(targetSystem = 'generic-csv') {
     template_verified AS templateVerified,note,updated_at AS updatedAt,
     file_format AS fileFormat,amount_unit AS amountUnit,columns_json AS columnsJson,
     transfer_template_name AS transferTemplateName,
+    fiscal_year_start AS fiscalYearStart,fiscal_year_end AS fiscalYearEnd,
     LENGTH(transfer_template) AS transferTemplateSize
     FROM accounting_transfer_settings WHERE target_system=?`).get(target);
   const stored = parseStoredJson(row?.columnsJson, []);
@@ -1577,6 +1580,8 @@ function accountingTransferSettings(targetSystem = 'generic-csv') {
     hasTransferTemplate: Number(row?.transferTemplateSize || 0) > 0,
     transferTemplateName: row?.transferTemplateName || '',
     transferTemplateSize: Number(row?.transferTemplateSize || 0),
+    fiscalYearStart: row?.fiscalYearStart || '',
+    fiscalYearEnd: row?.fiscalYearEnd || '',
   };
 }
 
@@ -1671,6 +1676,7 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
     FROM accounting_transfer_validations WHERE batch_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(row.id);
   const passedTrial = db.prepare(`SELECT id FROM accounting_transfer_validations
     WHERE batch_id=? AND attempt_type='trial-import' AND outcome='passed' ORDER BY created_at DESC,rowid DESC LIMIT 1`).get(row.id);
+  const readinessSnapshot = parseStoredJson(row.readinessSnapshot, {});
   const item = {
     id: row.id, period: row.period, targetSystem: row.targetSystem, fileName: row.fileName,
     rowCount: Number(row.rowCount), entryCount: Number(row.entryCount), debitTotal: Number(row.debitTotal),
@@ -1688,6 +1694,7 @@ function hydrateAccountingTransferBatch(row, includeFile = false) {
     lastDownloadedBy: userIdentity(row.lastDownloadedBy),
     lastDownloadReason: row.lastDownloadReason || '',
     redownloadRequired: Number(row.downloadCount || 0) > 0,
+    fiscalYearCheck: readinessSnapshot.checks?.find((check) => check.id === 'parsian-fiscal-year') || null,
     latestValidation: latestValidation ? { ...latestValidation, testedBy: userIdentity(latestValidation.testedBy) } : null,
     acceptanceReady: row.targetSystem !== 'parsian-review-csv' || Boolean(passedTrial),
   };
@@ -1700,7 +1707,8 @@ const accountingTransferBatchColumns = `id,period,target_system AS targetSystem,
   status_note AS statusNote,generated_by AS generatedBy,reviewed_by AS reviewedBy,created_at AS createdAt,
   updated_at AS updatedAt,file_format AS fileFormat,amount_unit AS amountUnit,download_count AS downloadCount,
   first_downloaded_at AS firstDownloadedAt,last_downloaded_at AS lastDownloadedAt,
-  last_downloaded_by AS lastDownloadedBy,last_download_reason AS lastDownloadReason`;
+  last_downloaded_by AS lastDownloadedBy,last_download_reason AS lastDownloadReason,
+  readiness_snapshot AS readinessSnapshot`;
 const accountingTransferBatchSelect = `SELECT ${accountingTransferBatchColumns} FROM accounting_transfer_batches`;
 const accountingTransferBatchFileSelect = `SELECT ${accountingTransferBatchColumns},file_data AS fileData FROM accounting_transfer_batches`;
 
@@ -1734,17 +1742,37 @@ export function saveAccountingTransferSettings(values = {}) {
   const current = accountingTransferSettings(targetSystem);
   const fileFormat = values.fileFormat == null ? current.fileFormat : normalizeTransferFileFormat(values.fileFormat);
   const amountUnit = values.amountUnit == null ? current.amountUnit : normalizeAmountUnit(values.amountUnit);
+  const latinDate = (value) => String(value || '').trim().replace(/[۰-۹٠-٩]/g, (digit) => ({
+    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+  })[digit]);
+  const fiscalYearStart = values.fiscalYearStart == null ? current.fiscalYearStart : latinDate(values.fiscalYearStart);
+  const fiscalYearEnd = values.fiscalYearEnd == null ? current.fiscalYearEnd : latinDate(values.fiscalYearEnd);
+  if (targetSystem === 'parsian-review-csv' && (fiscalYearStart || fiscalYearEnd)) {
+    const validDate = /^\d{4}\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
+    if (!validDate.test(fiscalYearStart) || !validDate.test(fiscalYearEnd)) {
+      throw Object.assign(new Error('شروع و پایان سال مالی را با قالب ۱۴۰۵/۰۱/۰۱ وارد کن.'), { status: 400, code: 'TRANSFER_FISCAL_RANGE_INVALID' });
+    }
+    if (fiscalYearStart > fiscalYearEnd) {
+      throw Object.assign(new Error('تاریخ پایان سال مالی نمی‌تواند قبل از تاریخ شروع باشد.'), { status: 400, code: 'TRANSFER_FISCAL_RANGE_INVALID' });
+    }
+  }
   // ستون‌ها فقط وقتی بازنویسی می‌شوند که کاربر صریحاً فرستاده باشد؛ ذخیرهٔ
   // نام قالب نباید چیدمان ستون‌های کنترل‌شده را پاک کند.
   const columns = values.columns == null ? null : normalizeTransferColumns(values.columns).columns;
 
-  db.prepare(`INSERT INTO accounting_transfer_settings (target_system,template_name,template_verified,note,updated_by,file_format,amount_unit,columns_json)
-    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(target_system) DO UPDATE SET template_name=excluded.template_name,
+  db.prepare(`INSERT INTO accounting_transfer_settings (target_system,template_name,template_verified,note,updated_by,file_format,amount_unit,columns_json,fiscal_year_start,fiscal_year_end)
+    VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(target_system) DO UPDATE SET template_name=excluded.template_name,
     template_verified=excluded.template_verified,note=excluded.note,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP,
-    file_format=excluded.file_format,amount_unit=excluded.amount_unit,columns_json=excluded.columns_json`)
+    file_format=excluded.file_format,amount_unit=excluded.amount_unit,columns_json=excluded.columns_json,
+    fiscal_year_start=excluded.fiscal_year_start,fiscal_year_end=excluded.fiscal_year_end`)
     .run(targetSystem, templateName, templateVerified ? 1 : 0, note, currentWorkspace()?.userId || null,
-      fileFormat, amountUnit, JSON.stringify(columns ?? (current.usingDefaultColumns ? [] : current.columns)));
-  audit('update-transfer-settings', 'accounting_transfer_settings', targetSystem, { templateName, templateVerified, fileFormat, amountUnit, columnCount: (columns || current.columns).length });
+      fileFormat, amountUnit, JSON.stringify(columns ?? (current.usingDefaultColumns ? [] : current.columns)), fiscalYearStart, fiscalYearEnd);
+  audit('update-transfer-settings', 'accounting_transfer_settings', targetSystem, {
+    templateName, templateVerified, fileFormat, amountUnit, fiscalYearStart, fiscalYearEnd,
+    previousFiscalYearStart: current.fiscalYearStart, previousFiscalYearEnd: current.fiscalYearEnd,
+    columnCount: (columns || current.columns).length,
+  });
   return accountingTransferSettings(targetSystem);
 }
 
@@ -1861,6 +1889,16 @@ export function claimAccountingTransferBatchDownload(id, values = {}) {
     if (!current) {
       db.exec('ROLLBACK');
       return null;
+    }
+    if (normalizeTransferFileFormat(current.fileFormat) === 'mdb') {
+      const snapshot = parseStoredJson(current.readinessSnapshot, {});
+      const fiscalCheck = snapshot.checks?.find((check) => check.id === 'parsian-fiscal-year');
+      if (!fiscalCheck?.passed) {
+        throw Object.assign(new Error('این بسته تأیید سال مالی مقصد ندارد؛ برای جلوگیری از ورود سند به دورهٔ اشتباه، تنظیمات سال مالی را کامل و بستهٔ تازه‌ای تولید کن.'), {
+          status: 409, code: 'TRANSFER_FISCAL_YEAR_NOT_VERIFIED',
+          details: { fiscalYearCheck: fiscalCheck || null },
+        });
+      }
     }
     const previousDownloads = Number(current.downloadCount || 0);
     if (previousDownloads > 0) {

@@ -67,12 +67,20 @@ test('builds an immutable balanced CSV batch with both toman and rial', () => in
   const downloadAudits = database.financialBackupSnapshot({ id: 'primary' }).tables.audit_log
     .filter((item) => item.entity_id === first.id && ['download-transfer-batch', 'redownload-transfer-batch'].includes(item.action));
   assert.deepEqual(downloadAudits.map((item) => item.action), ['download-transfer-batch', 'redownload-transfer-batch']);
+  database.db.prepare("UPDATE accounting_transfer_batches SET file_format='mdb',readiness_snapshot='{}' WHERE id=?").run(first.id);
+  assert.throws(() => database.claimAccountingTransferBatchDownload(first.id, {
+    confirmRedownload: true, reason: 'آزمون محافظ سال مالی بسته قدیمی',
+  }), (error) => error.code === 'TRANSFER_FISCAL_YEAR_NOT_VERIFIED');
+  database.db.prepare("UPDATE accounting_transfer_batches SET file_format='csv' WHERE id=?").run(first.id);
   assert.equal(database.updateAccountingTransferBatchStatus(first.id, { status: 'delivered' }).status, 'delivered');
   assert.equal(database.updateAccountingTransferBatchStatus(first.id, { status: 'accepted' }).status, 'accepted');
   assert.throws(() => database.updateAccountingTransferBatchStatus(first.id, { status: 'rejected', note: 'نیاز به اصلاح دارد' }), (error) => error.code === 'TRANSFER_BATCH_FINAL');
 }));
 
 test('requires a reviewed template and complete account mappings for Parsian preparation', () => inPrimary(() => {
+  assert.throws(() => database.saveAccountingTransferSettings({
+    targetSystem: 'parsian-review-csv', fiscalYearStart: '1405/12/29', fiscalYearEnd: '1405/01/01',
+  }), (error) => error.code === 'TRANSFER_FISCAL_RANGE_INVALID');
   let overview = database.accountingTransferOverview('1405-05', 'parsian-review-csv', new Date('2026-08-20T12:00:00.000Z'));
   assert.equal(overview.readiness.ready, false);
   assert.equal(overview.readiness.checks.find((item) => item.id === 'template').passed, false);
@@ -80,7 +88,11 @@ test('requires a reviewed template and complete account mappings for Parsian pre
 
   database.saveAccountingTransferSettings({
     targetSystem: 'parsian-review-csv', templateName: 'قالب شرکت آزمایشی پارسیان ۱۴۰۵', templateVerified: true,
+    fiscalYearStart: '۱۴۰۵/۰۱/۰۱', fiscalYearEnd: '۱۴۰۵/۱۲/۲۹',
   });
+  const savedSettings = database.accountingTransferOverview('1405-05', 'parsian-review-csv').settings;
+  assert.equal(savedSettings.fiscalYearStart, '1405/01/01');
+  assert.equal(savedSettings.fiscalYearEnd, '1405/12/29');
   for (const [index, account] of overview.readiness.accounts.entries()) database.saveAccountingTransferMapping({
     targetSystem: 'parsian-review-csv', ledgerAccountId: account.id,
     targetCode: `P-${index + 1}`, targetName: `حساب مقصد ${index + 1}`,
