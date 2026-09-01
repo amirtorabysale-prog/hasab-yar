@@ -110,6 +110,31 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
       id: 'parsian-segments', label: 'هر حساب استفاده‌شده کد کل و معین عددی دارد', count: missingSegments.length,
       passed: missingSegments.length === 0, severity: 'blocker',
     });
+    const fiscalYearStart = String(settings.fiscalYearStart || '').trim();
+    const fiscalYearEnd = String(settings.fiscalYearEnd || '').trim();
+    const validDate = /^\d{4}\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
+    const rangeValid = validDate.test(fiscalYearStart) && validDate.test(fiscalYearEnd) && fiscalYearStart <= fiscalYearEnd;
+    const documents = [...new Map(journalRows.map((item) => {
+      const date = persianDateToken(item.occurredAt, packageData.scope?.timeZone || 'Asia/Tehran');
+      return [item.entryId, {
+        entryId: item.entryId, documentNumber: item.documentNumber ?? null,
+        date, memo: String(item.memo || '').slice(0, 120),
+      }];
+    })).values()];
+    const outsideFiscalYear = rangeValid
+      ? documents.filter((item) => !item.date || item.date < fiscalYearStart || item.date > fiscalYearEnd)
+      : documents;
+    checks.push({
+      id: 'parsian-fiscal-year',
+      label: rangeValid
+        ? `همهٔ سندها داخل سال مالی مقصد (${fiscalYearStart} تا ${fiscalYearEnd}) هستند`
+        : 'بازهٔ سال مالی باز پارسیان ثبت شده است',
+      count: rangeValid ? outsideFiscalYear.length : 1,
+      passed: rangeValid && outsideFiscalYear.length === 0,
+      severity: 'blocker',
+      fiscalYearStart, fiscalYearEnd,
+      outsideDocuments: outsideFiscalYear.slice(0, 40),
+    });
   }
 
   // سند کنترل‌نشده نباید تحویل دفتر شود؛ گردش ثبت‌کننده/کنترل‌کننده وقتی معنا

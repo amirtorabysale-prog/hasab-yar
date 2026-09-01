@@ -74,7 +74,7 @@ test('readiness blocks the Parsian file until the template is loaded', () => {
   };
   const withoutTemplate = accountingTransferReadiness({
     ...base,
-    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: false, templateVerified: true, templateName: 'پارسیان ۱۴۰۲' },
+    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: false, templateVerified: true, templateName: 'پارسیان ۱۴۰۲', fiscalYearStart: '1402/01/01', fiscalYearEnd: '1402/12/29' },
   });
   const check = withoutTemplate.checks.find((item) => item.id === 'parsian-template');
   assert.equal(check.passed, false);
@@ -82,7 +82,7 @@ test('readiness blocks the Parsian file until the template is loaded', () => {
 
   const withTemplate = accountingTransferReadiness({
     ...base,
-    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: true, templateVerified: true, templateName: 'پارسیان ۱۴۰۲' },
+    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: true, templateVerified: true, templateName: 'پارسیان ۱۴۰۲', fiscalYearStart: '1402/01/01', fiscalYearEnd: '1402/12/29' },
     mappings: [
       { ledgerAccountId: 'a1', targetCode: '0-1-10' },
       { ledgerAccountId: 'a2', targetCode: '1-2-12' },
@@ -90,6 +90,25 @@ test('readiness blocks the Parsian file until the template is loaded', () => {
   });
   assert.equal(withTemplate.checks.find((item) => item.id === 'parsian-template').passed, true);
   assert.equal(withTemplate.checks.find((item) => item.id === 'parsian-segments').passed, true);
+  assert.equal(withTemplate.checks.find((item) => item.id === 'parsian-fiscal-year').passed, true);
+});
+
+test('readiness names every document outside the open Parsian fiscal year', () => {
+  const readiness = accountingTransferReadiness({
+    packageData: { checklist: { checks: [] }, sections: { transactions: [] }, scope: { timeZone: 'Asia/Tehran' } },
+    journalRows: JOURNAL_ROWS, mappings: [
+      { ledgerAccountId: 'a1', targetCode: '10-1' },
+      { ledgerAccountId: 'a2', targetCode: '12-2' },
+    ], chart: { installed: true }, workflow: {},
+    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: true,
+      templateVerified: true, templateName: 'پارسیان ۱۴۰۱', fiscalYearStart: '1401/01/01', fiscalYearEnd: '1401/12/29' },
+  });
+  const check = readiness.checks.find((item) => item.id === 'parsian-fiscal-year');
+  assert.equal(check.passed, false);
+  assert.equal(check.count, 1);
+  assert.equal(check.outsideDocuments[0].documentNumber, 117);
+  assert.match(check.outsideDocuments[0].date, /^1402\//);
+  assert.equal(readiness.ready, false);
 });
 
 test('readiness blocks an account that has no numeric kol or moeen code', () => {
@@ -97,7 +116,7 @@ test('readiness blocks an account that has no numeric kol or moeen code', () => 
     packageData: { checklist: { checks: [] }, sections: { transactions: [] } },
     journalRows: [{ ...JOURNAL_ROWS[0], kolCode: null, moeenCode: null }, JOURNAL_ROWS[1]],
     mappings: [], chart: { installed: true }, workflow: {},
-    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: true, templateVerified: true, templateName: 'x' },
+    settings: { targetSystem: 'parsian-review-csv', fileFormat: 'mdb', hasTransferTemplate: true, templateVerified: true, templateName: 'x', fiscalYearStart: '1402/01/01', fiscalYearEnd: '1402/12/29' },
   });
   const check = readiness.checks.find((item) => item.id === 'parsian-segments');
   assert.equal(check.passed, false);
