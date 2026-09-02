@@ -37,6 +37,9 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath === '/import/template') return 'viewer';
   if (normalizedPath.startsWith('/import/')) return 'manager';
   if (normalizedPath.startsWith('/tax/rates')) return 'manager';
+  if (normalizedPath.startsWith('/tax-assistant/sources') && !['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return 'manager';
+  if (normalizedPath.startsWith('/tax-assistant/questions/') && normalizedPath.endsWith('/resolve')) return 'manager';
+  if (normalizedPath.startsWith('/tax-assistant/')) return 'viewer';
   if (normalizedPath === '/backups/restore' || normalizedPath === '/backups/preview') return 'owner';
   if (normalizedPath.startsWith('/backups/')) return 'manager';
   if (normalizedPath === '/settings' || normalizedPath.startsWith('/accounts')) return 'manager';

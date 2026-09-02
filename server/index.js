@@ -18,6 +18,7 @@ import {
   mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
+  askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
@@ -387,6 +388,23 @@ app.get('/api/tax/rates', (_request, response) => response.json({ items: listTax
 app.post('/api/tax/rates', (request, response, next) => { try { response.status(201).json({ item: saveTaxRate(request.body) }); } catch (error) { next(error); } });
 app.put('/api/tax/rates/:id', (request, response, next) => { try { response.json({ item: saveTaxRate({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.get('/api/tax/report', (request, response, next) => { try { response.json(taxReport(request.query)); } catch (error) { next(error); } });
+app.get('/api/tax-assistant/sources', (_request, response) => response.json({ items: listTaxKnowledgeSources() }));
+app.post('/api/tax-assistant/sources', (request, response, next) => {
+  try { return response.status(201).json({ item: saveTaxKnowledgeSource(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.put('/api/tax-assistant/sources/:id', (request, response, next) => {
+  try { return response.json({ item: saveTaxKnowledgeSource({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
+});
+app.get('/api/tax-assistant/questions', (request, response) => response.json({ items: listTaxAssistantQuestions(request.query) }));
+app.post('/api/tax-assistant/questions', (request, response, next) => {
+  try { return response.status(201).json({ item: askTaxAssistant(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/tax-assistant/questions/:id/resolve', (request, response, next) => {
+  try {
+    const item = resolveTaxAssistantQuestion(request.params.id, request.body || {});
+    return item ? response.json({ item }) : response.status(404).json({ code: 'TAX_QUESTION_NOT_FOUND', message: 'سؤال پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
 app.get('/api/accounts', (_request, response) => response.json({ items: listAccounts() }));
 app.post('/api/accounts', (request, response, next) => { try { response.status(201).json({ item: saveAccount(request.body) }); } catch (error) { next(error); } });
 app.put('/api/accounts/:id', (request, response, next) => { try { response.json({ item: saveAccount({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });

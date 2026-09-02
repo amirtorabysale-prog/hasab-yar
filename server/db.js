@@ -47,6 +47,11 @@ import { importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows } 
 import { analyticRowsFromFile, chartRowsFromFile, openingRowsFromFile } from './spreadsheetImport.js';
 import { buildFirmPortfolio, parseStoredMoment } from './firm.js';
 import {
+  askTaxAssistant as askTaxAssistantCore, ensureTaxAssistantSchema,
+  listTaxAssistantQuestions as listTaxAssistantQuestionsCore, listTaxKnowledgeSources as listTaxKnowledgeSourcesCore,
+  resolveTaxAssistantQuestion as resolveTaxAssistantQuestionCore, saveTaxKnowledgeSource as saveTaxKnowledgeSourceCore,
+} from './taxAssistant.js';
+import {
   DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
   importChartOfAccounts, installDefaultChartTemplate, listAnalyticAccounts, listChartAccounts, listCostCenters,
   mapLedgerAccountToChart, parseChartCsv, saveAnalyticAccount, saveChartAccount, saveCostCenter,
@@ -556,6 +561,7 @@ ensureFirmConsoleSchema(controlDb);
 ensureAccountingTransferSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
+ensureTaxAssistantSchema(controlDb);
 
 const categorySeed = [
   ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
@@ -617,6 +623,7 @@ function workspaceDatabase(workspaceId) {
   ensureAccountingTransferSchema(database);
   ensureInventorySchema(database);
   ensureTaxSchema(database);
+  ensureTaxAssistantSchema(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   workspaceConnections.set(workspaceId, database);
@@ -3005,6 +3012,36 @@ export function taxReport(filters = {}) {
   return taxReportCore(db, filters);
 }
 
+export function listTaxKnowledgeSources(filters = {}) {
+  return listTaxKnowledgeSourcesCore(db, filters);
+}
+
+export function saveTaxKnowledgeSource(values = {}) {
+  const item = saveTaxKnowledgeSourceCore(db, values, currentWorkspace());
+  audit(values.id ? 'update-source' : 'create-source', 'tax_knowledge_source', item.id, {
+    title: item.title, issuer: item.issuer, versionLabel: item.versionLabel, status: item.status,
+  });
+  return item;
+}
+
+export function askTaxAssistant(values = {}) {
+  const item = askTaxAssistantCore(db, values, currentWorkspace());
+  audit(item.status === 'answered' ? 'answer-from-source' : 'refer-to-expert', 'tax_assistant_question', item.id, {
+    riskLevel: item.riskLevel, sourceCount: item.sources.length,
+  });
+  return item;
+}
+
+export function listTaxAssistantQuestions(filters = {}) {
+  return listTaxAssistantQuestionsCore(db, filters);
+}
+
+export function resolveTaxAssistantQuestion(id, values = {}) {
+  const item = resolveTaxAssistantQuestionCore(db, id, values, currentWorkspace());
+  if (item) audit('expert-answer', 'tax_assistant_question', item.id, { sourceCount: item.sources.length });
+  return item;
+}
+
 function financialTransactionRows(window, filters = {}) {
   const clauses = ["transactions.status!='deleted'", 'transactions.occurred_at>=?', 'transactions.occurred_at<?'];
   const values = [window.from, window.to];
@@ -3302,6 +3339,7 @@ export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
+  'tax_knowledge_sources', 'tax_assistant_questions',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
@@ -3310,7 +3348,7 @@ const BACKUP_DELETE_ORDER = [
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
-  'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
+  'tax_assistant_questions', 'tax_knowledge_sources', 'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',
 ];
 
