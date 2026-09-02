@@ -50,12 +50,12 @@ test('a no-op transition and an unknown target are both named clearly', () => {
   assert.throws(() => assertApprovalTransition('draft', 'archived'), (error) => error.code === 'JOURNAL_STATE_UNKNOWN');
 });
 
-test('self approval can be forbidden when the office wants two pairs of eyes', () => {
-  assert.doesNotThrow(() => assertApprovalTransition('submitted', 'approved', { sameUser: true, allowSelfApproval: true }));
+test('self approval is forbidden by default and only an explicit trusted override can allow it', () => {
   assert.throws(
-    () => assertApprovalTransition('submitted', 'approved', { sameUser: true, allowSelfApproval: false }),
+    () => assertApprovalTransition('submitted', 'approved', { sameUser: true }),
     (error) => error.code === 'JOURNAL_SELF_APPROVAL',
   );
+  assert.doesNotThrow(() => assertApprovalTransition('submitted', 'approved', { sameUser: true, allowSelfApproval: true }));
 });
 
 test('only approved documents are allowed to leave in an export', () => {

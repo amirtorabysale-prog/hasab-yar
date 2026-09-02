@@ -275,7 +275,7 @@ app.post('/api/accounting/journal', (request, response, next) => {
 });
 // فاز ۳ — ثبت انبوه، کارتابل تأیید و الگوی سند.
 app.post('/api/accounting/journal/batch', (request, response, next) => {
-  try { return response.status(201).json(createJournalDocuments(request.body?.documents, request.body || {})); }
+  try { return response.status(201).json(createJournalDocuments(request.body?.documents)); }
   catch (error) { return next(error); }
 });
 app.get('/api/accounting/journal/worklist', (request, response, next) => {

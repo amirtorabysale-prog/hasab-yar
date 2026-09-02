@@ -52,12 +52,16 @@ test('rejects unbalanced adjustments and accepts a balanced correction', () => i
     memo: 'سند نامتوازن', occurredAt: '2026-05-12T10:00:00.000Z',
     lines: [{ accountId: materials.id, debit: 100_000 }, { accountId: cash.id, credit: 90_000 }],
   }), (error) => error.code === 'JOURNAL_UNBALANCED');
+  const beforeBalance = accounting.trialBalance(db);
   const item = accounting.createAdjustingJournal(db, {
     memo: 'اصلاح مصرف مواد', occurredAt: '2026-05-12T10:00:00.000Z',
     lines: [{ accountId: materials.id, debit: 100_000 }, { accountId: cash.id, credit: 100_000 }],
   }, { createdBy: 'test-owner' });
   assert.equal(item.entryKind, 'adjustment');
-  assert.equal(accounting.trialBalance(db).balanced, true);
+  assert.equal(item.approvalState, 'draft');
+  const afterBalance = accounting.trialBalance(db);
+  assert.equal(afterBalance.balanced, true);
+  assert.deepEqual(afterBalance.totals, beforeBalance.totals, 'سند اصلاحی پیش‌نویس وارد تراز قطعی نمی‌شود');
 }));
 
 test('blocks every mutation in a locked period and records controlled reopening', () => inPrimary(() => {

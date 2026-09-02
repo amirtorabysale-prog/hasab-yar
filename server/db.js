@@ -1458,16 +1458,16 @@ export function journalWorklistOverview(query = {}) {
 export function submitJournalApproval(entryId, nextState, reason = '') {
   const result = setJournalApproval(activeWorkspaceDatabase(), entryId, nextState, {
     userId: currentWorkspace()?.userId || null, reason, timeZone: currentTimeZone(),
+    allowSelfApproval: false,
   });
   audit('approval', 'journal_entry', entryId, { from: result.from, to: result.to, reason: reason || undefined });
   return result;
 }
 
-export function createJournalDocuments(documents = [], options = {}) {
+export function createJournalDocuments(documents = []) {
   const result = createJournalBatch(activeWorkspaceDatabase(), documents, {
     createdBy: currentWorkspace()?.userId || null,
     timeZone: currentTimeZone(),
-    approvalState: options.approvalState || 'draft',
   });
   audit('create-batch', 'journal_entry', result.entryIds[0] || 'batch', {
     created: result.created, documentNumbers: result.documentNumbers,

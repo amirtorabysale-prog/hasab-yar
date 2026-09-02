@@ -40,7 +40,7 @@ export function approvalStateLabel(value) {
  * انتقال وضعیت را می‌سنجد و علت رد را دقیق می‌گوید.
  * منطق خالص است تا بتوان همهٔ مسیرها را بدون دیتابیس آزمود.
  */
-export function assertApprovalTransition(from, to, { reason = '', sameUser = false, allowSelfApproval = true } = {}) {
+export function assertApprovalTransition(from, to, { reason = '', sameUser = false, allowSelfApproval = false } = {}) {
   const current = normalizeApprovalState(from);
   const next = String(to || '');
   if (!Object.hasOwn(APPROVAL_STATES, next)) throw workflowError(`وضعیت «${next}» شناخته نشد.`, 'JOURNAL_STATE_UNKNOWN');
