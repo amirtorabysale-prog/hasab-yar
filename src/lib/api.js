@@ -1,14 +1,41 @@
+import {
+  isPermanentQueueError, normalizeOfflineScope, offlineScopeKey, requireOfflineScope,
+} from './offlineScope.js';
+
 const QUEUE_KEY = 'hesab-yar-transaction-queue';
 const CSRF_KEY = 'hesab-yar-csrf';
 const WORKSPACE_KEY = 'hesab-yar-workspace';
+const OFFLINE_SCOPE_KEY = 'hesab-yar-offline-scope';
 
 function currentWorkspaceId() {
   try { return localStorage.getItem(WORKSPACE_KEY) || ''; }
   catch { return ''; }
 }
 
-function queueKey() {
-  return `${QUEUE_KEY}:${currentWorkspaceId() || 'primary'}`;
+export function currentOfflineScope() {
+  try { return normalizeOfflineScope(JSON.parse(localStorage.getItem(OFFLINE_SCOPE_KEY) || 'null')); }
+  catch { return null; }
+}
+
+export function rememberOfflineScope(value) {
+  const scope = requireOfflineScope(value);
+  try {
+    localStorage.setItem(OFFLINE_SCOPE_KEY, JSON.stringify(scope));
+    localStorage.setItem(WORKSPACE_KEY, scope.workspaceId);
+  } catch { /* private mode */ }
+  return scope;
+}
+
+export function clearOfflineSession() {
+  try {
+    localStorage.removeItem(WORKSPACE_KEY);
+    localStorage.removeItem(OFFLINE_SCOPE_KEY);
+    sessionStorage.removeItem(CSRF_KEY);
+  } catch { /* storage can be unavailable */ }
+}
+
+function queueKey(scopeValue = currentOfflineScope()) {
+  return `${QUEUE_KEY}:${offlineScopeKey(scopeValue)}`;
 }
 
 function currentCsrfToken() {
@@ -48,11 +75,17 @@ async function request(path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (body.csrfToken) rememberCsrfToken(body.csrfToken);
   const selectedWorkspace = body.workspace || body.access?.workspace;
+  const selectedUser = body.user || body.access?.user;
   if (selectedWorkspace?.id) {
     try { localStorage.setItem(WORKSPACE_KEY, selectedWorkspace.id); } catch { /* private mode */ }
+    if (selectedUser?.id) rememberOfflineScope({ userId: selectedUser.id, workspaceId: selectedWorkspace.id });
+    else {
+      const remembered = currentOfflineScope();
+      if (remembered) rememberOfflineScope({ ...remembered, workspaceId: selectedWorkspace.id });
+    }
   }
   if (response.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/password') {
-    rememberCsrfToken('');
+    clearOfflineSession();
     window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
   }
   if (response.status === 403 && body.code === 'CSRF_INVALID') rememberCsrfToken('');
@@ -80,7 +113,7 @@ async function requestText(path, options = {}) {
   });
   const text = await response.text();
   if (response.status === 401) {
-    rememberCsrfToken('');
+    clearOfflineSession();
     window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
   }
   if (!response.ok) {
@@ -100,6 +133,9 @@ async function requestText(path, options = {}) {
 
 export const api = {
   activeWorkspaceId: currentWorkspaceId,
+  offlineScope: currentOfflineScope,
+  rememberOfflineScope,
+  clearOfflineSession,
   selectWorkspace: (workspaceId) => {
     if (workspaceId) localStorage.setItem(WORKSPACE_KEY, workspaceId);
     else localStorage.removeItem(WORKSPACE_KEY);
@@ -122,19 +158,25 @@ export const api = {
   removeMember: (userId) => request(`/api/workspace/members/${userId}`, { method: 'DELETE' }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
-  parseAudio: (blob, { signal, hint, fallbackReason } = {}) => {
+  parseAudio: (blob, { signal, hint, fallbackReason, workspaceId } = {}) => {
     const form = new FormData();
     const extension = blob.type === 'audio/wav' ? 'wav' : 'webm';
     form.append('audio', blob, `voice.${extension}`);
     if (hint) form.append('hint', String(hint).slice(0, 500));
     if (fallbackReason) form.append('fallbackReason', String(fallbackReason).slice(0, 160));
-    return request('/api/parse/audio', { method: 'POST', body: form, signal });
+    return request('/api/parse/audio', {
+      method: 'POST', body: form, signal,
+      headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined,
+    });
   },
   createRealtimeTranscription: (sdp, { signal } = {}) => requestText('/api/voice/realtime/session', {
     method: 'POST', body: sdp, signal, headers: { 'Content-Type': 'application/sdp' },
   }),
   recordVoiceMetric: (payload) => request('/api/voice/metrics', { method: 'POST', body: JSON.stringify(payload) }),
-  saveTransactions: (payload) => request('/api/transactions', { method: 'POST', body: JSON.stringify(payload) }),
+  saveTransactions: (payload, { workspaceId } = {}) => request('/api/transactions', {
+    method: 'POST', body: JSON.stringify(payload),
+    headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined,
+  }),
   transactions: (params = {}) => request(`/api/transactions?${new URLSearchParams(params)}`),
   latestTransaction: () => request('/api/transactions/latest'),
   updateTransaction: (id, payload) => request(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
@@ -342,20 +384,63 @@ export const api = {
   },
 };
 
-export function queueTransactions(payload) {
-  const key = queueKey();
-  const queue = JSON.parse(localStorage.getItem(key) || '[]');
-  queue.push({ id: crypto.randomUUID(), payload, createdAt: new Date().toISOString() });
-  localStorage.setItem(key, JSON.stringify(queue));
+function readTransactionQueue(scopeValue) {
+  try {
+    const value = JSON.parse(localStorage.getItem(queueKey(scopeValue)) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch { return []; }
 }
 
-export async function flushTransactionQueue() {
-  const key = queueKey();
-  const queue = JSON.parse(localStorage.getItem(key) || '[]');
+export function transactionQueueSnapshot(scopeValue = currentOfflineScope()) {
+  const scope = requireOfflineScope(scopeValue);
+  return readTransactionQueue(scope).filter((item) => (
+    item?.userId === scope.userId && item?.workspaceId === scope.workspaceId
+  ));
+}
+
+export function queueTransactions(payload, scopeValue = currentOfflineScope()) {
+  const scope = requireOfflineScope(scopeValue);
+  const key = queueKey(scope);
+  const queue = readTransactionQueue(scope);
+  const item = {
+    id: crypto.randomUUID(),
+    payload,
+    ...scope,
+    state: 'queued',
+    attempts: 0,
+    lastError: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  queue.push(item);
+  localStorage.setItem(key, JSON.stringify(queue));
+  return item;
+}
+
+export async function flushTransactionQueue(scopeValue = currentOfflineScope()) {
+  const scope = requireOfflineScope(scopeValue);
+  const key = queueKey(scope);
+  const queue = transactionQueueSnapshot(scope);
   const remaining = [];
+  let synced = 0;
+  let failed = 0;
   for (const item of queue) {
-    try { await api.saveTransactions(item.payload); } catch { remaining.push(item); }
+    if (item.state === 'failed') { remaining.push(item); failed += 1; continue; }
+    try {
+      await api.saveTransactions(item.payload, { workspaceId: scope.workspaceId });
+      synced += 1;
+    } catch (error) {
+      const permanent = isPermanentQueueError(error);
+      remaining.push({
+        ...item,
+        state: permanent ? 'failed' : 'queued',
+        attempts: Number(item.attempts || 0) + 1,
+        lastError: String(error?.message || 'خطای همگام‌سازی').slice(0, 300),
+        updatedAt: new Date().toISOString(),
+      });
+      if (permanent) failed += 1;
+    }
   }
   localStorage.setItem(key, JSON.stringify(remaining));
-  return queue.length - remaining.length;
+  return { synced, failed, pending: remaining.filter((item) => item.state !== 'failed').length };
 }
