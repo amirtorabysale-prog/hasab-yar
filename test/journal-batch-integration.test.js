@@ -12,7 +12,9 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('batch-owner', 'Ledger-Long-Passphrase-8812');
 const workspace = database.createWorkspace(owner.id, { name: 'شرکت ثبت انبوه', profileType: 'business' });
+const reviewerId = 'batch-reviewer';
 const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const reviewInWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'manager', userId: reviewerId }, callback);
 
 // اسناد باید داخل دورهٔ شمسی جاری بنشینند، وگرنه کنترل‌های دوره‌ای آن‌ها را نمی‌بینند.
 const AT = new Date().toISOString();
@@ -61,6 +63,7 @@ test('a bulk post writes many documents in one go, all as drafts', () => {
     cash = accounts.find((item) => item.type === 'asset');
     income = accounts.find((item) => item.type === 'income');
 
+    const beforeBalance = accounting.trialBalance(database.db);
     const result = database.createJournalDocuments([
       { occurredAt: AT, memo: 'سند دستی ۱', lines: twoLines(500_000) },
       { occurredAt: AT, memo: 'سند دستی ۲', lines: twoLines(700_000) },
@@ -77,7 +80,9 @@ test('a bulk post writes many documents in one go, all as drafts', () => {
     const worklist = database.journalWorklistOverview();
     assert.equal(worklist.summary.draft, 3);
     assert.equal(worklist.summary.clear, false);
-    assert.equal(accounting.trialBalance(database.db).balanced, true);
+    const afterBalance = accounting.trialBalance(database.db);
+    assert.equal(afterBalance.balanced, true);
+    assert.deepEqual(afterBalance.totals, beforeBalance.totals, 'پیش‌نویس نباید وارد تراز قطعی شود');
   });
 });
 
@@ -105,32 +110,64 @@ test('an empty or oversized batch is refused before touching the ledger', () => 
   });
 });
 
-test('a draft moves through submission and control with a full trail', () => {
+test('a client-supplied approved state is ignored for every manual batch', () => {
   inWorkspace(() => {
-    const target = batchIds[0];
+    const result = database.createJournalDocuments([
+      { occurredAt: AT, memo: 'تلاش برای دورزدن کنترل', lines: twoLines(110_000) },
+    ], { approvalState: 'approved' });
+    const created = accounting.listJournal(database.db, { entryId: result.entryIds[0] }).items[0];
+    assert.equal(created.approvalState, 'draft');
+  });
+});
+
+test('the maker cannot approve the same document', () => {
+  let target;
+  inWorkspace(() => {
+    target = database.createJournalDocuments([
+      { occurredAt: AT, memo: 'کنترل دو نفره', lines: twoLines(115_000) },
+    ]).entryIds[0];
+    database.submitJournalApproval(target, 'submitted');
+    assert.throws(
+      () => database.submitJournalApproval(target, 'approved'),
+      (error) => error.code === 'JOURNAL_SELF_APPROVAL',
+    );
+  });
+  reviewInWorkspace(() => {
+    assert.equal(database.submitJournalApproval(target, 'approved').to, 'approved');
+  });
+});
+
+test('a draft moves through submission and control with a full trail', () => {
+  const target = batchIds[0];
+  inWorkspace(() => {
     assert.equal(database.submitJournalApproval(target, 'submitted').to, 'submitted');
     const submitted = accounting.listJournal(database.db, { entryId: target }).items[0];
     assert.equal(submitted.approvalState, 'submitted');
     assert.ok(submitted.submittedAt);
     assert.equal(submitted.submittedBy, owner.id);
 
+  });
+  reviewInWorkspace(() => {
     assert.equal(database.submitJournalApproval(target, 'approved').to, 'approved');
     const approved = accounting.listJournal(database.db, { entryId: target }).items[0];
     assert.equal(approved.approvalState, 'approved');
-    assert.equal(approved.reviewedBy, owner.id);
+    assert.equal(approved.reviewedBy, reviewerId);
     assert.ok(approved.reviewedAt);
   });
 });
 
 test('a returned document carries its reason back to the maker', () => {
+  const target = batchIds[1];
   inWorkspace(() => {
-    const target = batchIds[1];
     database.submitJournalApproval(target, 'submitted');
+  });
+  reviewInWorkspace(() => {
     database.submitJournalApproval(target, 'returned', 'کد حساب درآمد اشتباه انتخاب شده است');
     const returned = accounting.listJournal(database.db, { entryId: target }).items[0];
     assert.equal(returned.approvalState, 'returned');
     assert.equal(returned.returnReason, 'کد حساب درآمد اشتباه انتخاب شده است');
-
+  });
+  inWorkspace(() => {
     // ثبت‌کننده دوباره می‌فرستد و دلیل برگشت پاک می‌شود.
     database.submitJournalApproval(target, 'submitted');
     assert.equal(accounting.listJournal(database.db, { entryId: target }).items[0].returnReason, '');
@@ -169,9 +206,13 @@ test('once every document is controlled the export opens again', () => {
     for (const entry of accounting.listJournal(database.db, { limit: 200 }).items) {
       if (entry.approvalState === 'draft' || entry.approvalState === 'returned') database.submitJournalApproval(entry.id, 'submitted');
     }
+  });
+  reviewInWorkspace(() => {
     for (const entry of accounting.listJournal(database.db, { limit: 200 }).items) {
       if (entry.approvalState === 'submitted') database.submitJournalApproval(entry.id, 'approved');
     }
+  });
+  inWorkspace(() => {
     database.applyChartSuggestions();
     const overview = database.accountingTransferOverview('', 'generic-csv');
     assert.equal(overview.readiness.checks.find((item) => item.id === 'approval').passed, true);

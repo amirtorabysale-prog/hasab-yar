@@ -444,15 +444,22 @@ export function trialBalance(database, through = '') {
   migrateAccountingLedger(database);
   const cutoff = through ? new Date(through) : null;
   if (cutoff && Number.isNaN(cutoff.getTime())) throw accountingError('تاریخ تراز معتبر نیست.');
-  const where = cutoff ? 'WHERE journal_entries.occurred_at<=?' : '';
+  const cutoffClause = cutoff ? 'AND journal_entries.occurred_at<=?' : '';
   const params = cutoff ? [cutoff.toISOString()] : [];
+  // پیش‌نویس، برگشتی و سند منتظر کنترل هنوز بخشی از دفاتر قطعی نیستند.
+  // تجمیع در زیرپرس‌وجو باعث می‌شود حساب‌های بدون سند تأییدشده هم با مانده صفر باقی بمانند.
   const rows = database.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,ledger_accounts.type,
     chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
-    COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit
+    COALESCE(approved_balances.debit,0) AS debit,COALESCE(approved_balances.credit,0) AS credit
     FROM ledger_accounts LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
-    LEFT JOIN journal_lines ON journal_lines.account_id=ledger_accounts.id
-    LEFT JOIN journal_entries ON journal_entries.id=journal_lines.entry_id ${where}
-    GROUP BY ledger_accounts.id ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all(...params)
+    LEFT JOIN (
+      SELECT journal_lines.account_id AS accountId,
+        SUM(journal_lines.debit) AS debit,SUM(journal_lines.credit) AS credit
+      FROM journal_lines INNER JOIN journal_entries ON journal_entries.id=journal_lines.entry_id
+      WHERE journal_entries.approval_state='approved' ${cutoffClause}
+      GROUP BY journal_lines.account_id
+    ) AS approved_balances ON approved_balances.accountId=ledger_accounts.id
+    ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all(...params)
     .map((row) => ({ ...row, debitBalance: Math.max(0, Number(row.debit) - Number(row.credit)), creditBalance: Math.max(0, Number(row.credit) - Number(row.debit)) }));
   const totals = rows.reduce((sum, row) => ({ debit: sum.debit + Number(row.debit), credit: sum.credit + Number(row.credit), debitBalance: sum.debitBalance + row.debitBalance, creditBalance: sum.creditBalance + row.creditBalance }), { debit: 0, credit: 0, debitBalance: 0, creditBalance: 0 });
   return { unit: 'IRT', basis: 'double-entry-operational', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
@@ -520,7 +527,7 @@ export function journalWorklist(database, { userId = '', limit = 50 } = {}) {
  * وضعیت تأیید یک سند را جابه‌جا می‌کند و رد پای کامل نگه می‌دارد.
  * دورهٔ قفل‌شده هیچ تغییری نمی‌پذیرد، حتی تغییر وضعیت.
  */
-export function setJournalApproval(database, entryId, nextState, { userId = null, reason = '', timeZone = 'Asia/Tehran', allowSelfApproval = true } = {}) {
+export function setJournalApproval(database, entryId, nextState, { userId = null, reason = '', timeZone = 'Asia/Tehran', allowSelfApproval = false } = {}) {
   ensureAccountingSchema(database);
   const entry = database.prepare(`SELECT id,occurred_at AS occurredAt,approval_state AS approvalState,
     created_by AS createdBy,submitted_by AS submittedBy FROM journal_entries WHERE id=?`).get(String(entryId || ''));
@@ -545,7 +552,7 @@ export function setJournalApproval(database, entryId, nextState, { userId = null
  * ثبت انبوه: چند سند در یک تراکنش. یا همه ثبت می‌شوند یا هیچ‌کدام.
  * ثبت نیمه‌کاره برای کمک‌حسابداری که ۳۰۰ ردیف زده، بدترین حالت ممکن است.
  */
-export function createJournalBatch(database, documents = [], { createdBy = null, timeZone = 'Asia/Tehran', approvalState = 'draft' } = {}) {
+export function createJournalBatch(database, documents = [], { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
   ensureAccountingSchema(database);
   const list = Array.isArray(documents) ? documents : [];
   if (!list.length) throw accountingError('هیچ سندی برای ثبت فرستاده نشد.', 'JOURNAL_BATCH_EMPTY');
@@ -570,7 +577,8 @@ export function createJournalBatch(database, documents = [], { createdBy = null,
     const created = prepared.map((document) => insertJournal(database, {
       sourceType: 'manual-batch', sourceId: randomUUID(), revision: 1, entryKind: 'adjustment',
       occurredAt: document.occurredAt, memo: document.memo, createdBy, timeZone,
-      approvalState: normalizeApprovalState(approvalState),
+      // سند دستی و انبوه همیشه از پیش‌نویس شروع می‌شود؛ وضعیت ارسالی کاربر قابل اعتماد نیست.
+      approvalState: 'draft',
       lines: document.lines,
     }));
     database.exec('COMMIT');
@@ -588,7 +596,10 @@ export function createAdjustingJournal(database, values, { createdBy = null, tim
   const occurredAt = values.occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
   const sourceId = randomUUID();
-  const result = insertJournal(database, { sourceType: 'adjustment', sourceId, revision: 1, entryKind: 'adjustment', occurredAt, memo: values.memo || 'سند اصلاحی', createdBy, lines: values.lines });
+  const result = insertJournal(database, {
+    sourceType: 'adjustment', sourceId, revision: 1, entryKind: 'adjustment', occurredAt,
+    memo: values.memo || 'سند اصلاحی', createdBy, approvalState: 'draft', lines: values.lines,
+  });
   // سند تازه با شناسهٔ خودش خوانده می‌شود، نه با «آخرین سند»؛ سند با تاریخ گذشته هم باید کامل برگردد.
   return listJournal(database, { entryId: result.id }).items[0] || { id: result.id };
 }
