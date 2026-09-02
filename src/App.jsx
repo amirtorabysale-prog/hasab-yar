@@ -7,7 +7,9 @@ import {
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
 import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
-import { pendingAudio, removeOfflineAudio, saveOfflineAudio } from './lib/offlineAudio.js';
+import {
+  countOfflineAudio, markOfflineAudioForReview, pendingAudio, releaseOfflineAudio, removeOfflineAudio, saveOfflineAudio,
+} from './lib/offlineAudio.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
 import { decideVoiceRoute } from './lib/voiceDecision.js';
@@ -86,6 +88,11 @@ export default function App() {
   const pendingAudioBlobRef = useRef(null);
   const fastFinalizeDoneRef = useRef(false);
   const fastVoiceAvailable = realtimeSpeechAvailable() || liveSpeechSupported();
+  const rememberedOfflineScope = api.offlineScope();
+  const offlineUserId = access.user?.id || rememberedOfflineScope?.userId || '';
+  const offlineWorkspaceId = access.workspace?.id || rememberedOfflineScope?.workspaceId || '';
+  const offlineScopeReady = Boolean(offlineUserId && offlineWorkspaceId);
+  const activeOfflineScope = () => ({ userId: offlineUserId, workspaceId: offlineWorkspaceId });
 
   const notify = useCallback((message) => {
     setToast(message);
@@ -105,15 +112,17 @@ export default function App() {
       const [bootstrap] = await Promise.all([api.bootstrap(), refreshVoiceSystemStatus()]);
       setData({ ...bootstrap, learnings: bootstrap.learnings || [], averages: bootstrap.averages || {} });
       if (bootstrap.access) setAccess(bootstrap.access);
+      return bootstrap;
     } catch (error) {
       notify(error.message);
+      return null;
     } finally {
       setLoading(false);
     }
   }, [notify, refreshVoiceSystemStatus]);
 
   useEffect(() => {
-    const requireAuth = () => { localStorage.removeItem('hesab-yar-authenticated'); setAuthenticated(false); };
+    const requireAuth = () => { localStorage.removeItem('hesab-yar-authenticated'); api.clearOfflineSession(); setAuthenticated(false); };
     window.addEventListener('hesabyar:auth-required', requireAuth);
     if (!navigator.onLine && localStorage.getItem('hesab-yar-authenticated') === '1') setAuthenticated(true);
     else api.authStatus().then((result) => { setAuthenticated(result.authenticated); if (result.authenticated) setAccess({ user: result.user, workspaces: result.workspaces || [], workspace: result.workspace }); }).catch((error) => { setAuthError(error.message); setAuthenticated(false); });
@@ -123,34 +132,47 @@ export default function App() {
   useEffect(() => { if (authenticated && !access.user?.mustChangePassword) load(); }, [authenticated, access.user?.mustChangePassword, load]);
 
   useEffect(() => {
-    if (!online || !authenticated) return;
+    if (!online || !authenticated || !offlineScopeReady || parseResult) return undefined;
     let active = true;
+    const scope = { userId: offlineUserId, workspaceId: offlineWorkspaceId };
     (async () => {
-      const synced = await flushTransactionQueue();
-      const audios = await pendingAudio().catch(() => []);
-      if (active) setPendingAudioCount(audios.length);
+      const syncResult = await flushTransactionQueue(scope).catch(() => ({ synced: 0, failed: 0, pending: 0 }));
+      const audios = await pendingAudio(scope).catch(() => []);
+      if (active) setPendingAudioCount(await countOfflineAudio(scope).catch(() => 0));
       for (const item of audios) {
         try {
-          const result = await api.parseAudio(item.blob);
-          await removeOfflineAudio(item.id);
-          if (active) setPendingAudioCount((count) => Math.max(0, count - 1));
-          if (active && result.transactions?.length) {
-            setParseResult(result);
-            notify('صدای ذخیره‌شده پردازش شد؛ لطفاً تأییدش کن.');
+          const result = await api.parseAudio(item.blob, { workspaceId: scope.workspaceId });
+          if (!result.transactions?.length) {
+            await releaseOfflineAudio(item.id, scope, 'تراکنشی از صوت استخراج نشد.');
             break;
           }
-        } catch { break; }
+          await markOfflineAudioForReview(item.id, scope);
+          if (active) {
+            setParseResult({ ...result, offlineAudioId: item.id });
+            notify('صدای ذخیره‌شده پردازش شد؛ پس از تأیید ثبت می‌شود.');
+          }
+          break;
+        } catch (error) {
+          await releaseOfflineAudio(item.id, scope, error?.message || 'خطای پردازش صوت').catch(() => {});
+          break;
+        }
       }
-      if (active && synced) { notify(`${toPersianDigits(synced)} ثبت آفلاین همگام شد.`); load(); }
+      if (active && syncResult.synced) {
+        notify(`${toPersianDigits(syncResult.synced)} ثبت آفلاین همگام شد.`);
+        load();
+      } else if (active && syncResult.failed) {
+        notify(`${toPersianDigits(syncResult.failed)} ثبت آفلاین نیازمند بررسی است و خودکار تکرار نمی‌شود.`);
+      }
     })();
     return () => { active = false; };
-  }, [online, authenticated, load, notify]);
+  }, [online, authenticated, offlineScopeReady, offlineUserId, offlineWorkspaceId, parseResult, load, notify]);
 
   useEffect(() => {
-    if (!authenticated) return undefined;
-    pendingAudio().then((items) => setPendingAudioCount(items.length)).catch(() => {});
+    if (!authenticated || !offlineScopeReady) { setPendingAudioCount(0); return undefined; }
+    countOfflineAudio({ userId: offlineUserId, workspaceId: offlineWorkspaceId })
+      .then(setPendingAudioCount).catch(() => setPendingAudioCount(0));
     return undefined;
-  }, [authenticated]);
+  }, [authenticated, offlineScopeReady, offlineUserId, offlineWorkspaceId]);
 
   useEffect(() => {
     if (!undoSave) return undefined;
@@ -209,10 +231,14 @@ export default function App() {
   const processAudio = async (blob, fallbackReason = '') => {
     if (!online) {
       setVoicePath('offline');
-      await saveOfflineAudio(blob);
-      setPendingAudioCount((count) => count + 1);
+      try {
+        await saveOfflineAudio(blob, activeOfflineScope());
+        setPendingAudioCount((count) => count + 1);
+        notify('ضبط برای همین کاربر و همین دفتر ذخیره شد و بعد از اتصال آمادهٔ تأیید می‌شود.');
+      } catch (error) {
+        setFailure({ transcript: '', message: error.message });
+      }
       setRecordState('idle');
-      notify('ضبط ذخیره شد و با وصل‌شدن اینترنت ارسال می‌شود.');
       return;
     }
     setRecordState('processing');
@@ -304,10 +330,10 @@ export default function App() {
       pendingAudioBlobRef.current = null;
       if (!online) {
         setVoicePath('offline');
-        saveOfflineAudio(blob).then(() => {
+        saveOfflineAudio(blob, activeOfflineScope()).then(() => {
           setPendingAudioCount((count) => count + 1);
           setRecordState('idle');
-          notify('صدا برای بررسی دقیق‌تر ذخیره شد و پس از اتصال آماده می‌شود.');
+          notify('صدا برای همین کاربر و همین دفتر ذخیره شد و پس از اتصال آماده می‌شود.');
         }).catch(() => {
           setRecordState('idle');
           setFailure({ transcript: snapshot.transcript, message: 'ذخیرهٔ آفلاین صدا انجام نشد؛ دوباره بگو یا دستی بنویس.' });
@@ -561,8 +587,16 @@ export default function App() {
     if (keyword.length >= 2) setLearningSuggestion({ keyword, category: corrected.category });
   };
 
-  const persistConfirmed = async (payload, transactions, allowDuplicates = false) => {
+  const finalizeOfflineAudio = async (offlineAudioId) => {
+    if (!offlineAudioId || !offlineScopeReady) return;
+    const scope = activeOfflineScope();
+    await removeOfflineAudio(offlineAudioId, scope).catch(() => {});
+    setPendingAudioCount(await countOfflineAudio(scope).catch(() => 0));
+  };
+
+  const persistConfirmed = async (payload, transactions, allowDuplicates = false, offlineAudioId = '') => {
     const result = await api.saveTransactions({ ...payload, allowDuplicates });
+    await finalizeOfflineAudio(offlineAudioId);
     setUndoSave({ ids: result.ids || [], count: transactions.length });
     setRedoSave(null);
     setDuplicatePrompt(null);
@@ -572,19 +606,22 @@ export default function App() {
   };
 
   const saveConfirmed = async (transactions) => {
+    const offlineAudioId = parseResult.offlineAudioId || '';
     const payload = { transcript: parseResult.transcript, transactions };
     try {
       if (!online) {
-        queueTransactions(payload);
+        queueTransactions(payload, activeOfflineScope());
+        await finalizeOfflineAudio(offlineAudioId);
         setParseResult(null);
-        notify('ثبت شد؛ بعد از اتصال همگام می‌شود.');
+        notify('ثبت شد؛ بعد از اتصال فقط در همین دفتر همگام می‌شود.');
         await load();
       } else {
-        await persistConfirmed(payload, transactions);
+        await persistConfirmed(payload, transactions, false, offlineAudioId);
       }
     } catch (error) {
-      if (error.code === 'POSSIBLE_DUPLICATE') setDuplicatePrompt({ payload, transactions, duplicates: error.details?.duplicates || [] });
-      else notify(error.message);
+      if (error.code === 'POSSIBLE_DUPLICATE') {
+        setDuplicatePrompt({ payload, transactions, offlineAudioId, duplicates: error.details?.duplicates || [] });
+      } else notify(error.message);
     }
   };
 
@@ -594,8 +631,17 @@ export default function App() {
       ...item, needsReview: false, reviewState: 'duplicate-confirmed',
       reviewReasons: [...(item.reviewReasons || []), 'شباهت با ثبت اخیر به کاربر نمایش داده شد و ثبت جداگانه تأیید شد.'],
     }));
-    try { await persistConfirmed({ ...duplicatePrompt.payload, transactions }, transactions, true); }
-    catch (error) { notify(error.message); }
+    try {
+      await persistConfirmed(
+        { ...duplicatePrompt.payload, transactions }, transactions, true, duplicatePrompt.offlineAudioId || '',
+      );
+    } catch (error) { notify(error.message); }
+  };
+
+  const discardParseResult = async () => {
+    const offlineAudioId = parseResult?.offlineAudioId;
+    if (offlineAudioId) await finalizeOfflineAudio(offlineAudioId);
+    setParseResult(null);
   };
 
   const undoLastSave = async () => {
@@ -671,8 +717,14 @@ export default function App() {
   };
 
   const logout = async () => {
+    if (parseResult?.offlineAudioId && offlineScopeReady) {
+      await releaseOfflineAudio(parseResult.offlineAudioId, activeOfflineScope(), 'خروج کاربر پیش از تأیید').catch(() => {});
+    }
     try { await api.logout(); } catch { /* پاک‌کردن نشست محلی حتی اگر شبکه قطع باشد */ }
     localStorage.removeItem('hesab-yar-authenticated');
+    api.clearOfflineSession();
+    setParseResult(null);
+    setPendingAudioCount(0);
     setData({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
     setAccess({ user: null, workspaces: [], workspace: null });
     setAuthenticated(false);
@@ -680,11 +732,22 @@ export default function App() {
 
   const switchWorkspace = async (workspaceId) => {
     if (!workspaceId || workspaceId === access.workspace?.id) return;
+    if (!online) { notify('برای تغییر دفتر ابتدا به اینترنت وصل شو؛ ثبت‌های آفلاین در دفتر فعلی محفوظ‌اند.'); return; }
+    if (parseResult?.offlineAudioId && offlineScopeReady) {
+      await releaseOfflineAudio(parseResult.offlineAudioId, activeOfflineScope(), 'تغییر دفتر پیش از تأیید').catch(() => {});
+    }
+    const previousWorkspaceId = access.workspace?.id || '';
     api.selectWorkspace(workspaceId);
     setLoading(true);
     setParseResult(null);
+    setPendingAudioCount(0);
     setFailure(null);
-    await load();
+    const loaded = await load();
+    if (!loaded) {
+      api.selectWorkspace(previousWorkspaceId);
+      notify('تغییر دفتر کامل نشد و دفتر قبلی فعال ماند.');
+      return;
+    }
     navigate('today');
     notify('دفتر فعال عوض شد.');
   };
@@ -733,7 +796,7 @@ export default function App() {
       {drawer && <Drawer profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
       {parseResult && (
         <ConfirmationSheet
-          result={parseResult} categories={data.categories} accounts={data.accounts} onCancel={() => setParseResult(null)} onConfirm={saveConfirmed}
+          result={parseResult} categories={data.categories} accounts={data.accounts} onCancel={discardParseResult} onConfirm={saveConfirmed}
         />
       )}
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}
