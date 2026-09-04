@@ -33,6 +33,34 @@ test('keeps at most five active sessions for the owner', () => {
   assert.equal(database.userFromSession(sessions[5].token)?.username, 'owner-test');
 });
 
+test('lists safe session identifiers and revokes only sessions owned by the user', () => {
+  const user = database.authenticateUser('owner-test', 'a-strong-test-password-1234');
+  const now = new Date();
+  const current = database.createSession(user.id, { now });
+  const otherCreatedAt = new Date(now.getTime() + 1000);
+  const other = database.createSession(user.id, { now: otherCreatedAt });
+  const sessions = database.listUserSessions(user.id, current.token);
+  assert.equal(sessions.some((item) => item.current), true);
+  assert.equal(sessions.every((item) => !('tokenHash' in item) && !('token' in item)), true);
+  const otherItem = sessions.find((item) => !item.current && item.createdAt === otherCreatedAt.toISOString());
+  assert.ok(otherItem);
+  assert.deepEqual(database.revokeUserSession(user.id, otherItem.id, current.token), { revoked: true });
+  assert.equal(database.userFromSession(other.token), null);
+  assert.equal(database.revokeUserSession(user.id, sessions.find((item) => item.current).id, current.token).code, 'CURRENT_SESSION');
+  assert.equal(database.userFromSession(current.token)?.username, 'owner-test');
+});
+
+test('revokes every other session while preserving the current one and uses a seven-day lifetime', () => {
+  const user = database.authenticateUser('owner-test', 'a-strong-test-password-1234');
+  const now = new Date();
+  const current = database.createSession(user.id, { now });
+  const other = database.createSession(user.id, { now: new Date(now.getTime() + 1000) });
+  assert.equal(new Date(current.expiresAt).getTime() - now.getTime(), 7 * 24 * 60 * 60 * 1000);
+  assert.ok(database.revokeOtherUserSessions(user.id, current.token).revoked >= 1);
+  assert.equal(database.userFromSession(current.token)?.username, 'owner-test');
+  assert.equal(database.userFromSession(other.token), null);
+});
+
 test('persists login throttling without storing a raw address', () => {
   const fingerprint = 'hashed-request-fingerprint';
   const now = new Date('2026-08-22T12:00:00.000Z');
