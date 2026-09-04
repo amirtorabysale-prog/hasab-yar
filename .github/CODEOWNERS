@@ -1,0 +1,17 @@
+# مالک پیش‌فرض تا زمانی که بازبین فنی دوم به پروژه اضافه شود.
+* @amirtorabysale-prog
+
+# مرزهای حساس مالی و امنیتی
+/server/accounting.js @amirtorabysale-prog
+/server/journalWorkflow.js @amirtorabysale-prog
+/server/db.js @amirtorabysale-prog
+/server/security.js @amirtorabysale-prog
+/server/backup.js @amirtorabysale-prog
+/server/taxAssistant.js @amirtorabysale-prog
+/server/accountingTransfer.js @amirtorabysale-prog
+/server/parsianAccess.js @amirtorabysale-prog
+
+# زنجیره ساخت و وابستگی‌ها
+/.github/ @amirtorabysale-prog
+/package.json @amirtorabysale-prog
+/package-lock.json @amirtorabysale-prog
