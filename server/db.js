@@ -3438,30 +3438,70 @@ export function authenticateUser(username, password) {
     ? { id: user.id, username: user.username, displayName: user.displayName, mustChangePassword: Boolean(user.mustChangePassword) } : null;
 }
 
-export function createSession(userId) {
+const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+
+function sessionTokenHash(token) {
+  return createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function publicSessionId(tokenHash) {
+  return createHash('sha256').update(`hesab-yar-session:${tokenHash}`).digest('base64url').slice(0, 24);
+}
+
+export function createSession(userId, { now = new Date() } = {}) {
   const token = randomBytes(32).toString('base64url');
-  const tokenHash = createHash('sha256').update(token).digest('hex');
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  controlDb.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
-  controlDb.prepare('INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)').run(tokenHash, userId, expiresAt);
+  const tokenHash = sessionTokenHash(token);
+  const expiresAt = new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString();
+  controlDb.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now.toISOString());
+  controlDb.prepare('INSERT INTO sessions (token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)').run(tokenHash, userId, expiresAt, now.toISOString());
   controlDb.prepare(`DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN (
-    SELECT token_hash FROM sessions WHERE user_id=? ORDER BY rowid DESC LIMIT 5
+    SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC,rowid DESC LIMIT 5
   )`).run(userId, userId);
   return { token, expiresAt };
 }
 
 export function userFromSession(token) {
   if (!token) return null;
-  const tokenHash = createHash('sha256').update(token).digest('hex');
+  const tokenHash = sessionTokenHash(token);
   return controlDb.prepare(`SELECT users.id,users.username,users.display_name AS displayName,
     users.must_change_password AS mustChangePassword,sessions.expires_at AS expiresAt
     FROM sessions JOIN users ON users.id=sessions.user_id
     WHERE sessions.token_hash=? AND sessions.expires_at>?`).get(tokenHash, new Date().toISOString()) || null;
 }
 
+export function listUserSessions(userId, currentToken = '') {
+  const currentHash = currentToken ? sessionTokenHash(currentToken) : '';
+  const now = new Date().toISOString();
+  controlDb.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now);
+  return controlDb.prepare(`SELECT token_hash AS tokenHash,created_at AS createdAt,expires_at AS expiresAt
+    FROM sessions WHERE user_id=? ORDER BY created_at DESC,rowid DESC`).all(userId).map((row) => ({
+      id: publicSessionId(row.tokenHash),
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      current: row.tokenHash === currentHash,
+    }));
+}
+
+export function revokeUserSession(userId, sessionId, currentToken = '') {
+  const target = listUserSessions(userId, currentToken).find((item) => item.id === String(sessionId || ''));
+  if (!target) return { revoked: false, code: 'SESSION_NOT_FOUND' };
+  if (target.current) return { revoked: false, code: 'CURRENT_SESSION' };
+  const rows = controlDb.prepare('SELECT token_hash AS tokenHash FROM sessions WHERE user_id=?').all(userId);
+  const row = rows.find((item) => publicSessionId(item.tokenHash) === target.id);
+  if (!row) return { revoked: false, code: 'SESSION_NOT_FOUND' };
+  controlDb.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash=?').run(userId, row.tokenHash);
+  return { revoked: true };
+}
+
+export function revokeOtherUserSessions(userId, currentToken) {
+  const currentHash = sessionTokenHash(currentToken);
+  const result = controlDb.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').run(userId, currentHash);
+  return { revoked: Number(result.changes || 0) };
+}
+
 export function deleteSession(token) {
   if (!token) return;
-  controlDb.prepare('DELETE FROM sessions WHERE token_hash=?').run(createHash('sha256').update(token).digest('hex'));
+  controlDb.prepare('DELETE FROM sessions WHERE token_hash=?').run(sessionTokenHash(token));
 }
 
 export function loginThrottle(fingerprint, now = new Date()) {
@@ -3470,13 +3510,14 @@ export function loginThrottle(fingerprint, now = new Date()) {
   return { blocked: true, retryAfterSeconds: Math.max(1, Math.ceil((new Date(row.lockedUntil).getTime() - now.getTime()) / 1000)) };
 }
 
-export function recordLoginFailure(fingerprint, now = new Date()) {
-  const windowMs = 15 * 60 * 1000;
+export function recordLoginFailure(fingerprint, now = new Date(), { limit = 8, lockMinutes = 15 } = {}) {
+  const normalizedLimit = Math.min(100, Math.max(2, Number(limit) || 8));
+  const windowMs = Math.min(60, Math.max(1, Number(lockMinutes) || 15)) * 60 * 1000;
   const current = controlDb.prepare('SELECT attempts,window_started_at AS windowStartedAt FROM auth_attempts WHERE fingerprint=?').get(fingerprint);
   const insideWindow = current && now.getTime() - new Date(current.windowStartedAt).getTime() < windowMs;
   const attempts = insideWindow ? Number(current.attempts) + 1 : 1;
   const windowStartedAt = insideWindow ? current.windowStartedAt : now.toISOString();
-  const lockedUntil = attempts >= 8 ? new Date(now.getTime() + windowMs).toISOString() : null;
+  const lockedUntil = attempts >= normalizedLimit ? new Date(now.getTime() + windowMs).toISOString() : null;
   controlDb.prepare(`INSERT INTO auth_attempts (fingerprint,attempts,window_started_at,locked_until,updated_at) VALUES (?,?,?,?,?)
     ON CONFLICT(fingerprint) DO UPDATE SET attempts=excluded.attempts,window_started_at=excluded.window_started_at,
       locked_until=excluded.locked_until,updated_at=excluded.updated_at`)
