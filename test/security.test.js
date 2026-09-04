@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  csrfTokenFor, csrfTokenIsValid, originMatchesHost, passwordPolicy, requestFingerprint, setSecurityHeaders,
+  accountLoginFingerprint, csrfTokenFor, csrfTokenIsValid, originMatchesHost, passwordPolicy, requestFingerprint, setSecurityHeaders, validateSecurityConfiguration,
 } from '../server/security.js';
 
 test('binds CSRF tokens to the opaque session token', () => {
@@ -22,6 +22,29 @@ test('hashes request identity before persistence', () => {
   const fingerprint = requestFingerprint('192.0.2.10', 'Test Browser');
   assert.equal(fingerprint.length, 64);
   assert.equal(fingerprint.includes('192.0.2.10'), false);
+});
+
+test('separates network and account login throttling identities', () => {
+  const network = requestFingerprint('192.0.2.10', 'Test Browser');
+  const account = accountLoginFingerprint('Owner-Test');
+  assert.equal(account.length, 64);
+  assert.notEqual(account, network);
+  assert.equal(account, accountLoginFingerprint(' owner-test '));
+});
+
+test('fails closed on weak or ambiguous production security configuration', () => {
+  const valid = {
+    NODE_ENV: 'production',
+    CSRF_SECRET: 'csrf-secret-32-characters-minimum-1',
+    AUTH_FINGERPRINT_SECRET: 'fingerprint-secret-32-characters-2',
+    TRUST_PROXY_HOPS: '1',
+  };
+  assert.deepEqual(validateSecurityConfiguration(valid), { production: true, trustProxyHops: 1 });
+  assert.throws(() => validateSecurityConfiguration({ ...valid, CSRF_SECRET: 'short' }), /CSRF_SECRET/);
+  assert.throws(() => validateSecurityConfiguration({ ...valid, CSRF_SECRET: 'replace-with-at-least-32-random-bytes' }), /CSRF_SECRET/);
+  assert.throws(() => validateSecurityConfiguration({ ...valid, AUTH_FINGERPRINT_SECRET: valid.CSRF_SECRET }), /مستقل/);
+  assert.throws(() => validateSecurityConfiguration({ ...valid, TRUST_PROXY_HOPS: '0' }), /TRUST_PROXY_HOPS/);
+  assert.deepEqual(validateSecurityConfiguration({ NODE_ENV: 'test' }), { production: false, trustProxyHops: 0 });
 });
 
 test('enforces a practical owner password policy', () => {
