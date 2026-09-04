@@ -1,6 +1,36 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const runtimeCsrfSecret = process.env.CSRF_SECRET || randomBytes(32).toString('hex');
+const MINIMUM_PRODUCTION_SECRET_LENGTH = 32;
+
+function configurationError(message) {
+  return Object.assign(new Error(message), { code: 'SECURITY_CONFIG_INVALID' });
+}
+
+export function validateSecurityConfiguration(environment = process.env) {
+  const production = String(environment.NODE_ENV || '').toLowerCase() === 'production';
+  if (!production) return { production: false, trustProxyHops: 0 };
+
+  const csrfSecret = String(environment.CSRF_SECRET || '');
+  const fingerprintSecret = String(environment.AUTH_FINGERPRINT_SECRET || '');
+  const isPlaceholder = (value) => /(?:replace|change|example|sample|placeholder)/i.test(value);
+  if (csrfSecret.length < MINIMUM_PRODUCTION_SECRET_LENGTH || isPlaceholder(csrfSecret)) {
+    throw configurationError('CSRF_SECRET در Production باید حداقل ۳۲ نویسهٔ تصادفی و غیرنمونه داشته باشد.');
+  }
+  if (fingerprintSecret.length < MINIMUM_PRODUCTION_SECRET_LENGTH || isPlaceholder(fingerprintSecret)) {
+    throw configurationError('AUTH_FINGERPRINT_SECRET در Production باید حداقل ۳۲ نویسهٔ تصادفی و غیرنمونه داشته باشد.');
+  }
+  if (csrfSecret === fingerprintSecret) {
+    throw configurationError('CSRF_SECRET و AUTH_FINGERPRINT_SECRET باید مستقل باشند.');
+  }
+
+  const rawProxyHops = String(environment.TRUST_PROXY_HOPS || '');
+  const trustProxyHops = Number(rawProxyHops);
+  if (!/^\d+$/.test(rawProxyHops) || !Number.isInteger(trustProxyHops) || trustProxyHops < 1 || trustProxyHops > 3) {
+    throw configurationError('TRUST_PROXY_HOPS در Production باید عدد صحیح بین ۱ تا ۳ باشد.');
+  }
+  return { production: true, trustProxyHops };
+}
 
 export function csrfTokenFor(sessionToken) {
   if (!sessionToken) return '';
@@ -14,9 +44,18 @@ export function csrfTokenIsValid(sessionToken, suppliedToken) {
   return expected.length === supplied.length && timingSafeEqual(expected, supplied);
 }
 
-export function requestFingerprint(address = '', userAgent = '') {
+function fingerprint(value) {
   const pepper = process.env.AUTH_FINGERPRINT_SECRET || runtimeCsrfSecret;
-  return createHash('sha256').update(`${pepper}:${address}:${String(userAgent).slice(0, 240)}`).digest('hex');
+  return createHmac('sha256', pepper).update(String(value)).digest('hex');
+}
+
+export function requestFingerprint(address = '', userAgent = '') {
+  return fingerprint(`network:${address}:${String(userAgent).slice(0, 240)}`);
+}
+
+export function accountLoginFingerprint(username = '') {
+  const normalized = String(username || '').trim().toLocaleLowerCase('en-US').slice(0, 160);
+  return fingerprint(`account:${normalized || '<empty>'}`);
 }
 
 export function originMatchesHost(origin, host) {
