@@ -7,7 +7,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
+  correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
@@ -16,7 +16,7 @@ import {
   fillTransferMappingsFromChart,
   saveJournalTemplate, submitJournalApproval,
   mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
-  listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
+  listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeOtherUserSessions, revokeUserSession, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
   askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
 } from './db.js';
@@ -31,7 +31,7 @@ import {
   accountingPeriods, createAdjustingJournal, listJournal, listLedgerAccounts, lockAccountingPeriod,
   periodForDate, reopenAccountingPeriod, trialBalance,
 } from './accounting.js';
-import { csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders } from './security.js';
+import { accountLoginFingerprint, csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders, validateSecurityConfiguration } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
 import { voiceProviderStatus } from './voiceProviderState.js';
@@ -47,8 +47,9 @@ const statementUpload = multer({ storage: multer.memoryStorage(), limits: { file
 const chartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 // الگوی انتقال پارسیان یک دیتابیس Access کامل است و چند مگابایت می‌شود.
 const transferTemplateUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 32 * 1024 * 1024, files: 1 } });
+const securityConfig = validateSecurityConfiguration();
 const adminState = ensureAdmin();
-if (process.env.NODE_ENV === 'production') app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+if (securityConfig.production) app.set('trust proxy', securityConfig.trustProxyHops);
 
 function cookies(request) {
   return Object.fromEntries(String(request.headers.cookie || '').split(';').map((part) => part.trim().split('=')).filter(([key, value]) => key && value).map(([key, value]) => [key, decodeURIComponent(value)]));
@@ -103,15 +104,24 @@ app.get('/api/auth/status', (request, response) => {
 });
 app.post('/api/auth/login', (request, response) => {
   if (!adminState.configured) return response.status(503).json({ code: 'ADMIN_NOT_CONFIGURED', message: 'ابتدا ADMIN_PASSWORD را روی سرور تنظیم کن.' });
-  const fingerprint = requestFingerprint(request.ip || request.socket.remoteAddress || 'unknown', request.get('user-agent'));
-  const throttle = loginThrottle(fingerprint);
+  const networkFingerprint = requestFingerprint(request.ip || request.socket.remoteAddress || 'unknown', request.get('user-agent'));
+  const accountFingerprint = accountLoginFingerprint(request.body?.username);
+  const throttles = [loginThrottle(networkFingerprint), loginThrottle(accountFingerprint)];
+  const throttle = throttles.reduce((strictest, item) => (
+    item.retryAfterSeconds > strictest.retryAfterSeconds ? item : strictest
+  ), { blocked: false, retryAfterSeconds: 0 });
   if (throttle.blocked) {
     response.setHeader('Retry-After', String(throttle.retryAfterSeconds));
     return response.status(429).json({ code: 'LOGIN_RATE_LIMIT', message: 'تلاش‌های ورود زیاد بود؛ کمی بعد دوباره امتحان کن.' });
   }
   const user = authenticateUser(request.body?.username, request.body?.password);
-  if (!user) { recordLoginFailure(fingerprint); return response.status(401).json({ code: 'INVALID_LOGIN', message: 'نام کاربری یا رمز درست نیست.' }); }
-  clearLoginFailures(fingerprint);
+  if (!user) {
+    recordLoginFailure(networkFingerprint);
+    recordLoginFailure(accountFingerprint, new Date(), { limit: 20, lockMinutes: 30 });
+    return response.status(401).json({ code: 'INVALID_LOGIN', message: 'نام کاربری یا رمز درست نیست.' });
+  }
+  clearLoginFailures(networkFingerprint);
+  clearLoginFailures(accountFingerprint);
   const session = createSession(user.id);
   response.setHeader('Set-Cookie', sessionCookie(session.token));
   return response.json({ authenticated: true, csrfToken: csrfTokenFor(session.token), ...accessPayload(user) });
@@ -154,6 +164,21 @@ app.post('/api/auth/password', (request, response) => {
   }
   response.setHeader('Set-Cookie', sessionCookie('', 0));
   return response.status(204).end();
+});
+app.get('/api/auth/sessions', (request, response) => {
+  return response.json({ items: listUserSessions(request.user.id, request.sessionToken) });
+});
+app.delete('/api/auth/sessions/:sessionId', (request, response) => {
+  const result = revokeUserSession(request.user.id, request.params.sessionId, request.sessionToken);
+  if (result.revoked) return response.status(204).end();
+  const current = result.code === 'CURRENT_SESSION';
+  return response.status(current ? 400 : 404).json({
+    code: result.code,
+    message: current ? 'نشست فعلی را از مسیر خروج امن ببند.' : 'نشست پیدا نشد یا قبلاً بسته شده است.',
+  });
+});
+app.post('/api/auth/sessions/revoke-others', (request, response) => {
+  return response.json(revokeOtherUserSessions(request.user.id, request.sessionToken));
 });
 app.get('/api/workspaces', (request, response) => response.json(accessPayload(request.user, request.workspace.id)));
 app.post('/api/workspaces', (request, response, next) => {
