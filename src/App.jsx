@@ -8,8 +8,9 @@ import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported, mergeSpeechSegments } from './lib/liveSpeech.js';
 import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
 import {
-  countOfflineAudio, markOfflineAudioForReview, pendingAudio, releaseOfflineAudio, removeOfflineAudio, saveOfflineAudio,
+  countOfflineAudio, failOfflineAudio, markOfflineAudioForReview, pendingAudio, releaseOfflineAudio, removeOfflineAudio, saveOfflineAudio,
 } from './lib/offlineAudio.js';
+import { isPermanentQueueError } from './lib/offlineScope.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from './lib/format.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
 import { decideVoiceRoute } from './lib/voiceDecision.js';
@@ -143,12 +144,18 @@ export default function App() {
       const syncResult = await flushTransactionQueue(scope).catch(() => ({ synced: 0, failed: 0, pending: 0 }));
       const audios = await pendingAudio(scope).catch(() => []);
       if (active) setPendingAudioCount(await countOfflineAudio(scope).catch(() => 0));
+      // فقط یک نتیجه در هر نوبت به کاربر نشان داده می‌شود، ولی قلم شکست‌خورده
+      // نباید بقیهٔ صف را پشت خودش نگه دارد: تا امروز یک ضبط پردازش‌نشدنی
+      // بی‌پایان تکرار می‌شد و همهٔ ضبط‌های بعدی هرگز نوبتشان نمی‌رسید.
+      let giveUpCount = 0;
       for (const item of audios) {
         try {
           const result = await api.parseAudio(item.blob, { workspaceId: scope.workspaceId });
           if (!result.transactions?.length) {
-            await releaseOfflineAudio(item.id, scope, 'تراکنشی از صوت استخراج نشد.');
-            break;
+            // متن شنیده شد ولی مبلغی نداشت؛ تکرارش هم همین نتیجه را می‌دهد.
+            const outcome = await failOfflineAudio(item.id, scope, 'مبلغی در این صدا پیدا نشد.', { permanent: true });
+            if (outcome?.exhausted) giveUpCount += 1;
+            continue;
           }
           await markOfflineAudioForReview(item.id, scope);
           if (active) {
@@ -157,9 +164,16 @@ export default function App() {
           }
           break;
         } catch (error) {
-          await releaseOfflineAudio(item.id, scope, error?.message || 'خطای پردازش صوت').catch(() => {});
-          break;
+          const outcome = await failOfflineAudio(item.id, scope, error?.message || 'خطای پردازش صوت', {
+            permanent: isPermanentQueueError(error),
+          }).catch(() => null);
+          if (outcome?.exhausted) giveUpCount += 1;
+          // خطای شبکه یعنی بقیهٔ صف هم همین حالا شکست می‌خورد؛ ادامه بی‌فایده است.
+          if (!navigator.onLine) break;
         }
+      }
+      if (active && giveUpCount) {
+        notify(`${toPersianDigits(giveUpCount)} صدای ذخیره‌شده پردازش نشد و از صف خارج شد؛ همان‌ها را دستی ثبت کن.`);
       }
       if (active && syncResult.synced) {
         notify(`${toPersianDigits(syncResult.synced)} ثبت آفلاین همگام شد.`);

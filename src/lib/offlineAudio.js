@@ -1,5 +1,5 @@
 import {
-  belongsToOfflineScope, normalizeOfflineScope, normalizeOfflineState, requireOfflineScope,
+  belongsToOfflineScope, nextOfflineAudioState, normalizeOfflineScope, normalizeOfflineState, requireOfflineScope,
 } from './offlineScope.js';
 
 const DB_NAME = 'hesab-yar-offline';
@@ -127,6 +127,28 @@ export function releaseOfflineAudio(id, scopeValue, error = '') {
     lastError: String(error || '').slice(0, 300),
     updatedAt: new Date().toISOString(),
   }));
+}
+
+/**
+ * شکست پردازش صدا. برخلاف releaseOfflineAudio که قلم را بی‌قید به صف برمی‌گرداند،
+ * اینجا تلاش شمرده می‌شود و پس از سقف — یا بلافاصله در خطای دائمی — قلم از صف
+ * بیرون می‌رود تا بقیهٔ ضبط‌ها پشتش نمانند. رکورد پاک نمی‌شود؛ صدای کاربر
+ * بی‌خبر از بین نمی‌رود.
+ */
+export async function failOfflineAudio(id, scopeValue, error = '', { permanent = false } = {}) {
+  let outcome = null;
+  await updateRecord(id, scopeValue, (record) => {
+    const next = nextOfflineAudioState(record, { permanent });
+    outcome = next;
+    return {
+      ...record,
+      state: next.state,
+      attempts: next.attempts,
+      lastError: String(error || '').slice(0, 300),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  return outcome;
 }
 
 export function removeOfflineAudio(id, scopeValue) {
