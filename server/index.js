@@ -36,6 +36,7 @@ import { parseFinancialAudio } from './voice.js';
 import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
 import { voiceProviderStatus } from './voiceProviderState.js';
 import { extractReceiptData, receiptOcrConfigured } from './receiptOcr.js';
+import { SUPPORTED_RECEIPT_TYPES, acceptReceiptImage } from './imageIntake.js';
 import { audioDurationMs } from './collaboration.js';
 import { healthPayload } from './release.js';
 
@@ -493,13 +494,20 @@ app.get('/api/receipts/:id', (request, response) => {
 app.get('/api/receipts/:id/image', (request, response) => {
   const image = receiptImage(request.params.id);
   if (!image) return response.status(404).end();
-  response.setHeader('Content-Type', image.mimeType);
-  response.setHeader('Cache-Control', 'private, max-age=3600');
+  // نوع خروجی از فهرست بسته انتخاب می‌شود، نه از مقدار ذخیره‌شده؛ رسیدهای قدیمیِ
+  // پیش از اعتبارسنجی باینری هم نباید بتوانند نوع دلخواه را به مرورگر تحمیل کنند.
+  const safeType = SUPPORTED_RECEIPT_TYPES.includes(image.mimeType) ? image.mimeType : 'application/octet-stream';
+  response.setHeader('Content-Type', safeType);
+  response.setHeader('Content-Disposition', 'inline');
+  response.setHeader('Cache-Control', 'private, no-store');
   return response.send(image.imageData);
 });
 app.post('/api/receipts', upload.single('image'), async (request, response, next) => {
   try {
-    if (!request.file || !['image/jpeg', 'image/png', 'image/webp'].includes(request.file.mimetype)) return response.status(400).json({ message: 'یک تصویر JPG، PNG یا WebP انتخاب کن.' });
+    if (!request.file) return response.status(400).json({ message: 'یک تصویر JPG، PNG یا WebP انتخاب کن.' });
+    // نوع فایل از بایت‌های خودش خوانده می‌شود و EXIF پیش از ذخیره حذف می‌شود؛
+    // برچسب کلاینت و مختصات GPS عکس موبایل هیچ‌کدام وارد پایگاه‌دادهٔ مالی نمی‌شوند.
+    const image = acceptReceiptImage(request.file.buffer, request.file.mimetype);
     const note = String(request.body.note || '');
     const parsed = parseFinancialText(note, { learnings: getLearnings(), averages: typicalAmounts(), source: 'text' });
     const noteSuggestion = parsed.transactions[0] || null;
@@ -508,7 +516,7 @@ app.post('/api/receipts', upload.single('image'), async (request, response, next
     let usageId = null;
     try {
       if (receiptOcrConfigured()) usageId = beginProviderUsage('receipt_ocr', 'openai');
-      extraction = await extractReceiptData({ buffer: request.file.buffer, mimeType: request.file.mimetype, note, categories: getCategories() });
+      extraction = await extractReceiptData({ buffer: image.buffer, mimeType: image.mimeType, note, categories: getCategories() });
       if (usageId) finishProviderUsage(usageId, { provider: extraction.provider || 'openai' });
     } catch (error) {
       if (usageId) finishProviderUsage(usageId, { provider: error.provider || 'openai', succeeded: false, errorCode: error.code });
@@ -523,7 +531,7 @@ app.post('/api/receipts', upload.single('image'), async (request, response, next
     const accountId = String(request.body.accountId || noteSuggestion?.accountId || 'cash');
     const status = extraction?.status === 'ready' && amount && type && category ? 'ready' : extraction ? 'review' : warning ? 'failed' : 'review';
     const item = saveReceipt({
-      buffer: request.file.buffer, fileName: request.file.originalname, mimeType: request.file.mimetype, note, amount, type, category, accountId,
+      buffer: image.buffer, fileName: request.file.originalname, mimeType: image.mimeType, note, amount, type, category, accountId,
       merchant: extraction?.merchant, occurredAt: extraction?.occurredAt, paymentMethod: extraction?.paymentMethod,
       reference: extraction?.reference, status, ocrProvider: extraction?.provider || (noteSuggestion ? 'note-parser' : ''),
       ocrModel: extraction?.model || '', ocrConfidence: extraction?.confidence || 0, fieldConfidence: extraction?.fieldConfidence || {},
