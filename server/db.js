@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
+import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
   postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
@@ -1450,17 +1451,38 @@ export function importTemplateWorkbook() {
 // ---------------------------------------------------------------------------
 
 export function journalWorklistOverview(query = {}) {
-  return journalWorklist(activeWorkspaceDatabase(), {
-    userId: currentWorkspace()?.userId || '', limit: query.limit,
+  const workspace = currentWorkspace();
+  const worklist = journalWorklist(activeWorkspaceDatabase(), {
+    userId: workspace?.userId || '', limit: query.limit,
   });
+  // کارتابل باید از قبل بگوید تأیید سند خودت مجاز است یا نه؛ فهمیدنش با خطای ۴۰۳ دیر است.
+  return { ...worklist, checkers: workspaceCheckerAvailability(workspace?.id || 'primary', workspace?.userId || null) };
+}
+
+/**
+ * تفکیک ثبت‌کننده از کنترل‌کننده فقط وقتی معنا دارد که کنترل‌کنندهٔ دیگری وجود داشته باشد.
+ * دفتر یک‌نفره اگر نتواند سند خودش را تأیید کند، سندش برای همیشه در «منتظر کنترل»
+ * می‌ماند: نه به تراز می‌آید و نه خروجی می‌گیرد. پس تنها در نبود کنترل‌کنندهٔ دوم،
+ * خودتأییدی باز می‌شود و صریح در Audit Log ثبت می‌شود.
+ */
+export function workspaceCheckerAvailability(workspaceId, userId) {
+  const checkers = listWorkspaceMembers(workspaceId).filter((member) => roleAllows(member.role, 'manager'));
+  const others = checkers.filter((member) => member.id !== userId);
+  return { checkerCount: checkers.length, otherCheckerCount: others.length, soloChecker: others.length === 0 };
 }
 
 export function submitJournalApproval(entryId, nextState, reason = '') {
+  const workspace = currentWorkspace();
+  const availability = workspaceCheckerAvailability(workspace?.id || 'primary', workspace?.userId || null);
   const result = setJournalApproval(activeWorkspaceDatabase(), entryId, nextState, {
-    userId: currentWorkspace()?.userId || null, reason, timeZone: currentTimeZone(),
-    allowSelfApproval: false,
+    userId: workspace?.userId || null, reason, timeZone: currentTimeZone(),
+    allowSelfApproval: availability.soloChecker,
   });
-  audit('approval', 'journal_entry', entryId, { from: result.from, to: result.to, reason: reason || undefined });
+  audit('approval', 'journal_entry', entryId, {
+    from: result.from, to: result.to, reason: reason || undefined,
+    selfApproved: result.selfApproved || undefined,
+    selfApprovalGround: result.selfApproved ? 'دفتر کنترل‌کنندهٔ دیگری ندارد' : undefined,
+  });
   return result;
 }
 

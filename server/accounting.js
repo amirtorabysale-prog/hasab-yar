@@ -545,7 +545,9 @@ export function setJournalApproval(database, entryId, nextState, { userId = null
   } else {
     database.prepare("UPDATE journal_entries SET approval_state='returned',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,return_reason=? WHERE id=?").run(userId, cleanReason, entry.id);
   }
-  return { ...move, entry: listJournal(database, { entryId: entry.id }).items[0] };
+  // خودتأییدی وقتی مجاز شمرده شده باشد باید در رد پا دیده شود، نه اینکه بی‌صدا بگذرد.
+  const selfApproved = move.to === 'approved' && sameUser;
+  return { ...move, selfApproved, entry: listJournal(database, { entryId: entry.id }).items[0] };
 }
 
 /**

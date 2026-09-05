@@ -1,0 +1,19 @@
+const DATE_SHAPE = /^\d{4}\/\d{2}\/\d{2}$/;
+
+/**
+ * سال مالی بازِ نصب مقصد.
+ *
+ * پارسیان سند خارج از سال مالی باز را وارد نمی‌کند و پیام قابل فهمی هم نمی‌دهد:
+ * فایل را می‌گیرد و هیچ سندی ساخته نمی‌شود. پس بازه باید همین‌جا کنترل شود.
+ * بازه دادهٔ خود دفتر است و حدس زده نمی‌شود؛ اگر داده نشود، کنترلی هم نیست.
+ */
+export function normalizeFiscalYear(value) {
+  const start = String((value && value.start) || '').trim();
+  const end = String((value && value.end) || '').trim();
+  if (!start && !end) return null;
+  if (!DATE_SHAPE.test(start) || !DATE_SHAPE.test(end)) {
+    throw transferError('سال مالی مقصد باید دو تاریخ کامل به شکل ۱۴۰۲/۰۱/۰۱ باشد.', 'PARSIAN_FISCAL_YEAR_INVALID');
+  }
+  if (start > end) throw transferError('شروع سال مالی مقصد بعد از پایان آن است.', 'PARSIAN_FISCAL_YEAR_INVALID');
+  return { start, end };
+}

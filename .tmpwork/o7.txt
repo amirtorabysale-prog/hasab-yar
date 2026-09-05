@@ -1,0 +1,5 @@
+    checks.push({
+      id: 'parsian-segments', label: 'هر حساب استفاده‌شده کد کل و معین عددی دارد', count: missingSegments.length,
+      passed: missingSegments.length === 0, severity: 'blocker',
+    });
+  }

@@ -12,7 +12,12 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('batch-owner', 'Ledger-Long-Passphrase-8812');
 const workspace = database.createWorkspace(owner.id, { name: 'شرکت ثبت انبوه', profileType: 'business' });
-const reviewerId = 'batch-reviewer';
+// کنترل‌کننده باید عضو واقعی دفتر باشد، وگرنه آزمون تفکیک ثبت/کنترل روی دفتری
+// اجرا می‌شود که اصلاً کنترل‌کنندهٔ دومی ندارد و خودتأییدی در آن مجاز است.
+const reviewerId = database.addWorkspaceMember(workspace.id, {
+  username: 'batch-reviewer', displayName: 'کنترل‌کننده', role: 'manager',
+  temporaryPassword: 'Reviewer-Long-Passphrase-4471',
+}).id;
 const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
 const reviewInWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'manager', userId: reviewerId }, callback);
 
@@ -249,4 +254,90 @@ test('the firm desk shows an uncontrolled document as a blocker', () => {
   const client = database.firmPortfolio(owner.id, { refresh: true }).clients.find((item) => item.workspace.id === workspace.id);
   assert.equal(client.level, 'blocked');
   assert.ok(client.blockers.some((item) => item.id === 'pendingApproval'));
+});
+
+// دفتر یک‌نفره: تفکیک ثبت‌کننده از کنترل‌کننده وقتی کنترل‌کنندهٔ دومی وجود ندارد
+// فقط سند را برای همیشه در «منتظر کنترل» حبس می‌کند و خروجی دفتر را می‌بندد.
+test('a one-person office may control its own document, and the trail says so', () => {
+  const soloWorkspace = database.createWorkspace(owner.id, { name: 'دفتر یک‌نفره', profileType: 'business' });
+  const soloInWorkspace = (callback) => database.runInWorkspace(soloWorkspace.id, { role: 'owner', userId: owner.id }, callback);
+
+  soloInWorkspace(() => {
+    const availability = database.workspaceCheckerAvailability(soloWorkspace.id, owner.id);
+    assert.equal(availability.otherCheckerCount, 0);
+    assert.equal(availability.soloChecker, true);
+    assert.equal(database.journalWorklistOverview().checkers.soloChecker, true);
+
+    const accounts = database.listAccounts();
+    const soloCash = accounts.find((item) => item.kind === 'cash') || accounts[0];
+    database.insertTransactions({
+      transcript: 'فروش دفتر یک‌نفره',
+      transactions: [{ amount: 4_000_000, type: 'income', category: 'فروش', rawText: 'فروش دفتر یک‌نفره', occurredAt: AT, accountId: soloCash.id }],
+    });
+    const ledger = accounting.listLedgerAccounts(database.db);
+    const soloIncome = ledger.find((item) => item.type === 'income');
+    const soloAsset = ledger.find((item) => item.type === 'asset');
+
+    const target = database.createJournalDocuments([{
+      occurredAt: AT,
+      memo: 'سند دفتر یک‌نفره',
+      lines: [
+        { accountId: soloAsset.id, debit: 250_000, description: 'دریافت' },
+        { accountId: soloIncome.id, credit: 250_000, description: 'فروش' },
+      ],
+    }]).entryIds[0];
+
+    assert.equal(database.submitJournalApproval(target, 'submitted').to, 'submitted');
+    const approval = database.submitJournalApproval(target, 'approved');
+    assert.equal(approval.to, 'approved');
+    assert.equal(approval.selfApproved, true);
+
+    // خودتأییدی باید در Audit Log با علتش دیده شود، نه اینکه بی‌صدا بگذرد.
+    const trail = database.db.prepare(
+      "SELECT payload FROM audit_log WHERE action='approval' AND entity_id=? ORDER BY rowid DESC LIMIT 1",
+    ).get(target);
+    const payload = JSON.parse(trail.payload);
+    assert.equal(payload.selfApproved, true);
+    assert.equal(payload.selfApprovalGround, 'دفتر کنترل‌کنندهٔ دیگری ندارد');
+
+    // سند تأییدشده باید در تراز دیده شود؛ همین چیزی است که حبس در «منتظر کنترل» می‌گرفت.
+    const balance = accounting.trialBalance(database.db);
+    assert.ok(balance.totals.debit >= 250_000);
+  });
+});
+
+// به محض اینکه کنترل‌کنندهٔ دوم اضافه شود، تفکیک دوباره اجباری می‌شود.
+test('adding a second controller closes self-approval again', () => {
+  const pairWorkspace = database.createWorkspace(owner.id, { name: 'دفتر دو‌نفره', profileType: 'business' });
+  database.addWorkspaceMember(pairWorkspace.id, {
+    username: 'pair-reviewer', displayName: 'کنترل‌کنندهٔ دوم', role: 'manager',
+    temporaryPassword: 'Second-Control-Passphrase-9930',
+  });
+  const availability = database.workspaceCheckerAvailability(pairWorkspace.id, owner.id);
+  assert.equal(availability.otherCheckerCount, 1);
+  assert.equal(availability.soloChecker, false);
+
+  database.runInWorkspace(pairWorkspace.id, { role: 'owner', userId: owner.id }, () => {
+    // دفتر تازه تا اولین ثبت، حساب دفتر کل ندارد.
+    database.insertTransactions({
+      transcript: 'فروش دفتر دونفره',
+      transactions: [{ amount: 3_000_000, type: 'income', category: 'فروش', rawText: 'فروش دفتر دونفره', occurredAt: AT }],
+    });
+    const ledger = accounting.listLedgerAccounts(database.db);
+    const pairIncome = ledger.find((item) => item.type === 'income');
+    const pairAsset = ledger.find((item) => item.type === 'asset');
+    const target = database.createJournalDocuments([{
+      occurredAt: AT,
+      memo: 'سند دفتر دونفره',
+      lines: [
+        { accountId: pairAsset.id, debit: 90_000, description: 'دریافت' },
+        { accountId: pairIncome.id, credit: 90_000, description: 'فروش' },
+      ],
+    }]).entryIds[0];
+    database.submitJournalApproval(target, 'submitted');
+    assert.throws(
+      () => database.submitJournalApproval(target, 'approved'),
+      (error) => error.code === 'JOURNAL_SELF_APPROVAL',
+    );
+  });
 });

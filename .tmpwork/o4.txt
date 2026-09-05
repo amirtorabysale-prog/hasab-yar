@@ -1,0 +1,4 @@
+export const PARSIAN_TRANSFER_LIMITS = Object.freeze({
+  pageSize: PAGE_SIZE,
+  maxRows: INDEX_CAPACITY,
+});
