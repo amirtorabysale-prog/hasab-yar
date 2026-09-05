@@ -19,3 +19,7 @@ backups/
 .DS_Store
 graphify-out/
 parsian/
+
+# فایل‌های کار موقت، بیرون از تحویل
+.tmpwork/
+graphify-out/
