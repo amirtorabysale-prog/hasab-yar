@@ -1733,6 +1733,11 @@ function JournalWorklistPanel({ worklist, canApprove, notify, refresh }) {
       </div>
     </div>
 
+    {canApprove && worklist.checkers?.soloChecker && <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
+      این دفتر کنترل‌کنندهٔ دیگری ندارد، پس می‌توانی سند خودت را تأیید کنی؛ هر خودتأییدی در Audit Log ثبت می‌شود.
+      برای تفکیک واقعی ثبت‌کننده و کنترل‌کننده، یک عضو با نقش مدیر اضافه کن.
+    </p>}
+
     {summary.clear && <p className="mt-3 text-[13px] text-income">هیچ سندی در جریان نمانده است.</p>}
 
     {!summary.clear && <div className="mt-3 divide-y divide-line">
