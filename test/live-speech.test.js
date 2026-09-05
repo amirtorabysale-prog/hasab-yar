@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../src/lib/liveSpeech.js';
+import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported, mergeSpeechSegments } from '../src/lib/liveSpeech.js';
+import { parseFinancialText } from '../shared/parser.js';
 
 test('configures Persian live recognition and returns alternatives', () => {
   class FakeRecognition {
@@ -41,4 +42,43 @@ test('restarts Chrome recognition only after recoverable early endings', () => {
   assert.equal(browserRecognitionCanRestart('no-speech'), true);
   assert.equal(browserRecognitionCanRestart('network'), false);
   assert.equal(browserRecognitionCanRestart('not-allowed'), false);
+});
+
+// تشخیص گفتار Chrome وسط ضبط تمام می‌شود و دوباره راه می‌افتد؛ نشست تازه
+// results خالی دارد. بدون حمل متن، هرچه کاربر تا آن لحظه گفته بود پاک می‌شد و
+// مسیر محلی می‌توانست همان نیمهٔ دوم را به‌عنوان کل جمله ثبت کند.
+test('metn-e neshast-haye pishin dar rah-andazi dobare gom nemishavad', () => {
+  const secondSession = {
+    transcript: 'دو میلیون و پونصد حقوق دادم',
+    finalTranscript: 'دو میلیون و پونصد حقوق دادم',
+    interim: '',
+    candidates: [{ transcript: 'دو میلیون و پونصد حقوق دادم', confidence: 0.9 }],
+  };
+  const merged = mergeSpeechSegments('دوازده میلیون فروش داشتم', secondSession);
+  assert.equal(merged.transcript, 'دوازده میلیون فروش داشتم دو میلیون و پونصد حقوق دادم');
+  assert.equal(merged.finalTranscript, 'دوازده میلیون فروش داشتم دو میلیون و پونصد حقوق دادم');
+  assert.equal(merged.candidates[0].transcript, 'دوازده میلیون فروش داشتم دو میلیون و پونصد حقوق دادم');
+
+  // مهم‌ترین اثر: هر دو تراکنش زنده می‌مانند، نه فقط نیمهٔ دوم.
+  const parsed = parseFinancialText(merged.transcript, { source: 'voice' });
+  assert.equal(parsed.transactions.length, 2);
+  assert.deepEqual(parsed.transactions.map((item) => item.amount), [12_000_000, 2_500_000]);
+});
+
+test('metn-e movaqqat ham baad az carry dorost michasbad', () => {
+  const merged = mergeSpeechSegments('دوازده میلیون فروش داشتم', {
+    transcript: 'و پونصد هزار',
+    finalTranscript: '',
+    interim: 'و پونصد هزار',
+    candidates: [{ transcript: 'و پونصد هزار', confidence: 0.4 }],
+  });
+  assert.equal(merged.transcript, 'دوازده میلیون فروش داشتم و پونصد هزار');
+  // آنچه هنوز نهایی نشده نباید وارد بخش نهایی شود.
+  assert.equal(merged.finalTranscript, 'دوازده میلیون فروش داشتم');
+});
+
+test('bedun-e carry, snapshot dast nakhorde mimanad', () => {
+  const snapshot = { transcript: 'سه میلیون فروش', finalTranscript: 'سه میلیون فروش', interim: '', candidates: [] };
+  assert.equal(mergeSpeechSegments('', snapshot), snapshot);
+  assert.equal(mergeSpeechSegments('   ', snapshot), snapshot);
 });

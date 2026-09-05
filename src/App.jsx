@@ -5,7 +5,7 @@ import {
   Search, Settings, Sparkles, Trash2, Users, WalletCards, WifiOff, X,
 } from 'lucide-react';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
-import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from './lib/liveSpeech.js';
+import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported, mergeSpeechSegments } from './lib/liveSpeech.js';
 import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
 import {
   countOfflineAudio, markOfflineAudioForReview, pendingAudio, releaseOfflineAudio, removeOfflineAudio, saveOfflineAudio,
@@ -81,6 +81,9 @@ export default function App() {
   const realtimeSpeechRef = useRef(null);
   const speechSnapshotRef = useRef({ transcript: '', candidates: [], error: null, source: '' });
   const browserSpeechSnapshotRef = useRef({ transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'browser-live' });
+  // متن نشست‌های پیشین تشخیص Chrome؛ نشست تازه results خالی دارد.
+  const carriedTranscriptRef = useRef('');
+  const segmentFinalRef = useRef('');
   const realtimeSpeechSnapshotRef = useRef({ transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'openai-realtime' });
   const firstTranscriptMsRef = useRef(0);
   const maxRecordingTimerRef = useRef(null);
@@ -429,6 +432,8 @@ export default function App() {
     firstTranscriptMsRef.current = 0;
     speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: '' };
     browserSpeechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'browser-live' };
+    carriedTranscriptRef.current = '';
+    segmentFinalRef.current = '';
     realtimeSpeechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: 'openai-realtime' };
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -454,8 +459,10 @@ export default function App() {
         if (recognitionRef.current || !liveSpeechSupported()) return;
         const recognizer = createPersianRecognizer({
           phrases: [...data.categories.map((item) => item.name), ...data.learnings.map((item) => item.keyword)],
-          onUpdate: (snapshot) => {
+          onUpdate: (rawSnapshot) => {
             browserError = '';
+            segmentFinalRef.current = rawSnapshot.finalTranscript || '';
+            const snapshot = mergeSpeechSegments(carriedTranscriptRef.current, rawSnapshot);
             const next = { ...snapshot, error: null, ended: false, source: 'browser-live' };
             browserSpeechSnapshotRef.current = next;
             if (speechSnapshotRef.current.source !== 'openai-realtime' || realtimeSpeechSnapshotRef.current.error) {
@@ -476,6 +483,10 @@ export default function App() {
             if (recognitionRef.current === recognizer) recognitionRef.current = null;
             const restartable = browserRecognitionCanRestart(browserError);
             if (holdingRef.current && wavRecorderRef.current && restartable) {
+              // آنچه در این نشست نهایی شد باید به نشست بعدی منتقل شود، وگرنه
+              // نشست تازه با results خالی شروع می‌کند و متن قبلی پاک می‌شود.
+              carriedTranscriptRef.current = [carriedTranscriptRef.current, segmentFinalRef.current].filter(Boolean).join(' ').trim();
+              segmentFinalRef.current = '';
               window.setTimeout(() => {
                 if (holdingRef.current && wavRecorderRef.current && !recognitionRef.current) startBrowserRecognizer();
               }, 90);
