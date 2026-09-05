@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
+import { financialDna } from './financialDna.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
@@ -3120,6 +3121,18 @@ export function snoozeFinancialAlert(alertId, { hours = 24 } = {}) {
     .run(id, normalizedId, snoozedUntil, currentWorkspace()?.userId || null);
   audit('snooze', 'financial_alert', normalizedId, { hours: safeHours, snoozedUntil });
   return { id, alertId: normalizedId, action: 'snooze', snoozedUntil };
+}
+
+/**
+ * DNA مالی پرونده. پنجرهٔ پیش‌فرض شش ماه است تا الگوی فصلی جا بیفتد، ولی
+ * محاسبه هیچ ادعایی بدون دادهٔ کافی نمی‌کند.
+ */
+export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
+  const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
+  const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
+    occurred_at AS occurredAt,created_at AS createdAt
+    FROM transactions WHERE status='confirmed' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+  return financialDna(rows, { timeZone: currentTimeZone(), now, months });
 }
 
 export function financialOverview(now = new Date()) {

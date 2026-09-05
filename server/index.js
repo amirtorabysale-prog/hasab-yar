@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
-  ensureAdmin, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
+  ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
@@ -205,6 +205,11 @@ app.put('/api/workspace/members/:userId', (request, response, next) => {
 app.delete('/api/workspace/members/:userId', (request, response, next) => {
   try { return response.status(removeWorkspaceMember(request.workspace.id, request.params.userId) ? 204 : 404).end(); }
   catch (error) { error.status ||= 400; return next(error); }
+});
+// DNA مالی پرونده: اثر انگشت رفتاری و پروفایل یک‌نگاهی برای دفتر.
+app.get('/api/financial-dna', (request, response, next) => {
+  try { return response.json(financialDnaOverview({ months: Number(request.query.months) || 6 })); }
+  catch (error) { return next(error); }
 });
 // میز کار دفتر حسابداری. فقط پرونده‌هایی که همین کاربر عضوشان است دیده می‌شوند.
 app.get('/api/firm/portfolio', (request, response, next) => {

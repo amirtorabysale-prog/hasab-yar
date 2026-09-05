@@ -2221,7 +2221,7 @@ function CollaborationPage({ access, notify, navigate }) {
     <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm font-bold text-accent">فاز همکاری واقعی</p><h1 className="mt-1 text-xl font-extrabold">همکاری حسابدار، پایلوت و هزینه</h1><p className="mt-2 max-w-[700px] text-[13px] leading-6 text-muted">حساب‌یار در این بخش پل بین صاحب کسب‌وکار و دفتر حسابداری است؛ ثبت اولیه، مدرک و سؤال جابه‌جا می‌شود، اما جای نرم‌افزار رسمی حسابداری را نمی‌گیرد.</p></div><label className="text-xs text-muted">دورهٔ شمسی بسته<select value={month} onChange={(event) => setMonth(event.target.value)} className="tap mt-2 block rounded-lg border border-line bg-surface px-3 text-ink">{periodOptions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div>
 
     <div className="mt-6 flex flex-wrap gap-1.5 border-b border-line pb-2 text-[13px] font-bold">
-      {[['delivery', 'تحویل به حسابدار'], ['questions', 'سؤال و پاسخ'], ['plan', 'پلن و هزینه'], ...(canManagePilot ? [['pilot', 'پایلوت و سلامت']] : [])].map(([id, label]) => (
+      {[['delivery', 'تحویل به حسابدار'], ['dna', 'DNA مالی'], ['questions', 'سؤال و پاسخ'], ['plan', 'پلن و هزینه'], ...(canManagePilot ? [['pilot', 'پایلوت و سلامت']] : [])].map(([id, label]) => (
         <button key={id} onClick={() => setTab(id)} className={`tap rounded-lg px-3 ${tab === id ? 'bg-warn-bg text-accent' : 'text-muted hover:bg-surface'}`}>{label}</button>
       ))}
     </div>
@@ -2240,6 +2240,8 @@ function CollaborationPage({ access, notify, navigate }) {
       {/* تحویل جداگانه: بستهٔ JSON مرور حسابدار، نه فایل انتقال نرم‌افزار. */}
       <section className="rounded-[12px] border border-line bg-surface p-4"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">بستهٔ پایان ماه برای حسابدار</h2><p className="mt-1 text-xs leading-6 text-muted">تراکنش‌ها، رسید ناقص، اختلاف صندوق، تطبیق باز، طلب/بدهی و سابقهٔ حسابرسی با شناسهٔ منبع.</p></div><FileText size={22} className="shrink-0 text-accent" /></div><div className="mt-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-[11px] text-muted">ثبت‌ها</span><b className="numbers mt-1 block">{toPersianDigits(packageData.summary?.transactionCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[11px] text-muted">رسید ناقص</span><b className="numbers mt-1 block">{toPersianDigits(packageData.summary?.incompleteReceipts || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-[11px] text-muted">سؤال بی‌پاسخ</span><b className="numbers mt-1 block">{toPersianDigits(packageData.summary?.unansweredRequests || 0)}</b></div></div><div className="mt-4 divide-y divide-line rounded-lg border border-line px-3">{packageData.checklist?.checks?.map((item) => <div key={item.id} className="flex min-h-11 items-center gap-2 py-2 text-xs"><span className={`grid h-5 w-5 place-items-center rounded-full ${item.passed ? 'bg-income/10 text-income' : 'bg-expense/10 text-expense'}`}>{item.passed ? <Check size={14} /> : <CircleAlert size={14} />}</span><span className="flex-1 font-bold">{item.label}</span>{!item.passed && <b className="numbers text-expense">{toPersianDigits(item.count)}</b>}</div>)}</div><button onClick={downloadPackage} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-ink font-bold text-white"><Download size={18} />دریافت بسته JSON حسابدار</button><p className="mt-3 text-[10px] leading-5 text-muted">هش SHA-256 داخل manifest امکان کنترل تغییر فایل را می‌دهد. تصویر خام رسید داخل خروجی قرار نمی‌گیرد.</p></section>
     </div>}
+
+    {tab === 'dna' && <FinancialDnaPanel notify={notify} />}
 
     {tab === 'questions' && <section className="mt-4 rounded-[12px] border border-line bg-surface p-4"><div className="flex items-center justify-between"><div><h2 className="font-extrabold">صندوق درخواست توضیح</h2><p className="mt-1 text-xs leading-6 text-muted">حسابدار سؤال را به یک منبع وصل می‌کند؛ مدیر یا مالک پاسخ می‌دهد و حسابدار پس از کنترل آن را می‌بندد.</p></div><Users size={22} className="text-accent" /></div><form onSubmit={createRequest} className="mt-4 grid gap-2 md:grid-cols-[150px_minmax(0,1fr)_110px]"><select value={requestDraft.entityType} onChange={(event) => setRequestDraft({ ...requestDraft, entityType: event.target.value, entityId: '' })} className="tap rounded-lg border border-line bg-surface px-3 text-sm">{Object.entries(entityLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>{requestDraft.entityType === 'general' ? <input required minLength={5} value={requestDraft.question} onChange={(event) => setRequestDraft({ ...requestDraft, question: event.target.value })} placeholder="مثلاً این پرداخت بابت کدام پروژه بود؟" className="tap rounded-lg border border-line px-3" /> : <div className="grid gap-2 sm:grid-cols-[160px_1fr]"><input required value={requestDraft.entityId} onChange={(event) => setRequestDraft({ ...requestDraft, entityId: event.target.value })} placeholder="شناسه منبع" dir="ltr" className="tap rounded-lg border border-line px-3 text-left text-xs" /><input required minLength={5} value={requestDraft.question} onChange={(event) => setRequestDraft({ ...requestDraft, question: event.target.value })} placeholder="سؤال حسابدار" className="tap rounded-lg border border-line px-3" /></div>}<button className="tap rounded-lg bg-accent px-3 text-sm font-bold text-white">ثبت درخواست</button><label className="flex items-center gap-2 text-xs md:col-span-3"><input type="checkbox" checked={requestDraft.priority === 'urgent'} onChange={(event) => setRequestDraft({ ...requestDraft, priority: event.target.checked ? 'urgent' : 'normal' })} />فوری است</label></form><div className="mt-5 space-y-3">{overview?.requests?.length ? overview.requests.map((item) => <article key={item.id} className={`rounded-lg border p-3 ${item.priority === 'urgent' && item.status !== 'resolved' ? 'border-expense/30 bg-expense/5' : 'border-line'}`}><div className="flex flex-wrap items-center gap-2 text-[11px]"><b>{entityLabels[item.entityType]}</b><span className="rounded-md bg-paper px-2 py-1">{item.status === 'open' ? 'منتظر پاسخ' : item.status === 'answered' ? 'پاسخ داده‌شده' : 'بسته'}</span><span className="text-muted">{item.requestedBy?.label} · {persianDate(item.createdAt)}</span></div><p className="mt-3 text-sm font-bold leading-6">{item.question}</p>{item.entityId && <p className="mt-1 truncate text-[10px] text-muted" dir="ltr">{item.entityId}</p>}{item.answer && <div className="mt-3 rounded-lg bg-paper px-3 py-2"><p className="text-[11px] text-muted">پاسخ {item.answeredBy?.label}</p><p className="mt-1 text-sm leading-6">{item.answer}</p></div>}{item.status === 'open' && canAnswer && <div className="mt-3 flex gap-2"><input value={answers[item.id] || ''} onChange={(event) => setAnswers({ ...answers, [item.id]: event.target.value })} placeholder="پاسخ مستند صاحب کسب‌وکار" className="tap min-w-0 flex-1 rounded-lg border border-line px-3" /><button disabled={!String(answers[item.id] || '').trim()} onClick={() => answer(item.id)} className="tap rounded-lg bg-ink px-3 text-xs font-bold text-white disabled:opacity-40">ثبت پاسخ</button></div>}{item.status === 'answered' && <button onClick={() => resolveRequest(item.id)} className="tap mt-3 rounded-lg border border-income/30 px-3 text-xs font-bold text-income">کنترل شد؛ بستن درخواست</button>}</article>) : <p className="rounded-lg bg-paper px-3 py-4 text-center text-xs text-muted">درخواست بازی وجود ندارد.</p>}</div></section>}
 
@@ -2670,6 +2672,124 @@ function AccountingTransferPanel({ month, target, setTarget, overview, notify, r
       {validationBatchId === item.id && <form onSubmit={(event) => saveValidation(event, item)} className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-2 lg:grid-cols-4"><input required value={validationDraft.softwareName} onChange={(event) => setValidationDraft({ ...validationDraft, softwareName: event.target.value })} placeholder="نام نرم‌افزار" className="tap rounded-lg border border-line px-2" /><input required value={validationDraft.softwareVersion} onChange={(event) => setValidationDraft({ ...validationDraft, softwareVersion: event.target.value })} placeholder="نسخه دقیق پارسیان" dir="ltr" className="tap rounded-lg border border-line px-2 text-left" /><input required value={validationDraft.testCompanyLabel} onChange={(event) => setValidationDraft({ ...validationDraft, testCompanyLabel: event.target.value })} placeholder="برچسب شرکت آزمایشی" className="tap rounded-lg border border-line px-2" /><select value={validationDraft.attemptType} onChange={(event) => setValidationDraft({ ...validationDraft, attemptType: event.target.value })} className="tap rounded-lg border border-line px-2"><option value="dry-run">Dry Run</option><option value="trial-import">ورود آزمایشی واقعی</option></select><select value={validationDraft.outcome} onChange={(event) => setValidationDraft({ ...validationDraft, outcome: event.target.value })} className="tap rounded-lg border border-line px-2"><option value="failed">ناموفق</option><option value="passed">موفق</option></select><select value={validationDraft.amountUnit} onChange={(event) => { const amountUnit = event.target.value; const multiplier = amountUnit === 'rial' ? 10 : 1; setValidationDraft({ ...validationDraft, amountUnit, importedDebitTotal: String(Number(item.debitTotal) * multiplier), importedCreditTotal: String(Number(item.creditTotal) * multiplier) }); }} className="tap rounded-lg border border-line px-2"><option value="rial">جمع مقصد به ریال</option><option value="toman">جمع مقصد به تومان</option></select><input required inputMode="numeric" value={validationDraft.importedRows} onChange={(event) => setValidationDraft({ ...validationDraft, importedRows: event.target.value.replace(/\D/g, '') })} placeholder="ردیف واردشده" className="tap numbers rounded-lg border border-line px-2" /><input required inputMode="numeric" value={validationDraft.rejectedRows} onChange={(event) => setValidationDraft({ ...validationDraft, rejectedRows: event.target.value.replace(/\D/g, '') })} placeholder="ردیف ردشده" className="tap numbers rounded-lg border border-line px-2" /><input required inputMode="numeric" value={validationDraft.importedDebitTotal} onChange={(event) => setValidationDraft({ ...validationDraft, importedDebitTotal: event.target.value.replace(/\D/g, '') })} placeholder="جمع بدهکار مقصد" className="tap numbers rounded-lg border border-line px-2" /><input required inputMode="numeric" value={validationDraft.importedCreditTotal} onChange={(event) => setValidationDraft({ ...validationDraft, importedCreditTotal: event.target.value.replace(/\D/g, '') })} placeholder="جمع بستانکار مقصد" className="tap numbers rounded-lg border border-line px-2" /><input value={validationDraft.errorSummary} onChange={(event) => setValidationDraft({ ...validationDraft, errorSummary: event.target.value })} placeholder="خطاهای مشاهده‌شده؛ برای ناموفق الزامی" className="tap rounded-lg border border-line px-2 lg:col-span-2" /><textarea value={validationDraft.note} onChange={(event) => setValidationDraft({ ...validationDraft, note: event.target.value })} placeholder="یادداشت و مدرک آزمون؛ بدون اطلاعات محرمانه" className="min-h-16 rounded-lg border border-line p-2 sm:col-span-2 lg:col-span-3" /><button disabled={busy === `validation-${item.id}`} className="tap rounded-lg bg-ink px-3 font-bold text-white">ثبت نتیجه آزمون</button><p className="text-[10px] leading-5 text-muted sm:col-span-2 lg:col-span-4">برای نتیجهٔ موفق، تعداد ردیف باید دقیقاً {toPersianDigits(item.rowCount)}، ردیف ردشده صفر و جمع بدهکار و بستانکار برابر هش/مبالغ همین بسته باشد.</p></form>}
     </article>) : <p className="rounded-lg bg-paper px-3 py-4 text-center text-xs text-muted">هنوز خروجی ثابتی ساخته نشده است.</p>}</div></div>
   </section>;
+}
+
+/**
+ * توزیع هفتگی یک سری واحد از جنس «بزرگی» است، نه هویت؛ پس یک رنگ می‌گیرد و
+ * روز اوج با برچسب مستقیم مشخص می‌شود، نه با رنگ دوم.
+ */
+function WeekdayBars({ rows }) {
+  const peak = rows.reduce((best, item) => (item.percent > best.percent ? item : best), rows[0]);
+  // سهم هر روز حدود یک‌هفتم است، پس مقیاس‌کردن به صد درصد همهٔ میله‌ها را به
+  // ته نوار می‌چسباند و تفاوتشان دیده نمی‌شود. مقیاس نسبت به بیشترین مقدار
+  // است و عدد واقعی کنارش می‌ماند، پس چیزی بزرگ‌نمایی نمی‌شود.
+  const highest = Math.max(...rows.map((item) => item.percent), 1);
+  return <div className="mt-3 space-y-1.5">
+    {rows.map((item) => <div key={item.day} className="flex items-center gap-2" title={`${item.day}: ${formatAmount(item.amount)} تومان`}>
+      <span className="w-16 shrink-0 text-[11px] text-muted">{item.day}</span>
+      <div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-paper">
+        <div className="h-full rounded-full bg-accent" style={{ width: `${item.percent ? Math.max(4, Math.round((item.percent / highest) * 100)) : 0}%` }} />
+      </div>
+      <span className="numbers w-9 shrink-0 text-left text-[11px] font-bold text-muted">{toPersianDigits(item.percent)}٪</span>
+      <span className="w-8 shrink-0">{item.day === peak.day && <span className="rounded-md bg-warn-bg px-1.5 py-0.5 text-[10px] font-bold text-accent">اوج</span>}</span>
+    </div>)}
+  </div>;
+}
+
+function FinancialDnaPanel({ notify }) {
+  const [dna, setDna] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    api.financialDna(6)
+      .then((result) => { if (alive) setDna(result); })
+      .catch((error) => { if (alive) notify(error.message); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [notify]);
+
+  if (loading) return <div className="mt-4 h-32 animate-pulse rounded-[12px] bg-surface" />;
+  if (!dna) return null;
+
+  // نبود داده یک واقعیت است، نه خطا؛ ادعای الگو روی دادهٔ کم بدتر از سکوت است.
+  if (dna.sufficiency.level !== 'ok') {
+    return <section className="mt-4 rounded-[12px] border border-line bg-surface p-4">
+      <h2 className="font-extrabold">DNA مالی این پرونده</h2>
+      <p className="mt-2 text-[13px] leading-7 text-muted">{dna.message}</p>
+      <p className="mt-3 rounded-lg bg-paper px-3 py-3 text-[12px] leading-6 text-muted">
+        تا آن موقع هیچ الگویی نشان داده نمی‌شود. پروفایل غلط برای دفتر بدتر از نبودِ پروفایل است، چون بر پایه‌اش تصمیم گرفته می‌شود.
+      </p>
+    </section>;
+  }
+
+  const brief = dna.brief;
+  const weekday = dna.traits.find((item) => item.id === 'weekday-pattern');
+  return <div className="mt-4 space-y-4">
+    <section className="rounded-[12px] border border-line bg-surface p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-extrabold">پروفایل یک‌نگاهی پرونده</h2>
+          <p className="mt-1 text-xs leading-6 text-muted">
+            از {toPersianDigits(dna.sufficiency.activeDays)} روز فعال در {toPersianDigits(dna.sufficiency.months)} ماه ساخته شده است؛ هر عدد از ثبت‌های واقعی می‌آید، نه از پیش‌بینی.
+          </p>
+        </div>
+        <BarChart3 size={22} className="shrink-0 text-accent" />
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ['شکل پرونده', brief.shape],
+          ['سند در ماه', toPersianDigits(brief.documentsPerMonth)],
+          ['انضباط ثبت', brief.discipline],
+          ['ثبت معمول درآمد', `${formatAmount(brief.typicalIncome)} تومان`],
+        ].map(([label, value]) => <div key={label} className="rounded-lg bg-paper p-3">
+          <span className="text-[11px] text-muted">{label}</span>
+          <b className="mt-1 block text-[13px] leading-6">{value}</b>
+        </div>)}
+      </div>
+      <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">{brief.workloadNote}</p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {brief.activeCategories.map((item) => <span key={item.category} className="rounded-md border border-line px-2 py-1 text-[11px]">
+          {item.category} <span className="numbers text-muted">{toPersianDigits(item.count)}</span>
+        </span>)}
+      </div>
+    </section>
+
+    <section className="rounded-[12px] border border-line bg-surface p-4">
+      <h2 className="font-extrabold">اثر انگشت رفتاری</h2>
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        {dna.traits.map((trait) => <article key={trait.id} className="rounded-[10px] border border-line bg-paper p-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <b className="text-[13px]">{trait.label}</b>
+            <span className="text-[13px] font-extrabold text-accent">{trait.value}</span>
+          </div>
+          <p className="mt-2 text-[11px] leading-6 text-muted">{trait.detail}</p>
+          {trait.id === 'weekday-pattern' && <WeekdayBars rows={weekday.evidence.byWeekday} />}
+          {trait.id === 'expense-backbone' && trait.evidence.fixed.length > 0 && <div className="mt-3 space-y-1">
+            {trait.evidence.fixed.slice(0, 4).map((item) => <div key={item.category} className="flex items-center justify-between text-[11px]">
+              <span className="text-muted">{item.category}</span>
+              <span className="flex shrink-0 items-baseline gap-2">
+                <b className="numbers">{toPersianDigits(item.percent)}٪</b>
+                <span className="text-muted">در {toPersianDigits(item.months)} ماه</span>
+              </span>
+            </div>)}
+          </div>}
+          {trait.id === 'income-concentration' && <div className="mt-3 space-y-1">
+            {trait.evidence.top.map((item) => <div key={item.category} className="flex items-center justify-between text-[11px]">
+              <span className="text-muted">{item.category}</span>
+              <span className="numbers font-bold">{toPersianDigits(item.percent)}٪</span>
+            </div>)}
+          </div>}
+          {trait.id === 'entry-discipline' && <p className="mt-3 text-[11px] leading-6 text-muted">
+            فاصلهٔ معمول ثبت تا وقوع: <b className="numbers">{toPersianDigits(trait.evidence.typicalLagDays)}</b> روز ·
+            همان‌روز: <b className="numbers">{toPersianDigits(trait.evidence.sameDayPercent)}٪</b> ·
+            شلوغ‌ترین روز ثبت: <b className="numbers">{toPersianDigits(trait.evidence.busiestDayCount)}</b> سند
+          </p>}
+          <p className="mt-2 text-[10px] text-muted">بر پایهٔ {toPersianDigits(trait.evidence.sample ?? trait.evidence.total ?? 0)} ثبت</p>
+        </article>)}
+      </div>
+    </section>
+  </div>;
 }
 
 function PilotPortfolioPanel({ portfolio, updatePlan }) {
