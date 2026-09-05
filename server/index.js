@@ -236,7 +236,7 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
     durationMs = audioDurationMs(request.file.buffer, request.file.mimetype) || Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0));
     usageId = beginProviderUsage('server_voice', 'pipeline');
-    const result = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
+    const result = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
     recordVoiceMetric({
       provider: result.provider || result.engine,
       model: result.model,
