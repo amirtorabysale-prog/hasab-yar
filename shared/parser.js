@@ -20,6 +20,11 @@ const SCALES = { هزار: 1_000, هزارتا: 1_000, میلیون: 1_000_000, 
 const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS), ...Object.keys(SCALES)]);
 const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'دخل', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد'];
 const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
+// فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
+// هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و نوع بی‌دلیل
+// هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
+const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'واریز', 'واریزی', 'دریافت']);
+const EXPENSE_VERBS = new Set(['دادم', 'خریدم', 'برداشت']);
 const CATEGORY_RULES = [
   ['فروش', ['فروش', 'فروختم']],
   ['خدمات', ['خدمات', 'سرویس']],
@@ -133,14 +138,27 @@ function isNumericWord(value) { return /^\d/.test(value) || NUMBER_WORDS.has(val
 const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن'];
 const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
 
+// عبارت‌های دوکلمه‌ای که هیچ خوانش مبلغی ندارند. این‌ها از معافیتِ واژهٔ مقیاس
+// هم قوی‌ترند: در «کد حساب هزار و دویست»، وجود «هزار» باعث می‌شد عدد مبلغ
+// شمرده شود و کد حساب وارد دفتر شود. برعکسش «فاکتور پنج میلیون» یک مبلغ واقعی
+// است، پس «فاکتور»ِ تنها در فهرست ضعیف می‌ماند.
+const STRONG_IDENTIFIER_PREFIXES = [
+  'کد حساب', 'شماره حساب', 'شماره فاکتور', 'شماره سند', 'کد ملی',
+  'کد اقتصادی', 'شماره پیگیری', 'کد رهگیری', 'شماره کارت', 'شماره شبا',
+];
+
 function isNonAmountSpan(text, span) {
   const raw = text.slice(span.start, span.end);
+  const before = text.slice(Math.max(0, span.start - 24), span.start).trim();
+  const after = text.slice(span.end, Math.min(text.length, span.end + 18)).trim();
+  const precededBy = (prefixes) => prefixes.some((prefix) => before === prefix || before.endsWith(` ${prefix}`));
+
+  // شناسهٔ صریح، حتی با واژهٔ مقیاس، هرگز مبلغ نیست.
+  if (precededBy(STRONG_IDENTIFIER_PREFIXES)) return true;
   // عددهای دارای مقیاس پولی، حتی اگر کنار واژه‌های دیگر باشند، مبلغ محسوب می‌شوند.
   if (/هزار|میلیون|میلیارد/.test(raw)) return false;
-  const before = text.slice(Math.max(0, span.start - 18), span.start).trim();
-  const after = text.slice(span.end, Math.min(text.length, span.end + 18)).trim();
   if (NON_AMOUNT_UNITS.some((unit) => after === unit || after.startsWith(`${unit} `))) return true;
-  return IDENTIFIER_PREFIXES.some((prefix) => before === prefix || before.endsWith(` ${prefix}`));
+  return precededBy(IDENTIFIER_PREFIXES);
 }
 
 export function extractAmounts(input) {
@@ -199,16 +217,28 @@ export function inferLearningKeyword(input) {
 
 function containsAny(text, words) { return words.some((word) => text.includes(word)); }
 
+/** فعل جهت‌دار دو امتیاز می‌گیرد و اسم یک امتیاز. */
+function signalScore(text, words, verbs) {
+  return words.reduce((sum, word) => (text.includes(word) ? sum + (verbs.has(word) ? 2 : 1) : sum), 0);
+}
+
 function classify(context, learnings = []) {
   const normalizedContext = normalizePersian(context);
   const learned = learnings.find((item) => normalizedContext.includes(normalizePersian(item.keyword)));
-  const hasIncome = containsAny(normalizedContext, INCOME_WORDS);
-  const hasExpense = containsAny(normalizedContext, EXPENSE_WORDS);
-  let type = hasIncome && !hasExpense ? 'income' : 'expense';
-  let confidence = hasIncome !== hasExpense ? 0.93 : 0.58;
-  let typeReason = hasIncome !== hasExpense
+  const incomeScore = signalScore(normalizedContext, INCOME_WORDS, INCOME_VERBS);
+  const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
+  const hasIncome = incomeScore > 0;
+  const hasExpense = expenseScore > 0;
+  const onlyOneSide = hasIncome !== hasExpense;
+  // وقتی هر دو نشانه هست، فعلِ جهت‌دار برنده می‌شود؛ ولی اطمینان پایین می‌ماند
+  // تا کاربر نگاهش کند، چون جمله واقعاً هر دو نشانه را داشته است.
+  let type = incomeScore > expenseScore ? 'income' : 'expense';
+  let confidence = onlyOneSide ? 0.93 : incomeScore === expenseScore ? 0.58 : 0.72;
+  let typeReason = onlyOneSide
     ? `نوع از واژهٔ ${hasIncome ? 'درآمدی' : 'هزینه‌ای'} متن تشخیص داده شد.`
-    : 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.';
+    : incomeScore === expenseScore
+      ? 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.'
+      : `متن هر دو نشانه را دارد؛ نوع از فعل ${type === 'income' ? 'دریافت' : 'پرداخت'} برداشت شد و باید کنترل شود.`;
   let category = learned?.category;
   let categoryConfidence = 0.56;
   let categoryReason = 'دستهٔ مشخصی در متن پیدا نشد؛ دستهٔ عمومی پیشنهاد شد.';

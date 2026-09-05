@@ -126,3 +126,45 @@ test('همهٔ ثبت‌های یک گفته یک مرجع زمانی می‌گ�
   assert.equal(result.transactions.length, 2);
   assert.ok(result.transactions.every((item) => item.occurredAt === '2026-09-04T10:00:00.000Z'));
 });
+
+// جهت پول را فعل تعیین می‌کند، نه اسمِ کنارش. «از مشتری ده میلیون گرفتم بابت
+// پیش پرداخت» هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و
+// نوع بی‌دلیل هزینه می‌افتاد — یعنی یک دریافتی به‌عنوان پرداختی وارد دفتر.
+test('فعل جهت‌دار بر اسم مقابلش می‌چربد', () => {
+  const received = amountOf('از مشتری ده میلیون گرفتم بابت پیش پرداخت');
+  assert.equal(received.amount, 10_000_000);
+  assert.equal(received.type, 'income');
+  // جمله واقعاً هر دو نشانه را داشته، پس باید کنترل شود.
+  assert.equal(received.needsReview, true);
+
+  const paid = amountOf('پنج میلیون بابت خرید مواد دادم');
+  assert.equal(paid.type, 'expense');
+});
+
+test('نشانهٔ یک‌طرفه همچنان اطمینان بالا می‌گیرد', () => {
+  const income = amountOf('دوازده میلیون فروش داشتم');
+  assert.equal(income.type, 'income');
+  assert.equal(income.needsReview, false);
+});
+
+// شناسه‌ها هرگز نباید مبلغ شوند؛ «کد حساب هزار و دویست» به‌خاطر واژهٔ «هزار»
+// از کنترل شناسه رد می‌شد و کد حساب به‌عنوان مبلغ وارد دفتر می‌شد.
+const identifiers = [
+  'کد حساب هزار و دویست رو نگاه کن',
+  'شماره حساب پانصد و بیست',
+  'شماره فاکتور دوازده',
+  'کد ملی هزار و پانصد',
+  'شماره پیگیری هفتصد',
+];
+
+for (const phrase of identifiers) {
+  test(`شناسه مبلغ شمرده نمی‌شود: ${phrase}`, () => {
+    assert.equal(parseFinancialText(phrase, { source: 'voice' }).transactions.length, 0);
+  });
+}
+
+// نگهبان عقب‌گرد: واژهٔ ضعیف مثل «فاکتور» یا «رسید» نباید مبلغ واقعی را بخورد.
+test('مبلغ واقعی پس از واژهٔ ضعیف همچنان خوانده می‌شود', () => {
+  assert.equal(amountOf('فاکتور پنج میلیون تومان فروختم').amount, 5_000_000);
+  assert.equal(amountOf('رسید سیصد هزار تومان خرید').amount, 300_000);
+});
