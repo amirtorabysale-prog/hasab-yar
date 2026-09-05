@@ -5,12 +5,12 @@ import { readFileSync } from 'node:fs';
 const databasePath = `/tmp/hesab-yar-validation-${process.pid}.sqlite`;
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'validation-owner';
-process.env.ADMIN_PASSWORD = 'Validation-Long-Passphrase-6620';
+process.env.ADMIN_PASSWORD = 'validation-safe-password-6620';
 
 const database = await import(`../server/db.js?validation=${process.pid}`);
 database.ensureAdmin();
 
-const owner = database.authenticateUser('validation-owner', 'Validation-Long-Passphrase-6620');
+const owner = database.authenticateUser('validation-owner', 'validation-safe-password-6620');
 const workspace = database.createWorkspace(owner.id, { name: 'دفتر اعتبارسنجی', profileType: 'business' });
 const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
 
