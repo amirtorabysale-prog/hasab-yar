@@ -1,0 +1,11 @@
+export function validateDocuments(documents) {
+  if (!Array.isArray(documents) || !documents.length) {
+    throw transferError('هیچ سندی برای انتقال داده نشده است.', 'PARSIAN_TRANSFER_EMPTY');
+  }
+  const errors = [];
+  documents.forEach((document, index) => {
+    const label = `سند ${index + 1}`;
+    const date = String((document && document.date) || '').trim();
+    if (!DATE_SHAPE.test(date)) {
+      errors.push(`${label}: تاریخ باید دقیقاً به شکل ۱۴۰۲/۰۶/۰۵ باشد. پارسیان ماه را از کاراکتر ششم می‌خواند و تاریخ بدون صفر گزارش‌های ماهانه‌اش را بی‌صدا خراب می‌کند.`);
+    }

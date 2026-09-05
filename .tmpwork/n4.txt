@@ -1,0 +1,53 @@
+/**
+ * سندها را به گروه‌هایی می‌شکند که هرکدام در یک فایل جا شوند.
+ *
+ * سقف، ظرفیت یک صفحهٔ ایندکس است. راه دیگرِ عبور از این سقف، ساختن ایندکس
+ * چندصفحه‌ای (یک صفحهٔ گره + چند برگ) بود؛ آن را ننوشتیم، چون هیچ نمونهٔ واقعیِ
+ * پارسیان با ایندکس چندصفحه‌ای در دست نبود که ساختهٔ ما با آن سنجیده شود و
+ * فایلی که فقط «به نظر درست» باشد، خطر خرابیِ بی‌صدای دفتر مشتری است. شکستن
+ * به چند فایل دقیقاً همان شکلی را تولید می‌کند که یک بار در پارسیان واقعی
+ * آزموده و تأیید شده است.
+ *
+ * مرز شکستن، مرز سند است: یک سند هرگز بین دو فایل تقسیم نمی‌شود، وگرنه هر دو
+ * فایل سند نامتوازن به مقصد می‌برند.
+ */
+export function splitDocumentsForTransfer(documents, maxRows = INDEX_CAPACITY) {
+  const groups = [];
+  let current = [];
+  let rows = 0;
+  documents.forEach((document, index) => {
+    const size = (document.lines || []).length;
+    if (size > maxRows) {
+      throw transferError(`سند ${index + 1} به‌تنهایی ${size} ردیف دارد و از سقف ${maxRows} ردیفِ هر فایل بیشتر است؛ این سند باید در حساب‌یار شکسته شود.`, 'PARSIAN_TRANSFER_DOCUMENT_TOO_LARGE');
+    }
+    if (rows && rows + size > maxRows) { groups.push(current); current = []; rows = 0; }
+    current.push(document);
+    rows += size;
+  });
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+/**
+ * بستهٔ انتقال را می‌سازد؛ اگر از سقف یک فایل بیشتر باشد، چند فایل.
+ *
+ * هر قطعه یک فایل انتقال کاملِ مستقل است و به‌ترتیب به «انتقال اسناد از فایل»
+ * داده می‌شود. شمارهٔ ردیف و شمارهٔ سندِ داخل هر فایل از یک شروع می‌شود، چون
+ * پارسیان هر فایل را جدا می‌خواند و شمارهٔ خودش را می‌دهد.
+ */
+export function buildParsianTransferSet({ template, documents, fiscalYear = null } = {}) {
+  validateDocuments(documents, { fiscalYear });
+  const groups = splitDocumentsForTransfer(documents);
+  return groups.map((group, index) => ({
+    index: index + 1,
+    total: groups.length,
+    documentCount: group.length,
+    rowCount: group.reduce((sum, document) => sum + document.lines.length, 0),
+    buffer: buildParsianTransfer({ template, documents: group, fiscalYear }),
+  }));
+}
+
+export const PARSIAN_TRANSFER_LIMITS = Object.freeze({
+  pageSize: PAGE_SIZE,
+  maxRows: INDEX_CAPACITY,
+});

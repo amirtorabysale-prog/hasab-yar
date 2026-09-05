@@ -1,0 +1,1 @@
+export function accountingTransferReadiness({ packageData = {}, journalRows = [], settings = {}, mappings = [], chart = {}, workflow = {}, history = {} } = {}) {

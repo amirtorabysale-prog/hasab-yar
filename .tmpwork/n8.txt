@@ -1,0 +1,10 @@
+    chart: { installed: Boolean(chart.installed), unmappedUsedAccounts, unmappedUsedCount: unmappedUsedAccounts.length },
+    parsian: {
+      fiscalYear: parsianFiscalYear,
+      outsideFiscalYear: parsianOutsideFiscalYear,
+      importedBatches: parsianImportedBatches,
+      reimportAcknowledged: Boolean(history.reimportAcknowledged),
+      // تعداد فایلی که این بسته می‌شود؛ بیش از یکی یعنی فایل‌ها به‌ترتیب وارد شوند.
+      partCount: Math.max(1, Math.ceil(journalRows.length / PARSIAN_TRANSFER_LIMITS.maxRows)),
+      maxRowsPerFile: PARSIAN_TRANSFER_LIMITS.maxRows,
+    },

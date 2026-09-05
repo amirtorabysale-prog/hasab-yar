@@ -1,0 +1,43 @@
+    checks.push({
+      id: 'parsian-segments', label: 'هر حساب استفاده‌شده کد کل و معین عددی دارد', count: missingSegments.length,
+      passed: missingSegments.length === 0, severity: 'blocker',
+    });
+
+    // سال مالی مقصد: پارسیان سند خارج از سال مالی باز را بی‌صدا وارد نمی‌کند —
+    // نه خطا می‌دهد نه سند می‌سازد. تا وقتی دفتر بازه را نگفته، این فقط یک
+    // یادآوری است؛ چون بازه را نمی‌شود حدس زد. به‌محض ثبت، بازدارنده می‌شود.
+    let fiscalYear = null;
+    try { fiscalYear = normalizeFiscalYear({ start: settings.fiscalYearStart, end: settings.fiscalYearEnd }); }
+    catch { fiscalYear = null; }
+    const timeZone = packageData.scope?.timeZone || 'Asia/Tehran';
+    const outsideFiscalYear = fiscalYear
+      ? [...new Map(journalRows
+        .map((item) => ({ item, date: persianDateToken(item.occurredAt, timeZone) }))
+        .filter(({ date }) => !date || date < fiscalYear.start || date > fiscalYear.end)
+        .map(({ item, date }) => [item.entryId, { id: item.entryId, documentNumber: item.documentNumber ?? '', date }])).values()]
+      : [];
+    checks.push(fiscalYear
+      ? {
+        id: 'parsian-fiscal-year',
+        label: `تاریخ همهٔ سندها داخل سال مالی باز مقصد (${fiscalYear.start} تا ${fiscalYear.end}) است`,
+        count: outsideFiscalYear.length, passed: outsideFiscalYear.length === 0, severity: 'blocker',
+      }
+      : {
+        id: 'parsian-fiscal-year', label: 'سال مالی باز نصب مقصد هنوز ثبت نشده است',
+        count: 1, passed: false, severity: 'advisory',
+      });
+
+    // ورود دوباره: پارسیان تکراری را تشخیص نمی‌دهد و سند را دوباره می‌سازد.
+    // بستهٔ ماهانه کل ماه است، پس ساختن دوبارهٔ بسته پس از یک اصلاح کوچک و
+    // وارد کردنش یعنی کل ماه دو بار در دفتر مشتری می‌نشیند.
+    const importedBatches = Array.isArray(history.importedBatches) ? history.importedBatches : [];
+    checks.push({
+      id: 'parsian-reimport',
+      label: history.reimportAcknowledged
+        ? 'ورود دوبارهٔ این دوره آگاهانه پذیرفته شد'
+        : 'این دوره هنوز فایل انتقال واردشده‌ای ندارد',
+      count: importedBatches.length,
+      passed: importedBatches.length === 0 || Boolean(history.reimportAcknowledged),
+      severity: 'blocker',
+    });
+  }

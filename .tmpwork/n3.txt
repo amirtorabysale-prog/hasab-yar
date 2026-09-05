@@ -1,0 +1,2 @@
+export function buildParsianTransfer({ template: templateBuffer, documents, fiscalYear = null } = {}) {
+  validateDocuments(documents, { fiscalYear });

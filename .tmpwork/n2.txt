@@ -1,0 +1,16 @@
+export function validateDocuments(documents, { fiscalYear = null } = {}) {
+  if (!Array.isArray(documents) || !documents.length) {
+    throw transferError('هیچ سندی برای انتقال داده نشده است.', 'PARSIAN_TRANSFER_EMPTY');
+  }
+  const range = normalizeFiscalYear(fiscalYear);
+  const errors = [];
+  documents.forEach((document, index) => {
+    const label = `سند ${index + 1}`;
+    const date = String((document && document.date) || '').trim();
+    if (!DATE_SHAPE.test(date)) {
+      errors.push(`${label}: تاریخ باید دقیقاً به شکل ۱۴۰۲/۰۶/۰۵ باشد. پارسیان ماه را از کاراکتر ششم می‌خواند و تاریخ بدون صفر گزارش‌های ماهانه‌اش را بی‌صدا خراب می‌کند.`);
+    } else if (range && (date < range.start || date > range.end)) {
+      // پارسیان این را نه رد می‌کند نه وارد؛ فایل را می‌گیرد و ساکت هیچ سندی
+      // نمی‌سازد. اینجا متوقف نشویم، دفتر ساعت‌ها دنبال «چرا وارد نشد» می‌گردد.
+      errors.push(`${label}: تاریخ ${date} خارج از سال مالی باز مقصد (${range.start} تا ${range.end}) است. پارسیان چنین سندی را بی‌صدا وارد نمی‌کند.`);
+    }
