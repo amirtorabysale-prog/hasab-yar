@@ -135,3 +135,32 @@ export function detectVoiceIntent(input, { now = new Date() } = {}) {
     transcript: text,
   };
 }
+
+/**
+ * پیش‌نویس فاکتور از نیت گفته.
+ *
+ * فاکتور واقعی ردیف کالا، تعداد، نرخ و مالیات می‌خواهد و هیچ‌کدام از یک جملهٔ
+ * گفتاری درنمی‌آید. پس صدا فقط یک پیش‌نویس با یک ردیف به کل مبلغ گفته‌شده
+ * می‌سازد و سند در وضعیت `draft` می‌ماند: نه در دفتر کل سند می‌خورد، نه انبار را
+ * تکان می‌دهد، نه در گزارش مالیاتی و نه در جمع طلب/بدهی می‌آید. تکمیل ردیف‌ها و
+ * نرخ مالیات در برگهٔ فاکتورها انجام می‌شود و صدور، آگاهانه و دستی است.
+ *
+ * تاریخ گفته‌شده عمداً روی سند نمی‌نشیند؛ تاریخ فاکتور هنگام صدور تعیین می‌شود و
+ * نشاندن تاریخِ حرف روی پیش‌نویسِ ناتمام فقط یک عدد بی‌پشتوانه می‌ساخت.
+ */
+export function invoiceDraftPayload(intent = {}) {
+  const documentType = intent.documentType === 'purchase' ? 'purchase' : 'sales';
+  const amount = Math.round(Number(intent.amount) || 0);
+  if (!amount || amount <= 0) return null;
+  return {
+    documentType,
+    customerName: intent.contactName || '',
+    note: String(intent.transcript || '').slice(0, 300),
+    issueNow: false,
+    items: [{
+      title: documentType === 'purchase' ? 'ردیف خرید — از گفتهٔ صوتی' : 'ردیف فروش — از گفتهٔ صوتی',
+      quantity: 1,
+      unitPrice: amount,
+    }],
+  };
+}

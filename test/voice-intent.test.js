@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { detectVoiceIntent, extractContactName } from '../shared/voiceIntent.js';
+import { detectVoiceIntent, extractContactName, invoiceDraftPayload } from '../shared/voiceIntent.js';
 import { persianToISO } from '../shared/persianDate.js';
 
 const TZ = 'Asia/Tehran';
@@ -75,4 +75,25 @@ test('نام طرف حساب از عنوان بیرون کشیده می‌شود
   assert.equal(extractContactName('شرکت پارس خودرو ده میلیون'), 'شرکت پارس خودرو');
   // بدون عنوان، حدس‌زدن نام خطای بیشتری می‌سازد تا فایده.
   assert.equal(extractContactName('دو میلیون بدهکاره'), '');
+});
+
+test('پیش‌نویس فاکتور یک ردیف به کل مبلغ می‌سازد و صادر نمی‌شود', () => {
+  const payload = invoiceDraftPayload(detect('فاکتور فروش برای آقای احمدی سه میلیون'));
+  assert.equal(payload.documentType, 'sales');
+  assert.equal(payload.customerName, 'احمدی');
+  assert.equal(payload.issueNow, false);
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0].quantity, 1);
+  assert.equal(payload.items[0].unitPrice, 3_000_000);
+  // نرخ مالیات از گفتار درنمی‌آید و ساختگی هم نمی‌شود؛ خالی می‌ماند تا در فرم انتخاب شود.
+  assert.equal(payload.items[0].taxRateId, undefined);
+
+  const purchase = invoiceDraftPayload(detect('فاکتور خرید از شرکت پارس دوازده میلیون'));
+  assert.equal(purchase.documentType, 'purchase');
+  assert.equal(purchase.items[0].unitPrice, 12_000_000);
+});
+
+test('بدون مبلغ پیش‌نویس فاکتور ساخته نمی‌شود', () => {
+  assert.equal(invoiceDraftPayload({ documentType: 'sales', amount: 0 }), null);
+  assert.equal(invoiceDraftPayload({}), null);
 });

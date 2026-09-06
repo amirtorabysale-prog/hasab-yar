@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { detectVoiceIntent, invoiceDraftPayload } from '../shared/voiceIntent.js';
 
 const databasePath = tempDatabase('invoicing');
 process.env.DATABASE_PATH = databasePath;
@@ -80,6 +81,30 @@ test('keeps drafts outside the ledger and obeys locked Persian accounting period
   const period = accounting.periodForDate('2026-07-22T09:00:00.000Z');
   accounting.lockAccountingPeriod(database.activeWorkspaceDatabase(), period, 'invoice-test-owner');
   assert.throws(() => database.issueInvoice(draft.id, { issuedAt: '2026-07-22T09:00:00.000Z' }), (error) => error.code === 'ACCOUNTING_PERIOD_LOCKED');
+}));
+
+// صدا تا امروز به فاکتور وصل نبود چون یک جمله ردیف کالا و نرخ مالیات نمی‌دهد.
+// حالا وصل است، اما فقط تا مرز پیش‌نویس: این آزمون همان مرز را قفل می‌کند.
+test('پیش‌نویس فاکتور صوتی نه سند می‌زند، نه در جمع طلب می‌آید', () => inPrimary(() => {
+  const before = accounting.listJournal(database.activeWorkspaceDatabase(), { limit: 100 }).items.length;
+  const receivableBefore = database.listInvoices().summary.receivable;
+
+  const intent = detectVoiceIntent('فاکتور فروش برای آقای احمدی سه میلیون');
+  const invoice = database.createInvoice(invoiceDraftPayload(intent));
+
+  assert.equal(invoice.status, 'draft');
+  assert.equal(invoice.total, 3_000_000);
+  assert.equal(invoice.tax, 0);
+  assert.equal(invoice.taxCalculation, 'none');
+  assert.equal(invoice.customerName, 'احمدی');
+  assert.equal(accounting.listJournal(database.activeWorkspaceDatabase(), { limit: 100 }).items.length, before);
+  assert.equal(database.listInvoices().summary.receivable, receivableBefore);
+
+  // تکمیل و صدور کار کاربر است؛ همان‌جا سند می‌خورد.
+  const issued = database.issueInvoice(invoice.id, { issuedAt: '2026-08-20T09:00:00.000Z' });
+  assert.equal(issued.status, 'sent');
+  assert.equal(database.listInvoices().summary.receivable, receivableBefore + 3_000_000);
+  assert.equal(accounting.trialBalance(database.activeWorkspaceDatabase()).balanced, true);
 }));
 
 test.after(() => {
