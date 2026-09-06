@@ -15,7 +15,8 @@
 //    کی این را می‌دانستیم» یکی نیست. بدون دومی نمی‌شود ثابت کرد پاسخی که پارسال
 //    به مشتری داده‌ایم، با دانش همان روز درست بوده است.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { normalizePersian } from '../shared/normalize.js';
 
 /** کلاس سند: چه نوع متنی است. */
 export const DOCUMENT_CLASSES = Object.freeze([
@@ -326,4 +327,213 @@ export function saveTaxDocumentRelation(database, values = {}) {
     .run(id, sourceId, targetId, relation, text(values.scope, 200), day(values.effectFrom) || null, text(values.note, 500));
   return database.prepare(`SELECT * FROM tax_document_relations
     WHERE source_version_id=? AND target_version_id=? AND relation=?`).get(sourceId, targetId, relation);
+}
+
+// ---------------------------------------------------------------------------
+// فاز ۱ — ورود دستی، تکه‌بندی ماده‌ای و دروازهٔ بازبینی
+// ---------------------------------------------------------------------------
+
+/**
+ * تکه‌بندی متن حقوقی به ماده و تبصره.
+ *
+ * تکه‌بندی با طول ثابت برای متن قانون غلط است: یک ماده را وسط تبصره می‌برد و
+ * استناد را بی‌معنا می‌کند. واحد استناد در متن فارسی «ماده» است و «تبصره» زیر
+ * آن می‌نشیند، پس مرز تکه همان مرز است.
+ *
+ * متنی که اصلاً ماده ندارد — بخشنامهٔ کوتاه، دستورالعمل بندی — یک واحد می‌ماند
+ * و ساختگی تکه نمی‌شود؛ استنادِ ساختگی از استنادِ درشت بدتر است.
+ */
+export function splitProvisions(input) {
+  // نرمال‌سازی سطر به سطر انجام می‌شود: `normalizePersian` همهٔ فاصله‌ها را — از
+  // جمله خط جدید — به یک فاصله تبدیل می‌کند و با آن، مرز ماده‌ها از بین می‌رفت و
+  // کل سند یک تکه می‌شد.
+  const body = String(input || '').split(/\r?\n/).map((line) => normalizePersian(line))
+    .filter((line, index, all) => line || (index > 0 && all[index - 1]))
+    .join('\n').trim();
+  if (!body) return [];
+  const articleMatches = [...body.matchAll(/(?:^|\n)\s*ماده\s*(\d+)\s*[-—:.]?/g)];
+  if (!articleMatches.length) {
+    return [{ path: 'متن', citation: 'متن سند', text: body.slice(0, 20_000), ordinal: 0 }];
+  }
+  const provisions = [];
+  articleMatches.forEach((match, index) => {
+    const start = match.index + (match[0].startsWith('\n') ? 1 : 0);
+    const end = index + 1 < articleMatches.length ? articleMatches[index + 1].index : body.length;
+    const segment = body.slice(start, end).trim();
+    const article = match[1];
+    // تبصره‌ها از بدنهٔ ماده جدا می‌شوند ولی خودِ ماده هم به‌عنوان واحد می‌ماند؛
+    // ارجاع «ماده ۱۴۸» بدون تبصره‌ها هم باید متن داشته باشد.
+    const noteMatches = [...segment.matchAll(/(?:^|\n)\s*تبصره\s*(\d*)\s*[-—:.]?/g)];
+    const articleBody = (noteMatches.length ? segment.slice(0, noteMatches[0].index) : segment).trim();
+    provisions.push({
+      path: `ماده ${article}`,
+      citation: `ماده ${article}`,
+      text: articleBody.slice(0, 20_000),
+      ordinal: provisions.length,
+    });
+    noteMatches.forEach((note, noteIndex) => {
+      const noteStart = note.index + (note[0].startsWith('\n') ? 1 : 0);
+      const noteEnd = noteIndex + 1 < noteMatches.length ? noteMatches[noteIndex + 1].index : segment.length;
+      const number = note[1] || String(noteIndex + 1);
+      provisions.push({
+        path: `ماده ${article}/تبصره ${number}`,
+        citation: `تبصره ${number} ماده ${article}`,
+        text: segment.slice(noteStart, noteEnd).trim().slice(0, 20_000),
+        ordinal: provisions.length,
+      });
+    });
+  });
+  return provisions;
+}
+
+function assertOfficialUrl(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch { fail('پیوند رسمی سند معتبر نیست.', 'TAX_SOURCE_URL_INVALID'); }
+  if (parsed.protocol !== 'https:') fail('منبع مالیاتی باید پیوند امن HTTPS داشته باشد.', 'TAX_SOURCE_URL_INVALID');
+  return parsed.toString();
+}
+
+/**
+ * ثبت پیش‌نویس یک سند و نسخه‌اش.
+ *
+ * خروجی همیشه **بازبینی‌نشده** است: `verified_at` خالی می‌ماند و تا انتشار، سند
+ * در هیچ بازیابی‌ای نمی‌آید. حتی مدیر دفتری که خودش سند را وارد می‌کند، با همین
+ * تابع چیزی را منتشر نمی‌کند — ثبت و انتشار دو تصمیم جدا هستند.
+ */
+export function saveTaxDocumentDraft(database, values = {}, actor = {}) {
+  ensureTaxKnowledgeSchema(database);
+  const documentClass = text(values.documentClass, 20);
+  if (!DOCUMENT_CLASSES.includes(documentClass)) fail('کلاس سند معتبر نیست.', 'TAX_DOCUMENT_CLASS_INVALID');
+  const authorityTier = Number(values.authorityTier);
+  if (!Number.isInteger(authorityTier) || authorityTier < 1 || authorityTier > 7) fail('ردیف اقتدار سند معتبر نیست.', 'TAX_AUTHORITY_TIER_INVALID');
+  const title = text(values.title, 180);
+  const issuer = text(values.issuer, 140);
+  const versionLabel = text(values.versionLabel, 100);
+  const effectiveFrom = day(values.effectiveFrom);
+  const effectiveTo = day(values.effectiveTo) || null;
+  if (!title || !issuer || !versionLabel || !effectiveFrom) fail('عنوان، صادرکننده، نسخه و تاریخ شروع اعتبار الزامی است.');
+  if (effectiveTo && effectiveTo < effectiveFrom) fail('پایان اعتبار نمی‌تواند پیش از شروع اعتبار باشد.', 'TAX_SOURCE_DATE_INVALID');
+  const officialUrl = assertOfficialUrl(text(values.officialUrl, 600));
+  const rawText = String(values.rawText || '').slice(0, 400_000);
+  const summary = text(values.summary, 4000);
+  if (!rawText && !summary) fail('متن سند یا دست‌کم خلاصهٔ آن لازم است.', 'TAX_DOCUMENT_TEXT_REQUIRED');
+  // حکم بودجه فقط برای سال خودش است؛ سال بدون کلاس قانون، معنایی ندارد.
+  const fiscalYear = text(values.fiscalYear, 8);
+
+  const documentId = text(values.documentId, 80) || randomUUID();
+  const existing = database.prepare('SELECT id FROM tax_documents WHERE id=?').get(documentId);
+  const subjectTags = JSON.stringify((Array.isArray(values.subjectTags) ? values.subjectTags : [])
+    .map((item) => text(item, 60)).filter(Boolean).slice(0, 20));
+  const contentHash = createHash('sha256').update(normalizePersian(rawText || summary)).digest('hex');
+  const versionId = randomUUID();
+  const today = new Date().toISOString().slice(0, 10);
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    if (existing) {
+      database.prepare(`UPDATE tax_documents SET document_class=?,authority_tier=?,issuer=?,official_number=?,title=?,
+        jurisdiction=?,fiscal_year=?,subject_tags=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(documentClass, authorityTier, issuer, text(values.officialNumber, 80), title,
+          text(values.jurisdiction, 12) || 'IR', fiscalYear, subjectTags, documentId);
+    } else {
+      database.prepare(`INSERT INTO tax_documents
+        (id,document_class,authority_tier,issuer,official_number,title,jurisdiction,fiscal_year,subject_tags,created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        .run(documentId, documentClass, authorityTier, issuer, text(values.officialNumber, 80), title,
+          text(values.jurisdiction, 12) || 'IR', fiscalYear, subjectTags, actor.userId || null);
+    }
+    const duplicate = database.prepare('SELECT id FROM tax_document_versions WHERE document_id=? AND version_label=?')
+      .get(documentId, versionLabel);
+    if (duplicate) fail('این نسخه از سند قبلاً ثبت شده است.', 'TAX_VERSION_DUPLICATE', 409);
+    database.prepare(`INSERT INTO tax_document_versions
+      (id,document_id,version_label,approved_at,published_at,effective_from,effective_to,known_from,status,official_url,content_hash,summary,raw_text)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(versionId, documentId, versionLabel, day(values.approvedAt) || null, day(values.publishedAt) || null,
+        effectiveFrom, effectiveTo, today, 'active', officialUrl, contentHash, summary, rawText);
+    const insertProvision = database.prepare(`INSERT INTO tax_provisions (id,version_id,path,citation,text,ordinal)
+      VALUES (?,?,?,?,?,?)`);
+    for (const provision of splitProvisions(rawText || summary)) {
+      insertProvision.run(randomUUID(), versionId, provision.path, `${title} — ${provision.citation}`,
+        provision.text, provision.ordinal);
+    }
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  return getTaxDocumentVersion(database, versionId);
+}
+
+export function getTaxDocumentVersion(database, versionId) {
+  ensureTaxKnowledgeSchema(database);
+  const row = database.prepare(`SELECT v.*, d.title AS document_title, d.document_class, d.authority_tier
+    FROM tax_document_versions v JOIN tax_documents d ON d.id=v.document_id WHERE v.id=?`).get(versionId);
+  if (!row) return null;
+  const provisions = database.prepare('SELECT id,path,citation,text,ordinal FROM tax_provisions WHERE version_id=? ORDER BY ordinal')
+    .all(versionId);
+  return {
+    ...versionRow(row),
+    documentTitle: row.document_title,
+    documentClass: row.document_class,
+    authorityTier: row.authority_tier,
+    provisions,
+  };
+}
+
+/** صف بازبینی: نسخه‌هایی که ثبت شده‌اند و هنوز تأیید انسانی ندارند. */
+export function listTaxReviewQueue(database) {
+  ensureTaxKnowledgeSchema(database);
+  return database.prepare(`SELECT v.*, d.title AS document_title, d.document_class, d.authority_tier
+    FROM tax_document_versions v JOIN tax_documents d ON d.id=v.document_id
+    WHERE v.verified_at IS NULL AND v.status NOT IN ('withdrawn')
+    ORDER BY v.created_at`).all().map((row) => ({
+    ...versionRow(row),
+    documentTitle: row.document_title,
+    documentClass: row.document_class,
+    authorityTier: row.authority_tier,
+    provisionCount: database.prepare('SELECT COUNT(*) AS count FROM tax_provisions WHERE version_id=?').get(row.id).count,
+    // آنچه بازبین باید ببیند، نه آنچه سیستم حدس زده.
+    warnings: [
+      row.raw_text ? '' : 'متن کامل سند ثبت نشده و فقط خلاصه هست.',
+      row.approved_at ? '' : 'تاریخ تصویب ثبت نشده است.',
+      CITABLE_CLASSES.includes(row.document_class) ? '' : 'این کلاس سند هرگز مبنای پاسخ نمی‌شود.',
+    ].filter(Boolean),
+  }));
+}
+
+/**
+ * دروازهٔ انتشار — تنها جایی که یک نسخه قابل استناد می‌شود.
+ *
+ * انتشار نسخهٔ تازه، نسخهٔ فعال قبلی همان سند را `superseded` می‌کند و زمانِ
+ * دانشش را می‌بندد. بازهٔ اعتبار دست نمی‌خورد: «ما دیگر این را مبنا نمی‌دانیم» با
+ * «این مقرره دیگر معتبر نیست» یکی نیست و قاطی‌کردنشان تاریخ سند را جعل می‌کند.
+ */
+export function publishTaxDocumentVersion(database, versionId, actor = {}) {
+  ensureTaxKnowledgeSchema(database);
+  const version = database.prepare('SELECT * FROM tax_document_versions WHERE id=?').get(versionId);
+  if (!version) return null;
+  if (!actor.userId) fail('انتشار منبع بدون کاربر مسئول ممکن نیست.', 'TAX_PUBLISH_ACTOR_REQUIRED', 403);
+  if (version.verified_at) return getTaxDocumentVersion(database, versionId);
+  if (version.status === 'withdrawn') fail('نسخهٔ ردشده منتشر نمی‌شود.', 'TAX_VERSION_WITHDRAWN', 409);
+  const today = new Date().toISOString().slice(0, 10);
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare(`UPDATE tax_document_versions SET status='superseded',known_to=?
+      WHERE document_id=? AND id<>? AND verified_at IS NOT NULL AND status='active'`)
+      .run(today, version.document_id, versionId);
+    database.prepare('UPDATE tax_document_versions SET verified_by=?,verified_at=?,status=? WHERE id=?')
+      .run(actor.userId, today, 'active', versionId);
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  return getTaxDocumentVersion(database, versionId);
+}
+
+/** رد نسخه در بازبینی: حذف نمی‌شود، با دلیل کنار گذاشته می‌شود. */
+export function rejectTaxDocumentVersion(database, versionId, reason = '', actor = {}) {
+  ensureTaxKnowledgeSchema(database);
+  const clean = text(reason, 500);
+  if (!clean) fail('دلیل رد نسخه لازم است.', 'TAX_REJECT_REASON_REQUIRED');
+  const version = database.prepare('SELECT * FROM tax_document_versions WHERE id=?').get(versionId);
+  if (!version) return null;
+  if (version.verified_at) fail('نسخهٔ منتشرشده رد نمی‌شود؛ باید نسخهٔ تازه جایگزینش کند.', 'TAX_VERSION_PUBLISHED', 409);
+  database.prepare("UPDATE tax_document_versions SET status='withdrawn',known_to=?,summary=? WHERE id=?")
+    .run(new Date().toISOString().slice(0, 10), `${version.summary}\n[ردشده در بازبینی: ${clean}]`.trim().slice(0, 4000), versionId);
+  return getTaxDocumentVersion(database, versionId);
 }

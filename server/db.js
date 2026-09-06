@@ -57,7 +57,10 @@ import {
 } from './taxAssistant.js';
 import {
   citableVersionsAt, ensureTaxKnowledgeSchema, getTaxDocument as getTaxDocumentCore,
-  listTaxDocuments as listTaxDocumentsCore, migrateTaxKnowledgeSources, saveTaxDocumentRelation as saveTaxDocumentRelationCore,
+  getTaxDocumentVersion as getTaxDocumentVersionCore, listTaxDocuments as listTaxDocumentsCore,
+  listTaxReviewQueue as listTaxReviewQueueCore, migrateTaxKnowledgeSources,
+  publishTaxDocumentVersion as publishTaxDocumentVersionCore, rejectTaxDocumentVersion as rejectTaxDocumentVersionCore,
+  saveTaxDocumentDraft as saveTaxDocumentDraftCore, saveTaxDocumentRelation as saveTaxDocumentRelationCore,
 } from './taxKnowledge.js';
 import {
   DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
@@ -3157,6 +3160,34 @@ export function saveTaxDocumentRelation(values = {}) {
   audit('create-relation', 'tax_document_relation', item.id, {
     relation: item.relation, effectFrom: item.effect_from,
   });
+  return item;
+}
+
+export function saveTaxDocumentDraft(values = {}) {
+  const item = saveTaxDocumentDraftCore(db, values, currentWorkspace());
+  audit('create-draft', 'tax_document_version', item.id, {
+    documentId: item.documentId, versionLabel: item.versionLabel, provisions: item.provisions.length,
+  });
+  return item;
+}
+
+export function getTaxDocumentVersion(id) {
+  return getTaxDocumentVersionCore(db, id);
+}
+
+export function listTaxReviewQueue() {
+  return listTaxReviewQueueCore(db);
+}
+
+export function publishTaxDocumentVersion(id) {
+  const item = publishTaxDocumentVersionCore(db, id, currentWorkspace());
+  if (item) audit('publish', 'tax_document_version', item.id, { versionLabel: item.versionLabel, verifiedBy: item.verifiedBy });
+  return item;
+}
+
+export function rejectTaxDocumentVersion(id, reason = '') {
+  const item = rejectTaxDocumentVersionCore(db, id, reason, currentWorkspace());
+  if (item) audit('reject', 'tax_document_version', item.id, { reason: String(reason).slice(0, 200) });
   return item;
 }
 

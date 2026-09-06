@@ -429,6 +429,47 @@ app.post('/api/tax-assistant/sources', (request, response, next) => {
 app.put('/api/tax-assistant/sources/:id', (request, response, next) => {
   try { return response.json({ item: saveTaxKnowledgeSource({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
 });
+// هستهٔ منابع نسخه‌دار (فاز ۰ و ۱). مسیر پاسخ دستیار هنوز از منابع قدیمی است.
+app.get('/api/tax-knowledge/documents', (request, response, next) => {
+  try { return response.json({ items: listTaxDocuments({ documentClass: request.query.documentClass || '' }) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/documents/:id', (request, response) => {
+  const item = getTaxDocument(request.params.id);
+  return item ? response.json({ item }) : response.status(404).json({ message: 'سند مالیاتی پیدا نشد.' });
+});
+app.post('/api/tax-knowledge/documents', (request, response, next) => {
+  try { return response.status(201).json({ item: saveTaxDocumentDraft(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/review-queue', (_request, response, next) => {
+  try { return response.json({ items: listTaxReviewQueue() }); } catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/versions/:id', (request, response) => {
+  const item = getTaxDocumentVersion(request.params.id);
+  return item ? response.json({ item }) : response.status(404).json({ message: 'نسخهٔ سند پیدا نشد.' });
+});
+app.post('/api/tax-knowledge/versions/:id/publish', (request, response, next) => {
+  try {
+    const item = publishTaxDocumentVersion(request.params.id);
+    return item ? response.json({ item }) : response.status(404).json({ message: 'نسخهٔ سند پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
+app.post('/api/tax-knowledge/versions/:id/reject', (request, response, next) => {
+  try {
+    const item = rejectTaxDocumentVersion(request.params.id, request.body?.reason || '');
+    return item ? response.json({ item }) : response.status(404).json({ message: 'نسخهٔ سند پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
+app.post('/api/tax-knowledge/relations', (request, response, next) => {
+  try { return response.status(201).json({ item: saveTaxDocumentRelation(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/citable', (request, response, next) => {
+  try {
+    return response.json({ items: citableTaxVersions({ asOf: request.query.asOf, fiscalYear: request.query.fiscalYear }) });
+  } catch (error) { return next(error); }
+});
 app.get('/api/tax-assistant/questions', (request, response) => response.json({ items: listTaxAssistantQuestions(request.query) }));
 app.post('/api/tax-assistant/questions', (request, response, next) => {
   try { return response.status(201).json({ item: askTaxAssistant(request.body || {}) }); } catch (error) { return next(error); }

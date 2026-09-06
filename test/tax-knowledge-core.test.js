@@ -168,6 +168,132 @@ test('جدول‌های تازه وارد پشتیبان می‌شوند و پش
   assert.doesNotThrow(() => database.restoreFinancialSnapshot(legacyBackup));
 }));
 
+// --- فاز ۱: ورود دستی، تکه‌بندی ماده‌ای و دروازهٔ بازبینی ---
+
+test('متن قانون به ماده و تبصره تکه می‌شود، نه به طول ثابت', () => {
+  const provisions = core.splitProvisions([
+    'ماده 1 - متن مادهٔ یک.',
+    'تبصره 1 - استثنای اول.',
+    'تبصره 2 - استثنای دوم.',
+    'ماده 2 - متن مادهٔ دو.',
+  ].join('\n'));
+  assert.deepEqual(provisions.map((item) => item.path),
+    ['ماده 1', 'ماده 1/تبصره 1', 'ماده 1/تبصره 2', 'ماده 2']);
+  // ارجاع به «ماده ۱» باید بدون تبصره‌ها هم متن داشته باشد.
+  assert.match(provisions[0].text, /متن ماده یک/);
+  assert.ok(!provisions[0].text.includes('استثنای اول'));
+});
+
+test('متن بدون ماده، ساختگی تکه نمی‌شود', () => {
+  const provisions = core.splitProvisions('بخشنامه‌ای کوتاه بدون ماده و تبصره.');
+  assert.equal(provisions.length, 1);
+  assert.equal(provisions[0].path, 'متن');
+});
+
+test('سند تازه بازبینی‌نشده ثبت می‌شود و در بازیابی نمی‌آید', () => inPrimary(() => {
+  const draft = database.saveTaxDocumentDraft({
+    documentClass: 'circular', authorityTier: 4, title: 'بخشنامهٔ ورودی دستی',
+    issuer: 'سازمان امور مالیاتی', versionLabel: '۲۰۰/۱۴۰۵/۹', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://intamedia.ir/manual', rawText: 'ماده 1 - متن اول.\nتبصره 1 - استثنا.',
+  });
+  assert.equal(draft.verified, false);
+  assert.equal(draft.provisions.length, 2);
+  assert.ok(draft.contentHash.length === 64);
+  assert.ok(!database.citableTaxVersions({ asOf: '2026-06-01' }).some((item) => item.id === draft.id));
+
+  const queue = database.listTaxReviewQueue().map((item) => item.id);
+  assert.ok(queue.includes(draft.id));
+}));
+
+test('انتشار فقط با کاربر مسئول انجام می‌شود و سند را قابل استناد می‌کند', () => inPrimary(() => {
+  const draft = database.saveTaxDocumentDraft({
+    documentClass: 'circular', authorityTier: 4, title: 'بخشنامهٔ منتشرشدنی',
+    issuer: 'سازمان امور مالیاتی', versionLabel: 'v1', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://intamedia.ir/publish', rawText: 'ماده 1 - متن.',
+  });
+  const published = database.publishTaxDocumentVersion(draft.id);
+  assert.equal(published.verified, true);
+  assert.equal(published.verifiedBy, 'tax-knowledge-test');
+  assert.ok(database.citableTaxVersions({ asOf: '2026-06-01' }).some((item) => item.id === draft.id));
+  assert.ok(!database.listTaxReviewQueue().some((item) => item.id === draft.id));
+}));
+
+test('انتشار بدون کاربر مسئول رد می‌شود', () => database.runInWorkspace('primary', { role: 'owner' }, () => {
+  const draft = database.saveTaxDocumentDraft({
+    documentClass: 'circular', authorityTier: 4, title: 'بخشنامهٔ بی‌مسئول',
+    issuer: 'سازمان امور مالیاتی', versionLabel: 'v1', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://intamedia.ir/no-actor', summary: 'خلاصه',
+  });
+  assert.throws(() => database.publishTaxDocumentVersion(draft.id),
+    (error) => error.code === 'TAX_PUBLISH_ACTOR_REQUIRED');
+}));
+
+test('نسخهٔ تازه، نسخهٔ قبلی را کنار می‌گذارد ولی بازهٔ اعتبارش را جعل نمی‌کند', () => inPrimary(() => {
+  const first = database.saveTaxDocumentDraft({
+    documentClass: 'circular', authorityTier: 4, title: 'بخشنامهٔ دو نسخه‌ای',
+    issuer: 'سازمان امور مالیاتی', versionLabel: 'v1', effectiveFrom: '2025-01-01',
+    officialUrl: 'https://intamedia.ir/two', rawText: 'ماده 1 - نسخهٔ اول.',
+  });
+  database.publishTaxDocumentVersion(first.id);
+  const second = database.saveTaxDocumentDraft({
+    documentId: first.documentId, documentClass: 'circular', authorityTier: 4, title: 'بخشنامهٔ دو نسخه‌ای',
+    issuer: 'سازمان امور مالیاتی', versionLabel: 'v2', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://intamedia.ir/two-v2', rawText: 'ماده 1 - نسخهٔ دوم.',
+  });
+  database.publishTaxDocumentVersion(second.id);
+
+  const document = database.getTaxDocument(first.documentId);
+  const oldVersion = document.versions.find((item) => item.id === first.id);
+  assert.equal(oldVersion.status, 'superseded');
+  assert.ok(oldVersion.knownTo, 'زمان دانش نسخهٔ قبلی بسته می‌شود');
+  // «ما دیگر این را مبنا نمی‌دانیم» با «این مقرره دیگر معتبر نیست» یکی نیست.
+  assert.equal(oldVersion.effectiveTo, null);
+}));
+
+test('نسخهٔ تکراری و پیوند ناامن پذیرفته نمی‌شوند', () => inPrimary(() => {
+  const base = {
+    documentClass: 'circular', authorityTier: 4, title: 'بخشنامهٔ کنترل ورودی',
+    issuer: 'سازمان امور مالیاتی', versionLabel: 'v1', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://intamedia.ir/validate', summary: 'خلاصه',
+  };
+  const draft = database.saveTaxDocumentDraft(base);
+  assert.throws(() => database.saveTaxDocumentDraft({ ...base, documentId: draft.documentId }),
+    (error) => error.code === 'TAX_VERSION_DUPLICATE');
+  assert.throws(() => database.saveTaxDocumentDraft({ ...base, versionLabel: 'v2', officialUrl: 'http://intamedia.ir/x' }),
+    (error) => error.code === 'TAX_SOURCE_URL_INVALID');
+  assert.throws(() => database.saveTaxDocumentDraft({ ...base, versionLabel: 'v3', documentClass: 'ساختگی' }),
+    (error) => error.code === 'TAX_DOCUMENT_CLASS_INVALID');
+  assert.throws(() => database.saveTaxDocumentDraft({ ...base, versionLabel: 'v4', rawText: '', summary: '' }),
+    (error) => error.code === 'TAX_DOCUMENT_TEXT_REQUIRED');
+}));
+
+test('رد نسخه با دلیل انجام می‌شود و سند منتشرشده رد نمی‌شود', () => inPrimary(() => {
+  const draft = database.saveTaxDocumentDraft({
+    documentClass: 'news', authorityTier: 7, title: 'خبر اشتباه واردشده',
+    issuer: 'سازمان امور مالیاتی', versionLabel: 'v1', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://tax.gov.ir/news', summary: 'خبر',
+  });
+  assert.throws(() => database.rejectTaxDocumentVersion(draft.id, ''),
+    (error) => error.code === 'TAX_REJECT_REASON_REQUIRED');
+  const rejected = database.rejectTaxDocumentVersion(draft.id, 'خبر است، نه مقرره');
+  assert.equal(rejected.status, 'withdrawn');
+  assert.ok(!database.listTaxReviewQueue().some((item) => item.id === draft.id));
+  assert.throws(() => database.publishTaxDocumentVersion(draft.id),
+    (error) => error.code === 'TAX_VERSION_WITHDRAWN');
+}));
+
+test('صف بازبینی، کاستی هر نسخه را نشان می‌دهد', () => inPrimary(() => {
+  const draft = database.saveTaxDocumentDraft({
+    documentClass: 'educational', authorityTier: 6, title: 'جزوهٔ واردشده',
+    issuer: 'مؤسسهٔ خصوصی', versionLabel: 'v1', effectiveFrom: '2026-01-01',
+    officialUrl: 'https://example.org/guide', summary: 'خلاصه بدون متن کامل',
+  });
+  const entry = database.listTaxReviewQueue().find((item) => item.id === draft.id);
+  assert.ok(entry.warnings.some((item) => item.includes('متن کامل')));
+  assert.ok(entry.warnings.some((item) => item.includes('تاریخ تصویب')));
+  assert.ok(entry.warnings.some((item) => item.includes('مبنای پاسخ')));
+}));
+
 test.after(() => {
   database.closeWorkspaceDatabases();
   database.db.close();
