@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-receipts-${process.pid}.sqlite`;
+const databasePath = tempDatabase('receipts');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'receipt-owner';
 process.env.ADMIN_PASSWORD = randomBytes(24).toString('base64url');
@@ -52,5 +52,5 @@ test('links a reviewed receipt, a new ledger transaction and an unmatched bank l
 test.after(() => {
   database.closeWorkspaceDatabases();
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });

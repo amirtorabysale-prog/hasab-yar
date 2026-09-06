@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-parsian-${process.pid}.sqlite`;
+const databasePath = tempDatabase('parsian');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'parsian-owner';
 process.env.ADMIN_PASSWORD = 'Parsian-Long-Passphrase-4417';
@@ -103,3 +104,5 @@ test('the template check still stands on its own and then the export opens', () 
     assert.equal(accounting.trialBalance(database.db).balanced, true);
   });
 });
+
+test.after(() => removeTempDatabase(databasePath));

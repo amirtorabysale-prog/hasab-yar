@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
 import { buildRunway, detectExpenseGrowth, financialScope, exactWindow, findUnusualTransaction } from '../server/financialIntelligence.js';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-financial-intelligence-${process.pid}.sqlite`;
+const databasePath = tempDatabase('financial-intelligence');
 process.env.DATABASE_PATH = databasePath;
 const core = await import(`../server/db.js?financial-intelligence=${process.pid}`);
 const now = new Date('2026-08-26T12:00:00.000Z');
@@ -88,5 +88,5 @@ test('tax and legal questions are guarded instead of generating advice', () => {
 
 test.after(() => {
   core.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });

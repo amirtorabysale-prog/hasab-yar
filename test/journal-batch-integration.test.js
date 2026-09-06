@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-batch-${process.pid}.sqlite`;
+const databasePath = tempDatabase('batch');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'batch-owner';
 process.env.ADMIN_PASSWORD = 'Ledger-Long-Passphrase-8812';
@@ -341,3 +342,5 @@ test('adding a second controller closes self-approval again', () => {
     );
   });
 });
+
+test.after(() => removeTempDatabase(databasePath));

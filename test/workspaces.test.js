@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import { minimumRoleForRequest, roleAllows } from '../server/access.js';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-workspaces-${process.pid}.sqlite`;
+const databasePath = tempDatabase('workspaces');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'workspace-owner';
 process.env.ADMIN_PASSWORD = 'separate-strong-password-1234';
@@ -83,12 +82,8 @@ test('enforces the role matrix for reads, financial writes, settings and members
 });
 
 test.after(() => {
-  const workspaceId = secondWorkspace?.id;
   database.closeWorkspaceDatabases();
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
-  if (workspaceId) {
-    const tenantPath = resolve(dirname(databasePath), 'workspaces', `${workspaceId}.sqlite`);
-    for (const suffix of ['', '-shm', '-wal']) rmSync(`${tenantPath}${suffix}`, { force: true });
-  }
+  // دیتابیس دفترها زیر همین پوشه ساخته می‌شود و با حذف پوشه می‌رود.
+  removeTempDatabase(databasePath);
 });

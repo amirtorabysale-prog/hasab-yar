@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-chart-${process.pid}.sqlite`;
+const databasePath = tempDatabase('chart');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'chart-owner';
 process.env.ADMIN_PASSWORD = 'chart-strong-password-123456';
@@ -278,3 +279,5 @@ test('بدون refine هیچ نگاشت موجودی دست نمی‌خورد', 
     assert.equal(result.refined, 0);
   });
 });
+
+test.after(() => removeTempDatabase(databasePath));

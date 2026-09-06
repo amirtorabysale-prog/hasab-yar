@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-validation-${process.pid}.sqlite`;
+const databasePath = tempDatabase('validation');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'validation-owner';
 process.env.ADMIN_PASSWORD = 'validation-safe-password-6620';
@@ -75,3 +76,5 @@ test('هیچ اعتبارسنجی تازه‌ای بدون status اضافه ن�
   const bare = source.match(/throw new Error\(/g) || [];
   assert.equal(bare.length, 0, `${bare.length} مورد throw بدون status در db.js هست؛ به‌جایش invalidInput استفاده کن`);
 });
+
+test.after(() => removeTempDatabase(databasePath));

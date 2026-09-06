@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-invoicing-${process.pid}.sqlite`;
+const databasePath = tempDatabase('invoicing');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'invoice-owner';
 process.env.ADMIN_PASSWORD = randomBytes(24).toString('base64url');
@@ -85,5 +85,5 @@ test('keeps drafts outside the ledger and obeys locked Persian accounting period
 test.after(() => {
   database.closeWorkspaceDatabases();
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-tax-${process.pid}.sqlite`;
+const databasePath = tempDatabase('tax');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'tax-owner';
 process.env.ADMIN_PASSWORD = randomBytes(24).toString('base64url');
@@ -127,5 +127,5 @@ test('never allocates a negative line discount after rounding', () => inPrimary(
 test.after(() => {
   database.closeWorkspaceDatabases();
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });

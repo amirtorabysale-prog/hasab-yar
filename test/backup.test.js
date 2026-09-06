@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-backup-${process.pid}.sqlite`;
-const backupDirectory = `/tmp/hesab-yar-backups-${process.pid}`;
+const databasePath = tempDatabase('backup');
+const backupDirectory = join(dirname(databasePath), 'backups');
 process.env.DATABASE_PATH = databasePath;
 process.env.BACKUP_DIR = backupDirectory;
 process.env.ADMIN_USERNAME = 'backup-owner';
@@ -82,5 +84,5 @@ test.after(() => {
   database.closeWorkspaceDatabases();
   database.db.close();
   rmSync(backupDirectory, { recursive: true, force: true });
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });
