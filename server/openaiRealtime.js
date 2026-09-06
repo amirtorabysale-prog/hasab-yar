@@ -16,6 +16,23 @@ function cleanVocabulary(categories = [], learnings = []) {
     .slice(0, 100);
 }
 
+/**
+ * SDP یک قالب خط‌محور با پایان‌خط CRLF است و آخرین خط هم باید CRLF داشته باشد.
+ *
+ * سرور ما به‌عنوان واسط، offer مرورگر را `trim()` می‌کرد و همان CRLF پایانی را
+ * می‌برد. نتیجه‌اش `invalid_offer` از OpenAI بود با پیام «offer باید
+ * WHIP-compliant باشد» — یعنی تایپ زنده هرگز وصل نمی‌شد، درحالی‌که کلید و مدل
+ * هر دو سالم بودند. نمونهٔ خود OpenAI هم بدنه را دست‌نخورده می‌فرستد.
+ *
+ * پس اعتبارسنجی روی نسخهٔ trim‌شده انجام می‌شود ولی چیزی که ارسال می‌شود
+ * دست‌نخوردهٔ مرورگر است، با CRLF پایانی تضمین‌شده.
+ */
+export function normalizeSdpOffer(sdp) {
+  const raw = typeof sdp === 'string' ? sdp : '';
+  if (!raw.trim().startsWith('v=0') || raw.length > 128_000) return null;
+  return raw.endsWith('\r\n') ? raw : `${raw.replace(/[\r\n]+$/, '')}\r\n`;
+}
+
 export function buildRealtimeTranscriptionSession({ categories = [], learnings = [] } = {}) {
   return {
     type: 'transcription',
@@ -38,8 +55,8 @@ export async function createRealtimeTranscriptionCall({ sdp, categories = [], le
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw providerFailure('کلید OpenAI روی سرور تنظیم نشده است.', 'OPENAI_UNAVAILABLE', 503);
   assertOpenAIAvailable('openai-realtime');
-  const offer = String(sdp || '').trim();
-  if (!offer.startsWith('v=0') || offer.length > 128_000) throw providerFailure('پیشنهاد اتصال صوتی معتبر نیست.', 'VOICE_REALTIME_SDP', 400);
+  const offer = normalizeSdpOffer(sdp);
+  if (!offer) throw providerFailure('پیشنهاد اتصال صوتی معتبر نیست.', 'VOICE_REALTIME_SDP', 400);
 
   const form = new FormData();
   form.set('sdp', offer);

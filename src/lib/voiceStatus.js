@@ -12,6 +12,24 @@ export function retryLabel(seconds) {
   return `${Math.ceil(value / 60)} دقیقه`;
 }
 
+/**
+ * آیا اصلاً ارزش دارد نشست Realtime باز شود؟
+ *
+ * `realtimeSpeechAvailable` فقط پشتیبانی مرورگر و cooldown محلی را می‌سنجد و
+ * نظر سرور را نمی‌پرسد. نتیجه‌اش این بود که وقتی سرور می‌دانست Realtime
+ * تنظیم نشده یا در cooldown است، مرورگر همچنان برای **هر ضبط** یک نشست باز
+ * می‌کرد. Realtime بر اساس مدت باز بودن نشست هزینه می‌گیرد، پس این یعنی پولِ
+ * بی‌نتیجه.
+ *
+ * وضعیت ناشناخته (هنوز بارگذاری نشده) مانع تلاش نمی‌شود؛ فقط «می‌دانیم در
+ * دسترس نیست» جلوی نشست را می‌گیرد.
+ */
+export function realtimeWorthTrying(status, { browserReady = false } = {}) {
+  if (!browserReady) return false;
+  if (!status?.realtime) return true;
+  return Boolean(status.realtime.available);
+}
+
 export function describeVoiceAvailability(status, { browserSupported = false, storage, now = Date.now() } = {}) {
   const localCooldown = realtimeCooldown(storage, now);
   const serverCooldown = status?.realtime?.cooldown;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeVoiceAvailability, pointerReleaseAction, retryLabel } from '../src/lib/voiceStatus.js';
+import { describeVoiceAvailability, pointerReleaseAction, realtimeWorthTrying, retryLabel } from '../src/lib/voiceStatus.js';
 import { voiceProviderStatus } from '../server/voiceProviderState.js';
 
 test('publishes voice provider availability without exposing credentials', () => {
@@ -27,4 +27,20 @@ test('supports both tap-to-toggle and hold-to-finish gestures', () => {
   assert.equal(pointerReleaseAction(120), 'keep-recording');
   assert.equal(pointerReleaseAction(420), 'stop');
   assert.equal(retryLabel(61), '2 دقیقه');
+});
+
+// نشتی هزینه: `realtimeSpeechAvailable` فقط مرورگر را می‌سنجید، پس حتی وقتی
+// سرور می‌دانست Realtime تنظیم نشده، برای هر ضبط یک نشستِ پولی باز می‌شد.
+test('نشست Realtime وقتی سرور می‌گوید در دسترس نیست، باز نمی‌شود', () => {
+  assert.equal(realtimeWorthTrying({ realtime: { available: false } }, { browserReady: true }), false);
+  assert.equal(realtimeWorthTrying({ realtime: { configured: false, available: false } }, { browserReady: true }), false);
+});
+
+test('وضعیت ناشناخته مانع تلاش نمی‌شود', () => {
+  assert.equal(realtimeWorthTrying(null, { browserReady: true }), true);
+  assert.equal(realtimeWorthTrying({}, { browserReady: true }), true);
+});
+
+test('مرورگر ناتوان یا در cooldown، هیچ نشستی باز نمی‌کند', () => {
+  assert.equal(realtimeWorthTrying({ realtime: { available: true } }, { browserReady: false }), false);
 });

@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
 import { financialDna } from './financialDna.js';
+import { CATEGORY_DEFINITIONS } from '../shared/categoryRules.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
@@ -578,12 +579,22 @@ ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
 ensureTaxAssistantSchema(controlDb);
 
-const categorySeed = [
-  ['inc-sale', 'فروش', 'income', 1], ['inc-service', 'خدمات', 'income', 2], ['inc-project', 'پروژه و دستمزد', 'income', 3], ['inc-other', 'سایر درآمدها', 'income', 9],
-  ['exp-material', 'مواد و کالا', 'expense', 1], ['exp-salary', 'حقوق و دستمزد', 'expense', 2], ['exp-rent', 'اجاره', 'expense', 3], ['exp-delivery', 'حمل‌ونقل', 'expense', 4], ['exp-food', 'خوراک', 'expense', 5], ['exp-bill', 'قبوض', 'expense', 6], ['exp-other', 'سایر هزینه‌ها', 'expense', 9],
-];
-const insertCategory = db.prepare('INSERT OR IGNORE INTO categories (id,name,type,sort_order) VALUES (?,?,?,?)');
-for (const item of categorySeed) insertCategory.run(...item);
+// دسته‌ها یک منبع حقیقت دارند: همان جدولی که پارسر با آن تصمیم می‌گیرد. اگر
+// این دو از هم جدا شوند، پارسر دسته‌ای پیشنهاد می‌دهد که در کشوی کارت تأیید
+// وجود ندارد و کاربر نمی‌تواند تأییدش کند.
+const categorySeed = CATEGORY_DEFINITIONS.map((item, index) => [
+  item.id, item.name, item.type, item.id.endsWith('-other') ? 99 : index + 1,
+]);
+
+// دفترهای موجود هم باید دسته‌های تازه را بگیرند، وگرنه فقط نصب‌های جدید از
+// دسته‌بندی دقیق بهره می‌برند.
+// نام دسته‌های قدیمی عمداً دست‌نخورده می‌ماند: تراکنش‌ها دسته را به‌صورت نام
+// ذخیره می‌کنند، پس تغییر نام یعنی بی‌دسته‌شدن هر ثبت قدیمی.
+function ensureCategorySeed(database) {
+  const insert = database.prepare('INSERT OR IGNORE INTO categories (id,name,type,sort_order) VALUES (?,?,?,?)');
+  for (const item of categorySeed) insert.run(...item);
+}
+ensureCategorySeed(db);
 
 db.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,opening_balance,sort_order)
   VALUES ('cash','صندوق نقدی','cash',0,1)`).run();
@@ -627,6 +638,7 @@ function workspaceDatabase(workspaceId) {
     for (const [key, value] of Object.entries(defaults)) settingInsert.run(key, String(value));
     settingInsert.run('accountOpeningMigrated', 'true');
   }
+  ensureCategorySeed(database);
   ensureAccountingSchema(database);
   ensureTransactionReviewSchema(database);
   ensureVoiceMetricSchema(database);
