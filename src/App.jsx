@@ -1838,8 +1838,10 @@ function ChartPage({ access, notify }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // پیام موفقیت گاهی به نتیجه بستگی دارد («۳ نگاشت منتقل شد» در برابر «چیزی
+  // تغییر نکرد»)، پس مقدار برگشتی اقدام هم می‌تواند پیام باشد.
   const run = async (action, success) => {
-    try { await action(); await load(); notify(success); }
+    try { const outcome = await action(); await load(); notify(typeof outcome === 'string' ? outcome : success); }
     catch (error) { notify(error.details?.errors?.[0] ? `ردیف ${error.details.errors[0].rowNumber}: ${error.details.errors[0].message}` : error.message); }
   };
 
@@ -1877,7 +1879,21 @@ function ChartPage({ access, notify }) {
     {tab === 'mapping' && mapping && <div className="mt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[13px] text-muted">هر حساب داخلی حساب‌یار باید یک معین مقصد در کدینگ داشته باشد.</p>
-        {canManage && mapping.suggestionsAvailable > 0 && <button onClick={() => run(() => api.applyChartSuggestions(), 'پیشنهادها اعمال شدند.')} className="tap rounded-lg border border-line bg-surface px-4 text-sm font-bold">اعمال {toPersianDigits(mapping.suggestionsAvailable)} پیشنهاد</button>}
+        <div className="flex flex-wrap gap-2">
+          {canManage && mapping.suggestionsAvailable > 0 && <button onClick={() => run(() => api.applyChartSuggestions(), 'پیشنهادها اعمال شدند.')} className="tap rounded-lg border border-line bg-surface px-4 text-sm font-bold">اعمال {toPersianDigits(mapping.suggestionsAvailable)} پیشنهاد</button>}
+          {/* نگاشت‌های قدیمی پیش از شناختن معین اختصاصی دسته‌ها ساخته شده‌اند و
+              همه روی «سایر هزینه‌های عملیاتی» نشسته‌اند. اصلاحشان تصمیم کاربر
+              است، نه بازنویسی خاموش. */}
+          {canManage && mapping.mappedCount > 0 && <button
+            onClick={() => run(async () => {
+              const result = await api.applyChartSuggestions({ refine: true });
+              return result.refined > 0
+                ? `${toPersianDigits(result.refined)} نگاشت عمومی به معین دقیق‌تر منتقل شد.`
+                : 'نگاشت عمومیِ قابل اصلاحی پیدا نشد؛ چیزی تغییر نکرد.';
+            })}
+            className="tap rounded-lg border border-line bg-surface px-4 text-sm font-bold"
+          >اصلاح نگاشت‌های عمومی</button>}
+        </div>
       </div>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[640px] text-right text-[13px]">
@@ -2367,15 +2383,22 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   };
 
   return <div className="mt-3 space-y-2">
-    {fiscalCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+    {/* بدون بازهٔ ثبت‌شده، سرور همهٔ سندها را «بیرون از بازه» گزارش می‌کند. نمایش
+        همان فهرست به‌عنوان ناسازگاری، کاربر را دنبال سندهای سالم می‌فرستد
+        درحالی‌که مشکل یک فیلد پرنشده است. */}
+    {fiscalCheck && (fiscalCheck.fiscalYearStart ? <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
       <p className="font-bold text-expense">سال مالی مقصد با سندهای این بسته سازگار نیست</p>
-      {fiscalCheck.fiscalYearStart && <p className="mt-1 text-muted">بازهٔ ثبت‌شده: <span dir="ltr" className="numbers">{fiscalCheck.fiscalYearStart} تا {fiscalCheck.fiscalYearEnd}</span></p>}
+      <p className="mt-1 text-muted">بازهٔ ثبت‌شده: <span dir="ltr" className="numbers">{fiscalCheck.fiscalYearStart} تا {fiscalCheck.fiscalYearEnd}</span></p>
       {(fiscalCheck.outsideDocuments || []).length > 0 && <ul className="mt-2 space-y-0.5">
         {fiscalCheck.outsideDocuments.slice(0, 8).map((item) => <li key={item.entryId}>سند {toPersianDigits(item.documentNumber || '—')} · <span dir="ltr" className="numbers">{item.date || 'تاریخ نامعتبر'}</span>{item.memo ? ` · ${item.memo}` : ''}</li>)}
         {fiscalCheck.outsideDocuments.length > 8 && <li className="text-muted">و {toPersianDigits(fiscalCheck.outsideDocuments.length - 8)} سند دیگر…</li>}
       </ul>}
-      <p className="mt-2 text-[11px] text-muted">بازهٔ صحیح را در بخش «چیدمان ستون‌های خروجی» ثبت کن یا اسناد را به دورهٔ درست منتقل کن. تا آن زمان فایل ساخته و تحویل نمی‌شود.</p>
-    </div>}
+      <p className="mt-2 text-[11px] text-muted">بازهٔ صحیح را در بخش «تنظیم مقصد» ثبت کن یا اسناد را به دورهٔ درست منتقل کن. تا آن زمان فایل ساخته و تحویل نمی‌شود.</p>
+    </div> : <div className="rounded-lg border border-accent/40 bg-warn-bg p-3 text-xs leading-6">
+      <p className="font-bold text-accent">بازهٔ سال مالی باز پارسیان هنوز ثبت نشده است</p>
+      <p className="mt-1 text-muted">فایل انتقال بدون این بازه ساخته نمی‌شود، چون پارسیان سند خارج از سال مالی باز را نمی‌پذیرد. سندهای این بسته ایرادی ندارند.</p>
+      <p className="mt-2 text-[11px] text-muted">بخش «تنظیم مقصد — یک بار انجام می‌شود» را در بالای همین صفحه باز کن و تاریخ شروع و پایان را به شکل <span dir="ltr" className="numbers">1405/01/01</span> وارد کن.</p>
+    </div>)}
     {chartCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
       <p className="font-bold text-expense">این حساب‌ها هنوز معین مقصد ندارند</p>
       {unmapped.length > 0 && <ul className="mt-2 space-y-0.5">

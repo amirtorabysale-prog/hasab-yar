@@ -136,3 +136,36 @@ test('chart master data sits behind the manager role, not daily entry', () => {
   assert.equal(minimumRoleForRequest('POST', '/chart/cost-centers'), 'manager');
   assert.equal(minimumRoleForRequest('GET', '/chart/overview'), 'viewer');
 });
+
+// نقش `operating-expense` را فقط یک معین دارد، پس هر دستهٔ هزینه‌ای به ۸۱۰۹
+// می‌رفت و در پارسیان اجاره، حمل‌ونقل و قبوض همه در یک حساب کلی جمع می‌شدند.
+test('دستهٔ هزینه به معین اختصاصی خودش نگاشت می‌شود، نه به سایر هزینه‌ها', () => {
+  const chart = DEFAULT_CHART_TEMPLATE.map((item) => ({ ...item, postable: item.level === 'subsidiary', active: true, id: item.code }));
+  const suggest = (name, type = 'expense') => suggestChartAccount({ sourceKind: `${type}-category`, sourceKey: name, type, name }, chart)?.code || null;
+  assert.equal(suggest('اجاره'), '8102');
+  assert.equal(suggest('حمل‌ونقل'), '8103');
+  assert.equal(suggest('قبوض'), '8104');
+  assert.equal(suggest('حقوق و دستمزد'), '8101');
+  assert.equal(suggest('کسری و ضایعات موجودی'), '8105');
+  assert.equal(suggest('فروش', 'income'), '6101');
+  assert.equal(suggest('خدمات', 'income'), '6102');
+});
+
+test('دستهٔ بدون معین اختصاصی، همچنان به سایر هزینه‌ها می‌افتد', () => {
+  const chart = DEFAULT_CHART_TEMPLATE.map((item) => ({ ...item, postable: item.level === 'subsidiary', active: true, id: item.code }));
+  const suggest = (name) => suggestChartAccount({ sourceKind: 'expense-category', sourceKey: name, type: 'expense', name }, chart)?.code || null;
+  assert.equal(suggest('سایر هزینه‌ها'), '8109');
+  // دستهٔ دست‌ساز کاربر کد اختصاصی ندارد و نباید کد جعلی بگیرد.
+  assert.equal(suggest('یک دستهٔ دلخواه'), '8109');
+});
+
+// معینی که در کدینگ دفتر وجود ندارد نباید پیشنهاد شود؛ نگاشت به کد ناموجود
+// یعنی فایل انتقالی که پارسیان ردش می‌کند.
+test('کد اختصاصیِ نبود در کدینگ، به نقش عمومی برمی‌گردد', () => {
+  const trimmed = DEFAULT_CHART_TEMPLATE
+    .filter((item) => !['8102', '8103'].includes(item.code))
+    .map((item) => ({ ...item, postable: item.level === 'subsidiary', active: true, id: item.code }));
+  const suggest = (name) => suggestChartAccount({ sourceKind: 'expense-category', sourceKey: name, type: 'expense', name }, trimmed)?.code || null;
+  assert.equal(suggest('اجاره'), '8109');
+  assert.equal(suggest('حمل‌ونقل'), '8109');
+});

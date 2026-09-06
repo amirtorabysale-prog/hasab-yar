@@ -1391,9 +1391,9 @@ export function mapLedgerAccount(ledgerAccountId, chartAccountId) {
   return { ...result, mapping: chartMappingOverview(activeWorkspaceDatabase()) };
 }
 
-export function applyChartSuggestions() {
-  const result = applySuggestedChartMappings(activeWorkspaceDatabase());
-  audit('map-suggested', 'chart_of_accounts', 'chart', { applied: result.applied });
+export function applyChartSuggestions({ refine = false } = {}) {
+  const result = applySuggestedChartMappings(activeWorkspaceDatabase(), { refine });
+  audit('map-suggested', 'chart_of_accounts', 'chart', { applied: result.applied, refined: result.refined });
   return result;
 }
 

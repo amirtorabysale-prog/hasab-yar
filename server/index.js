@@ -397,8 +397,8 @@ app.put('/api/chart/accounts/:id', (request, response, next) => {
 app.put('/api/chart/mappings/:ledgerAccountId', (request, response, next) => {
   try { return response.json(mapLedgerAccount(request.params.ledgerAccountId, request.body?.chartAccountId || null)); } catch (error) { return next(error); }
 });
-app.post('/api/chart/mappings/suggest', (_request, response, next) => {
-  try { return response.json(applyChartSuggestions()); } catch (error) { return next(error); }
+app.post('/api/chart/mappings/suggest', (request, response, next) => {
+  try { return response.json(applyChartSuggestions({ refine: request.body?.refine === true })); } catch (error) { return next(error); }
 });
 app.get('/api/chart/dimensions/balance', (request, response, next) => {
   try { return response.json(dimensionReport(request.query)); } catch (error) { return next(error); }

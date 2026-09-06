@@ -235,3 +235,46 @@ test('a newly used account without a mapping blocks the export', () => {
     assert.match(overview.readiness.chart.unmappedUsedAccounts[0].name, /دستهٔ کاملاً تازه/);
   });
 });
+
+// وضعیت واقعی کاربر در production: نگاشت‌ها پیش از شناختن معین اختصاصی دسته‌ها
+// ساخته شده بودند، پس اجاره و حمل‌ونقل هر دو روی ۸۱۰۹ «سایر هزینه‌های عملیاتی»
+// نشسته بودند و در پارسیان همه‌چیز در یک حساب کلی جمع می‌شد.
+test('اصلاح، نگاشت عمومیِ خودکار را دقیق‌تر می‌کند و انتخاب حسابدار را دست نمی‌زند', () => {
+  inWorkspace(() => {
+    database.insertTransactions({
+      transcript: 'هزینه‌های دوره',
+      transactions: [
+        { amount: 5_000_000, type: 'expense', category: 'اجاره', rawText: 'اجاره' },
+        { amount: 800_000, type: 'expense', category: 'حمل‌ونقل', rawText: 'حمل‌ونقل' },
+        { amount: 300_000, type: 'expense', category: 'خوراک', rawText: 'خوراک' },
+      ],
+    });
+    const idOf = (name) => database.chartOverview().mapping.items.find((item) => item.sourceKey === name)?.id;
+    const [rent, transport, food] = ['اجاره', 'حمل‌ونقل', 'خوراک'].map(idOf);
+
+    // همان چیزی که کاربر امروز دارد: همه روی معین عمومی.
+    for (const id of [rent, transport, food]) database.mapLedgerAccount(id, '8109');
+    // این یکی را حسابدار آگاهانه جای دیگری گذاشته است.
+    database.mapLedgerAccount(food, '8104');
+
+    const result = database.applyChartSuggestions({ refine: true });
+    const codeOf = (id) => result.items.find((item) => item.id === id)?.chartCode;
+    assert.equal(codeOf(rent), '8102');
+    assert.equal(codeOf(transport), '8103');
+    assert.equal(codeOf(food), '8104', 'انتخاب آگاهانهٔ حسابدار نباید بازنویسی شود');
+    assert.equal(result.refined, 2);
+  });
+});
+
+test('بدون refine هیچ نگاشت موجودی دست نمی‌خورد', () => {
+  inWorkspace(() => {
+    database.insertTransactions({
+      transcript: 'اجاره', transactions: [{ amount: 5_000_000, type: 'expense', category: 'اجاره', rawText: 'اجاره' }],
+    });
+    const rent = database.chartOverview().mapping.items.find((item) => item.sourceKey === 'اجاره').id;
+    database.mapLedgerAccount(rent, '8109');
+    const result = database.applyChartSuggestions();
+    assert.equal(result.items.find((item) => item.id === rent).chartCode, '8109');
+    assert.equal(result.refined, 0);
+  });
+});

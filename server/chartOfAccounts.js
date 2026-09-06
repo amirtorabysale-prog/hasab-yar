@@ -6,6 +6,7 @@
 // اسناد قبلی و ارجاع‌هایشان دست‌نخورده بمانند.
 
 import { randomUUID } from 'node:crypto';
+import { chartCodeForCategory } from '../shared/categoryRules.js';
 
 export const CHART_LEVELS = Object.freeze({
   group: Object.freeze({ id: 'group', label: 'گروه', order: 1 }),
@@ -510,14 +511,27 @@ const ROLE_BY_SOURCE_KEY = {
  * برای یک حساب داخلی، مناسب‌ترین معین کدینگ را پیشنهاد می‌دهد.
  * اگر نقش دقیق پیدا نشود، اولین معین هم‌نوع پیشنهاد می‌شود و اگر آن هم نبود null.
  */
-export function suggestChartAccount(ledgerAccount, chartAccounts = []) {
+export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specific = true } = {}) {
   const postable = chartAccounts.filter((item) => item.postable !== false && item.level === 'subsidiary' && item.active !== false);
   const byRole = (role) => postable.find((item) => item.role === role) || null;
 
-  const keyRole = ROLE_BY_SOURCE_KEY[ledgerAccount.sourceKey || ledgerAccount.source_key];
+  const sourceKey = ledgerAccount.sourceKey || ledgerAccount.source_key;
+  const keyRole = ROLE_BY_SOURCE_KEY[sourceKey];
   if (keyRole) return byRole(keyRole);
 
   const sourceKind = ledgerAccount.sourceKind || ledgerAccount.source_kind;
+  // نقشِ `operating-expense` را فقط یک معین دارد (۸۱۰۹ سایر هزینه‌های عملیاتی)،
+  // پس هر دستهٔ هزینه‌ای — اجاره، حمل‌ونقل، قبوض — همان‌جا می‌نشست و در پارسیان
+  // همه‌چیز در یک حساب کلی جمع می‌شد. حساب دستهٔ دفتر، `source_key` برابر نام
+  // دسته دارد، پس کد اختصاصی همان دسته از قبل معلوم است.
+  //
+  // `specific: false` عمداً همان پیشنهادِ عمومیِ قبلی را برمی‌گرداند تا بشود
+  // تشخیص داد یک نگاشت موجود، خودکارِ عمومی بوده یا انتخاب آگاهانهٔ حسابدار.
+  if (specific && ['income-category', 'expense-category'].includes(sourceKind)) {
+    const code = chartCodeForCategory(sourceKey);
+    const exact = code ? postable.find((item) => normalizeChartCode(item.code) === code) : null;
+    if (exact) return exact;
+  }
   if (sourceKind === 'operational-account') {
     const name = String(ledgerAccount.name || '');
     const wantsBank = /بانک|کارت|شبا|حساب جاری/.test(name);
@@ -584,16 +598,38 @@ export function chartMappingOverview(database) {
   };
 }
 
-export function applySuggestedChartMappings(database) {
+/**
+ * `refine` نگاشت‌های موجودی را هم اصلاح می‌کند که پیش از شناختن معین اختصاصیِ
+ * دسته‌ها ساخته شده‌اند — مثلاً «اجاره» که روی ۸۱۰۹ سایر هزینه‌ها نشسته بود.
+ *
+ * انتخاب آگاهانهٔ حسابدار بازنویسی نمی‌شود. چون جدول نگاشت ستون منشأ ندارد،
+ * ملاک این است: فقط نگاشتی جابه‌جا می‌شود که **دقیقاً** همان پیشنهاد عمومیِ
+ * قبلی باشد. هر کد دیگری یعنی کسی آگاهانه انتخابش کرده و دست‌نخورده می‌ماند.
+ */
+export function applySuggestedChartMappings(database, { refine = false } = {}) {
   const overview = chartMappingOverview(database);
   if (!overview.chartInstalled) throw chartError('ابتدا کدینگ را وارد کن یا کدینگ پیش‌فرض را نصب کن.', 'CHART_NOT_INSTALLED');
+  const chartAccounts = listChartAccounts(database);
   let applied = 0;
+  let refined = 0;
   for (const item of overview.items) {
-    if (item.mapped || !item.suggestion) continue;
-    mapLedgerAccountToChart(database, item.id, item.suggestion.id);
-    applied += 1;
+    if (!item.mapped) {
+      if (!item.suggestion) continue;
+      mapLedgerAccountToChart(database, item.id, item.suggestion.id);
+      applied += 1;
+      continue;
+    }
+    if (!refine) continue;
+    const specific = suggestChartAccount(item, chartAccounts);
+    const generic = suggestChartAccount(item, chartAccounts, { specific: false });
+    const current = normalizeChartCode(item.chartCode);
+    if (!specific || !generic) continue;
+    if (normalizeChartCode(specific.code) === current) continue;
+    if (normalizeChartCode(generic.code) !== current) continue;
+    mapLedgerAccountToChart(database, item.id, specific.id);
+    refined += 1;
   }
-  return { applied, ...chartMappingOverview(database) };
+  return { applied, refined, ...chartMappingOverview(database) };
 }
 
 // ---------------------------------------------------------------------------

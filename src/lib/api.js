@@ -275,7 +275,7 @@ export const api = {
   importChart: (csv, replace = false) => request('/api/chart/import', { method: 'POST', body: JSON.stringify({ csv, replace }) }),
   saveChartAccount: (payload) => request(payload.id ? `/api/chart/accounts/${encodeURIComponent(payload.id)}` : '/api/chart/accounts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   mapLedgerAccount: (ledgerAccountId, chartAccountId) => request(`/api/chart/mappings/${encodeURIComponent(ledgerAccountId)}`, { method: 'PUT', body: JSON.stringify({ chartAccountId }) }),
-  applyChartSuggestions: () => request('/api/chart/mappings/suggest', { method: 'POST', body: '{}' }),
+  applyChartSuggestions: ({ refine = false } = {}) => request('/api/chart/mappings/suggest', { method: 'POST', body: JSON.stringify({ refine }) }),
   dimensionBalance: (params = {}) => request(`/api/chart/dimensions/balance?${new URLSearchParams(params)}`),
   saveAnalytic: (payload) => request(payload.id ? `/api/chart/analytics/${encodeURIComponent(payload.id)}` : '/api/chart/analytics', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   saveCostCenter: (payload) => request(payload.id ? `/api/chart/cost-centers/${encodeURIComponent(payload.id)}` : '/api/chart/cost-centers', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
