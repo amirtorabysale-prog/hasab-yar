@@ -49,11 +49,16 @@ import { normalizeTemplateLines } from './journalWorkflow.js';
 import { importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows } from './ledgerImport.js';
 import { analyticRowsFromFile, chartRowsFromFile, openingRowsFromFile } from './spreadsheetImport.js';
 import { buildFirmPortfolio, parseStoredMoment } from './firm.js';
+import { OPTIONAL_BACKUP_TABLES } from './backup.js';
 import {
   askTaxAssistant as askTaxAssistantCore, ensureTaxAssistantSchema,
   listTaxAssistantQuestions as listTaxAssistantQuestionsCore, listTaxKnowledgeSources as listTaxKnowledgeSourcesCore,
   resolveTaxAssistantQuestion as resolveTaxAssistantQuestionCore, saveTaxKnowledgeSource as saveTaxKnowledgeSourceCore,
 } from './taxAssistant.js';
+import {
+  citableVersionsAt, ensureTaxKnowledgeSchema, getTaxDocument as getTaxDocumentCore,
+  listTaxDocuments as listTaxDocumentsCore, migrateTaxKnowledgeSources, saveTaxDocumentRelation as saveTaxDocumentRelationCore,
+} from './taxKnowledge.js';
 import {
   DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
   importChartOfAccounts, installDefaultChartTemplate, listAnalyticAccounts, listChartAccounts, listCostCenters,
@@ -582,6 +587,8 @@ ensureAccountingTransferSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
 ensureTaxAssistantSchema(controlDb);
+ensureTaxKnowledgeSchema(controlDb);
+migrateTaxKnowledgeSources(controlDb);
 
 // دسته‌ها یک منبع حقیقت دارند: همان جدولی که پارسر با آن تصمیم می‌گیرد. اگر
 // این دو از هم جدا شوند، پارسر دسته‌ای پیشنهاد می‌دهد که در کشوی کارت تأیید
@@ -655,6 +662,8 @@ function workspaceDatabase(workspaceId) {
   ensureInventorySchema(database);
   ensureTaxSchema(database);
   ensureTaxAssistantSchema(database);
+  ensureTaxKnowledgeSchema(database);
+  migrateTaxKnowledgeSources(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   workspaceConnections.set(workspaceId, database);
@@ -3127,6 +3136,30 @@ export function saveTaxKnowledgeSource(values = {}) {
   return item;
 }
 
+// --- هستهٔ منابع نسخه‌دار (فاز ۰) ---
+// این توابع فقط می‌خوانند. مسیر پاسخ دستیار هنوز از `tax_knowledge_sources`
+// می‌آید و در فاز ۲ و ۳ جابه‌جا می‌شود، پس امروز هیچ رفتاری عوض نمی‌شود.
+
+export function listTaxDocuments(filters = {}) {
+  return listTaxDocumentsCore(db, filters);
+}
+
+export function getTaxDocument(id) {
+  return getTaxDocumentCore(db, id);
+}
+
+export function citableTaxVersions(filters = {}) {
+  return citableVersionsAt(db, filters);
+}
+
+export function saveTaxDocumentRelation(values = {}) {
+  const item = saveTaxDocumentRelationCore(db, values);
+  audit('create-relation', 'tax_document_relation', item.id, {
+    relation: item.relation, effectFrom: item.effect_from,
+  });
+  return item;
+}
+
 export function askTaxAssistant(values = {}) {
   const item = askTaxAssistantCore(db, values, currentWorkspace());
   audit(item.status === 'answered' ? 'answer-from-source' : 'refer-to-expert', 'tax_assistant_question', item.id, {
@@ -3489,6 +3522,7 @@ export const FINANCIAL_BACKUP_TABLES = [
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
   'tax_knowledge_sources', 'tax_assistant_questions',
+  'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
@@ -3497,6 +3531,7 @@ const BACKUP_DELETE_ORDER = [
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
+  'tax_document_mirrors', 'tax_document_relations', 'tax_provisions', 'tax_document_versions', 'tax_documents',
   'tax_assistant_questions', 'tax_knowledge_sources', 'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',
 ];
@@ -3517,7 +3552,9 @@ export function restoreFinancialSnapshot(snapshot) {
   try {
     for (const table of BACKUP_DELETE_ORDER) db.prepare(`DELETE FROM ${table}`).run();
     for (const table of FINANCIAL_BACKUP_TABLES) {
-      const rows = snapshot.tables[table];
+      // جدولی که بعد از ساخت آن پشتیبان به محصول اضافه شده، خالی بازیابی می‌شود؛
+      // پشتیبان قدیمی نباید به‌خاطر قابلیتی که آن روز وجود نداشته رد شود.
+      const rows = snapshot.tables[table] ?? (OPTIONAL_BACKUP_TABLES.has(table) ? [] : undefined);
       if (!Array.isArray(rows)) throw invalidInput(`جدول ${table} در پشتیبان کامل نیست.`);
       const validColumns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
       for (const row of rows) {
