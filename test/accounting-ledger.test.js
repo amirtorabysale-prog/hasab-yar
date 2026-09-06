@@ -92,6 +92,35 @@ test('migrates a legacy transaction exactly once', () => inPrimary(() => {
   assert.equal(accounting.trialBalance(db).balanced, true);
 }));
 
+// سرمایه و دارایی ثابت هر دو از صندوق رد می‌شوند ولی هیچ‌کدام سود دوره نیستند.
+test('آورده و دارایی ثابت، صندوق را تکان می‌دهند و سود دوره را نه', () => inPrimary(() => {
+  const cashBefore = database.listAccounts().find((item) => item.id === 'cash').balance;
+  const reportBefore = database.report('month').summary;
+
+  database.recordCapitalEntry({ kind: 'capital-in', amount: 50_000_000, title: 'آوردهٔ نقدی مالک', accountId: 'cash' });
+  database.recordCapitalEntry({ kind: 'fixed-asset', amount: 30_000_000, title: 'لپ تاپ', accountId: 'cash' });
+
+  const cashAfter = database.listAccounts().find((item) => item.id === 'cash').balance;
+  assert.equal(cashAfter, cashBefore + 20_000_000);
+
+  const reportAfter = database.report('month').summary;
+  assert.equal(reportAfter.income, reportBefore.income);
+  assert.equal(reportAfter.expense, reportBefore.expense);
+
+  const trial = accounting.trialBalance(database.activeWorkspaceDatabase());
+  assert.equal(trial.balanced, true);
+  assert.equal(trial.rows.find((row) => row.name === 'سرمایه — آوردهٔ مالک').creditBalance, 50_000_000);
+  assert.equal(trial.rows.find((row) => row.name === 'دارایی ثابت — لپ تاپ').debitBalance, 30_000_000);
+  // دارایی به بهای تمام‌شده می‌نشیند؛ استهلاکی محاسبه نمی‌شود و ادعا هم نمی‌شود.
+  assert.equal(trial.rows.some((row) => row.name.includes('استهلاک')), false);
+}));
+
+test('ثبت سرمایه بدون عنوان یا با نوع نامعتبر رد می‌شود', () => inPrimary(() => {
+  assert.throws(() => database.recordCapitalEntry({ kind: 'fixed-asset', amount: 10_000_000, title: '  ' }));
+  assert.throws(() => database.recordCapitalEntry({ kind: 'profit', amount: 10_000_000, title: 'چیزی' }));
+  assert.throws(() => database.recordCapitalEntry({ kind: 'capital-in', amount: 0, title: 'آورده' }));
+}));
+
 test.after(() => {
   database.closeWorkspaceDatabases();
   database.db.close();

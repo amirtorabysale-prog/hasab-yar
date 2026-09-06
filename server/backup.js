@@ -50,12 +50,16 @@ export function validateFinancialBackup(snapshot) {
 export function backupSummary(snapshot) {
   validateFinancialBackup(snapshot);
   const transactions = snapshot.tables.transactions.filter((item) => item.status !== 'deleted');
+  // آورده و خرید دارایی ثابت جابه‌جایی سرمایه‌اند، نه درآمد و هزینه؛ در خلاصهٔ
+  // پشتیبان هم نباید جمع دخل‌وخرج را باد کنند. پشتیبان‌های قدیمی این ستون را
+  // ندارند و همان‌طور که بودند شمرده می‌شوند.
+  const operational = transactions.filter((item) => !item.capital_flow);
   return {
     exportedAt: snapshot.exportedAt,
     sourceWorkspaceId: snapshot.workspace?.id || null,
     transactions: transactions.length,
-    income: transactions.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount || 0), 0),
-    expense: transactions.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+    income: operational.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount || 0), 0),
+    expense: operational.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount || 0), 0),
     contacts: snapshot.tables.contacts.length,
     invoices: snapshot.tables.invoices.length,
     receipts: snapshot.tables.receipts.length,
