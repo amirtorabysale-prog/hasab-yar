@@ -20,6 +20,7 @@ import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState
 import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
 import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload } from '../shared/voiceIntent.js';
+import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
@@ -48,7 +49,7 @@ export default function App() {
   const [screen, setScreen] = useState('today');
   const [ledgerTab, setLedgerTab] = useState('transactions');
   const [drawer, setDrawer] = useState(false);
-  const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
+  const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, dnaProfiles: null, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   const [manualText, setManualText] = useState('');
@@ -610,7 +611,9 @@ export default function App() {
       return;
     }
     if (routeIntent(text)) { setManualText(''); return; }
-    const result = parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' });
+    // همان کنترلی که سرور روی مسیر صدا می‌زند؛ ثبت متنی محلی پارس می‌شود و نباید
+    // از الگوی خودِ پرونده بی‌خبر بماند.
+    const result = applyDnaSignals(parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' }), data.dnaProfiles);
     if (!result.transactions?.length) setFailure({ transcript: text });
     else { setParseResult({ ...result, engine: 'local-text', latencyMs: 0 }); setManualText(''); }
   };

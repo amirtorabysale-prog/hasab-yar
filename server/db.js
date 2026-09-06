@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
-import { financialDna } from './financialDna.js';
+import { dnaCategoryProfiles, financialDna, overdueBackboneCategories } from './financialDna.js';
 import { CATEGORY_DEFINITIONS } from '../shared/categoryRules.js';
 import { roleAllows } from './access.js';
 import {
@@ -3216,6 +3216,19 @@ export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
   return financialDna(rows, { timeZone: currentTimeZone(), now, months });
 }
 
+/**
+ * پروفایل دسته‌ها برای تصمیم‌گیری پیش از ثبت.
+ * پنجرهٔ شش ماه با خود DNA یکی است تا کاربر همان چیزی را ببیند که تصمیم بر پایه‌اش
+ * گرفته شده.
+ */
+export function dnaProfiles({ months = 6, now = new Date() } = {}) {
+  const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
+  const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
+    occurred_at AS occurredAt,created_at AS createdAt
+    FROM transactions WHERE status='confirmed' AND capital_flow='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+  return dnaCategoryProfiles(rows, { timeZone: currentTimeZone() });
+}
+
 export function financialOverview(now = new Date()) {
   const settings = getSettings();
   const accounts = listAccounts();
@@ -3269,6 +3282,26 @@ export function financialOverview(now = new Date()) {
       detail: `${money(anomaly.current.amount)} تومان در «${anomaly.current.category}»؛ ${anomaly.ratio} برابر میانهٔ ${anomaly.baseline.length} ثبت مشابه.`,
       value: Number(anomaly.current.amount), unit: FINANCIAL_UNIT, scope: financialScope(historyWindow, 'خط مبنای ۹۰ روزه'), sources,
       action: { screen: 'ledger', tab: 'transactions', entityId: anomaly.current.id, label: 'بازبینی ثبت' },
+    });
+  }
+
+  // DNA تا امروز فقط تماشا می‌شد. ستون فقرات هزینه — دسته‌ای که تقریباً هر ماه
+  // تکرار شده — تنها جایی است که نبودِ یک ثبت، خودش خبر است: اجاره‌ای که این ماه
+  // نیامده یعنی یا پرداخت نشده یا ثبت نشده، و هر دو کار دارند.
+  const profiles = dnaProfiles({ now });
+  const fiscalMonth = periodForDate(now, currentTimeZone());
+  const recordedThisMonth = historyRows.filter((item) => periodForDate(item.occurredAt, currentTimeZone()) === fiscalMonth);
+  const persianDayOfMonth = Number(new Intl.DateTimeFormat('en-u-ca-persian', { timeZone: currentTimeZone(), day: 'numeric' }).format(now));
+  for (const missing of overdueBackboneCategories(profiles, recordedThisMonth, { dayOfMonth: persianDayOfMonth }).slice(0, 2)) {
+    const evidence = historyRows.filter((item) => item.type === 'expense' && item.category === missing.category);
+    alerts.push({
+      id: `missing-recurring-${missing.category}`, type: 'missing-recurring', level: 'info', priority: 65,
+      title: `«${missing.category}» این ماه هنوز ثبت نشده`,
+      detail: `در ${missing.months} ماه از ${profiles.months} ماه گذشته ثبت شده و معمولاً حدود روز ${missing.typicalDay} ماه می‌آید؛ مبلغ معمولش ${money(missing.median)} تومان است.`,
+      value: missing.median, unit: FINANCIAL_UNIT,
+      scope: financialScope(historyWindow, 'الگوی تکرار همین پرونده'),
+      sources: evidence.map(transactionSource),
+      action: { screen: 'ledger', tab: 'transactions', label: 'ثبت این هزینه' },
     });
   }
 
