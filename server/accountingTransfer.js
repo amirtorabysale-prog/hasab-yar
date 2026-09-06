@@ -51,6 +51,42 @@ function persianDateToken(value, timeZone = 'Asia/Tehran') {
   return `${part('year')}/${part('month')}/${part('day')}`;
 }
 
+/**
+ * پایان سال شمسی: اسفند بسته به کبیسه ۲۹ یا ۳۰ روز است.
+ *
+ * قاعدهٔ کبیسه را از حفظ ننوشتم؛ از تقویم خود پلتفرم پرسیده می‌شود. روزهای
+ * پیرامون نوروز سال بعد میلادی بررسی و بزرگ‌ترین روزِ ماه ۱۲ برداشته می‌شود.
+ */
+export function persianYearEnd(year, timeZone = 'Asia/Tehran') {
+  // پایان سال شمسی Y در اسفند، یعنی مارس سال میلادی Y+۶۲۲ می‌افتد؛ نوروزِ
+  // خودِ Y در Y+۶۲۱ است. اشتباه‌گرفتن این دو، هر سال را ۲۹ روزه نشان می‌داد.
+  const gregorian = Number(year) + 622;
+  let lastDay = 29;
+  for (let day = 15; day <= 25; day += 1) {
+    const token = persianDateToken(Date.UTC(gregorian, 2, day, 9), timeZone);
+    const [tokenYear, month, dayOfMonth] = token.split('/');
+    if (Number(tokenYear) === Number(year) && month === '12') lastDay = Math.max(lastDay, Number(dayOfMonth));
+  }
+  return `${year}/12/${String(lastDay).padStart(2, '0')}`;
+}
+
+/**
+ * وقتی بازه‌ای ثبت نشده، سالِ خود سندها را پیشنهاد می‌دهد.
+ *
+ * پرسیدن «سال مالی باز پارسیان چیست؟» بدون پیشنهاد، کاربر را با یک فیلد خالی
+ * تنها می‌گذارد — درحالی‌که تاریخ سندها همین‌جاست و در بیشتر پرونده‌ها بازه
+ * دقیقاً همان سال شمسی است.
+ */
+export function suggestFiscalYearRange(documentDates = [], timeZone = 'Asia/Tehran') {
+  const years = [...new Set(documentDates.map((item) => String(item || '').slice(0, 4)).filter((item) => /^\d{4}$/.test(item)))].sort();
+  if (!years.length) return null;
+  // چند سال در یک بسته یعنی بازه را نمی‌شود حدس زد؛ آن‌وقت پیشنهاد ندادن
+  // صادقانه‌تر از پیشنهاد غلط است.
+  if (years.length > 1) return null;
+  const [year] = years;
+  return { start: `${year}/01/01`, end: persianYearEnd(year, timeZone), year };
+}
+
 export function accountingTransferReadiness({ packageData = {}, journalRows = [], settings = {}, mappings = [], chart = {}, workflow = {} } = {}) {
   const target = accountingTransferTarget(settings.targetSystem);
   const checks = [];
@@ -136,6 +172,11 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
       severity: 'blocker',
       fiscalYearStart, fiscalYearEnd,
       outsideDocuments: outsideFiscalYear.slice(0, 40),
+      // بازهٔ پیشنهادی تا رابط بتواند به‌جای یک فیلد خالی، یک دکمه بدهد.
+      suggestedFiscalYear: suggestFiscalYearRange(
+        documents.map((item) => item.date),
+        packageData.scope?.timeZone || 'Asia/Tehran',
+      ),
     });
   }
 

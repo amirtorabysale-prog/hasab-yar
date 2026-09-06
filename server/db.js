@@ -1750,13 +1750,17 @@ export function accountingTransferOverview(month = '', targetSystem = 'generic-c
 
 export function saveAccountingTransferSettings(values = {}) {
   const targetSystem = normalizeAccountingTransferTarget(values.targetSystem);
-  const templateName = String(values.templateName || '').trim().slice(0, 160);
-  const templateVerified = Boolean(values.templateVerified);
-  const note = String(values.note || '').trim().slice(0, 800);
+  const current = accountingTransferSettings(targetSystem);
+  // این سه فیلد ادغام نمی‌شدند و در نبودشان خالی می‌شدند، درحالی‌که بقیهٔ
+  // فیلدها ادغام می‌شوند. پنل چیدمان هنگام ذخیرهٔ سال مالی این‌ها را نمی‌فرستد،
+  // پس هر بار ثبت سال مالی، تأیید قالب را پاک می‌کرد — و کاربر هرگز نمی‌توانست
+  // هر دو دروازه را هم‌زمان سبز کند. این تنها بن‌بست واقعی مسیر خروجی بود.
+  const templateName = values.templateName == null ? String(current.templateName || '') : String(values.templateName).trim().slice(0, 160);
+  const templateVerified = values.templateVerified == null ? Boolean(current.templateVerified) : Boolean(values.templateVerified);
+  const note = values.note == null ? String(current.note || '') : String(values.note).trim().slice(0, 800);
   if (targetSystem === 'parsian-review-csv' && templateVerified && templateName.length < 3) {
     throw invalidInput('برای تأیید نگاشت پارسیان، نام یا نسخهٔ قالب کنترل‌شده را وارد کن.');
   }
-  const current = accountingTransferSettings(targetSystem);
   const fileFormat = values.fileFormat == null ? current.fileFormat : normalizeTransferFileFormat(values.fileFormat);
   const amountUnit = values.amountUnit == null ? current.amountUnit : normalizeAmountUnit(values.amountUnit);
   const latinDate = (value) => String(value || '').trim().replace(/[۰-۹٠-٩]/g, (digit) => ({

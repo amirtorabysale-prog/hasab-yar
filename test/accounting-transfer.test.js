@@ -12,6 +12,7 @@ process.env.ADMIN_USERNAME = testAdminUsername;
 process.env.ADMIN_PASSWORD = testAdminPassword;
 
 const database = await import(`../server/db.js?transfer=${process.pid}`);
+const { persianYearEnd, suggestFiscalYearRange } = await import(`../server/accountingTransfer.js?transfer=${process.pid}`);
 database.ensureAdmin();
 const owner = database.authenticateUser(testAdminUsername, testAdminPassword);
 let secondWorkspace;
@@ -179,4 +180,61 @@ test.after(() => {
     const tenantPath = resolve(dirname(databasePath), 'workspaces', `${workspaceId}.sqlite`);
     for (const suffix of ['', '-shm', '-wal']) rmSync(`${tenantPath}${suffix}`, { force: true });
   }
+});
+
+test('پایان سال شمسی از تقویم واقعی می‌آید، نه از حدس', () => {
+  // سال‌های کبیسه ۳۰ اسفند دارند. اگر سال میلادیِ متناظر اشتباه گرفته شود،
+  // همهٔ سال‌ها ۲۹ روزه به نظر می‌رسند و سند ۳۰ اسفند بیرون از بازه می‌افتد.
+  assert.equal(persianYearEnd('1403'), '1403/12/30');
+  assert.equal(persianYearEnd('1399'), '1399/12/30');
+  assert.equal(persianYearEnd('1404'), '1404/12/29');
+  assert.equal(persianYearEnd('1405'), '1405/12/29');
+});
+
+test('بازهٔ سال مالی از تاریخ خود سندها پیشنهاد می‌شود', () => {
+  assert.deepEqual(suggestFiscalYearRange(['1405/06/02', '1405/06/31', '1405/01/01']), {
+    start: '1405/01/01', end: '1405/12/29', year: '1405',
+  });
+});
+
+test('بستهٔ چندساله پیشنهاد نمی‌گیرد، چون حدسش غلط از نگفتن بدتر است', () => {
+  assert.equal(suggestFiscalYearRange(['1404/12/29', '1405/01/01']), null);
+  assert.equal(suggestFiscalYearRange([]), null);
+  assert.equal(suggestFiscalYearRange(['', null]), null);
+});
+
+// بن‌بست واقعی مسیر خروجی: پنل چیدمان هنگام ذخیرهٔ سال مالی، نام و تأیید قالب
+// را نمی‌فرستد و سرور آن‌ها را خالی می‌کرد. پس هر بار ثبت سال مالی، تأیید قالب
+// پاک می‌شد و کاربر هرگز نمی‌توانست هر دو دروازه را هم‌زمان سبز کند.
+test('ذخیرهٔ سال مالی، تأیید قالب را پاک نمی‌کند', () => {
+  inPrimary(() => {
+    database.saveAccountingTransferSettings({
+      targetSystem: 'parsian-review-csv',
+      templateName: 'خروجی نمونه پارسیان',
+      templateVerified: true,
+    });
+    assert.equal(database.accountingTransferOverview('', 'parsian-review-csv').settings.templateVerified, true);
+
+    // همان چیزی که پنل چیدمان می‌فرستد — بدون فیلدهای قالب.
+    database.saveAccountingTransferSettings({
+      targetSystem: 'parsian-review-csv',
+      fiscalYearStart: '1405/01/01',
+      fiscalYearEnd: '1405/12/29',
+    });
+
+    const after = database.accountingTransferOverview('', 'parsian-review-csv').settings;
+    assert.equal(after.templateVerified, true, 'تأیید قالب نباید پاک شود');
+    assert.equal(after.templateName, 'خروجی نمونه پارسیان');
+    assert.equal(after.fiscalYearStart, '1405/01/01');
+    assert.equal(after.fiscalYearEnd, '1405/12/29');
+  });
+});
+
+test('فرستادن صریح مقدار خالی همچنان پاک می‌کند', () => {
+  inPrimary(() => {
+    database.saveAccountingTransferSettings({ targetSystem: 'parsian-review-csv', templateVerified: false, templateName: '' });
+    const after = database.accountingTransferOverview('', 'parsian-review-csv').settings;
+    assert.equal(after.templateVerified, false);
+    assert.equal(after.templateName, '');
+  });
 });

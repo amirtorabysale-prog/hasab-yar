@@ -2360,6 +2360,18 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   const fiscalCheck = failed.find((item) => item.id === 'parsian-fiscal-year');
   const missing = readiness?.missingMappings || [];
 
+  // بقیهٔ تنظیمات عمداً فرستاده نمی‌شوند؛ سرور فیلدهای نیامده را نگه می‌دارد،
+  // پس ثبت سال مالی تأیید قالب را پاک نمی‌کند.
+  const applySuggestedFiscalYear = async (suggestion) => {
+    setBusy(true);
+    try {
+      await api.saveAccountingTransferSettings({ fiscalYearStart: suggestion.start, fiscalYearEnd: suggestion.end });
+      await refresh();
+      notify(`سال مالی ${toPersianDigits(suggestion.year)} ثبت شد.`);
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
   const fillFromChart = async () => {
     setBusy(true);
     try {
@@ -2396,8 +2408,16 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
       <p className="mt-2 text-[11px] text-muted">بازهٔ صحیح را در بخش «تنظیم مقصد» ثبت کن یا اسناد را به دورهٔ درست منتقل کن. تا آن زمان فایل ساخته و تحویل نمی‌شود.</p>
     </div> : <div className="rounded-lg border border-accent/40 bg-warn-bg p-3 text-xs leading-6">
       <p className="font-bold text-accent">بازهٔ سال مالی باز پارسیان هنوز ثبت نشده است</p>
-      <p className="mt-1 text-muted">فایل انتقال بدون این بازه ساخته نمی‌شود، چون پارسیان سند خارج از سال مالی باز را نمی‌پذیرد. سندهای این بسته ایرادی ندارند.</p>
-      <p className="mt-2 text-[11px] text-muted">بخش «تنظیم مقصد — یک بار انجام می‌شود» را در بالای همین صفحه باز کن و تاریخ شروع و پایان را به شکل <span dir="ltr" className="numbers">1405/01/01</span> وارد کن.</p>
+      <p className="mt-1 text-muted">سندهای این بسته ایرادی ندارند. پارسیان سند خارج از سال مالی باز را نمی‌پذیرد، پس حساب‌یار پیش از ساختن فایل باید بداند آن بازه چیست.</p>
+      {fiscalCheck.suggestedFiscalYear ? <>
+        <p className="mt-2 text-muted">همهٔ سندهای این بسته در سال <b className="text-ink numbers">{toPersianDigits(fiscalCheck.suggestedFiscalYear.year)}</b> هستند.</p>
+        <button
+          disabled={busy}
+          onClick={() => applySuggestedFiscalYear(fiscalCheck.suggestedFiscalYear)}
+          className="tap mt-2 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+        >ثبت سال مالی <span dir="ltr" className="numbers">{fiscalCheck.suggestedFiscalYear.start} تا {fiscalCheck.suggestedFiscalYear.end}</span></button>
+        <p className="mt-2 text-[11px] text-muted">اگر سال مالی باز در پارسیان شما بازهٔ دیگری است، آن را در بخش «تنظیم مقصد» دستی وارد کن.</p>
+      </> : <p className="mt-2 text-[11px] text-muted">سندهای این بسته در بیش از یک سال شمسی‌اند، پس بازه حدس زده نمی‌شود. آن را در بخش «تنظیم مقصد — یک بار انجام می‌شود» بالای همین صفحه وارد کن.</p>}
     </div>)}
     {chartCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
       <p className="font-bold text-expense">این حساب‌ها هنوز معین مقصد ندارند</p>
