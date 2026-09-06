@@ -2265,7 +2265,7 @@ function CollaborationPage({ access, notify, navigate }) {
 
       {/* گام ۱ و ۲ — تنظیمی که یک بار انجام می‌شود و بعد جمع می‌ماند. */}
       <TransferSetupSection readiness={transfer?.readiness}>
-        <TransferLayoutPanel target={transferTarget} settings={transfer?.settings} notify={notify} refresh={load} />
+        <TransferLayoutPanel target={transferTarget} settings={transfer?.settings} readiness={transfer?.readiness} notify={notify} refresh={load} />
       </TransferSetupSection>
 
       {/* گام ۳ و ۴ — کار هر ماه: کنترل داده، ساخت بسته، ثبت آزمون ورود. */}
@@ -2466,7 +2466,7 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   </div>;
 }
 
-function TransferLayoutPanel({ target, settings, notify, refresh }) {
+function TransferLayoutPanel({ target, settings, readiness, notify, refresh }) {
   const [catalogue, setCatalogue] = useState(null);
   const [columns, setColumns] = useState([]);
   const [fileFormat, setFileFormat] = useState('csv');
@@ -2483,9 +2483,13 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
     setColumns(settings?.columns || []);
     setFileFormat(settings?.fileFormat || 'csv');
     setAmountUnit(settings?.amountUnit || 'toman');
-    setFiscalYearStart(settings?.fiscalYearStart || '');
-    setFiscalYearEnd(settings?.fiscalYearEnd || '');
-  }, [settings]);
+    // فیلد خالی، کاربر را با یک سؤال تنها می‌گذارد. بازهٔ سالِ خود سندها از پیش
+    // نوشته می‌شود تا در حالت رایج فقط ذخیره لازم باشد — دیده می‌شود و قابل
+    // تغییر است، پس حدسِ خاموش نیست.
+    const suggested = (readiness?.checks || []).find((item) => item.id === 'parsian-fiscal-year')?.suggestedFiscalYear;
+    setFiscalYearStart(settings?.fiscalYearStart || suggested?.start || '');
+    setFiscalYearEnd(settings?.fiscalYearEnd || suggested?.end || '');
+  }, [settings, readiness]);
 
   const move = (index, step) => {
     const next = [...columns];
@@ -2554,9 +2558,23 @@ function TransferLayoutPanel({ target, settings, notify, refresh }) {
           setBusy(false);
         }}
       />
+      <div className="mt-3 rounded-lg bg-surface p-3 text-[12px] leading-6">
+        <b className="text-[13px]">سال مالی چیست و چرا پرسیده می‌شود؟</b>
+        <p className="mt-1 text-muted">
+          در پارسیان هر شرکت یک سال مالی دارد؛ مثل پوشه‌ای که سندهای آن سال داخلش می‌روند. معمولاً
+          <b className="numbers"> ۱ فروردین تا ۲۹ اسفند</b>، ولی بعضی شرکت‌ها بازهٔ دیگری دارند (مثلاً ۱ مهر تا ۳۱ شهریور).
+        </p>
+        <p className="mt-1 text-muted">
+          پارسیان سندی را که تاریخش بیرون از این پوشه باشد نمی‌پذیرد. حساب‌یار نمی‌داند پوشهٔ باز شرکت تو
+          کدام است، پس همین‌جا می‌پرسد تا اگر ناسازگاری هست پیش از ساخت فایل بفهمی، نه بعد از رد شدنش.
+        </p>
+        <p className="mt-1 text-muted">
+          مقدار زیر از تاریخ سندهای همین بسته پر شده است. اگر شرکتت سال مالی خاصی ندارد همین درست است؛
+          اگر مطمئن نیستی، از حسابدارت بپرس سال مالی باز در پارسیان چه بازه‌ای است.
+        </p>
+      </div>
       <p className="mt-2 text-[11px] leading-5 text-muted">
-        تاریخ سندها باید داخل سال مالی بازِ پارسیان مقصد باشد، وگرنه ورود انجام نمی‌شود. ورود دوبارهٔ یک
-        فایل هم سند تکراری می‌سازد، چون پارسیان تکراری را تشخیص نمی‌دهد.
+        ورود دوبارهٔ یک فایل سند تکراری می‌سازد، چون پارسیان تکراری را تشخیص نمی‌دهد.
       </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <label className="text-[12px] font-bold">شروع سال مالی باز
