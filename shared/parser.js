@@ -1,5 +1,7 @@
 import { withReviewAssessment } from './review.js';
+import { normalizePersian } from './normalize.js';
 import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
+import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -33,20 +35,7 @@ export const FINANCIAL_SPEECH_PHRASES = [
   'حقوق', 'اجاره', 'خرید', 'پرداخت', 'دریافت', 'مواد', 'کالا', 'قبض', 'کرایه', 'اسنپ',
 ];
 
-export function normalizePersian(input) {
-  return String(input || '')
-    .replace(/[۰-۹٠-٩]/g, (digit) => DIGITS[digit])
-    .replace(/ي/g, 'ی').replace(/ك/g, 'ک')
-    // کسرهٔ اضافه به شکل «هٔ» و «هٕ» در متن تایپی فارسی همه‌جا هست و بدون این
-    // حذف، «اجارهٔ انبار» هرگز با قاعدهٔ «اجاره انبار» تطبیق نمی‌خورد.
-    .replace(/[ٕٔ]/g, '')
-    // «آ» عمداً دست‌نخورده می‌ماند: INCOME_WORDS و EXPENSE_WORDS نرمال‌نشده‌اند و
-    // یکسان‌سازی الف، «درآمد» را از تشخیص جهت پول می‌انداخت.
-    .replace(/ة/g, 'ه')
-    .replace(/[‌ـ]/g, ' ')
-    .replace(/٬/g, ',').replace(/٫/g, '.')
-    .replace(/\s+/g, ' ').trim();
-}
+export { normalizePersian };
 
 // موتور تشخیص گفتار عدد و مقیاس را گاهی سرِ هم می‌نویسد («دوهزار»، «دومیلیون»)
 // یا «و» را به عدد می‌چسباند («سیصدو»). بدون این ترمیم، هیچ مبلغی پیدا نمی‌شد.
@@ -131,7 +120,10 @@ function tokenize(text) {
 
 function isNumericWord(value) { return /^\d/.test(value) || NUMBER_WORDS.has(value); }
 
-const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن'];
+// نام ماه پس از عدد یعنی تاریخ، نه مبلغ. بدون این، «۲۵ مرداد قبض دادم» یک ثبت
+// بیست‌وپنج تومانی می‌ساخت — همان خطای بی‌صدایی که در بخش مبلغ بسته شد.
+const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن',
+  ...PERSIAN_MONTHS.map(([name]) => name)];
 const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
 
 // عبارت‌های دوکلمه‌ای که هیچ خوانش مبلغی ندارند. این‌ها از معافیتِ واژهٔ مقیاس
@@ -267,8 +259,11 @@ function classify(context, learnings = []) {
 
 export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
   const { text, spans } = extractAmounts(input);
-  const relativeDay = relativeDayOffset(text);
-  const occurredAt = relativeDay ? new Date(now.getTime() + relativeDay.days * 86_400_000).toISOString() : null;
+  // تاریخ از متن اصلی خوانده می‌شود، نه از متنِ مبلغ‌زدوده، تا واژه‌های تاریخ
+  // دست‌نخورده بمانند. یک گفته یک مرجع زمانی دارد، پس همهٔ ثبت‌های آن گفته
+  // همان تاریخ را می‌گیرند.
+  const mentionedDate = extractDateMention(input, { now, preferPast: true });
+  const occurredAt = mentionedDate?.iso || null;
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word))];
   const transactions = spans.map((span, index) => {
     const previousEnd = spans[index - 1]?.end ?? 0;
@@ -301,7 +296,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       confidence: classified.confidence,
       needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous,
       source,
-      ...(occurredAt ? { occurredAt, occurredAtLabel: relativeDay.label } : {}),
+      ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),
       confidenceDetails: {
         amount: {
           score: span.bareScale ? 0.3 : colloquialThousands ? 0.66 : source === 'voice' ? 0.93 : 0.98,

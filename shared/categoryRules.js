@@ -1,4 +1,4 @@
-import { normalizePersian } from './parser.js';
+import { normalizePersian } from './normalize.js';
 
 /**
  * دسته‌بندی هزینه و درآمد برای دفتر حسابداری.

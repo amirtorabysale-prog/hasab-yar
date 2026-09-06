@@ -107,11 +107,16 @@ test('تاریخ نسبی از گفتار استخراج می‌شود', () => {
   assert.equal(relativeDayOffset('دو میلیون فروختم'), null);
 });
 
+// تاریخ عمداً روی ظهر تهران می‌نشیند، نه ساعتِ لحظهٔ ثبت: نگه‌داشتن ساعت،
+// سندِ نزدیک نیمه‌شب را با تبدیل منطقهٔ زمانی به روز قبل یا بعد پرت می‌کرد.
+// پس آنچه باید تضمین شود روزِ شمسی است، نه لحظهٔ دقیق.
+const persianDay = (iso) => new Intl.DateTimeFormat('en-CA-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+
 test('تاریخ نسبی روی خود تراکنش می‌نشیند', () => {
   const now = new Date('2026-09-05T10:00:00.000Z');
   const result = parseFinancialText('دیروز دو میلیون فروختم', { source: 'voice', now });
   const transaction = result.transactions[0];
-  assert.equal(transaction.occurredAt, '2026-09-04T10:00:00.000Z');
+  assert.equal(persianDay(transaction.occurredAt), persianDay('2026-09-04T10:00:00.000Z'));
   assert.equal(transaction.occurredAtLabel, 'دیروز');
 });
 
@@ -124,7 +129,8 @@ test('همهٔ ثبت‌های یک گفته یک مرجع زمانی می‌گ�
   const now = new Date('2026-09-05T10:00:00.000Z');
   const result = parseFinancialText('دیروز دو میلیون فروختم و پونصد هزار قبض برق دادم', { source: 'voice', now });
   assert.equal(result.transactions.length, 2);
-  assert.ok(result.transactions.every((item) => item.occurredAt === '2026-09-04T10:00:00.000Z'));
+  const expected = persianDay('2026-09-04T10:00:00.000Z');
+  assert.ok(result.transactions.every((item) => persianDay(item.occurredAt) === expected));
 });
 
 // جهت پول را فعل تعیین می‌کند، نه اسمِ کنارش. «از مشتری ده میلیون گرفتم بابت
