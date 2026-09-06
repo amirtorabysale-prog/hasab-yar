@@ -1,4 +1,5 @@
 import { withReviewAssessment } from './review.js';
+import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -25,17 +26,6 @@ const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'حقو
 // هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
 const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'واریز', 'واریزی', 'دریافت']);
 const EXPENSE_VERBS = new Set(['دادم', 'خریدم', 'برداشت']);
-const CATEGORY_RULES = [
-  ['فروش', ['فروش', 'فروختم']],
-  ['خدمات', ['خدمات', 'سرویس']],
-  ['پروژه و دستمزد', ['پروژه', 'دستمزد گرفتم']],
-  ['حقوق و دستمزد', ['حقوق', 'دستمزد دادم']],
-  ['اجاره', ['اجاره']],
-  ['مواد و کالا', ['مواد', 'کالا', 'موجودی', 'خرید جنس']],
-  ['حمل‌ونقل', ['اسنپ', 'تاکسی', 'کرایه', 'پیک']],
-  ['خوراک', ['غذا', 'خوراک', 'ناهار', 'شام', 'اسنپ فود']],
-  ['قبوض', ['قبض', 'آب', 'برق', 'گاز', 'اینترنت']],
-];
 const LEARNING_STOP_WORDS = new Set(['امروز', 'دیروز', 'تومان', 'تومن', 'تومنی', 'ریال', 'بابت', 'برای', 'از', 'به', 'را', 'رو', 'کردم', 'دادم', 'گرفتم', 'داشتم', 'خریدم', 'فروختم', 'پرداخت', 'هزینه', 'درآمد', 'فروش', 'حقوق', 'و']);
 
 export const FINANCIAL_SPEECH_PHRASES = [
@@ -47,6 +37,12 @@ export function normalizePersian(input) {
   return String(input || '')
     .replace(/[۰-۹٠-٩]/g, (digit) => DIGITS[digit])
     .replace(/ي/g, 'ی').replace(/ك/g, 'ک')
+    // کسرهٔ اضافه به شکل «هٔ» و «هٕ» در متن تایپی فارسی همه‌جا هست و بدون این
+    // حذف، «اجارهٔ انبار» هرگز با قاعدهٔ «اجاره انبار» تطبیق نمی‌خورد.
+    .replace(/[ٕٔ]/g, '')
+    // «آ» عمداً دست‌نخورده می‌ماند: INCOME_WORDS و EXPENSE_WORDS نرمال‌نشده‌اند و
+    // یکسان‌سازی الف، «درآمد» را از تشخیص جهت پول می‌انداخت.
+    .replace(/ة/g, 'ه')
     .replace(/[‌ـ]/g, ' ')
     .replace(/٬/g, ',').replace(/٫/g, '.')
     .replace(/\s+/g, ' ').trim();
@@ -239,37 +235,41 @@ function classify(context, learnings = []) {
     : incomeScore === expenseScore
       ? 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.'
       : `متن هر دو نشانه را دارد؛ نوع از فعل ${type === 'income' ? 'دریافت' : 'پرداخت'} برداشت شد و باید کنترل شود.`;
+  // نگاشت تأییدشدهٔ کاربر از هر قاعده‌ای قوی‌تر است: او یک‌بار همین را اصلاح
+  // کرده و نباید دوباره از او پرسیده شود.
   let category = learned?.category;
-  let categoryConfidence = 0.56;
-  let categoryReason = 'دستهٔ مشخصی در متن پیدا نشد؛ دستهٔ عمومی پیشنهاد شد.';
-  if (learned) {
-    confidence = Math.max(confidence, 0.96);
-    categoryConfidence = 0.98;
-    categoryReason = `بر اساس نگاشت تأییدشدهٔ «${learned.keyword}» انتخاب شد.`;
-  }
+  let categoryConfidence = 0.98;
+  let categoryReason = learned ? `بر اساس نگاشت تأییدشدهٔ «${learned.keyword}» انتخاب شد.` : '';
+  let categoryAmbiguous = false;
+  let categoryRunnerUp = null;
+  if (learned) confidence = Math.max(confidence, 0.96);
   if (!category) {
-    const categoryRule = CATEGORY_RULES.find(([, words]) => containsAny(normalizedContext, words));
-    category = categoryRule?.[0];
-    if (categoryRule) {
-      categoryConfidence = 0.92;
-      categoryReason = `واژهٔ مرتبط با «${categoryRule[0]}» در متن پیدا شد.`;
-    }
+    const suggestion = classifyCategory(normalizedContext, type);
+    category = suggestion.category;
+    categoryConfidence = suggestion.confidence;
+    categoryReason = suggestion.reason;
+    categoryAmbiguous = suggestion.ambiguous;
+    categoryRunnerUp = suggestion.runnerUp;
   }
-  if (!category) category = type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها';
-  const incomeCategories = new Set(['فروش', 'خدمات', 'پروژه و دستمزد', 'سایر درآمدها']);
-  if (incomeCategories.has(category) && type !== 'income') {
+  // یک دستهٔ درآمدی روی تراکنشی که هزینه تشخیص داده شده یعنی جهت پول اشتباه
+  // خوانده شده؛ دسته مرجع است چون از واژهٔ صریح‌تری آمده.
+  const categoryType = CATEGORY_DEFINITIONS.find((item) => item.name === category)?.type;
+  if (categoryType === 'income' && type !== 'income') {
     type = 'income';
     typeReason = `نوع با دستهٔ «${category}» هماهنگ شد.`;
     confidence = Math.max(confidence, categoryConfidence);
   }
-  return { type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason };
+  return {
+    type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason,
+    chartCode: chartCodeForCategory(category), categoryAmbiguous, categoryRunnerUp,
+  };
 }
 
 export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
   const { text, spans } = extractAmounts(input);
   const relativeDay = relativeDayOffset(text);
   const occurredAt = relativeDay ? new Date(now.getTime() + relativeDay.days * 86_400_000).toISOString() : null;
-  const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_RULES.flatMap(([, words]) => words)];
+  const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word))];
   const transactions = spans.map((span, index) => {
     const previousEnd = spans[index - 1]?.end ?? 0;
     const nextStart = spans[index + 1]?.start ?? text.length;
@@ -295,8 +295,12 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
-      amount, type: classified.type, category: classified.category, rawText: context || text,
-      confidence: classified.confidence, needsReview: unusual || ambiguous || colloquialThousands || span.bareScale, source,
+      amount, type: classified.type, category: classified.category, chartCode: classified.chartCode, rawText: context || text,
+      // دستهٔ مبهم یعنی دو دسته به یک اندازه موجه بودند؛ ثبت چنین چیزی بدون
+      // نگاه کاربر همان خطای بی‌صداست که در بخش مبلغ بستیم.
+      confidence: classified.confidence,
+      needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous,
+      source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: relativeDay.label } : {}),
       confidenceDetails: {
         amount: {
