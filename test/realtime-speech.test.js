@@ -20,7 +20,8 @@ class FakeChannel extends EventTarget {
 class FakePeer extends EventTarget {
   constructor() { super(); this.iceGatheringState = 'complete'; this.channel = new FakeChannel(); }
   createDataChannel() { return this.channel; }
-  addTrack(track) { this.track = track; }
+  addTrack(track) { this.track = track; this.direction = 'sendrecv'; }
+  addTransceiver(track, init) { this.track = track; this.direction = init?.direction; }
   async createOffer() { return { type: 'offer', sdp: 'v=0\r\no=browser\r\n' }; }
   async setLocalDescription(offer) { this.localDescription = offer; }
   async setRemoteDescription(answer) { this.remoteDescription = answer; }
@@ -70,4 +71,26 @@ test('temporarily disables realtime in the browser after quota failure', () => {
     global.window = originalWindow;
     Object.defineProperty(global, 'navigator', { configurable: true, value: originalNavigator });
   }
+});
+
+// WHIP یک پروتکل ingestion است. `addTrack` تراسیور را sendrecv می‌سازد و برای
+// نشست transcription که هیچ صدایی برنمی‌گرداند، مسیر دریافتِ بی‌مصرف اعلام
+// می‌کند — یکی از دو شرطی که offer را نامعتبر می‌کرد.
+test('offer فقط ارسالی است، چون نشست transcription صدایی برنمی‌گرداند', async () => {
+  const originalWindow = global.window;
+  global.window = { RTCPeerConnection: FakePeer, setTimeout, clearTimeout };
+  try {
+    const track = { kind: 'audio' };
+    const stream = { getAudioTracks: () => [track] };
+    let peer;
+    class Capturing extends FakePeer { constructor() { super(); peer = this; } }
+    global.window.RTCPeerConnection = Capturing;
+    const transcriber = createRealtimeTranscriber({
+      stream, createSession: async () => 'v=0\r\no=openai\r\n', onUpdate: () => {}, onError: () => {},
+    });
+    await transcriber.ready;
+    assert.equal(peer.direction, 'sendonly');
+    assert.equal(peer.track, track);
+    transcriber.abort();
+  } finally { global.window = originalWindow; }
 });

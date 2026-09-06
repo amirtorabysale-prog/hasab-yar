@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRealtimeTranscriptionSession, createRealtimeTranscriptionCall } from '../server/openaiRealtime.js';
+import { buildRealtimeTranscriptionSession, createRealtimeTranscriptionCall, normalizeSdpOffer } from '../server/openaiRealtime.js';
 import { resetVoiceProviderState } from '../server/voiceProviderState.js';
 
 test('builds a Persian low-latency financial transcription session', () => {
@@ -92,4 +92,40 @@ test('honors Retry-After for a temporary realtime rate limit', async () => {
     global.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = originalKey;
   }
+});
+
+// production خطای `invalid_offer` می‌داد با پیام «offer باید WHIP-compliant
+// باشد». علت `trim()` روی SDP بود که CRLF پایانی را می‌برد؛ کلید و مدل هر دو
+// سالم بودند و تایپ زنده صرفاً هرگز وصل نمی‌شد.
+test('CRLF پایانی SDP دست‌نخورده به OpenAI می‌رسد', async () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-openai-key';
+  let sentSdp = null;
+  global.fetch = async (_url, options) => {
+    sentSdp = options.body.get('sdp');
+    return new Response('v=0\r\n', { status: 200 });
+  };
+  try {
+    const browserOffer = 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendonly\r\n';
+    await createRealtimeTranscriptionCall({ sdp: browserOffer });
+    assert.equal(sentSdp, browserOffer, 'offer باید بیت‌به‌بیت همان چیزی باشد که مرورگر ساخت');
+    assert.ok(sentSdp.endsWith('\r\n'), 'آخرین خط SDP باید CRLF داشته باشد');
+  } finally {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = originalKey;
+  }
+});
+
+test('offer بدون پایان‌خط، CRLF می‌گیرد به‌جای اینکه رد شود', () => {
+  assert.equal(normalizeSdpOffer('v=0\r\na=sendonly'), 'v=0\r\na=sendonly\r\n');
+  assert.equal(normalizeSdpOffer('v=0\r\na=sendonly\r\n'), 'v=0\r\na=sendonly\r\n');
+});
+
+test('ورودی‌ای که SDP نیست رد می‌شود', () => {
+  assert.equal(normalizeSdpOffer(''), null);
+  assert.equal(normalizeSdpOffer('{"sdp":"v=0"}'), null);
+  assert.equal(normalizeSdpOffer(undefined), null);
+  assert.equal(normalizeSdpOffer({}), null);
+  assert.equal(normalizeSdpOffer(`v=0\r\n${'x'.repeat(130_000)}`), null);
 });

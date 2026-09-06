@@ -15,7 +15,7 @@ import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits }
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
 import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
-import { describeVoiceAvailability, pointerReleaseAction, voicePathLabel } from './lib/voiceStatus.js';
+import { describeVoiceAvailability, pointerReleaseAction, realtimeWorthTrying, voicePathLabel } from './lib/voiceStatus.js';
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from './lib/todayExperience.js';
 import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
@@ -66,6 +66,9 @@ export default function App() {
   const [recordState, setRecordState] = useState('idle');
   const [voicePath, setVoicePath] = useState('ready');
   const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
+  // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
+  // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
+  const voiceSystemStatusRef = useRef(null);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [liveVoiceNote, setLiveVoiceNote] = useState('');
   const [livePreview, setLivePreview] = useState([]);
@@ -107,6 +110,7 @@ export default function App() {
   const refreshVoiceSystemStatus = useCallback(async () => {
     try {
       const status = await api.voiceStatus();
+      voiceSystemStatusRef.current = status;
       setVoiceSystemStatus(status);
       return status;
     } catch { return null; }
@@ -525,7 +529,7 @@ export default function App() {
       };
       // Chrome must start listening immediately. Realtime connects in parallel and takes over only after its first delta.
       startBrowserRecognizer();
-      if (realtimeSpeechAvailable()) {
+      if (realtimeWorthTrying(voiceSystemStatusRef.current, { browserReady: realtimeSpeechAvailable() })) {
         try {
           setVoicePath('realtime-connecting');
           let realtime;

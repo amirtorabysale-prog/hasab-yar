@@ -76,7 +76,11 @@ export function createRealtimeTranscriber({ stream, createSession, onUpdate, onE
   const channel = peer.createDataChannel('oai-events');
   const track = stream?.getAudioTracks?.()[0];
   if (!track) throw Object.assign(new Error('Audio track is missing'), { code: 'VOICE_AUDIO_CAPTURE' });
-  peer.addTrack(track, stream);
+  // WHIP یک پروتکل ingestion است: فرستنده صدا می‌دهد و چیزی نمی‌گیرد.
+  // `addTrack` تراسیور را `sendrecv` می‌سازد و برای نشست transcription — که
+  // اصلاً صدایی برنمی‌گرداند — یک مسیر دریافتِ بی‌مصرف اعلام می‌کند.
+  if (typeof peer.addTransceiver === 'function') peer.addTransceiver(track, { direction: 'sendonly', streams: [stream] });
+  else peer.addTrack(track, stream);
 
   let partialTranscript = '';
   let finalTranscript = '';
