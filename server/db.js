@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
+import { financialDna } from './financialDna.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
@@ -60,6 +61,19 @@ import {
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 mkdirSync(dirname(databasePath), { recursive: true });
+
+/**
+ * خطای ورودی کاربر، نه خرابی سرور.
+ *
+ * error handler فقط وقتی پیام واقعی را به کاربر می‌دهد که خطا `status` داشته
+ * باشد؛ وگرنه ۵۰۰ برمی‌گرداند و پیام را با «خطای داخلی سرور» جایگزین می‌کند.
+ * تا امروز دهها اعتبارسنجی اینجا `Error` خالی پرتاب می‌کردند، پس پیام فارسیِ
+ * دقیقی که برایشان نوشته شده بود هرگز به کاربر نمی‌رسید و او فقط می‌دید
+ * «دوباره تلاش کن» — کاری که هرگز جواب نمی‌داد چون ایراد از ورودی خودش بود.
+ */
+export function invalidInput(message, code = 'INVALID_INPUT') {
+  return Object.assign(new Error(message), { code, status: 400 });
+}
 
 const controlDb = new DatabaseSync(databasePath);
 const workspaceContext = new AsyncLocalStorage();
@@ -663,7 +677,7 @@ export function workspaceForUser(userId, requestedId = '') {
 
 export function createWorkspace(userId, values = {}) {
   const name = String(values.name || '').trim().slice(0, 100);
-  if (name.length < 2) throw new Error('نام دفتر باید حداقل دو نویسه باشد.');
+  if (name.length < 2) throw invalidInput('نام دفتر باید حداقل دو نویسه باشد.');
   const profileType = values.profileType === 'personal' ? 'personal' : 'business';
   const id = randomUUID();
   controlDb.exec('BEGIN IMMEDIATE');
@@ -689,7 +703,7 @@ export function listWorkspaceMembers(workspaceId) {
 }
 
 function assertWorkspaceRole(role) {
-  if (!['owner', 'manager', 'accountant', 'viewer'].includes(role)) throw new Error('نقش انتخاب‌شده معتبر نیست.');
+  if (!['owner', 'manager', 'accountant', 'viewer'].includes(role)) throw invalidInput('نقش انتخاب‌شده معتبر نیست.');
   return role;
 }
 
@@ -697,7 +711,7 @@ export function addWorkspaceMember(workspaceId, values = {}) {
   const username = String(values.username || '').trim().toLowerCase().slice(0, 80);
   const displayName = String(values.displayName || '').trim().slice(0, 100);
   const role = assertWorkspaceRole(values.role || 'viewer');
-  if (!/^[a-z0-9._-]{3,80}$/i.test(username)) throw new Error('نام کاربری باید حداقل سه نویسه و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.');
+  if (!/^[a-z0-9._-]{3,80}$/i.test(username)) throw invalidInput('نام کاربری باید حداقل سه نویسه و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.');
   let user = controlDb.prepare('SELECT id,username FROM users WHERE username=?').get(username);
   const existingMembership = user && controlDb.prepare('SELECT 1 FROM workspace_members WHERE workspace_id=? AND user_id=?').get(workspaceId, user.id);
   if (!existingMembership) {
@@ -711,7 +725,7 @@ export function addWorkspaceMember(workspaceId, values = {}) {
     if (!user) {
       const password = String(values.temporaryPassword || '');
       const policy = passwordPolicy(password, username);
-      if (!policy.valid) throw new Error(policy.message);
+      if (!policy.valid) throw invalidInput(policy.message);
       const salt = randomBytes(24).toString('hex');
       user = { id: randomUUID(), username };
       controlDb.prepare(`INSERT INTO users (id,username,password_hash,password_salt,display_name,must_change_password,role)
@@ -731,7 +745,7 @@ export function updateWorkspaceMember(workspaceId, userId, role) {
   const current = controlDb.prepare('SELECT role FROM workspace_members WHERE workspace_id=? AND user_id=?').get(workspaceId, userId);
   if (!current) return null;
   const owners = controlDb.prepare("SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=? AND role='owner'").get(workspaceId).count;
-  if (current.role === 'owner' && nextRole !== 'owner' && owners <= 1) throw new Error('دفتر باید حداقل یک مالک داشته باشد.');
+  if (current.role === 'owner' && nextRole !== 'owner' && owners <= 1) throw invalidInput('دفتر باید حداقل یک مالک داشته باشد.');
   controlDb.prepare('UPDATE workspace_members SET role=?,updated_at=CURRENT_TIMESTAMP WHERE workspace_id=? AND user_id=?').run(nextRole, workspaceId, userId);
   return listWorkspaceMembers(workspaceId).find((item) => item.id === userId);
 }
@@ -740,7 +754,7 @@ export function removeWorkspaceMember(workspaceId, userId) {
   const current = controlDb.prepare('SELECT role FROM workspace_members WHERE workspace_id=? AND user_id=?').get(workspaceId, userId);
   if (!current) return false;
   const owners = controlDb.prepare("SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=? AND role='owner'").get(workspaceId).count;
-  if (current.role === 'owner' && owners <= 1) throw new Error('آخرین مالک دفتر قابل حذف نیست.');
+  if (current.role === 'owner' && owners <= 1) throw invalidInput('آخرین مالک دفتر قابل حذف نیست.');
   return controlDb.prepare('DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?').run(workspaceId, userId).changes > 0;
 }
 
@@ -761,7 +775,7 @@ function workspacePlanRecord(workspaceId) {
 export function updateWorkspaceCommercialPlan(workspaceId, values = {}, updatedBy = '') {
   const planId = normalizePlanId(values.planId);
   const budgetUsd = Number(values.providerBudgetUsd);
-  if (!Number.isFinite(budgetUsd) || budgetUsd < 0 || budgetUsd > 1_000_000) throw new Error('سقف بودجهٔ provider معتبر نیست.');
+  if (!Number.isFinite(budgetUsd) || budgetUsd < 0 || budgetUsd > 1_000_000) throw invalidInput('سقف بودجهٔ provider معتبر نیست.');
   const providerBudgetMicrousd = Math.round(budgetUsd * 1_000_000);
   controlDb.prepare(`INSERT INTO workspace_plans (workspace_id,plan_id,provider_budget_microusd,updated_by)
     VALUES (?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET plan_id=excluded.plan_id,
@@ -816,7 +830,7 @@ function quotaItemForCapability(status, capability) {
 }
 
 export function beginProviderUsage(capability, provider = 'unknown') {
-  if (!['server_voice', 'realtime_session', 'receipt_ocr'].includes(capability)) throw new Error('قابلیت provider معتبر نیست.');
+  if (!['server_voice', 'realtime_session', 'receipt_ocr'].includes(capability)) throw invalidInput('قابلیت provider معتبر نیست.');
   const status = commercialStatus();
   const quota = quotaItemForCapability(status, capability);
   if (quota?.exhausted) throw quotaError(quota);
@@ -878,7 +892,7 @@ export function saveSettings(values) {
     }
     if (values.openingBalance != null) {
       const opening = Math.round(Number(values.openingBalance));
-      if (!Number.isSafeInteger(opening)) throw new Error('ماندهٔ ابتدای دوره معتبر نیست.');
+      if (!Number.isSafeInteger(opening)) throw invalidInput('ماندهٔ ابتدای دوره معتبر نیست.');
       db.prepare("UPDATE accounts SET opening_balance=?,updated_at=CURRENT_TIMESTAMP WHERE id='cash'").run(opening);
     }
     db.exec('COMMIT');
@@ -900,8 +914,8 @@ export function saveAccount(values = {}) {
   const name = String(values.name || '').trim().slice(0, 100);
   const kind = ['cash', 'bank', 'wallet', 'other'].includes(values.kind) ? values.kind : 'other';
   const openingBalance = Math.round(Number(values.openingBalance) || 0);
-  if (!name) throw new Error('نام حساب را وارد کن.');
-  if (!Number.isSafeInteger(openingBalance)) throw new Error('ماندهٔ ابتدای دوره معتبر نیست.');
+  if (!name) throw invalidInput('نام حساب را وارد کن.');
+  if (!Number.isSafeInteger(openingBalance)) throw invalidInput('ماندهٔ ابتدای دوره معتبر نیست.');
   const current = db.prepare('SELECT created_at AS createdAt,opening_balance AS openingBalance FROM accounts WHERE id=?').get(id);
   if (current && Number(current.openingBalance) !== openingBalance) assertAccountingPeriodOpen(db, periodForDate(current.createdAt, currentTimeZone()));
   if (!current && openingBalance !== 0) assertAccountingPeriodOpen(db, periodForDate(new Date(), currentTimeZone()));
@@ -992,7 +1006,7 @@ function resolveAccountId(item = {}) {
   const requested = String(item.accountId || item.account || 'cash').trim().slice(0, 80);
   const account = db.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(requested)
     || db.prepare('SELECT id FROM accounts WHERE name=? AND active=1').get(requested);
-  if (!account) throw new Error('حساب مالی انتخاب‌شده معتبر یا فعال نیست.');
+  if (!account) throw invalidInput('حساب مالی انتخاب‌شده معتبر یا فعال نیست.');
   return account.id;
 }
 
@@ -1013,8 +1027,8 @@ function insertTransactionRows({ transcript, transactions }) {
   for (const item of transactions) {
     const id = randomUUID();
     const amount = Math.round(Number(item.amount));
-    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw new Error('مبلغ معتبر نیست.');
-    if (!['income', 'expense'].includes(item.type)) throw new Error('نوع تراکنش معتبر نیست.');
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
+    if (!['income', 'expense'].includes(item.type)) throw invalidInput('نوع تراکنش معتبر نیست.');
     const occurredAt = item.occurredAt || new Date().toISOString();
     assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
@@ -1095,7 +1109,7 @@ export function getLearnings() {
 export function saveLearning({ id = randomUUID(), keyword, category }) {
   const cleanedKeyword = String(keyword || '').trim().slice(0, 80);
   const cleanedCategory = String(category || '').trim().slice(0, 80);
-  if (cleanedKeyword.length < 2 || !cleanedCategory) throw new Error('عبارت و دسته را کامل وارد کن.');
+  if (cleanedKeyword.length < 2 || !cleanedCategory) throw invalidInput('عبارت و دسته را کامل وارد کن.');
   db.prepare(`INSERT INTO learnings (id,keyword,category) VALUES (?,?,?)
     ON CONFLICT(keyword) DO UPDATE SET category=excluded.category,updated_at=CURRENT_TIMESTAMP`).run(id, cleanedKeyword, cleanedCategory);
   return db.prepare('SELECT id,keyword,category FROM learnings WHERE keyword=?').get(cleanedKeyword);
@@ -1204,7 +1218,7 @@ export function createCollaborationRequest(values = {}) {
   const entityId = entityType === 'general' ? null : String(values.entityId || '').trim().slice(0, 80);
   const question = String(values.question || '').trim().slice(0, 1200);
   const priority = values.priority === 'urgent' ? 'urgent' : 'normal';
-  if (question.length < 5) throw new Error('درخواست توضیح باید حداقل پنج نویسه باشد.');
+  if (question.length < 5) throw invalidInput('درخواست توضیح باید حداقل پنج نویسه باشد.');
   if (!collaborationEntityExists(entityType, entityId)) throw Object.assign(new Error('منبع درخواست در همین دفتر پیدا نشد.'), { status: 404, code: 'COLLABORATION_ENTITY_NOT_FOUND' });
   const id = randomUUID();
   db.prepare(`INSERT INTO collaboration_requests (id,entity_type,entity_id,question,priority,requested_by)
@@ -1215,7 +1229,7 @@ export function createCollaborationRequest(values = {}) {
 
 export function answerCollaborationRequest(id, answer) {
   const text = String(answer || '').trim().slice(0, 2000);
-  if (text.length < 2) throw new Error('پاسخ را کامل وارد کن.');
+  if (text.length < 2) throw invalidInput('پاسخ را کامل وارد کن.');
   const result = db.prepare(`UPDATE collaboration_requests SET answer=?,status='answered',answered_by=?,answered_at=CURRENT_TIMESTAMP,
     resolved_by=NULL,resolved_at=NULL WHERE id=? AND status IN ('open','answered')`)
     .run(text, currentWorkspace()?.userId || null, id);
@@ -1256,7 +1270,7 @@ function monthWindowForWorkspace(month = '', now = new Date()) {
         break;
       }
     }
-    if (!firstDay || !nextDay) throw new Error('دورهٔ شمسی انتخاب‌شده قابل محاسبه نیست.');
+    if (!firstDay || !nextDay) throw invalidInput('دورهٔ شمسی انتخاب‌شده قابل محاسبه نیست.');
     const start = zonedMidnight(firstDay, timeZone);
     const endExclusive = zonedMidnight(nextDay, timeZone);
     return {
@@ -1728,7 +1742,7 @@ export function saveAccountingTransferSettings(values = {}) {
   const templateVerified = Boolean(values.templateVerified);
   const note = String(values.note || '').trim().slice(0, 800);
   if (targetSystem === 'parsian-review-csv' && templateVerified && templateName.length < 3) {
-    throw new Error('برای تأیید نگاشت پارسیان، نام یا نسخهٔ قالب کنترل‌شده را وارد کن.');
+    throw invalidInput('برای تأیید نگاشت پارسیان، نام یا نسخهٔ قالب کنترل‌شده را وارد کن.');
   }
   const current = accountingTransferSettings(targetSystem);
   const fileFormat = values.fileFormat == null ? current.fileFormat : normalizeTransferFileFormat(values.fileFormat);
@@ -1813,7 +1827,7 @@ export function saveAccountingTransferMapping(values = {}) {
   const targetName = String(values.targetName || '').trim().slice(0, 160);
   const account = db.prepare('SELECT id,code,name FROM ledger_accounts WHERE id=?').get(ledgerAccountId);
   if (!account) throw Object.assign(new Error('حساب دفتر کل در این دفتر پیدا نشد.'), { status: 404, code: 'TRANSFER_ACCOUNT_NOT_FOUND' });
-  if (!targetCode) throw new Error('کد حساب مقصد را وارد کن.');
+  if (!targetCode) throw invalidInput('کد حساب مقصد را وارد کن.');
   db.prepare(`INSERT INTO accounting_transfer_mappings (target_system,ledger_account_id,target_code,target_name,updated_by)
     VALUES (?,?,?,?,?) ON CONFLICT(target_system,ledger_account_id) DO UPDATE SET target_code=excluded.target_code,
     target_name=excluded.target_name,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`)
@@ -1957,8 +1971,8 @@ export function createAccountingTransferValidation(batchId, values = {}) {
   const importedCreditTotal = Math.max(0, Math.round(Number(values.importedCreditTotal) || 0));
   const errorSummary = String(values.errorSummary || '').trim().slice(0, 1600);
   const note = String(values.note || '').trim().slice(0, 1600);
-  if (softwareName.length < 2 || softwareVersion.length < 1 || testCompanyLabel.length < 2) throw new Error('نام نرم‌افزار، نسخه و برچسب شرکت آزمایشی را کامل وارد کن.');
-  if (outcome === 'failed' && errorSummary.length < 5) throw new Error('برای آزمون ناموفق، خلاصهٔ خطا را کامل وارد کن.');
+  if (softwareName.length < 2 || softwareVersion.length < 1 || testCompanyLabel.length < 2) throw invalidInput('نام نرم‌افزار، نسخه و برچسب شرکت آزمایشی را کامل وارد کن.');
+  if (outcome === 'failed' && errorSummary.length < 5) throw invalidInput('برای آزمون ناموفق، خلاصهٔ خطا را کامل وارد کن.');
   const multiplier = amountUnit === 'rial' ? 10 : 1;
   const expectedDebitTotal = Number(batch.debitTotal) * multiplier;
   const expectedCreditTotal = Number(batch.creditTotal) * multiplier;
@@ -1986,8 +2000,8 @@ export function createAccountingTransferValidation(batchId, values = {}) {
 export function updateAccountingTransferBatchStatus(id, values = {}) {
   const status = ['delivered', 'accepted', 'rejected'].includes(values.status) ? values.status : '';
   const note = String(values.note || '').trim().slice(0, 1200);
-  if (!status) throw new Error('وضعیت تحویل معتبر نیست.');
-  if (status === 'rejected' && note.length < 5) throw new Error('دلیل رد خروجی را کامل وارد کن.');
+  if (!status) throw invalidInput('وضعیت تحویل معتبر نیست.');
+  if (status === 'rejected' && note.length < 5) throw invalidInput('دلیل رد خروجی را کامل وارد کن.');
   const current = db.prepare('SELECT id,status,target_system AS targetSystem FROM accounting_transfer_batches WHERE id=?').get(id);
   if (!current) return null;
   if (['accepted', 'rejected'].includes(current.status) && status !== current.status) throw Object.assign(new Error('خروجی نهایی‌شده قابل بازگرداندن نیست؛ پس از اصلاح داده یک بستهٔ جدید بساز.'), { status: 409, code: 'TRANSFER_BATCH_FINAL' });
@@ -2004,7 +2018,7 @@ export function updateAccountingTransferBatchStatus(id, values = {}) {
 
 export function savePilotCheckin(values = {}) {
   const weekStart = String(values.weekStart || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || Number.isNaN(new Date(`${weekStart}T00:00:00Z`).getTime())) throw new Error('تاریخ شروع هفته معتبر نیست.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || Number.isNaN(new Date(`${weekStart}T00:00:00Z`).getTime())) throw invalidInput('تاریخ شروع هفته معتبر نیست.');
   const respondentType = values.respondentType === 'accountant' ? 'accountant' : 'owner';
   const savedMinutes = Math.min(10_000, Math.max(0, Math.round(Number(values.savedMinutes) || 0)));
   const errorCount = Math.min(10_000, Math.max(0, Math.round(Number(values.errorCount) || 0)));
@@ -2182,7 +2196,7 @@ export function workspaceOperationalSignals() {
 
 function cleanAmount(value) {
   const amount = Math.round(Number(value));
-  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw new Error('مبلغ معتبر نیست.');
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
   return amount;
 }
 
@@ -2360,7 +2374,7 @@ export function listContacts() {
 
 export function saveContact(values = {}) {
   const name = String(values.name || '').trim().slice(0, 100);
-  if (name.length < 2) throw new Error('نام شخص را کامل وارد کن.');
+  if (name.length < 2) throw invalidInput('نام شخص را کامل وارد کن.');
   const id = values.id || randomUUID();
   const kind = ['person', 'customer', 'vendor'].includes(values.kind) ? values.kind : 'person';
   db.prepare(`INSERT INTO contacts (id,name,kind,phone,note) VALUES (?,?,?,?,?)
@@ -2389,9 +2403,9 @@ export function listObligations({ status = 'open' } = {}) {
 export function saveObligation(values = {}) {
   const amount = cleanAmount(values.amount);
   const direction = ['receivable', 'payable'].includes(values.direction) ? values.direction : null;
-  if (!direction) throw new Error('نوع طلب یا بدهی معتبر نیست.');
+  if (!direction) throw invalidInput('نوع طلب یا بدهی معتبر نیست.');
   const title = String(values.title || '').trim().slice(0, 120);
-  if (!title) throw new Error('عنوان طلب یا بدهی را وارد کن.');
+  if (!title) throw invalidInput('عنوان طلب یا بدهی را وارد کن.');
   const id = values.id || randomUUID();
   db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,status,note) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,title=excluded.title,amount=excluded.amount,
@@ -2414,7 +2428,7 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId }
       rawText: `تسویه ${item.title}`, source: 'text', contactId: item.contact_id, occurredAt, account, accountId,
     }] });
     const updated = db.prepare("UPDATE obligations SET status='paid',paid_transaction_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='open'").run(transactionId, id);
-    if (!updated.changes) throw new Error('این طلب یا بدهی قبلاً تسویه شده است.');
+    if (!updated.changes) throw invalidInput('این طلب یا بدهی قبلاً تسویه شده است.');
     audit('settle', 'obligation', id, { transactionId });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -2449,7 +2463,7 @@ export function saveRecurringRule(values = {}) {
   const type = ['income', 'expense'].includes(values.type) ? values.type : 'expense';
   const day = Math.min(31, Math.max(1, Number(values.dayOfMonth) || new Date().getDate()));
   const title = String(values.title || '').trim().slice(0, 120);
-  if (!title) throw new Error('عنوان ثبت تکرارشونده را وارد کن.');
+  if (!title) throw invalidInput('عنوان ثبت تکرارشونده را وارد کن.');
   db.prepare(`INSERT INTO recurring_rules (id,title,amount,type,category,day_of_month,next_due_at,active) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET title=excluded.title,amount=excluded.amount,type=excluded.type,category=excluded.category,
       day_of_month=excluded.day_of_month,next_due_at=excluded.next_due_at,active=excluded.active,updated_at=CURRENT_TIMESTAMP`)
@@ -2537,7 +2551,7 @@ export function getInvoice(id) {
 
 export function createInvoice(values = {}) {
   const items = Array.isArray(values.items) ? values.items.filter((item) => String(item.title || '').trim()) : [];
-  if (!items.length) throw new Error('حداقل یک ردیف برای سند لازم است.');
+  if (!items.length) throw invalidInput('حداقل یک ردیف برای سند لازم است.');
   const normalized = items.map((item) => {
     const quantity = Math.max(0.01, Number(item.quantity) || 1);
     const unitPrice = cleanAmount(item.unitPrice);
@@ -2550,7 +2564,7 @@ export function createInvoice(values = {}) {
   const taxResult = calculateInvoiceTax(db, normalized, discount, values.tax);
   const tax = taxResult.tax;
   const total = subtotal - discount + tax;
-  if (total <= 0) throw new Error('مبلغ نهایی سند باید بیشتر از صفر باشد.');
+  if (total <= 0) throw invalidInput('مبلغ نهایی سند باید بیشتر از صفر باشد.');
   const documentType = values.documentType === 'purchase' ? 'purchase' : 'sales';
   const taxedItems = taxResult.items.map((item) => {
     if (documentType === 'purchase' && item.productId) item.inventoryCost = item.taxBase;
@@ -2653,7 +2667,7 @@ export function deleteInvoice(id) {
       reverseInvoiceJournal(db, invoice, occurredAt, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
     }
     const result = db.prepare("UPDATE invoices SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
-    if (!result.changes) throw new Error('سند قابل ابطال نیست.');
+    if (!result.changes) throw invalidInput('سند قابل ابطال نیست.');
     audit('cancel', 'invoice', id, { reversal: Boolean(invoice.postedAt) });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -2808,14 +2822,14 @@ export function saveReceipt({
   paymentMethod = '', reference = '', accountId = null, status = 'review', ocrProvider = '', ocrModel = '', ocrConfidence = 0,
   fieldConfidence = {}, ocrText = '', reviewReasons = [],
 }) {
-  if (!buffer?.length) throw new Error('تصویر رسید خالی است.');
+  if (!buffer?.length) throw invalidInput('تصویر رسید خالی است.');
   const id = randomUUID();
   const normalizedAmount = amount ? cleanAmount(amount) : null;
   const normalizedType = ['income', 'expense'].includes(type) ? type : null;
   const rule = findAutomationRule('merchant', merchant, normalizedType);
   const resolvedCategory = String(category || rule?.category || '').trim().slice(0, 80) || null;
   const resolvedAccountId = accountId || rule?.accountId || null;
-  if (resolvedAccountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(resolvedAccountId)) throw new Error('حساب پیشنهادی رسید معتبر نیست.');
+  if (resolvedAccountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(resolvedAccountId)) throw invalidInput('حساب پیشنهادی رسید معتبر نیست.');
   db.prepare(`INSERT INTO receipts
     (id,file_name,mime_type,image_data,note,amount,type,category,merchant,occurred_at,payment_method,reference,account_id,status,
       ocr_provider,ocr_model,ocr_confidence,field_confidence,ocr_text,review_reasons,updated_at)
@@ -2848,7 +2862,7 @@ export function updateReceipt(id, values = {}) {
   const type = ['income', 'expense'].includes(values.type) ? values.type : current.type;
   const category = String(values.category ?? current.category ?? '').trim().slice(0, 80) || null;
   const accountId = String(values.accountId ?? current.accountId ?? '').trim() || null;
-  if (accountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(accountId)) throw new Error('حساب انتخاب‌شده معتبر نیست.');
+  if (accountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(accountId)) throw invalidInput('حساب انتخاب‌شده معتبر نیست.');
   const occurredAt = values.occurredAt ? new Date(values.occurredAt).toISOString() : current.occurredAt;
   const ready = Boolean(amount && type && category && accountId);
   const status = normalizeReceiptStatus(values.status, ready ? 'ready' : 'review');
@@ -2943,8 +2957,8 @@ export function saveAutomationRule(values = {}) {
   const type = ['income', 'expense'].includes(values.type) ? values.type : null;
   const category = String(values.category || '').trim().slice(0, 80);
   const accountId = String(values.accountId || '').trim() || null;
-  if (!source || pattern.length < 2 || !category) throw new Error('منبع، عبارت و دستهٔ قانون را کامل کن.');
-  if (accountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(accountId)) throw new Error('حساب قانون معتبر نیست.');
+  if (!source || pattern.length < 2 || !category) throw invalidInput('منبع، عبارت و دستهٔ قانون را کامل کن.');
+  if (accountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(accountId)) throw invalidInput('حساب قانون معتبر نیست.');
   const id = values.id || randomUUID();
   db.prepare(`INSERT INTO automation_rules (id,source,pattern,type,category,account_id,created_by) VALUES (?,?,?,?,?,?,?)
     ON CONFLICT(source,pattern) DO UPDATE SET type=excluded.type,category=excluded.category,account_id=excluded.account_id,updated_at=CURRENT_TIMESTAMP`)
@@ -2976,7 +2990,7 @@ export function listProducts() {
 
 export function saveProduct(values = {}) {
   const name = String(values.name || '').trim().slice(0, 100);
-  if (!name) throw new Error('نام کالا را وارد کن.');
+  if (!name) throw invalidInput('نام کالا را وارد کن.');
   const id = values.id || randomUUID();
   const openingStock = Math.max(0, Number(values.stock) || 0);
   const buyPrice = Math.max(0, Math.round(Number(values.buyPrice) || 0));
@@ -3003,7 +3017,7 @@ export function saveProduct(values = {}) {
 
 export function adjustStock(id, values = {}) {
   const quantity = Number(values.quantity);
-  if (!Number.isFinite(quantity) || quantity === 0) throw new Error('تغییر موجودی معتبر نیست.');
+  if (!Number.isFinite(quantity) || quantity === 0) throw invalidInput('تغییر موجودی معتبر نیست.');
   db.exec('BEGIN IMMEDIATE');
   try {
     const result = recordInventoryMovement(db, id, {
@@ -3112,7 +3126,7 @@ function snoozedFinancialAlertIds(now = new Date()) {
 
 export function snoozeFinancialAlert(alertId, { hours = 24 } = {}) {
   const normalizedId = String(alertId || '').trim().slice(0, 120);
-  if (!/^[a-z0-9-]+$/i.test(normalizedId)) throw new Error('شناسهٔ هشدار معتبر نیست.');
+  if (!/^[a-z0-9-]+$/i.test(normalizedId)) throw invalidInput('شناسهٔ هشدار معتبر نیست.');
   const safeHours = Math.min(168, Math.max(1, Math.round(Number(hours) || 24)));
   const snoozedUntil = new Date(Date.now() + safeHours * 60 * 60 * 1000).toISOString();
   const id = randomUUID();
@@ -3120,6 +3134,18 @@ export function snoozeFinancialAlert(alertId, { hours = 24 } = {}) {
     .run(id, normalizedId, snoozedUntil, currentWorkspace()?.userId || null);
   audit('snooze', 'financial_alert', normalizedId, { hours: safeHours, snoozedUntil });
   return { id, alertId: normalizedId, action: 'snooze', snoozedUntil };
+}
+
+/**
+ * DNA مالی پرونده. پنجرهٔ پیش‌فرض شش ماه است تا الگوی فصلی جا بیفتد، ولی
+ * محاسبه هیچ ادعایی بدون دادهٔ کافی نمی‌کند.
+ */
+export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
+  const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
+  const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
+    occurred_at AS occurredAt,created_at AS createdAt
+    FROM transactions WHERE status='confirmed' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+  return financialDna(rows, { timeZone: currentTimeZone(), now, months });
 }
 
 export function financialOverview(now = new Date()) {
@@ -3384,14 +3410,14 @@ export function financialBackupSnapshot(workspace = currentWorkspace()) {
 }
 
 export function restoreFinancialSnapshot(snapshot) {
-  if (!snapshot || snapshot.format !== 'hesab-yar-financial-data' || snapshot.version !== 1 || !snapshot.tables) throw new Error('ساختار پشتیبان معتبر نیست.');
+  if (!snapshot || snapshot.format !== 'hesab-yar-financial-data' || snapshot.version !== 1 || !snapshot.tables) throw invalidInput('ساختار پشتیبان معتبر نیست.');
   db.exec('PRAGMA defer_foreign_keys = ON');
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const table of BACKUP_DELETE_ORDER) db.prepare(`DELETE FROM ${table}`).run();
     for (const table of FINANCIAL_BACKUP_TABLES) {
       const rows = snapshot.tables[table];
-      if (!Array.isArray(rows)) throw new Error(`جدول ${table} در پشتیبان کامل نیست.`);
+      if (!Array.isArray(rows)) throw invalidInput(`جدول ${table} در پشتیبان کامل نیست.`);
       const validColumns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
       for (const row of rows) {
         const columns = Object.keys(row).filter((column) => validColumns.has(column));
@@ -3403,7 +3429,7 @@ export function restoreFinancialSnapshot(snapshot) {
     }
     ensureTaxSchema(db);
     const cash = db.prepare("SELECT id FROM accounts WHERE id='cash'").get();
-    if (!cash) throw new Error('پشتیبان حساب صندوق اصلی را ندارد.');
+    if (!cash) throw invalidInput('پشتیبان حساب صندوق اصلی را ندارد.');
     migrateAccountingLedger(db, { createdBy: currentWorkspace()?.userId });
     migrateInventory(db, { createdBy: currentWorkspace()?.userId, timeZone: currentTimeZone() });
     db.prepare('INSERT INTO audit_log (id,action,entity_type,entity_id,payload) VALUES (?,?,?,?,?)')

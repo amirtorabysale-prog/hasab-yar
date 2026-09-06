@@ -298,6 +298,7 @@ export const api = {
   savePilotCheckin: (payload) => request('/api/pilot/checkins', { method: 'POST', body: JSON.stringify(payload) }),
   pilotPortfolio: () => request('/api/pilot/portfolio'),
   operationsOverview: () => request('/api/operations/overview'),
+  financialDna: (months = 6) => request(`/api/financial-dna?months=${months}`),
   downloadMonthlyAccountantPackage: async (month = '') => {
     const path = `/api/collaboration/monthly-package/download${month ? `?month=${encodeURIComponent(month)}` : ''}`;
     const response = await fetch(path, { credentials: 'same-origin', headers: protectedHeaders(false) });

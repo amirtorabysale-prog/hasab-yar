@@ -52,6 +52,28 @@ function snapshotResults(results) {
   return { transcript, finalTranscript, interim: normalizePersian(interim), candidates };
 }
 
+/**
+ * تشخیص گفتار Chrome وسط ضبط تمام می‌شود و دوباره راه می‌افتد؛ نشست تازه با
+ * results خالی شروع می‌کند. بدون این ادغام، هرچه کاربر پیش از راه‌اندازی دوباره
+ * گفته بود از تایپ زنده پاک می‌شد — و بدتر: مسیر محلی ممکن بود همان متن ناقص
+ * را ثبت کند و صدای کامل هرگز به سرور نرسد.
+ */
+export function mergeSpeechSegments(carried, snapshot) {
+  const carriedText = normalizePersian(carried);
+  if (!carriedText) return snapshot;
+  const join = (...parts) => normalizePersian(parts.filter(Boolean).join(' '));
+  const finalTranscript = join(carriedText, snapshot.finalTranscript);
+  return {
+    ...snapshot,
+    finalTranscript,
+    transcript: join(finalTranscript, snapshot.interim),
+    candidates: (snapshot.candidates || []).map((candidate) => ({
+      ...candidate,
+      transcript: join(carriedText, candidate.transcript),
+    })),
+  };
+}
+
 export function createPersianRecognizer({ phrases = [], onUpdate, onEnd, onError }) {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) return null;

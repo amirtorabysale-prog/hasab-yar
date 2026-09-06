@@ -32,3 +32,17 @@ export function isPermanentQueueError(error) {
   const status = Number(error?.status || 0);
   return status >= 400 && status < 500 && ![408, 425, 429].includes(status);
 }
+
+export const MAX_OFFLINE_AUDIO_ATTEMPTS = 3;
+
+/**
+ * صف صدا برخلاف صف تراکنش‌ها هیچ سقف تلاشی نداشت: هر ضبطی که پردازش نمی‌شد
+ * دوباره در حالت `queued` می‌نشست و بی‌پایان تکرار می‌شد. چون حلقهٔ همگام‌سازی
+ * بعد از هر قلم متوقف می‌شود، همان یک ضبط خرابْ تمام ضبط‌های بعدی را هم بلوکه
+ * می‌کرد و هر بار سهمیهٔ سرویس را می‌سوزاند.
+ */
+export function nextOfflineAudioState(record = {}, { permanent = false } = {}) {
+  const attempts = Number(record.attempts || 0) + 1;
+  const exhausted = permanent || attempts >= MAX_OFFLINE_AUDIO_ATTEMPTS;
+  return { state: exhausted ? 'failed' : 'queued', attempts, exhausted };
+}

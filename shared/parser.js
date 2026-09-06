@@ -9,14 +9,22 @@ const VALUES = {
   صفر: 0, یک: 1, یه: 1, ی: 1, دو: 2, سه: 3, چهار: 4, چار: 4, پنج: 5, شش: 6, شیش: 6, هفت: 7, هشت: 8, نه: 9,
   ده: 10, یازده: 11, دوازده: 12, سیزده: 13, چهارده: 14, پونزده: 15, پانزده: 15, شانزده: 16, هفده: 17, هجده: 18, نوزده: 19,
   بیست: 20, سی: 30, چهل: 40, پنجاه: 50, شصت: 60, شست: 60, هفتاد: 70, هشتاد: 80, نود: 90,
-  صد: 100, یکصد: 100, دویست: 200, سیصد: 300, سیصدتا: 300, چهارصد: 400, چارصد: 400,
-  پانصد: 500, پونصد: 500, ششصد: 600, شیشصد: 600, هفتصد: 700, هشتصد: 800, نهصد: 900,
+  صد: 100, یکصد: 100, دویست: 200, دویس: 200, سیصد: 300, سیصدتا: 300, چهارصد: 400, چارصد: 400,
+  پانصد: 500, پونصد: 500, پنصد: 500, ششصد: 600, شیشصد: 600, ششصدتا: 600,
+  // گویش محاوره‌ای که موتور تشخیص گفتار واقعاً تولید می‌کند؛ نبودشان یعنی
+  // «هفصد هزار» بی‌صدا ۱۰۰۰ خوانده می‌شد.
+  هفتصد: 700, هفصد: 700, هشتصد: 800, هشصد: 800, نهصد: 900, نهصدتا: 900,
 };
 const FRACTIONS = { نیم: 0.5, نصف: 0.5 };
 const SCALES = { هزار: 1_000, هزارتا: 1_000, میلیون: 1_000_000, میلیارد: 1_000_000_000 };
 const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS), ...Object.keys(SCALES)]);
 const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'دخل', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد'];
 const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
+// فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
+// هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و نوع بی‌دلیل
+// هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
+const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'واریز', 'واریزی', 'دریافت']);
+const EXPENSE_VERBS = new Set(['دادم', 'خریدم', 'برداشت']);
 const CATEGORY_RULES = [
   ['فروش', ['فروش', 'فروختم']],
   ['خدمات', ['خدمات', 'سرویس']],
@@ -42,6 +50,35 @@ export function normalizePersian(input) {
     .replace(/[‌ـ]/g, ' ')
     .replace(/٬/g, ',').replace(/٫/g, '.')
     .replace(/\s+/g, ' ').trim();
+}
+
+// موتور تشخیص گفتار عدد و مقیاس را گاهی سرِ هم می‌نویسد («دوهزار»، «دومیلیون»)
+// یا «و» را به عدد می‌چسباند («سیصدو»). بدون این ترمیم، هیچ مبلغی پیدا نمی‌شد.
+const JOINABLE_VALUES = Object.keys(VALUES).sort((left, right) => right.length - left.length);
+const SCALE_WORDS = Object.keys(SCALES).sort((left, right) => right.length - left.length);
+const JOINED_SCALE_PATTERN = new RegExp(`(?<![آ-ی])(${JOINABLE_VALUES.join('|')})(${SCALE_WORDS.join('|')})(?![آ-ی])`, 'g');
+const TRAILING_VAV_PATTERN = new RegExp(`(?<![آ-ی])(${JOINABLE_VALUES.join('|')})و(?![آ-ی])`, 'g');
+
+export function repairNumberSpeech(text) {
+  return String(text || '')
+    .replace(JOINED_SCALE_PATTERN, '$1 $2')
+    .replace(TRAILING_VAV_PATTERN, '$1 و')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// یک گفته یک مرجع زمانی دارد. تا امروز «دیروز» کاملاً نادیده گرفته می‌شد و سند
+// در تاریخ اشتباه، یعنی در دورهٔ مالی اشتباه، می‌نشست.
+const RELATIVE_DAYS = [
+  [/پریروز/, -2, 'پریروز'],
+  [/دیروز/, -1, 'دیروز'],
+  [/هفته\s*ی?\s*(?:پیش|گذشته|قبل)/, -7, 'هفتهٔ پیش'],
+];
+
+export function relativeDayOffset(text) {
+  const normalized = normalizePersian(text);
+  for (const [pattern, days, label] of RELATIVE_DAYS) if (pattern.test(normalized)) return { days, label };
+  return null;
 }
 
 function parseNumericToken(token) {
@@ -101,18 +138,31 @@ function isNumericWord(value) { return /^\d/.test(value) || NUMBER_WORDS.has(val
 const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن'];
 const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
 
+// عبارت‌های دوکلمه‌ای که هیچ خوانش مبلغی ندارند. این‌ها از معافیتِ واژهٔ مقیاس
+// هم قوی‌ترند: در «کد حساب هزار و دویست»، وجود «هزار» باعث می‌شد عدد مبلغ
+// شمرده شود و کد حساب وارد دفتر شود. برعکسش «فاکتور پنج میلیون» یک مبلغ واقعی
+// است، پس «فاکتور»ِ تنها در فهرست ضعیف می‌ماند.
+const STRONG_IDENTIFIER_PREFIXES = [
+  'کد حساب', 'شماره حساب', 'شماره فاکتور', 'شماره سند', 'کد ملی',
+  'کد اقتصادی', 'شماره پیگیری', 'کد رهگیری', 'شماره کارت', 'شماره شبا',
+];
+
 function isNonAmountSpan(text, span) {
   const raw = text.slice(span.start, span.end);
+  const before = text.slice(Math.max(0, span.start - 24), span.start).trim();
+  const after = text.slice(span.end, Math.min(text.length, span.end + 18)).trim();
+  const precededBy = (prefixes) => prefixes.some((prefix) => before === prefix || before.endsWith(` ${prefix}`));
+
+  // شناسهٔ صریح، حتی با واژهٔ مقیاس، هرگز مبلغ نیست.
+  if (precededBy(STRONG_IDENTIFIER_PREFIXES)) return true;
   // عددهای دارای مقیاس پولی، حتی اگر کنار واژه‌های دیگر باشند، مبلغ محسوب می‌شوند.
   if (/هزار|میلیون|میلیارد/.test(raw)) return false;
-  const before = text.slice(Math.max(0, span.start - 18), span.start).trim();
-  const after = text.slice(span.end, Math.min(text.length, span.end + 18)).trim();
   if (NON_AMOUNT_UNITS.some((unit) => after === unit || after.startsWith(`${unit} `))) return true;
-  return IDENTIFIER_PREFIXES.some((prefix) => before === prefix || before.endsWith(` ${prefix}`));
+  return precededBy(IDENTIFIER_PREFIXES);
 }
 
 export function extractAmounts(input) {
-  const text = normalizePersian(input);
+  const text = repairNumberSpeech(normalizePersian(input));
   const tokens = tokenize(text);
   const spans = [];
   for (let index = 0; index < tokens.length; index += 1) {
@@ -139,7 +189,11 @@ export function extractAmounts(input) {
     }
     const amount = wordsToNumber(collected);
     if (amount > 0) {
-      const span = { amount, start: token.start, end, raw: text.slice(token.start, end) };
+      // مقیاس بدون عدد («... هزار تومان») تقریباً همیشه یعنی عددِ پیش از آن
+      // شنیده نشده است. wordsToNumber ناچار ۱×مقیاس برمی‌گرداند؛ این پرچم
+      // جلوی ثبت آن به‌عنوان یک مبلغ مطمئن را می‌گیرد.
+      const bareScale = Boolean(SCALES[collected[0]]);
+      const span = { amount, start: token.start, end, raw: text.slice(token.start, end), bareScale };
       if (!isNonAmountSpan(text, span)) spans.push(span);
     }
     index = cursor - 1;
@@ -163,16 +217,28 @@ export function inferLearningKeyword(input) {
 
 function containsAny(text, words) { return words.some((word) => text.includes(word)); }
 
+/** فعل جهت‌دار دو امتیاز می‌گیرد و اسم یک امتیاز. */
+function signalScore(text, words, verbs) {
+  return words.reduce((sum, word) => (text.includes(word) ? sum + (verbs.has(word) ? 2 : 1) : sum), 0);
+}
+
 function classify(context, learnings = []) {
   const normalizedContext = normalizePersian(context);
   const learned = learnings.find((item) => normalizedContext.includes(normalizePersian(item.keyword)));
-  const hasIncome = containsAny(normalizedContext, INCOME_WORDS);
-  const hasExpense = containsAny(normalizedContext, EXPENSE_WORDS);
-  let type = hasIncome && !hasExpense ? 'income' : 'expense';
-  let confidence = hasIncome !== hasExpense ? 0.93 : 0.58;
-  let typeReason = hasIncome !== hasExpense
+  const incomeScore = signalScore(normalizedContext, INCOME_WORDS, INCOME_VERBS);
+  const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
+  const hasIncome = incomeScore > 0;
+  const hasExpense = expenseScore > 0;
+  const onlyOneSide = hasIncome !== hasExpense;
+  // وقتی هر دو نشانه هست، فعلِ جهت‌دار برنده می‌شود؛ ولی اطمینان پایین می‌ماند
+  // تا کاربر نگاهش کند، چون جمله واقعاً هر دو نشانه را داشته است.
+  let type = incomeScore > expenseScore ? 'income' : 'expense';
+  let confidence = onlyOneSide ? 0.93 : incomeScore === expenseScore ? 0.58 : 0.72;
+  let typeReason = onlyOneSide
     ? `نوع از واژهٔ ${hasIncome ? 'درآمدی' : 'هزینه‌ای'} متن تشخیص داده شد.`
-    : 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.';
+    : incomeScore === expenseScore
+      ? 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.'
+      : `متن هر دو نشانه را دارد؛ نوع از فعل ${type === 'income' ? 'دریافت' : 'پرداخت'} برداشت شد و باید کنترل شود.`;
   let category = learned?.category;
   let categoryConfidence = 0.56;
   let categoryReason = 'دستهٔ مشخصی در متن پیدا نشد؛ دستهٔ عمومی پیشنهاد شد.';
@@ -199,8 +265,10 @@ function classify(context, learnings = []) {
   return { type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason };
 }
 
-export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text' } = {}) {
+export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
   const { text, spans } = extractAmounts(input);
+  const relativeDay = relativeDayOffset(text);
+  const occurredAt = relativeDay ? new Date(now.getTime() + relativeDay.days * 86_400_000).toISOString() : null;
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_RULES.flatMap(([, words]) => words)];
   const transactions = spans.map((span, index) => {
     const previousEnd = spans[index - 1]?.end ?? 0;
@@ -210,8 +278,10 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const context = containsAny(afterAmount, signalWords) ? afterAmount : `${beforeAmount} ${afterAmount}`.trim();
     const classified = classify(context, learnings);
     let amount = span.amount;
+    // «پنجاه تومن» یعنی پنجاه هزار تومان. هیچ چیزی در ایران امروز پنجاه تومان
+    // نیست، پس محدودکردن این قاعده به سه‌رقمی‌ها فقط مبلغ‌های کوچک را خراب می‌کرد.
     const colloquialThousands = source === 'voice'
-      && amount >= 100 && amount < 1_000
+      && amount > 0 && amount < 1_000
       && !/\d|هزار|میلیون|میلیارد/.test(span.raw)
       && /تومان|تومن/.test(context);
     if (colloquialThousands) amount *= 1_000;
@@ -223,24 +293,30 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     if (unusual) reviewReasons.push('مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.');
     if (colloquialThousands) reviewReasons.push('واحد هزار از گفتار محاوره‌ای برداشت شده است.');
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
+    if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
       amount, type: classified.type, category: classified.category, rawText: context || text,
-      confidence: classified.confidence, needsReview: unusual || ambiguous || colloquialThousands, source,
+      confidence: classified.confidence, needsReview: unusual || ambiguous || colloquialThousands || span.bareScale, source,
+      ...(occurredAt ? { occurredAt, occurredAtLabel: relativeDay.label } : {}),
       confidenceDetails: {
         amount: {
-          score: colloquialThousands ? 0.66 : source === 'voice' ? 0.93 : 0.98,
-          reason: colloquialThousands
-            ? 'مبلغ با قاعدهٔ گفتار محاوره‌ای به هزار تومان تبدیل شد.'
-            : source === 'voice' ? 'مبلغ از نتیجهٔ تشخیص گفتار استخراج شد.' : 'مبلغ مستقیم از متن استخراج شد.',
+          score: span.bareScale ? 0.3 : colloquialThousands ? 0.66 : source === 'voice' ? 0.93 : 0.98,
+          reason: span.bareScale
+            ? `فقط واژهٔ «${span.raw}» شنیده شد و عددِ پیش از آن گم شده است.`
+            : colloquialThousands
+              ? 'مبلغ با قاعدهٔ گفتار محاوره‌ای به هزار تومان تبدیل شد.'
+              : source === 'voice' ? 'مبلغ از نتیجهٔ تشخیص گفتار استخراج شد.' : 'مبلغ مستقیم از متن استخراج شد.',
         },
         type: { score: classified.typeConfidence, reason: classified.typeReason },
         category: { score: classified.categoryConfidence, reason: classified.categoryReason },
         account: { score: 0.82, reason: 'حساب پیش‌فرض دفتر انتخاب می‌شود؛ قبل از ثبت قابل تغییر است.' },
       },
       reviewReasons,
-      warning: unusual
-        ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟'
-        : colloquialThousands
+      warning: span.bareScale
+        ? `عدد پیش از «${span.raw}» شنیده نشد؛ این مبلغ حدس است، نه برداشت.`
+        : unusual
+          ? 'این مبلغ بیشتر از پنج برابر میانگین ثبت‌های مشابه توست. مطمئنی؟'
+          : colloquialThousands
           ? `«${span.raw} تومان» به‌صورت محاوره‌ای ${new Intl.NumberFormat('fa-IR').format(amount)} تومان برداشت شد؛ مبلغ را بررسی کن.`
           : ambiguous ? 'نوع این تراکنش با اطمینان کم تشخیص داده شد؛ لطفاً بررسی کن.' : null,
       alternatives: colloquialThousands ? [span.amount] : [],

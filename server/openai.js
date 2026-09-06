@@ -14,7 +14,14 @@ function extensionFor(mimeType) {
   })[mimeType] || 'wav';
 }
 
-export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], learnings = [], hint = '', timeoutMs = 7_000 }) {
+// مهلت ثابت، جملهٔ بلند را جریمه می‌کرد: کاربر بیست ثانیه حرف می‌زد و پاسخ
+// پیش از رسیدن، timeout می‌خورد. مهلت با طول صدا رشد می‌کند و سقف دارد.
+export function transcriptionTimeoutFor(durationMs = 0) {
+  const audioMs = Math.max(0, Number(durationMs) || 0);
+  return Math.min(15_000, Math.max(7_000, 6_000 + audioMs));
+}
+
+export async function transcribeWithOpenAI({ buffer, mimeType, categories = [], learnings = [], hint = '', durationMs = 0, timeoutMs = transcriptionTimeoutFor(durationMs) }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw providerFailure('کلید OpenAI روی سرور تنظیم نشده است.', 'OPENAI_UNAVAILABLE', 503);
   assertOpenAIAvailable('openai-file');
