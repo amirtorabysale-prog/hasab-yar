@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRealtimeTranscriptionSession, createRealtimeTranscriptionCall, normalizeSdpOffer } from '../server/openaiRealtime.js';
+import { buildRealtimeTranscriptionSession, createRealtimeTranscriptionCall, describeSdpOffer, normalizeSdpOffer } from '../server/openaiRealtime.js';
 import { resetVoiceProviderState } from '../server/voiceProviderState.js';
 
 test('builds a Persian low-latency financial transcription session', () => {
@@ -128,4 +128,17 @@ test('ورودی‌ای که SDP نیست رد می‌شود', () => {
   assert.equal(normalizeSdpOffer(undefined), null);
   assert.equal(normalizeSdpOffer({}), null);
   assert.equal(normalizeSdpOffer(`v=0\r\n${'x'.repeat(130_000)}`), null);
+});
+
+test('اثر انگشت SDP شکل offer را نشان می‌دهد بدون افشای محتوا', () => {
+  const offer = 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendonly\r\na=ice-ufrag:abcd\r\na=fingerprint:sha-256 AA:BB\r\na=candidate:1 1 udp 2 1.2.3.4 5 typ host\r\nm=application 9 DTLS/SCTP\r\n';
+  const shape = describeSdpOffer(offer);
+  assert.equal(shape.endsWithCrlf, true);
+  assert.deepEqual(shape.directions, ['sendonly']);
+  assert.deepEqual(shape.mediaLines, ['m=audio 9', 'm=application 9']);
+  assert.equal(shape.hasFingerprint, true);
+  assert.equal(shape.candidates, 1);
+  // نه کاندیدا، نه اثر انگشت DTLS، نه ufrag نباید در خروجی بازتاب شوند.
+  const serialized = JSON.stringify(shape);
+  for (const secret of ['1.2.3.4', 'abcd', 'AA:BB']) assert.ok(!serialized.includes(secret), `${secret} نباید لاگ شود`);
 });

@@ -27,6 +27,28 @@ function cleanVocabulary(categories = [], learnings = []) {
  * پس اعتبارسنجی روی نسخهٔ trim‌شده انجام می‌شود ولی چیزی که ارسال می‌شود
  * دست‌نخوردهٔ مرورگر است، با CRLF پایانی تضمین‌شده.
  */
+/**
+ * اثر انگشت SDP برای عیب‌یابی، بدون افشای محتوا.
+ *
+ * SDP کاندیداهای ICE و اثر انگشت DTLS دارد؛ لاگ‌کردن کاملش هم پر سر و صداست
+ * هم بی‌احتیاطی. آنچه برای تشخیص `invalid_offer` لازم است فقط شکل آن است:
+ * پایان‌خط درست، جهت مسیر صدا، و وجود m-lineها.
+ */
+export function describeSdpOffer(sdp) {
+  const raw = typeof sdp === 'string' ? sdp : '';
+  const lines = raw.split(/\r?\n/);
+  return {
+    length: raw.length,
+    endsWithCrlf: raw.endsWith('\r\n'),
+    usesCrlf: raw.includes('\r\n'),
+    mediaLines: lines.filter((line) => line.startsWith('m=')).map((line) => line.split(' ').slice(0, 2).join(' ')),
+    directions: lines.filter((line) => /^a=(sendonly|recvonly|sendrecv|inactive)$/.test(line)).map((line) => line.slice(2)),
+    hasFingerprint: lines.some((line) => line.startsWith('a=fingerprint')),
+    hasIceUfrag: lines.some((line) => line.startsWith('a=ice-ufrag')),
+    candidates: lines.filter((line) => line.startsWith('a=candidate')).length,
+  };
+}
+
 export function normalizeSdpOffer(sdp) {
   const raw = typeof sdp === 'string' ? sdp : '';
   if (!raw.trim().startsWith('v=0') || raw.length > 128_000) return null;
@@ -80,7 +102,16 @@ export async function createRealtimeTranscriptionCall({ sdp, categories = [], le
   if (!response.ok) {
     let body = {};
     try { body = JSON.parse(answer); } catch { /* OpenAI can return a plain-text gateway error. */ }
-    console.error('OpenAI realtime transcription failed', { status: response.status, code: body?.error?.code, type: body?.error?.type });
+    // پیام OpenAI دقیقاً می‌گوید offer چرا رد شده و تا امروز دور ریخته می‌شد؛
+    // بدون آن، عیب‌یابی به حدس‌زدن تبدیل می‌شود.
+    console.error('OpenAI realtime transcription failed', {
+      status: response.status,
+      code: body?.error?.code,
+      type: body?.error?.type,
+      message: body?.error?.message || answer.slice(0, 300),
+      offer: describeSdpOffer(offer),
+      sessionModel: buildRealtimeTranscriptionSession({ categories, learnings }).audio.input.transcription.model,
+    });
     if (response.status === 429) throw markOpenAIRateLimit('openai-realtime', response, body);
     if ([401, 403].includes(response.status)) throw providerFailure('کلید OpenAI معتبر نیست یا مجوز Realtime ندارد.', 'VOICE_AUTH', 503);
     if (response.status === 400) throw providerFailure('تنظیمات تایپ زنده معتبر نیست.', 'VOICE_REALTIME_CONFIG', 503);
