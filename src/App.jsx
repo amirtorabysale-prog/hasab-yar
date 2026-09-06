@@ -19,6 +19,7 @@ import { describeVoiceAvailability, pointerReleaseAction, realtimeWorthTrying, v
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from './lib/todayExperience.js';
 import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
+import { detectVoiceIntent } from '../shared/voiceIntent.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
@@ -66,6 +67,7 @@ export default function App() {
   const [recordState, setRecordState] = useState('idle');
   const [voicePath, setVoicePath] = useState('ready');
   const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
+  const [intentDraft, setIntentDraft] = useState(null);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
   const voiceSystemStatusRef = useRef(null);
@@ -277,6 +279,7 @@ export default function App() {
         fallbackReason,
       });
       if (isCorrectionCommand(result.transcript)) await openCorrection(result.transcript);
+      else if (routeIntent(result.transcript)) { /* نیت ساختاری، نه ثبت سادهٔ تراکنش */ }
       else if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.' });
       else setParseResult({ ...result, responseMs: Date.now() - requestedAt });
     } catch (error) {
@@ -331,6 +334,7 @@ export default function App() {
         responseMs: Date.now() - stoppedAtRef.current,
       };
       if (isCorrectionCommand(result.transcript)) void openCorrection(result.transcript);
+      else if (routeIntent(result.transcript)) { /* نیت ساختاری، نه ثبت سادهٔ تراکنش */ }
       else setParseResult(reviewedResult);
       if (online) {
         api.recordVoiceMetric({
@@ -605,9 +609,34 @@ export default function App() {
       await openCorrection(text);
       return;
     }
+    if (routeIntent(text)) { setManualText(''); return; }
     const result = parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' });
     if (!result.transactions?.length) setFailure({ transcript: text });
     else { setParseResult({ ...result, engine: 'local-text', latencyMs: 0 }); setManualText(''); }
+  };
+
+  /**
+   * گفته‌ای که طلب، بدهی، چک یا فاکتور است نباید به‌عنوان تراکنش ساده ثبت شود.
+   * هیچ‌چیز خودکار ذخیره نمی‌شود؛ فقط کارت تأیید باز می‌شود.
+   */
+  const routeIntent = (transcript) => {
+    if (!canWrite) return false;
+    const found = detectVoiceIntent(transcript);
+    if (!found || found.intent === 'invoice') return false;
+    setIntentDraft(found);
+    return true;
+  };
+
+  const saveIntentDraft = async (draft) => {
+    try {
+      await api.saveObligation({
+        title: draft.title, amount: draft.amount, direction: draft.direction,
+        dueAt: draft.dueAt || null, note: draft.transcript.slice(0, 300),
+      });
+      setIntentDraft(null);
+      await load();
+      notify(draft.direction === 'receivable' ? 'طلب ثبت شد.' : 'بدهی ثبت شد.');
+    } catch (error) { notify(error.message); }
   };
 
   const queueLearningSuggestion = (transactions, transcript) => {
@@ -833,6 +862,7 @@ export default function App() {
       {correctionDraft && <CorrectionSheet draft={correctionDraft} accounts={data.accounts} close={() => setCorrectionDraft(null)} confirm={applyCorrection} />}
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
       {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
+      {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
       {selectedDecision && <DecisionDetailsSheet item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
       {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} ثبت ذخیره شد.` : 'تراکنش ثبت شد.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
@@ -3243,3 +3273,57 @@ function Drawer({ profileType = 'business', close, navigate, access }) {
 }
 
 function DrawerItem({ icon: Icon, label, onClick }) { return <button onClick={onClick} className="tap flex w-full items-center gap-3 rounded-lg px-3 text-right font-bold hover:bg-surface"><Icon size={20} className="text-muted" />{label}</button>; }
+
+/**
+ * کارت تأیید نیت‌های ساختاری (طلب، بدهی، چک).
+ *
+ * جهت پول مهم‌ترین چیزی است که می‌تواند غلط باشد، پس همیشه به‌صورت دو دکمهٔ
+ * صریح نشان داده می‌شود — حتی وقتی تشخیص مطمئن است. جملهٔ مبهم بدون انتخاب
+ * کاربر اصلاً ذخیره نمی‌شود.
+ */
+function IntentSheet({ draft, setDraft, close, confirm }) {
+  const [busy, setBusy] = useState(false);
+  const isCheque = draft.intent === 'cheque';
+  const submit = async () => {
+    if (!draft.direction) return;
+    setBusy(true);
+    await confirm(draft);
+    setBusy(false);
+  };
+  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
+    <section role="dialog" aria-modal="true" aria-label="تأیید طلب یا بدهی" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
+      <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
+      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">{isCheque ? 'چک' : 'طلب و بدهی'}</span>
+      <h2 className="mt-3 text-xl font-extrabold">{isCheque ? 'این چک ثبت شود؟' : 'این مورد ثبت شود؟'}</h2>
+      <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
+
+      <div className="mt-4 rounded-[10px] border border-line bg-surface px-3 py-3">
+        <p className="text-xs font-bold text-muted">مبلغ</p>
+        <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>
+      </div>
+
+      <div className="mt-3">
+        <p className="text-xs font-bold text-muted">جهت</p>
+        {draft.ambiguous && <p className="mt-1 text-[11px] leading-5 text-expense">جمله هم نشانهٔ طلب داشت هم بدهی؛ خودت انتخاب کن.</p>}
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {[['receivable', 'طلب ما (بدهکار است)'], ['payable', 'بدهی ما (طلبکار است)']].map(([value, label]) => (
+            <button key={value} onClick={() => setDraft({ ...draft, direction: value, ambiguous: false })}
+              className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.direction === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      <label className="mt-3 block text-xs font-bold text-muted">عنوان
+        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+          className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+      </label>
+
+      {draft.dueAt && <p className="mt-3 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}
+
+      <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
+        <button disabled={busy || !draft.direction} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال ثبت…' : 'ثبت کن'}</button>
+        <button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
+      </div>
+    </section>
+  </div>;
+}
