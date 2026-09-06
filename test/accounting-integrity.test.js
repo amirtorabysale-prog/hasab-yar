@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-accounting-${process.pid}.sqlite`;
+const databasePath = tempDatabase('accounting');
 process.env.DATABASE_PATH = databasePath;
 const core = await import(`../server/db.js?accounting=${process.pid}`);
 
@@ -85,5 +85,5 @@ test('materializes each recurring occurrence exactly once', () => {
 
 test.after(() => {
   core.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });

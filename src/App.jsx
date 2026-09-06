@@ -19,7 +19,8 @@ import { describeVoiceAvailability, pointerReleaseAction, realtimeWorthTrying, v
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from './lib/todayExperience.js';
 import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
-import { detectVoiceIntent } from '../shared/voiceIntent.js';
+import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload } from '../shared/voiceIntent.js';
+import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
@@ -48,7 +49,7 @@ export default function App() {
   const [screen, setScreen] = useState('today');
   const [ledgerTab, setLedgerTab] = useState('transactions');
   const [drawer, setDrawer] = useState(false);
-  const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
+  const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, dnaProfiles: null, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   const [manualText, setManualText] = useState('');
@@ -610,7 +611,9 @@ export default function App() {
       return;
     }
     if (routeIntent(text)) { setManualText(''); return; }
-    const result = parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' });
+    // همان کنترلی که سرور روی مسیر صدا می‌زند؛ ثبت متنی محلی پارس می‌شود و نباید
+    // از الگوی خودِ پرونده بی‌خبر بماند.
+    const result = applyDnaSignals(parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' }), data.dnaProfiles);
     if (!result.transactions?.length) setFailure({ transcript: text });
     else { setParseResult({ ...result, engine: 'local-text', latencyMs: 0 }); setManualText(''); }
   };
@@ -622,13 +625,35 @@ export default function App() {
   const routeIntent = (transcript) => {
     if (!canWrite) return false;
     const found = detectVoiceIntent(transcript);
-    if (!found || found.intent === 'invoice') return false;
+    if (!found) return false;
     setIntentDraft(found);
     return true;
   };
 
   const saveIntentDraft = async (draft) => {
     try {
+      if (draft.intent === 'invoice') {
+        const payload = invoiceDraftPayload(draft);
+        if (!payload) return;
+        const { item } = await api.saveInvoice({ ...payload, documentType: draft.documentType, customerName: draft.contactName || '' });
+        setIntentDraft(null);
+        await load();
+        // پیام عمداً می‌گوید سند ناتمام است؛ «ثبت شد» خالی، کاربر را به این
+        // باور می‌رساند که فاکتور صادر شده.
+        notify(`پیش‌نویس ${item.number} ساخته شد؛ ردیف کالا و مالیاتش را در برگهٔ فاکتورها کامل کن.`);
+        return;
+      }
+      if (draft.intent === 'capital' || draft.intent === 'fixed-asset') {
+        const payload = capitalEntryPayload(draft);
+        if (!payload) return;
+        await api.saveCapitalEntry({ ...payload, source: 'voice' });
+        setIntentDraft(null);
+        await load();
+        notify(draft.intent === 'capital'
+          ? 'آورده ثبت شد؛ در جمع درآمد ماه نمی‌آید و مستقیم به حساب سرمایه نشست.'
+          : 'دارایی ثابت ثبت شد؛ هزینهٔ این ماه نشد و به بهای تمام‌شده در دارایی‌ها نشست.');
+        return;
+      }
       await api.saveObligation({
         title: draft.title, amount: draft.amount, direction: draft.direction,
         dueAt: draft.dueAt || null, note: draft.transcript.slice(0, 300),
@@ -862,7 +887,7 @@ export default function App() {
       {correctionDraft && <CorrectionSheet draft={correctionDraft} accounts={data.accounts} close={() => setCorrectionDraft(null)} confirm={applyCorrection} />}
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
       {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
-      {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
+      {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} accounts={data.accounts || []} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
       {selectedDecision && <DecisionDetailsSheet item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
       {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} ثبت ذخیره شد.` : 'تراکنش ثبت شد.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
@@ -3281,20 +3306,31 @@ function DrawerItem({ icon: Icon, label, onClick }) { return <button onClick={on
  * صریح نشان داده می‌شود — حتی وقتی تشخیص مطمئن است. جملهٔ مبهم بدون انتخاب
  * کاربر اصلاً ذخیره نمی‌شود.
  */
-function IntentSheet({ draft, setDraft, close, confirm }) {
+function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) {
   const [busy, setBusy] = useState(false);
   const isCheque = draft.intent === 'cheque';
+  const isInvoice = draft.intent === 'invoice';
+  const isCapital = draft.intent === 'capital';
+  const isAsset = draft.intent === 'fixed-asset';
+  const isEquityMove = isCapital || isAsset;
+  const ready = isInvoice ? true : isEquityMove ? Boolean(String(draft.title || '').trim()) : Boolean(draft.direction);
+  const label = isInvoice ? 'فاکتور' : isCapital ? 'سرمایه' : isAsset ? 'دارایی ثابت' : isCheque ? 'چک' : 'طلب و بدهی';
   const submit = async () => {
-    if (!draft.direction) return;
+    if (!ready) return;
     setBusy(true);
     await confirm(draft);
     setBusy(false);
   };
   return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
-    <section role="dialog" aria-modal="true" aria-label="تأیید طلب یا بدهی" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
+    <section role="dialog" aria-modal="true" aria-label={isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
-      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">{isCheque ? 'چک' : 'طلب و بدهی'}</span>
-      <h2 className="mt-3 text-xl font-extrabold">{isCheque ? 'این چک ثبت شود؟' : 'این مورد ثبت شود؟'}</h2>
+      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">{label}</span>
+      <h2 className="mt-3 text-xl font-extrabold">
+        {isInvoice ? 'پیش‌نویس فاکتور ساخته شود؟'
+          : isCapital ? 'این آورده به حساب سرمایه برود؟'
+            : isAsset ? 'این خرید دارایی ثابت است؟'
+              : isCheque ? 'این چک ثبت شود؟' : 'این مورد ثبت شود؟'}
+      </h2>
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
 
       <div className="mt-4 rounded-[10px] border border-line bg-surface px-3 py-3">
@@ -3302,26 +3338,80 @@ function IntentSheet({ draft, setDraft, close, confirm }) {
         <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>
       </div>
 
-      <div className="mt-3">
-        <p className="text-xs font-bold text-muted">جهت</p>
-        {draft.ambiguous && <p className="mt-1 text-[11px] leading-5 text-expense">جمله هم نشانهٔ طلب داشت هم بدهی؛ خودت انتخاب کن.</p>}
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {[['receivable', 'طلب ما (بدهکار است)'], ['payable', 'بدهی ما (طلبکار است)']].map(([value, label]) => (
-            <button key={value} onClick={() => setDraft({ ...draft, direction: value, ambiguous: false })}
-              className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.direction === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{label}</button>
-          ))}
+      {isEquityMove ? <>
+        <label className="mt-3 block text-xs font-bold text-muted">{isCapital ? 'عنوان آورده' : 'نام دارایی'}
+          <input value={draft.title || ''} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+            placeholder={isCapital ? 'آوردهٔ نقدی مالک' : 'مثلاً لپ‌تاپ، خودرو، دستگاه چاپ'}
+            className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+        </label>
+        {/* حساب دارایی بی‌نام، ردیفی است که شش ماه بعد هیچ‌کس نمی‌داند چیست. */}
+        {isAsset && !String(draft.title || '').trim() && <p className="mt-1 text-[11px] leading-5 text-expense">
+          نام دارایی از جمله برداشت نشد؛ خودت بنویس. حساب دارایی بدون نام در دفتر کل قابل پیگیری نیست.
+        </p>}
+
+        <div className="mt-3">
+          <p className="text-xs font-bold text-muted">{isCapital ? 'پول به کدام حساب آمد؟' : 'پول از کدام حساب رفت؟'}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {accounts.filter((item) => item.active).map((item) => (
+              <button key={item.id} onClick={() => setDraft({ ...draft, accountId: item.id })}
+                className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.accountId === item.id ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{item.name}</button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <label className="mt-3 block text-xs font-bold text-muted">عنوان
-        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-          className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
-      </label>
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-[11px] leading-6 text-accent">
+          {isCapital
+            ? 'آورده درآمد نیست: در جمع درآمد و سود ماه نمی‌آید و بستانکار حساب سرمایه می‌شود. مانده و کنترل پایان روزِ همان حساب، این پول را می‌بیند.'
+            : 'دارایی ثابت هزینهٔ این ماه نیست: به بهای تمام‌شده در دارایی‌ها می‌نشیند و از جمع هزینهٔ دوره بیرون می‌ماند. استهلاک در این نسخه محاسبه نمی‌شود.'}
+        </p>
+      </> : isInvoice ? <>
+        <div className="mt-3">
+          <p className="text-xs font-bold text-muted">نوع سند</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {[['sales', 'فاکتور فروش'], ['purchase', 'فاکتور خرید']].map(([value, text]) => (
+              <button key={value} onClick={() => setDraft({ ...draft, documentType: value })}
+                className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.documentType === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{text}</button>
+            ))}
+          </div>
+        </div>
 
-      {draft.dueAt && <p className="mt-3 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}
+        <label className="mt-3 block text-xs font-bold text-muted">{draft.documentType === 'purchase' ? 'تأمین‌کننده' : 'مشتری'}
+          <input value={draft.contactName || ''} onChange={(event) => setDraft({ ...draft, contactName: event.target.value })}
+            placeholder={draft.documentType === 'purchase' ? 'تأمین‌کننده متفرقه' : 'مشتری متفرقه'}
+            className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+        </label>
+
+        {/* مرز صریح: از یک جملهٔ گفتاری ردیف کالا و نرخ مالیات درنمی‌آید. */}
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-[11px] leading-6 text-accent">
+          سند به‌صورت <b>پیش‌نویس</b> با یک ردیف به کل این مبلغ ساخته می‌شود و صادر نمی‌شود: نه در دفتر کل سند می‌خورد،
+          نه در گزارش مالیاتی می‌آید و نه در جمع طلب و بدهی. ردیف کالا، تعداد و نرخ مالیات را در برگهٔ «فاکتورها» کامل
+          کن و بعد خودت صادرش کن.
+          {draft.occurredAt && <> تاریخ گفته‌شده روی پیش‌نویس نمی‌نشیند؛ تاریخ فاکتور هنگام صدور تعیین می‌شود.</>}
+        </p>
+      </> : <>
+        <div className="mt-3">
+          <p className="text-xs font-bold text-muted">جهت</p>
+          {draft.ambiguous && <p className="mt-1 text-[11px] leading-5 text-expense">جمله هم نشانهٔ طلب داشت هم بدهی؛ خودت انتخاب کن.</p>}
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {[['receivable', 'طلب ما (بدهکار است)'], ['payable', 'بدهی ما (طلبکار است)']].map(([value, text]) => (
+              <button key={value} onClick={() => setDraft({ ...draft, direction: value, ambiguous: false })}
+                className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.direction === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{text}</button>
+            ))}
+          </div>
+        </div>
+
+        <label className="mt-3 block text-xs font-bold text-muted">عنوان
+          <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+            className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+        </label>
+
+        {draft.dueAt && <p className="mt-3 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}
+      </>}
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
-        <button disabled={busy || !draft.direction} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال ثبت…' : 'ثبت کن'}</button>
+        <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">
+          {busy ? 'در حال ثبت…' : isInvoice ? 'پیش‌نویس بساز' : 'ثبت کن'}
+        </button>
         <button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
       </div>
     </section>

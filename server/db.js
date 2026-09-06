@@ -4,12 +4,12 @@ import { dirname, resolve } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { passwordPolicy } from './security.js';
-import { financialDna } from './financialDna.js';
+import { dnaCategoryProfiles, financialDna, overdueBackboneCategories } from './financialDna.js';
 import { CATEGORY_DEFINITIONS } from '../shared/categoryRules.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
-  postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
+  postCapitalJournal, postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseTransactionJournal,
   nextLedgerCode, postImportedOpeningBalances,
   createJournalBatch, journalWorklist, listJournal as listJournalEntries, setJournalApproval,
   syncOpeningBalanceJournal, syncTransactionJournal,
@@ -123,6 +123,9 @@ db.exec(`
     review_state TEXT NOT NULL DEFAULT 'ready',
     restored_from TEXT,
     account_id TEXT REFERENCES accounts(id) ON DELETE RESTRICT,
+    -- '' یعنی ثبت عادی. 'capital-in' و 'fixed-asset' پول را جابه‌جا می‌کنند ولی
+    -- سود و زیان دوره نیستند و از جمع درآمد/هزینه بیرون می‌مانند.
+    capital_flow TEXT NOT NULL DEFAULT '' CHECK(capital_flow IN ('','capital-in','fixed-asset')),
     occurred_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -314,6 +317,7 @@ function ensureTransactionReviewSchema(database) {
   ensureColumnOn(database, 'transactions', "review_reasons TEXT NOT NULL DEFAULT '[]'");
   ensureColumnOn(database, 'transactions', "review_state TEXT NOT NULL DEFAULT 'ready'");
   ensureColumnOn(database, 'transactions', 'restored_from TEXT');
+  ensureColumnOn(database, 'transactions', "capital_flow TEXT NOT NULL DEFAULT ''");
   database.exec('CREATE INDEX IF NOT EXISTS idx_transactions_restored_from ON transactions(restored_from)');
 }
 
@@ -994,6 +998,7 @@ export function getToday() {
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
+    transactions.capital_flow AS capitalFlow,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.account_id AS accountId,
     accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -1001,14 +1006,18 @@ export function getToday() {
     ORDER BY transactions.occurred_at DESC,transactions.created_at DESC`).all(start, endExclusive).map(hydrateTransaction);
   const totals = summarize(transactions);
   const previousBounds = dayBounds(addLocalDays(today, -1));
-  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
+  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND capital_flow='' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
   totals.comparison = previous > 0 ? Math.round(((totals.income - previous) / previous) * 100) : null;
   return { transactions, summary: totals };
 }
 
 export function summarize(items) {
-  const income = items.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount), 0);
-  const expense = items.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount), 0);
+  // آوردهٔ سرمایه درآمد نیست و خرید دارایی ثابت هزینهٔ دوره نیست؛ هر دو از صندوق
+  // رد می‌شوند و در ماندهٔ حساب و کنترل پایان روز دیده می‌شوند، ولی اگر در این
+  // جمع بیایند سود دوره را جعل می‌کنند.
+  const operational = items.filter((item) => !item.capitalFlow);
+  const income = operational.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount), 0);
+  const expense = operational.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount), 0);
   const netCashFlow = income - expense;
   // profit برای سازگاری نسخهٔ قبلی نگه داشته شده و نباید با سود حسابداری اشتباه شود.
   return { income, expense, netCashFlow, profit: netCashFlow, comparison: null };
@@ -1022,6 +1031,8 @@ function resolveAccountId(item = {}) {
   return account.id;
 }
 
+export const CAPITAL_FLOWS = Object.freeze(['capital-in', 'fixed-asset']);
+
 function normalizeReviewState(value, fallback = 'ready') {
   return ['ready', 'review', 'unintelligible', 'reviewed', 'duplicate-confirmed'].includes(value) ? value : fallback;
 }
@@ -1033,8 +1044,8 @@ function jsonText(value, fallback) {
 
 function insertTransactionRows({ transcript, transactions }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
-    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const ids = [];
   for (const item of transactions) {
     const id = randomUUID();
@@ -1049,7 +1060,8 @@ function insertTransactionRows({ transcript, transactions }) {
       id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80),
       String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1),
       item.needsReview ? 1 : 0, jsonText(item.confidenceDetails, {}), jsonText(item.reviewReasons, []), reviewState,
-      item.restoredFrom || null, occurredAt, item.contactId || null, accountId, accountId,
+      item.restoredFrom || null, CAPITAL_FLOWS.includes(item.capitalFlow) ? item.capitalFlow : '',
+      occurredAt, item.contactId || null, accountId, accountId,
       String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt,
     );
     if (result.changes) {
@@ -1064,13 +1076,52 @@ function insertTransactionRows({ transcript, transactions }) {
   return ids;
 }
 
+/**
+ * ثبت آوردهٔ سرمایه یا خرید دارایی ثابت.
+ *
+ * چرا از مسیر تراکنش عبور می‌کند و سند دستی نیست: ماندهٔ صندوق و کنترل پایان
+ * روز از ردیف‌های `transactions` ساخته می‌شوند. سندِ فقط-دفترکل، پول را در دفتر
+ * جابه‌جا می‌کرد ولی موجودی صندوق برنامه دست‌نخورده می‌ماند و کاربر پایان روز یک
+ * اختلاف بی‌دلیل می‌دید.
+ *
+ * و چرا `capital_flow` لازم است: ردیف تراکنش فقط دو نوع دارد، درآمد و هزینه.
+ * بدون این نشانه، آورده در جمع درآمد ماه می‌نشست و خرید دارایی در جمع هزینه.
+ * سند دفتر کل هم عمداً از مسیر دستهٔ درآمد/هزینه رد نمی‌شود؛ `journalManaged`
+ * سند خودکار را خاموش می‌کند و `postCapitalJournal` سند درست را می‌زند.
+ */
+export function recordCapitalEntry(values = {}) {
+  const kind = CAPITAL_FLOWS.includes(values.kind) ? values.kind : null;
+  if (!kind) throw invalidInput('نوع ثبت سرمایه معتبر نیست.');
+  const amount = cleanAmount(values.amount);
+  if (amount <= 0) throw invalidInput('مبلغ را وارد کن.');
+  const title = String(values.title || '').trim().slice(0, 100);
+  if (!title) throw invalidInput(kind === 'capital-in' ? 'عنوان آورده را وارد کن.' : 'نام دارایی ثابت را وارد کن.');
+  const occurredAt = values.occurredAt || new Date().toISOString();
+  const accountId = resolveAccountId(values);
+  const note = String(values.note || '').slice(0, 500);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const [id] = insertTransactionRows({ transcript: note || title, transactions: [{
+      amount, type: kind === 'capital-in' ? 'income' : 'expense',
+      category: kind === 'capital-in' ? 'آورده و افزایش سرمایه' : `دارایی ثابت — ${title}`,
+      rawText: note || title, source: values.source === 'voice' ? 'voice' : 'text',
+      occurredAt, accountId, note, status: 'confirmed', journalManaged: true, capitalFlow: kind,
+    }] });
+    postCapitalJournal(db, { transactionId: id, kind, amount, accountId, title, occurredAt },
+      { createdBy: currentWorkspace()?.userId });
+    audit('create', 'capital-entry', id, { kind, amount, title });
+    db.exec('COMMIT');
+    return { id, kind, amount, title, accountId, occurredAt };
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
 export function insertTransactions(payload) {
   db.exec('BEGIN IMMEDIATE');
   try {
     // Public transaction writes may describe review metadata, but cannot forge an
     // internal restore link, allocation status or bypass the accounting journal.
     const transactions = (payload.transactions || []).map((item) => ({
-      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false,
+      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false, capitalFlow: '',
     }));
     const ids = insertTransactionRows({ ...payload, transactions });
     db.exec('COMMIT');
@@ -1137,7 +1188,7 @@ export function updateLearning(id, values) {
 export function deleteLearning(id) { return db.prepare('DELETE FROM learnings WHERE id=?').run(id).changes > 0; }
 
 export function typicalAmounts() {
-  const rows = db.prepare("SELECT type, AVG(amount) AS average FROM (SELECT type,amount FROM transactions WHERE status!='deleted' ORDER BY occurred_at DESC LIMIT 120) GROUP BY type").all();
+  const rows = db.prepare("SELECT type, AVG(amount) AS average FROM (SELECT type,amount FROM transactions WHERE status!='deleted' AND capital_flow='' ORDER BY occurred_at DESC LIMIT 120) GROUP BY type").all();
   return Object.fromEntries(rows.map((row) => [row.type, Math.round(row.average)]));
 }
 
@@ -1148,7 +1199,7 @@ export function report(range = 'month', now = new Date()) {
   const startDay = addLocalDays(today, -(days - 1));
   const start = dayBounds(startDay, timeZone).start;
   const endExclusive = dayBounds(addLocalDays(today, 1), timeZone).start;
-  const items = db.prepare("SELECT amount,type,category,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
+  const items = db.prepare("SELECT amount,type,category,capital_flow AS capitalFlow,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
   const summary = summarize(items);
   const bucketCount = range === 'quarter' ? 12 : range === 'month' ? 10 : 7;
   const bucketDays = Math.ceil(days / bucketCount);
@@ -3101,6 +3152,7 @@ function financialTransactionRows(window, filters = {}) {
   if (filters.category) { clauses.push('transactions.category=?'); values.push(filters.category); }
   if (filters.contactId) { clauses.push('transactions.contact_id=?'); values.push(filters.contactId); }
   return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
+    transactions.capital_flow AS capitalFlow,
     transactions.raw_text AS rawText,transactions.occurred_at AS occurredAt,transactions.account_id AS accountId,
     accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -3160,8 +3212,21 @@ export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
   const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
   const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
     occurred_at AS occurredAt,created_at AS createdAt
-    FROM transactions WHERE status='confirmed' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+    FROM transactions WHERE status='confirmed' AND capital_flow='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
   return financialDna(rows, { timeZone: currentTimeZone(), now, months });
+}
+
+/**
+ * پروفایل دسته‌ها برای تصمیم‌گیری پیش از ثبت.
+ * پنجرهٔ شش ماه با خود DNA یکی است تا کاربر همان چیزی را ببیند که تصمیم بر پایه‌اش
+ * گرفته شده.
+ */
+export function dnaProfiles({ months = 6, now = new Date() } = {}) {
+  const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
+  const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
+    occurred_at AS occurredAt,created_at AS createdAt
+    FROM transactions WHERE status='confirmed' AND capital_flow='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+  return dnaCategoryProfiles(rows, { timeZone: currentTimeZone() });
 }
 
 export function financialOverview(now = new Date()) {
@@ -3217,6 +3282,26 @@ export function financialOverview(now = new Date()) {
       detail: `${money(anomaly.current.amount)} تومان در «${anomaly.current.category}»؛ ${anomaly.ratio} برابر میانهٔ ${anomaly.baseline.length} ثبت مشابه.`,
       value: Number(anomaly.current.amount), unit: FINANCIAL_UNIT, scope: financialScope(historyWindow, 'خط مبنای ۹۰ روزه'), sources,
       action: { screen: 'ledger', tab: 'transactions', entityId: anomaly.current.id, label: 'بازبینی ثبت' },
+    });
+  }
+
+  // DNA تا امروز فقط تماشا می‌شد. ستون فقرات هزینه — دسته‌ای که تقریباً هر ماه
+  // تکرار شده — تنها جایی است که نبودِ یک ثبت، خودش خبر است: اجاره‌ای که این ماه
+  // نیامده یعنی یا پرداخت نشده یا ثبت نشده، و هر دو کار دارند.
+  const profiles = dnaProfiles({ now });
+  const fiscalMonth = periodForDate(now, currentTimeZone());
+  const recordedThisMonth = historyRows.filter((item) => periodForDate(item.occurredAt, currentTimeZone()) === fiscalMonth);
+  const persianDayOfMonth = Number(new Intl.DateTimeFormat('en-u-ca-persian', { timeZone: currentTimeZone(), day: 'numeric' }).format(now));
+  for (const missing of overdueBackboneCategories(profiles, recordedThisMonth, { dayOfMonth: persianDayOfMonth }).slice(0, 2)) {
+    const evidence = historyRows.filter((item) => item.type === 'expense' && item.category === missing.category);
+    alerts.push({
+      id: `missing-recurring-${missing.category}`, type: 'missing-recurring', level: 'info', priority: 65,
+      title: `«${missing.category}» این ماه هنوز ثبت نشده`,
+      detail: `در ${missing.months} ماه از ${profiles.months} ماه گذشته ثبت شده و معمولاً حدود روز ${missing.typicalDay} ماه می‌آید؛ مبلغ معمولش ${money(missing.median)} تومان است.`,
+      value: missing.median, unit: FINANCIAL_UNIT,
+      scope: financialScope(historyWindow, 'الگوی تکرار همین پرونده'),
+      sources: evidence.map(transactionSource),
+      action: { screen: 'ledger', tab: 'transactions', label: 'ثبت این هزینه' },
     });
   }
 

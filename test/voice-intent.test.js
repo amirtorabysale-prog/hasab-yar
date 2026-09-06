@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { detectVoiceIntent, extractContactName } from '../shared/voiceIntent.js';
+import { capitalEntryPayload, detectVoiceIntent, extractContactName, invoiceDraftPayload } from '../shared/voiceIntent.js';
 import { persianToISO } from '../shared/persianDate.js';
 
 const TZ = 'Asia/Tehran';
@@ -75,4 +75,57 @@ test('نام طرف حساب از عنوان بیرون کشیده می‌شود
   assert.equal(extractContactName('شرکت پارس خودرو ده میلیون'), 'شرکت پارس خودرو');
   // بدون عنوان، حدس‌زدن نام خطای بیشتری می‌سازد تا فایده.
   assert.equal(extractContactName('دو میلیون بدهکاره'), '');
+});
+
+test('پیش‌نویس فاکتور یک ردیف به کل مبلغ می‌سازد و صادر نمی‌شود', () => {
+  const payload = invoiceDraftPayload(detect('فاکتور فروش برای آقای احمدی سه میلیون'));
+  assert.equal(payload.documentType, 'sales');
+  assert.equal(payload.customerName, 'احمدی');
+  assert.equal(payload.issueNow, false);
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0].quantity, 1);
+  assert.equal(payload.items[0].unitPrice, 3_000_000);
+  // نرخ مالیات از گفتار درنمی‌آید و ساختگی هم نمی‌شود؛ خالی می‌ماند تا در فرم انتخاب شود.
+  assert.equal(payload.items[0].taxRateId, undefined);
+
+  const purchase = invoiceDraftPayload(detect('فاکتور خرید از شرکت پارس دوازده میلیون'));
+  assert.equal(purchase.documentType, 'purchase');
+  assert.equal(purchase.items[0].unitPrice, 12_000_000);
+});
+
+test('بدون مبلغ پیش‌نویس فاکتور ساخته نمی‌شود', () => {
+  assert.equal(invoiceDraftPayload({ documentType: 'sales', amount: 0 }), null);
+  assert.equal(invoiceDraftPayload({}), null);
+});
+
+test('آورده و افزایش سرمایه از ثبت عادی جدا می‌شود', () => {
+  const capital = detect('پنجاه میلیون سرمایه گذاشتم');
+  assert.equal(capital.intent, 'capital');
+  assert.equal(capital.amount, 50_000_000);
+  assert.equal(detect('افزایش سرمایه صد میلیون').intent, 'capital');
+});
+
+test('دارایی ثابت فقط با نشانهٔ صریح تشخیص داده می‌شود', () => {
+  const asset = detect('لپ‌تاپ به عنوان دارایی ثابت سی میلیون خریدم');
+  assert.equal(asset.intent, 'fixed-asset');
+  assert.equal(asset.amount, 30_000_000);
+  assert.equal(asset.title, 'لپ تاپ');
+  assert.equal(detect('دارایی ثابت کولر گازی بیست میلیون').title, 'کولر گازی');
+  // بدون نشانهٔ صریح حدس زده نمی‌شود؛ همان لپ‌تاپ می‌تواند کالای فروش باشد.
+  assert.equal(detect('لپ‌تاپ سی میلیون خریدم'), null);
+});
+
+// واژهٔ شمارش برای پارسر هم یک عدد است؛ اولین عدد، مبلغ را ۱ می‌کرد.
+test('عدد شمارش با مبلغ اشتباه گرفته نمی‌شود', () => {
+  const asset = detect('یک دستگاه پراید به عنوان دارایی ثابت چهارصد میلیون خریدم');
+  assert.equal(asset.amount, 400_000_000);
+  assert.equal(asset.title, 'دستگاه پراید');
+});
+
+test('ورودی ثبت سرمایه بدون عنوان ساخته نمی‌شود', () => {
+  const asset = detect('دارایی ثابت هشتاد میلیون خریدم');
+  assert.equal(asset.title, '');
+  assert.equal(capitalEntryPayload(asset), null);
+  assert.equal(capitalEntryPayload({ ...asset, title: 'میز اداری' }).kind, 'fixed-asset');
+  assert.equal(capitalEntryPayload(detect('پنجاه میلیون سرمایه گذاشتم')).kind, 'capital-in');
 });

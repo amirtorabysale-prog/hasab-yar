@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-phase6-${process.pid}.sqlite`;
+const databasePath = tempDatabase('phase6');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'phase6-owner';
 process.env.ADMIN_PASSWORD = 'phase6-safe-password-4829';
@@ -92,12 +91,8 @@ test('includes collaboration and usage records in portable backup data', () => i
 }));
 
 test.after(() => {
-  const workspaceIds = database.allWorkspaces().filter((item) => item.id !== 'primary').map((item) => item.id);
   database.closeWorkspaceDatabases();
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
-  for (const workspaceId of workspaceIds) {
-    const tenantPath = resolve(dirname(databasePath), 'workspaces', `${workspaceId}.sqlite`);
-    for (const suffix of ['', '-shm', '-wal']) rmSync(`${tenantPath}${suffix}`, { force: true });
-  }
+  // دیتابیس دفترها زیر همین پوشه ساخته می‌شود و با حذف پوشه می‌رود.
+  removeTempDatabase(databasePath);
 });

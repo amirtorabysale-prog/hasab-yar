@@ -216,6 +216,8 @@ export const api = {
   recurring: () => request('/api/recurring'),
   saveRecurring: (payload) => request('/api/recurring', { method: 'POST', body: JSON.stringify(payload) }),
   deleteRecurring: (id) => request(`/api/recurring/${id}`, { method: 'DELETE' }),
+  // آورده و دارایی ثابت؛ ثبت عادی نیست چون سود دوره را تکان نمی‌دهد.
+  saveCapitalEntry: (payload) => request('/api/capital-entries', { method: 'POST', body: JSON.stringify(payload) }),
   invoices: (params = {}) => request(`/api/invoices?${new URLSearchParams(params)}`),
   invoice: (id) => request(`/api/invoices/${id}`),
   saveInvoice: (payload) => request('/api/invoices', { method: 'POST', body: JSON.stringify(payload) }),

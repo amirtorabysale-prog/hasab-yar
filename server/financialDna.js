@@ -41,6 +41,19 @@ function tehranParts(date, timeZone) {
   };
 }
 
+/**
+ * ماه و روزِ شمسی.
+ *
+ * صفت‌ها فقط «چند ماه» را می‌شمارند و آنجا تفاوت تقویم اثری ندارد. اما «معمولاً
+ * چندم ماه» و «همین ماه ثبت شده یا نه» را کاربر با تقویم شمسی می‌فهمد؛ مرز ماه
+ * میلادی وسط ماه شمسی می‌افتد و اجارهٔ اول ماه را به دو ماه مختلف می‌برد.
+ */
+function persianParts(date, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA-u-ca-persian', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return { month: `${parts.year}-${parts.month}`, day: Number(parts.day) };
+}
+
 function median(values) {
   if (!values.length) return 0;
   const sorted = [...values].sort((left, right) => left - right);
@@ -62,6 +75,7 @@ export function normalizeDnaRows(rows = [], timeZone = 'Asia/Tehran') {
     if (amount <= 0) return null;
     const type = row.type === 'income' ? 'income' : 'expense';
     const when = tehranParts(occurredAt, timeZone);
+    const persian = persianParts(occurredAt, timeZone);
     return {
       amount,
       type,
@@ -71,6 +85,8 @@ export function normalizeDnaRows(rows = [], timeZone = 'Asia/Tehran') {
       createdAt,
       day: when.day,
       month: when.month,
+      fiscalMonth: persian.month,
+      fiscalDay: persian.day,
       weekday: when.weekday,
       // فاصلهٔ ثبت تا وقوع؛ منفی یعنی ساعت‌گرد، پس صفر می‌شود.
       lagDays: Math.max(0, Math.floor((createdAt.getTime() - occurredAt.getTime()) / DAY_MS)),
@@ -303,4 +319,66 @@ export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Da
     brief: accountantBrief(normalized, monthCount, traits),
     message: '',
   };
+}
+
+// ---------------------------------------------------------------------------
+// از پروفایل به تصمیم
+// ---------------------------------------------------------------------------
+
+/**
+ * پروفایل هر دسته: چند بار ثبت شده، مبلغ معمولش چقدر است، در چند ماه دیده شده و
+ * معمولاً چندم ماه می‌آید.
+ *
+ * تا امروز DNA فقط نمایش داده می‌شد. این خروجی همان دانش را به شکلی می‌دهد که
+ * بتوان پیش از ثبت دربارهٔ یک گفته تصمیم گرفت: مبلغ نسبت به عادت خودِ این پرونده
+ * سنجیده شود، نه نسبت به یک میانگین کلی که خرید ملک و خرید نان را با هم جمع
+ * می‌کند.
+ *
+ * ساختار خروجی عمداً ساده و JSON است تا هم سرور و هم مرورگر — که ثبت متنی را
+ * محلی پارس می‌کند — از یک منبع تصمیم بگیرند.
+ */
+export function dnaCategoryProfiles(rows = [], { timeZone = 'Asia/Tehran' } = {}) {
+  const normalized = normalizeDnaRows(rows, timeZone);
+  const grouped = new Map();
+  for (const row of normalized) {
+    const key = `${row.type}:${row.category}`;
+    const entry = grouped.get(key) || { type: row.type, category: row.category, amounts: [], months: new Set(), days: [] };
+    entry.amounts.push(row.amount);
+    entry.months.add(row.fiscalMonth);
+    entry.days.push(row.fiscalDay);
+    grouped.set(key, entry);
+  }
+  return {
+    totalRows: normalized.length,
+    months: new Set(normalized.map((row) => row.fiscalMonth)).size,
+    categories: [...grouped.values()].map((entry) => ({
+      type: entry.type,
+      category: entry.category,
+      count: entry.amounts.length,
+      median: median(entry.amounts),
+      months: entry.months.size,
+      typicalDay: median(entry.days),
+    })),
+  };
+}
+
+/**
+ * دسته‌های تکرارشوندهٔ ماهانه‌ای که ماه جاری هنوز ثبت نشده‌اند و روز معمولشان
+ * گذشته است.
+ *
+ * همان تعریف «ستون فقرات هزینه» در صفت‌ها استفاده می‌شود: دسته‌ای که در بیشتر
+ * ماه‌ها تکرار شده. تفاوت اینجاست که خروجی، یک صفت برای تماشا نیست؛ یک کار
+ * باقی‌مانده است.
+ */
+export function overdueBackboneCategories(profiles, recordedThisMonth = [], { dayOfMonth = 1 } = {}) {
+  const recorded = new Set(recordedThisMonth.map((item) => `${item.type}:${item.category}`));
+  const requiredMonths = Math.max(2, Math.round(Number(profiles.months || 0) * 0.6));
+  if (profiles.months < DNA_MINIMUMS.monthsForBackbone) return [];
+  return profiles.categories
+    .filter((item) => item.type === 'expense' && item.months >= requiredMonths)
+    // مهلت سه روز است، نه صفر: اجاره و حقوق یکی-دو روز جابه‌جا پرداخت می‌شوند و
+    // هشدار روزِ سررسید فقط نویز می‌سازد.
+    .filter((item) => dayOfMonth >= item.typicalDay + 3)
+    .filter((item) => !recorded.has(`expense:${item.category}`))
+    .sort((left, right) => right.median - left.median);
 }

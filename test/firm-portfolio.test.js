@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-firm-${process.pid}.sqlite`;
-// بعضی runnerها PID فرایند قبلی را دوباره استفاده می‌کنند؛ fixture قدیمی نباید
-// عضویت‌ها را دو بار وارد کند و CI را تصادفی قرمز کند.
-rmSync(databasePath, { force: true });
+const databasePath = tempDatabase('firm');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'firm-owner';
 process.env.ADMIN_PASSWORD = 'firm-desk-strong-password-1234';
@@ -102,3 +99,5 @@ test('invalidating one client forces only that client to be recomputed', () => {
     1,
   );
 });
+
+test.after(() => removeTempDatabase(databasePath));

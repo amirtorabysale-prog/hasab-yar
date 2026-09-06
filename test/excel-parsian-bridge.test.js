@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-bridge-${process.pid}.sqlite`;
+const databasePath = tempDatabase('bridge');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'bridge-owner';
 process.env.ADMIN_PASSWORD = 'bridge-strong-password-12345';
@@ -229,3 +230,5 @@ test('the export field catalogue is offered so the office can build its own layo
   assert.deepEqual(catalogue.formats.map((item) => item.id).sort(), ['csv', 'mdb', 'xlsx']);
   assert.equal(catalogue.formats.find((item) => item.id === 'mdb').requiresTemplate, true);
 });
+
+test.after(() => removeTempDatabase(databasePath));

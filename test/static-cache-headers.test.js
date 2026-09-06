@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { once } from 'node:events';
+import { tempDatabase } from './helpers/tempPath.js';
 
 // این تست یک باگ واقعی production را قفل می‌کند: express.static با maxAge یک
 // ساعته روی همهٔ فایل‌ها، باعث می‌شد index.html و sw.js تا یک ساعت از کش
 // مرورگر بیایند و دیپلوی تازه برای کاربر نامرئی بماند تا Ctrl+Shift+R بزند.
 
-const root = resolve(`/tmp/hesab-yar-static-${process.pid}`);
+const databasePath = tempDatabase('static');
+const root = dirname(databasePath);
 const dist = resolve(root, 'dist');
 mkdirSync(resolve(dist, 'assets'), { recursive: true });
 writeFileSync(resolve(dist, 'index.html'), '<!doctype html><title>حساب‌یار</title><script src="/assets/index-abc123.js"></script>');
@@ -17,18 +20,20 @@ writeFileSync(resolve(dist, 'assets', 'index-abc123.js'), 'console.log("bundle")
 writeFileSync(resolve(dist, 'assets', 'index-abc123.css'), 'body{color:#000}');
 
 process.chdir(root);
-process.env.DATABASE_PATH = resolve(root, 'db.sqlite');
+process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'static-owner';
 process.env.ADMIN_PASSWORD = 'Static-Long-Passphrase-9931';
-// پورت از pid ساخته می‌شود؛ پورت ثابت باعث می‌شد یک سرور جامانده از اجرای قبلی
-// بی‌سروصدا پاسخ بدهد و تست، کدِ قدیمی را بسنجد.
-const port = 4300 + (process.pid % 900);
-process.env.PORT = String(port);
+// پورت را سیستم‌عامل می‌دهد. پورتِ ساخته‌شده از pid هم با سرور جامانده از اجرای
+// قبلی برخورد می‌کرد و هم با اجرای موازی؛ در آن حالت listen خطا می‌داد و این
+// فایل یک‌بار و بدون دلیل روشن قرمز می‌شد.
+process.env.PORT = '0';
 
 const { server } = await import(`../server/index.js?static=${process.pid}`);
-await new Promise((done) => { setTimeout(done, 700); });
+// انتظار برای رویداد واقعی listening، نه یک وقفهٔ ثابت: روی ماشین شلوغ ۷۰۰
+// میلی‌ثانیه گاهی کم می‌آمد و اولین fetch با ECONNREFUSED می‌خورد.
+if (!server.listening) await once(server, 'listening');
 
-const base = `http://127.0.0.1:${port}`;
+const base = `http://127.0.0.1:${server.address().port}`;
 const headersFor = async (path, method = 'GET') => {
   const response = await fetch(base + path, { method });
   await response.arrayBuffer();

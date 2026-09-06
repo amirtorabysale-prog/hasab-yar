@@ -1,9 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-transfer-${process.pid}.sqlite`;
+const databasePath = tempDatabase('transfer');
 process.env.DATABASE_PATH = databasePath;
 const testAdminUsername = 'transfer-owner';
 const testAdminPassword = `transfer-test-${crypto.randomUUID()}`;
@@ -172,14 +171,10 @@ test('includes transfer settings, mappings and immutable files in encrypted-back
 }));
 
 test.after(() => {
-  const workspaceId = secondWorkspace?.id;
   database.closeWorkspaceDatabases();
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
-  if (workspaceId) {
-    const tenantPath = resolve(dirname(databasePath), 'workspaces', `${workspaceId}.sqlite`);
-    for (const suffix of ['', '-shm', '-wal']) rmSync(`${tenantPath}${suffix}`, { force: true });
-  }
+  // دیتابیس دفترها زیر همین پوشه ساخته می‌شود و با حذف پوشه می‌رود.
+  removeTempDatabase(databasePath);
 });
 
 test('پایان سال شمسی از تقویم واقعی می‌آید، نه از حدس', () => {

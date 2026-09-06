@@ -28,6 +28,24 @@ const CHEQUE_PATTERNS = [/(?<![آ-ی])چک(?![آ-ی])/, /(?<![آ-ی])چکی(?![�
 const INVOICE_SALES_PATTERNS = [/فاکتور\s*فروش/, /فاکتور\s*زدم\s*برای/, /پیش\s*فاکتور\s*فروش/];
 const INVOICE_PURCHASE_PATTERNS = [/فاکتور\s*خرید/, /فاکتور\s*خریدم/];
 
+// آوردهٔ مالک درآمد نیست. اگر به‌عنوان درآمد ثبت شود، سود دوره به اندازهٔ همان
+// آورده باد می‌کند و مالیات روی پولی حساب می‌شود که خودِ مالک گذاشته است.
+const CAPITAL_PATTERNS = [
+  /سرمایه\s*(?:را\s*)?(?:گذاشتم|گذاشتیم|آوردم|آوردیم|اضافه\s*کردم|اضافه\s*کردیم|واریز\s*کردم|ریختم)/,
+  /افزایش\s*سرمایه/,
+  /آورده\s*(?:نقدی|مالک|شریک)/,
+  /سرمایه\s*اولیه/,
+];
+
+// دارایی ثابت هزینهٔ دوره نیست؛ خرجِ امسال نیست، دارایی چند ساله است.
+//
+// تشخیص فقط با نشانهٔ صریح انجام می‌شود. حدس‌زدن از روی نام کالا («لپ‌تاپ
+// خریدم») وسوسه‌انگیز است ولی همان لپ‌تاپ می‌تواند کالای فروش یک مغازهٔ
+// کامپیوتر باشد؛ سرمایه‌ای‌کردن یک خرید عادی، هم سود دوره را جعل می‌کند و هم
+// یک حساب دارایی بی‌صاحب در دفتر کل می‌سازد. همان قاعده‌ای که برای نام طرف
+// حساب پذیرفته‌ایم: بدون نشانهٔ صریح، حدس نمی‌زنیم.
+const FIXED_ASSET_PATTERNS = [/دارایی\s*ثابت/, /اموال\s*و\s*تجهیزات/, /خرید\s*سرمایه\s*ای/];
+
 const CONTACT_STOP_WORDS = new Set([
   'آقای', 'اقای', 'خانم', 'جناب', 'شرکت', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار',
   'از', 'به', 'برای', 'بابت', 'با', 'رو', 'را', 'که', 'و', 'در', 'تا', 'یک', 'یه',
@@ -42,7 +60,37 @@ const NUMBER_WORDS = new Set(['صفر', 'یک', 'یه', 'دو', 'سه', 'چها�
   'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود', 'صد', 'دویست', 'سیصد', 'چهارصد',
   'پانصد', 'پونصد', 'ششصد', 'هفتصد', 'هفصد', 'هشتصد', 'هشصد', 'نهصد', 'هزار', 'میلیون', 'میلیارد', 'نیم']);
 
+// واژه‌هایی که کنار نشانهٔ دارایی می‌آیند و نام دارایی نیستند.
+const ASSET_STOP_WORDS = new Set(['خریدم', 'خریدیم', 'گرفتم', 'گرفتیم', 'ثبت', 'کن', 'بزن', 'به', 'عنوان',
+  'یک', 'بابت', 'برای', 'با', 'از', 'در', 'و', 'را', 'رو', 'شد', 'است', 'هست', 'دارایی', 'ثابت', 'اموال', 'تجهیزات']);
+
 const TITLE_PREFIXES = ['آقای', 'اقای', 'خانم', 'جناب', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار خانم', 'شرکت'];
+
+/**
+ * نام دارایی را از کنار نشانهٔ صریح برمی‌دارد.
+ * «لپ‌تاپ به عنوان دارایی ثابت خریدم» → «لپ تاپ»، «دارایی ثابت کولر گازی» →
+ * «کولر گازی». چیزی پیدا نشد یعنی کاربر باید خودش بنویسد؛ حساب دارایی بدون نام،
+ * ردیفی است که شش ماه بعد هیچ‌کس نمی‌داند چیست.
+ */
+export function extractAssetTitle(input) {
+  const text = normalizePersian(input);
+  const marker = text.match(/(?:به\s*عنوان\s*)?(?:دارایی\s*ثابت|اموال\s*و\s*تجهیزات)/);
+  if (!marker) return '';
+  const pick = (words) => {
+    const picked = [];
+    for (const word of words) {
+      if (CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || ASSET_STOP_WORDS.has(word) || /\d/.test(word)) break;
+      picked.push(word);
+      if (picked.length === 2) break;
+    }
+    return picked;
+  };
+  const before = text.slice(0, marker.index).split(' ').filter(Boolean).reverse();
+  const beforePick = pick(before).reverse();
+  if (beforePick.length) return beforePick.join(' ');
+  const after = text.slice(marker.index + marker[0].length).split(' ').filter(Boolean);
+  return pick(after).join(' ');
+}
 
 function matchesAny(text, patterns) {
   return patterns.some((pattern) => pattern.test(text));
@@ -75,9 +123,17 @@ export function extractContactName(input) {
   return '';
 }
 
-function firstAmount(input) {
+/**
+ * مبلغ گفته‌شده در یک جملهٔ نیت‌دار.
+ *
+ * بزرگ‌ترین عدد برداشته می‌شود، نه اولی: «یک دستگاه پراید ... چهارصد میلیون» و
+ * «دو تا چک پنج میلیونی» با اولین عدد به مبلغ ۱ و ۲ ثبت می‌شدند، چون واژهٔ
+ * شمارش هم برای پارسر یک عدد است. در این جمله‌ها عدد شمارش همیشه کوچک و بی‌مقیاس
+ * است و مبلغ همان عددی است که مقیاس (هزار، میلیون) را با خود دارد.
+ */
+function spokenAmount(input) {
   const parsed = parseFinancialText(input, { source: 'voice' });
-  return parsed.transactions[0]?.amount || 0;
+  return parsed.transactions.reduce((largest, item) => Math.max(largest, Number(item.amount) || 0), 0);
 }
 
 /**
@@ -93,7 +149,7 @@ export function detectVoiceIntent(input, { now = new Date() } = {}) {
   const text = normalizePersian(input);
   if (!text) return null;
 
-  const amount = firstAmount(input);
+  const amount = spokenAmount(input);
   const contactName = extractContactName(input);
   const isCheque = matchesAny(text, CHEQUE_PATTERNS);
 
@@ -106,6 +162,30 @@ export function detectVoiceIntent(input, { now = new Date() } = {}) {
       amount,
       contactName,
       title: documentType === 'purchase' ? 'خرید' : 'فروش',
+      occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
+      transcript: text,
+    };
+  }
+
+  if (matchesAny(text, CAPITAL_PATTERNS)) {
+    if (!amount) return null;
+    return {
+      intent: 'capital',
+      amount,
+      title: 'آورده و افزایش سرمایه',
+      accountId: 'cash',
+      occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
+      transcript: text,
+    };
+  }
+
+  if (!isCheque && matchesAny(text, FIXED_ASSET_PATTERNS)) {
+    if (!amount) return null;
+    return {
+      intent: 'fixed-asset',
+      amount,
+      title: extractAssetTitle(input),
+      accountId: 'cash',
       occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
       transcript: text,
     };
@@ -133,5 +213,56 @@ export function detectVoiceIntent(input, { now = new Date() } = {}) {
     dueAt: dueDate(input, now),
     title: [isCheque ? 'چک' : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
     transcript: text,
+  };
+}
+
+/**
+ * پیش‌نویس فاکتور از نیت گفته.
+ *
+ * فاکتور واقعی ردیف کالا، تعداد، نرخ و مالیات می‌خواهد و هیچ‌کدام از یک جملهٔ
+ * گفتاری درنمی‌آید. پس صدا فقط یک پیش‌نویس با یک ردیف به کل مبلغ گفته‌شده
+ * می‌سازد و سند در وضعیت `draft` می‌ماند: نه در دفتر کل سند می‌خورد، نه انبار را
+ * تکان می‌دهد، نه در گزارش مالیاتی و نه در جمع طلب/بدهی می‌آید. تکمیل ردیف‌ها و
+ * نرخ مالیات در برگهٔ فاکتورها انجام می‌شود و صدور، آگاهانه و دستی است.
+ *
+ * تاریخ گفته‌شده عمداً روی سند نمی‌نشیند؛ تاریخ فاکتور هنگام صدور تعیین می‌شود و
+ * نشاندن تاریخِ حرف روی پیش‌نویسِ ناتمام فقط یک عدد بی‌پشتوانه می‌ساخت.
+ */
+export function invoiceDraftPayload(intent = {}) {
+  const documentType = intent.documentType === 'purchase' ? 'purchase' : 'sales';
+  const amount = Math.round(Number(intent.amount) || 0);
+  if (!amount || amount <= 0) return null;
+  return {
+    documentType,
+    customerName: intent.contactName || '',
+    note: String(intent.transcript || '').slice(0, 300),
+    issueNow: false,
+    items: [{
+      title: documentType === 'purchase' ? 'ردیف خرید — از گفتهٔ صوتی' : 'ردیف فروش — از گفتهٔ صوتی',
+      quantity: 1,
+      unitPrice: amount,
+    }],
+  };
+}
+
+/**
+ * ورودی ثبت سرمایه یا دارایی ثابت.
+ *
+ * هر دو از صندوق یا بانک عبور می‌کنند — پس ماندهٔ حساب و کنترل پایان روز باید
+ * حرکتشان را ببیند — ولی هیچ‌کدام درآمد یا هزینهٔ دوره نیستند. سمت دیگر سند،
+ * حساب سرمایه یا حساب همان دارایی است، نه یک دستهٔ درآمد/هزینه.
+ */
+export function capitalEntryPayload(draft = {}) {
+  const amount = Math.round(Number(draft.amount) || 0);
+  const title = String(draft.title || '').trim().slice(0, 100);
+  if (!amount || amount <= 0 || !title) return null;
+  if (!['capital', 'fixed-asset'].includes(draft.intent)) return null;
+  return {
+    kind: draft.intent === 'capital' ? 'capital-in' : 'fixed-asset',
+    amount,
+    title,
+    accountId: draft.accountId || 'cash',
+    occurredAt: draft.occurredAt || null,
+    note: String(draft.transcript || '').slice(0, 300),
   };
 }

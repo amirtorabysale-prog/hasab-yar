@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 
-const databasePath = `/tmp/hesab-yar-auth-${process.pid}.sqlite`;
+const databasePath = tempDatabase('auth');
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_USERNAME = 'owner-test';
 process.env.ADMIN_PASSWORD = 'a-strong-test-password-1234';
@@ -82,5 +82,5 @@ test('changes the password and revokes every existing session', () => {
 
 test.after(() => {
   database.db.close();
-  for (const suffix of ['', '-shm', '-wal']) rmSync(`${databasePath}${suffix}`, { force: true });
+  removeTempDatabase(databasePath);
 });

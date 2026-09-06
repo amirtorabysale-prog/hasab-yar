@@ -211,6 +211,40 @@ export function syncTransactionJournal(database, transaction, { createdBy = null
   });
 }
 
+/**
+ * سند سرمایه و دارایی ثابت.
+ *
+ * هر دو پول را از صندوق یا بانک رد می‌کنند، ولی هیچ‌کدام سود و زیان دوره را
+ * تکان نمی‌دهند: آوردهٔ مالک بستانکارِ حساب سرمایه است و خرید دارایی ثابت
+ * بدهکارِ حساب همان دارایی. اگر مثل یک ثبت عادی به دستهٔ درآمد/هزینه می‌رفتند،
+ * آورده سود را باد می‌کرد و خرید دارایی، سود همان ماه را می‌خورد.
+ *
+ * استهلاک اینجا نیست و ادعا هم نمی‌شود؛ دارایی به بهای تمام‌شده می‌نشیند و
+ * استهلاک کار فاز جداگانه است.
+ */
+export function postCapitalJournal(database, entry, { createdBy = null } = {}) {
+  ensureAccountingSchema(database);
+  const amount = Math.round(Number(entry.amount));
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ سند سرمایه معتبر نیست.');
+  const cash = operationalLedgerAccount(database, entry.accountId || 'cash');
+  const title = String(entry.title || '').trim().slice(0, 100);
+  if (!title) throw accountingError('عنوان سرمایه یا دارایی ثابت لازم است.');
+  const lines = entry.kind === 'capital-in'
+    ? [
+      { accountId: cash, debit: amount },
+      { accountId: linkedLedgerAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity'), credit: amount },
+    ]
+    : [
+      { accountId: linkedLedgerAccount(database, 'fixed-asset', title, `دارایی ثابت — ${title}`, 'asset'), debit: amount },
+      { accountId: cash, credit: amount },
+    ];
+  return insertJournal(database, {
+    sourceType: 'transaction', sourceId: entry.transactionId,
+    revision: nextRevision(database, 'transaction', entry.transactionId), entryKind: 'normal',
+    occurredAt: entry.occurredAt, memo: title, createdBy, lines,
+  });
+}
+
 export function reverseTransactionJournal(database, transactionId, occurredAt, { createdBy = null, memo = 'سند معکوس اصلاح' } = {}) {
   ensureAccountingSchema(database);
   const original = database.prepare(`SELECT * FROM journal_entries WHERE source_type='transaction' AND source_id=?

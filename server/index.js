@@ -8,7 +8,7 @@ import {
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
-  importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, receiptImage, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
+  importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   saveAccountingTransferTemplate,
@@ -22,6 +22,7 @@ import {
 } from './db.js';
 import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
+import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
@@ -224,14 +225,15 @@ app.get('/api/bootstrap', (request, response) => {
   materializeRecurringRules();
   return response.json({
     ...getToday(), categories: getCategories(), settings: getSettings(), learnings: getLearnings(),
-    averages: typicalAmounts(), overview: financialOverview(), accounts: listAccounts(), contacts: listContacts(),
+    averages: typicalAmounts(), dnaProfiles: dnaProfiles(), overview: financialOverview(), accounts: listAccounts(), contacts: listContacts(),
     obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(), closings: listDailyClosings(), closingPreview: previewDayClosing(), access: accessPayload(request.user, request.workspace.id),
   });
 });
 app.post('/api/parse/text', (request, response) => {
   const text = String(request.body?.text || '').trim();
   if (!text || text.length > 1500) return response.status(400).json({ message: 'متن ثبت مالی معتبر نیست.' });
-  return response.json(parseFinancialText(text, { learnings: getLearnings(), averages: typicalAmounts() }));
+  // برداشت با الگوی خودِ پرونده سنجیده می‌شود؛ چیزی رد یا ثبت نمی‌شود، فقط به صف بررسی می‌رود.
+  return response.json(applyDnaSignals(parseFinancialText(text, { learnings: getLearnings(), averages: typicalAmounts() }), dnaProfiles()));
 });
 app.post('/api/parse/audio', upload.single('audio'), async (request, response, next) => {
   const startedAt = Date.now();
@@ -241,7 +243,8 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
     durationMs = audioDurationMs(request.file.buffer, request.file.mimetype) || Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0));
     usageId = beginProviderUsage('server_voice', 'pipeline');
-    const result = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
+    const parsed = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
+    const result = applyDnaSignals(parsed, dnaProfiles());
     recordVoiceMetric({
       provider: result.provider || result.engine,
       model: result.model,
@@ -464,6 +467,11 @@ app.post('/api/obligations', (request, response, next) => { try { response.statu
 app.put('/api/obligations/:id', (request, response, next) => { try { response.json({ item: saveObligation({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.post('/api/obligations/:id/settle', (request, response, next) => { try { const result = settleObligation(request.params.id, request.body); return result ? response.json(result) : response.status(404).json({ message: 'طلب یا بدهی باز پیدا نشد.' }); } catch (error) { return next(error); } });
 app.delete('/api/obligations/:id', (request, response) => response.status(deleteObligation(request.params.id) ? 204 : 404).end());
+// آورده و دارایی ثابت: پول از صندوق رد می‌شود ولی سود دوره را تکان نمی‌دهد.
+app.post('/api/capital-entries', (request, response, next) => {
+  try { return response.status(201).json({ item: recordCapitalEntry(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
 app.get('/api/recurring', (_request, response) => response.json({ items: listRecurringRules() }));
 app.post('/api/recurring', (request, response, next) => { try { response.status(201).json({ item: saveRecurringRule(request.body) }); } catch (error) { next(error); } });
 app.delete('/api/recurring/:id', (request, response) => response.status(deleteRecurringRule(request.params.id) ? 204 : 404).end());

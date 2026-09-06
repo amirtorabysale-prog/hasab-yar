@@ -27,6 +27,7 @@ export const CHART_ROLES = Object.freeze([
   'cash', 'bank', 'receivable', 'payable', 'inventory', 'cogs',
   'sales', 'service-income', 'other-income', 'operating-expense',
   'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
+  'fixed-asset', 'owner-capital',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({
@@ -353,6 +354,9 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['14', 'پیش‌پرداخت‌ها و مالیات', 'general', '1', 'asset', ''],
   ['1401', 'پیش‌پرداخت‌ها', 'subsidiary', '14', 'asset', ''],
   ['1402', 'مالیات و عوارض ارزش افزودهٔ خرید', 'subsidiary', '14', 'asset', 'input-tax'],
+  ['2', 'دارایی‌های غیرجاری', 'group', '', 'asset', ''],
+  ['21', 'دارایی‌های ثابت مشهود', 'general', '2', 'asset', ''],
+  ['2101', 'اموال، ماشین‌آلات و تجهیزات', 'subsidiary', '21', 'asset', 'fixed-asset'],
   ['3', 'بدهی‌های جاری', 'group', '', 'liability', ''],
   ['31', 'حساب‌ها و اسناد پرداختنی', 'general', '3', 'liability', ''],
   ['3101', 'حساب‌های پرداختنی تجاری', 'subsidiary', '31', 'liability', 'payable'],
@@ -362,6 +366,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['5', 'حقوق صاحبان سرمایه', 'group', '', 'equity', ''],
   ['51', 'سرمایه', 'general', '5', 'equity', ''],
   ['5101', 'سرمایه و ماندهٔ افتتاحیه', 'subsidiary', '51', 'equity', 'equity'],
+  ['5102', 'آورده و افزایش سرمایه', 'subsidiary', '51', 'equity', 'owner-capital'],
   ['6', 'درآمدها', 'group', '', 'income', ''],
   ['61', 'درآمد عملیاتی', 'general', '6', 'income', ''],
   ['6101', 'فروش کالا', 'subsidiary', '61', 'income', 'sales'],
@@ -497,12 +502,15 @@ const ROLE_BY_SOURCE_KIND = {
   'income-category': ['sales', 'service-income', 'other-income'],
   'expense-category': ['operating-expense'],
   'operational-account': ['cash', 'bank'],
+  // هر دارایی ثابت حساب دفترکل خودش را می‌گیرد؛ همه به همان معین اموال نگاشته می‌شوند.
+  'fixed-asset': ['fixed-asset'],
 };
 
 const ROLE_BY_SOURCE_KEY = {
   'output-tax': 'output-tax',
   'input-tax': 'input-tax',
   'opening-equity': 'equity',
+  'owner-capital': 'owner-capital',
   'inventory-gain': 'inventory-gain',
   'inventory-shrinkage': 'inventory-shrinkage',
 };
