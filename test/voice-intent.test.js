@@ -172,3 +172,20 @@ test('جملهٔ بی‌ربط روی صفحهٔ طلب و بدهی هم نیت 
   assert.equal(inObligations('قبض برق دادم'), null);
   assert.equal(inObligations('دیروز ده میلیون فروختم'), null);
 });
+
+// سررسید در گفتار طلب و بدهی تقریباً همیشه نسبی و رو به آینده است.
+test('سررسید نسبی روی صفحهٔ طلب و بدهی فهمیده می‌شود', () => {
+  const persianDay = (iso) => {
+    const parts = new Intl.DateTimeFormat('en-US-u-ca-persian', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(iso));
+    const part = (type) => parts.find((item) => item.type === type).value;
+    return `${part('year')}/${part('month')}/${part('day')}`;
+  };
+  // NOW برابر ۶ شهریور ۱۴۰۵ است.
+  assert.equal(persianDay(inObligations('حسن سه میلیون بدهکار شد سه روز دیگه').dueAt), '1405/06/09');
+  assert.equal(persianDay(inObligations('رضا دو میلیون بدهکار شد هفته بعد').dueAt), '1405/06/13');
+  assert.equal(persianDay(inObligations('حسن یک میلیون بدهکار شد آخر ماه').dueAt), '1405/06/31');
+  assert.equal(persianDay(inObligations('حسن دو میلیون بدهکار شد سررسید بیستم مهر').dueAt), '1405/07/20');
+
+  // سررسید آینده نباید به سال گذشته پرت شود.
+  assert.equal(persianDay(inObligations('حسن سه میلیون بدهکار شد سررسید دهم مهر').dueAt), '1405/07/10');
+});
