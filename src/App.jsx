@@ -3003,11 +3003,21 @@ function ObligationsPanel({ contacts: initialContacts, notify, refresh }) {
   const [contactName, setContactName] = useState('');
   const [draft, setDraft] = useState({ title: '', amount: '', direction: 'receivable', contactId: '', dueAt: '' });
   const [dictating, setDictating] = useState(false);
+  const [busyVoice, setBusyVoice] = useState(false);
   const [heard, setHeard] = useState('');
   const recognizerRef = useRef(null);
+  const wavRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const liveFailedRef = useRef(false);
   const load = useCallback(async () => { const [people, obligations] = await Promise.all([api.contacts(), api.obligations('open')]); setContacts(people.items); setItems(obligations.items); }, []);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => () => recognizerRef.current?.stop?.(), []);
+  useEffect(() => () => {
+    recognizerRef.current?.stop?.();
+    wavRecorderRef.current?.dispose?.();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    audioContextRef.current?.close().catch(() => {});
+  }, []);
   const addContact = async () => { if (!contactName.trim()) return; await api.saveContact({ name: contactName }); setContactName(''); notify('شخص اضافه شد.'); load(); refresh(); };
   const add = async (event) => {
     event.preventDefault();
@@ -3050,21 +3060,112 @@ function ObligationsPanel({ contacts: initialContacts, notify, refresh }) {
     else if (!found.amount) notify(`«${found.contactName || 'طرف حساب'}» ثبت شد؛ مبلغ را بنویس.`);
   };
 
-  const toggleDictation = () => {
-    if (dictating) { recognizerRef.current?.stop(); setDictating(false); return; }
-    if (!liveSpeechSupported()) return notify('تایپ زندهٔ فارسی در این مرورگر فعال نیست؛ فعلاً دستی بنویس.');
+  /**
+   * وقتی تشخیص زندهٔ مرورگر جواب نمی‌دهد، صدا روی سرور بررسی می‌شود.
+   *
+   * تشخیص زندهٔ Chrome به سرویس بیرونی وصل می‌شود و در بعضی شبکه‌ها اصلاً بالا
+   * نمی‌آید. بدون این مسیر، دکمهٔ میکروفن روی همان دستگاه‌ها فقط یک پیام خطا بود.
+   * این مسیر سهمیهٔ «پردازش صوت هوشمند» مصرف می‌کند و صریح گفته می‌شود.
+   */
+  const reviewRecordingOnServer = async () => {
+    const capture = wavRecorderRef.current?.stop() || null;
+    wavRecorderRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    audioContextRef.current?.close().catch(() => {});
+    audioContextRef.current = null;
+    if (!capture?.blob || capture.durationMs < 400) return false;
+    setBusyVoice(true);
+    try {
+      const result = await api.parseAudio(capture.blob, { attemptId: crypto.randomUUID() });
+      const transcript = result.transcript || '';
+      setHeard(transcript);
+      if (!transcript.trim()) { notify('از این صدا متنی درنیامد؛ دوباره و شمرده‌تر بگو.'); return true; }
+      applySpokenObligation(transcript);
+      return true;
+    } catch (error) {
+      notify(error.code === 'PLAN_QUOTA_EXCEEDED'
+        ? 'تشخیص زندهٔ مرورگر جواب نداد و سهمیهٔ بررسی روی سرور هم تمام شده؛ فعلاً دستی بنویس.'
+        : error.message);
+      return true;
+    } finally { setBusyVoice(false); }
+  };
+
+  const stopDictation = () => {
+    recognizerRef.current?.stop();
+    recognizerRef.current = null;
+    setDictating(false);
+  };
+
+  const toggleDictation = async () => {
+    if (dictating) { stopDictation(); return; }
     setHeard('');
+    liveFailedRef.current = false;
     let latest = '';
+    // صدا از همان ابتدا ضبط می‌شود، حتی وقتی تشخیص زنده کار می‌کند: اگر وسط کار
+    // شکست بخورد، گفتهٔ کاربر از دست نمی‌رود و همان ضبط روی سرور بررسی می‌شود.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      streamRef.current = stream;
+      const context = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = context;
+      wavRecorderRef.current = createWavRecorder(context, stream);
+    } catch {
+      notify('میکروفن در دسترس نیست یا اجازه‌اش داده نشده است.');
+      return;
+    }
+    if (!liveSpeechSupported()) {
+      // مرورگری که تایپ زنده ندارد مستقیم به مسیر سرور می‌رود؛ پیام پیش از مصرف.
+      notify('این مرورگر تایپ زندهٔ فارسی ندارد؛ صدا روی سرور بررسی می‌شود و از سهمیهٔ صوت هوشمند کم می‌کند.');
+      setDictating(true);
+      liveFailedRef.current = true;
+      return;
+    }
     const recognizer = createPersianRecognizer({
       onUpdate: (snapshot) => { latest = snapshot.transcript; setHeard(snapshot.transcript); },
-      onEnd: () => { setDictating(false); if (latest.trim()) applySpokenObligation(latest); },
-      onError: (code) => { setDictating(false); notify(liveSpeechErrorMessage(code)); },
+      onEnd: async () => {
+        setDictating(false);
+        recognizerRef.current = null;
+        if (latest.trim()) {
+          wavRecorderRef.current?.dispose?.();
+          wavRecorderRef.current = null;
+          streamRef.current?.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+          audioContextRef.current?.close().catch(() => {});
+          audioContextRef.current = null;
+          applySpokenObligation(latest);
+          return;
+        }
+        if (liveFailedRef.current) { await reviewRecordingOnServer(); return; }
+        // تشخیص زنده سالم بود ولی چیزی نگفت: ضبط دور ریخته می‌شود، نه اینکه
+        // بی‌دلیل سهمیهٔ سرور خرج شود.
+        wavRecorderRef.current?.dispose?.();
+        wavRecorderRef.current = null;
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        audioContextRef.current?.close().catch(() => {});
+        audioContextRef.current = null;
+        notify('چیزی نشنیدم؛ دوباره روی میکروفن بزن و بگو.');
+      },
+      onError: (code) => {
+        // «چیزی نشنیدم» و «متوقف شد» خطا نیستند؛ همان ضبط روی سرور بررسی می‌شود.
+        liveFailedRef.current = true;
+        if (!['no-speech', 'aborted'].includes(code)) {
+          notify(`تشخیص زندهٔ مرورگر جواب نداد (${code})؛ همین صدا روی سرور بررسی می‌شود.`);
+        }
+      },
     });
     recognizerRef.current = recognizer;
-    try { recognizer.start(); setDictating(true); } catch { notify('میکروفن شروع نشد.'); }
+    try { recognizer.start(); setDictating(true); } catch { liveFailedRef.current = true; setDictating(true); }
+  };
+
+  const finishDictation = async () => {
+    if (recognizerRef.current) { stopDictation(); return; }
+    setDictating(false);
+    await reviewRecordingOnServer();
   };
   const settle = async (id) => { await api.settleObligation(id); notify('تسویه شد و تراکنش آن در دفتر ثبت شد.'); load(); refresh(); };
-  return <section className="mt-5 space-y-6"><div><h2 className="font-extrabold">اشخاص</h2><div className="mt-2 flex gap-2"><input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="نام شخص یا مشتری" className="tap min-w-0 flex-1 rounded-lg border border-line bg-surface px-3" /><button onClick={addContact} className="tap rounded-lg bg-ink px-4 font-bold text-white">افزودن</button></div><div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto">{contacts.map((contact) => <span key={contact.id} className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-xs"><b>{contact.name}</b>{Number(contact.balance) !== 0 && <span className={`numbers mr-2 ${contact.balance > 0 ? 'text-income' : 'text-expense'}`}>{formatAmount(Math.abs(contact.balance))}</span>}</span>)}</div></div><form onSubmit={add} className="rounded-[10px] border border-line bg-surface p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">طلب یا بدهی تازه</h2><p className="mt-1 text-[11px] leading-5 text-muted">می‌توانی بگویی «حسن سه میلیون بدهکار شد». شخص تازه خودش ساخته می‌شود و ثبت با دکمهٔ خودت انجام می‌شود.</p></div><button type="button" onClick={toggleDictation} className={`tap grid shrink-0 place-items-center rounded-lg border px-3 ${dictating ? 'border-expense bg-expense/10 text-expense' : 'border-line text-accent'}`} aria-label={dictating ? 'توقف گفتن' : 'گفتن طلب یا بدهی'}><Mic size={19} /></button></div>{heard && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{heard}»</blockquote>}{draft.spokenName && <p className="mt-2 text-[11px] leading-5 text-accent">شخص «{draft.spokenName}» در دفتر نیست و با ذخیره‌شدن این ثبت ساخته می‌شود.</p>}<div className="mt-3 grid gap-2 sm:grid-cols-2"><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً طلب از حسن" className="tap rounded-lg border border-line px-3" /><input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3" /><select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="receivable">طلب دارم</option><option value="payable">بدهکارم</option></select><select value={draft.contactId} onChange={(event) => setDraft({ ...draft, contactId: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="">بدون شخص</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select><input type="date" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value ? new Date(`${event.target.value}T09:00:00`).toISOString() : '' })} className="tap rounded-lg border border-line px-3" /><button className="tap rounded-lg bg-accent font-bold text-white">ذخیره سررسید</button></div></form><div className="divide-y divide-line border-y border-line">{items.length ? items.map((item) => <article key={item.id} className="flex min-h-[76px] items-center gap-3 py-3"><HandCoins className={item.direction === 'receivable' ? 'text-income' : 'text-expense'} /><div className="min-w-0 flex-1"><p className="font-bold">{item.title}</p><p className="mt-1 text-xs text-muted">{item.contactName || 'بدون شخص'}{item.dueAt ? ` · سررسید ${new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(item.dueAt))}` : ''}</p></div><b className="numbers text-sm">{formatAmount(item.amount)}</b><button onClick={() => settle(item.id)} className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">تسویه</button></article>) : <p className="py-10 text-center text-sm text-muted">طلب یا بدهی بازی نداری.</p>}</div></section>;
+  return <section className="mt-5 space-y-6"><div><h2 className="font-extrabold">اشخاص</h2><div className="mt-2 flex gap-2"><input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="نام شخص یا مشتری" className="tap min-w-0 flex-1 rounded-lg border border-line bg-surface px-3" /><button onClick={addContact} className="tap rounded-lg bg-ink px-4 font-bold text-white">افزودن</button></div><div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto">{contacts.map((contact) => <span key={contact.id} className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-xs"><b>{contact.name}</b>{Number(contact.balance) !== 0 && <span className={`numbers mr-2 ${contact.balance > 0 ? 'text-income' : 'text-expense'}`}>{formatAmount(Math.abs(contact.balance))}</span>}</span>)}</div></div><form onSubmit={add} className="rounded-[10px] border border-line bg-surface p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">طلب یا بدهی تازه</h2><p className="mt-1 text-[11px] leading-5 text-muted">می‌توانی بگویی «حسن سه میلیون بدهکار شد». شخص تازه خودش ساخته می‌شود و ثبت با دکمهٔ خودت انجام می‌شود.</p></div><button type="button" disabled={busyVoice} onClick={dictating ? finishDictation : toggleDictation} className={`tap grid shrink-0 place-items-center rounded-lg border px-3 disabled:opacity-40 ${dictating ? 'border-expense bg-expense/10 text-expense' : 'border-line text-accent'}`} aria-label={dictating ? 'پایان گفتن' : 'گفتن طلب یا بدهی'}>{busyVoice ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent/30 border-t-accent" /> : <Mic size={19} />}</button></div>{dictating && <p className="mt-2 text-[11px] font-bold text-expense">در حال شنیدن… وقتی حرفت تمام شد دوباره روی میکروفن بزن.</p>}{busyVoice && <p className="mt-2 text-[11px] font-bold text-accent">صدا روی سرور بررسی می‌شود…</p>}{heard && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{heard}»</blockquote>}{draft.spokenName && <p className="mt-2 text-[11px] leading-5 text-accent">شخص «{draft.spokenName}» در دفتر نیست و با ذخیره‌شدن این ثبت ساخته می‌شود.</p>}<div className="mt-3 grid gap-2 sm:grid-cols-2"><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً طلب از حسن" className="tap rounded-lg border border-line px-3" /><input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3" /><select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="receivable">طلب دارم</option><option value="payable">بدهکارم</option></select><select value={draft.contactId} onChange={(event) => setDraft({ ...draft, contactId: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="">بدون شخص</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select><input type="date" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value ? new Date(`${event.target.value}T09:00:00`).toISOString() : '' })} className="tap rounded-lg border border-line px-3" /><button className="tap rounded-lg bg-accent font-bold text-white">ذخیره سررسید</button></div></form><div className="divide-y divide-line border-y border-line">{items.length ? items.map((item) => <article key={item.id} className="flex min-h-[76px] items-center gap-3 py-3"><HandCoins className={item.direction === 'receivable' ? 'text-income' : 'text-expense'} /><div className="min-w-0 flex-1"><p className="font-bold">{item.title}</p><p className="mt-1 text-xs text-muted">{item.contactName || 'بدون شخص'}{item.dueAt ? ` · سررسید ${new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(item.dueAt))}` : ''}</p></div><b className="numbers text-sm">{formatAmount(item.amount)}</b><button onClick={() => settle(item.id)} className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">تسویه</button></article>) : <p className="py-10 text-center text-sm text-muted">طلب یا بدهی بازی نداری.</p>}</div></section>;
 }
 
 function InvoicesPanel({ contacts, accounts, categories, notify, refresh }) {
