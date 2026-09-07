@@ -21,7 +21,7 @@
     "express": "^5.1.0",
     "lucide-react": "^1.41.0",
     "multer": "^2.3.0",
-    "postcss": "^8.5.6",
+    "postcss": "^8.5.28",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tailwindcss": "^3.4.17",
