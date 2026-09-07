@@ -2496,17 +2496,36 @@ export function listObligations({ status = 'open' } = {}) {
     ORDER BY CASE WHEN obligations.due_at IS NULL THEN 1 ELSE 0 END,obligations.due_at,obligations.created_at DESC`).all(...args);
 }
 
+/**
+ * نام گفته‌شده را به شخص موجود وصل می‌کند و اگر نبود، می‌سازد.
+ *
+ * وقتی کاربر می‌گوید «حسن بدهکار شد»، انتظارش این نیست که اول برود شخص را
+ * دستی اضافه کند. اما شخص تکراری هم نباید ساخته شود، وگرنه ماندهٔ یک نفر بین دو
+ * ردیف پخش می‌شود: نام با همان نرمال‌سازی فارسیِ بقیهٔ محصول مقایسه می‌شود، پس
+ * «مرتضي» و «مرتضی» یک نفرند.
+ */
+function contactIdForName(name) {
+  const clean = String(name || '').trim().slice(0, 100);
+  if (clean.length < 2) return null;
+  const target = normalizePersian(clean);
+  const existing = db.prepare('SELECT id,name FROM contacts').all()
+    .find((item) => normalizePersian(item.name) === target);
+  if (existing) return existing.id;
+  return saveContact({ name: clean })?.id || null;
+}
+
 export function saveObligation(values = {}) {
   const amount = cleanAmount(values.amount);
   const direction = ['receivable', 'payable'].includes(values.direction) ? values.direction : null;
   if (!direction) throw invalidInput('نوع طلب یا بدهی معتبر نیست.');
   const title = String(values.title || '').trim().slice(0, 120);
   if (!title) throw invalidInput('عنوان طلب یا بدهی را وارد کن.');
+  const contactId = values.contactId || (values.contactName ? contactIdForName(values.contactName) : null);
   const id = values.id || randomUUID();
   db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,status,note) VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,title=excluded.title,amount=excluded.amount,
       direction=excluded.direction,due_at=excluded.due_at,status=excluded.status,note=excluded.note,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, values.contactId || null, title, amount, direction, values.dueAt || null, ['open', 'paid', 'cancelled'].includes(values.status) ? values.status : 'open', String(values.note || '').slice(0, 500));
+    .run(id, contactId, title, amount, direction, values.dueAt || null, ['open', 'paid', 'cancelled'].includes(values.status) ? values.status : 'open', String(values.note || '').slice(0, 500));
   audit(values.id ? 'update' : 'create', 'obligation', id, { amount, direction, title });
   return listObligations({ status: 'all' }).find((item) => item.id === id);
 }

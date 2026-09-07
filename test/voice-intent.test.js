@@ -129,3 +129,46 @@ test('ورودی ثبت سرمایه بدون عنوان ساخته نمی‌ش�
   assert.equal(capitalEntryPayload({ ...asset, title: 'میز اداری' }).kind, 'fixed-asset');
   assert.equal(capitalEntryPayload(detect('پنجاه میلیون سرمایه گذاشتم')).kind, 'capital-in');
 });
+
+// روی صفحهٔ طلب و بدهی، موضوع از قبل روشن است: نام بدون عنوان پذیرفته می‌شود و
+// جملهٔ بدون مبلغ رد نمی‌شود.
+const inObligations = (text) => detectVoiceIntent(text, { now: NOW, context: 'obligation' });
+
+test('روی صفحهٔ طلب و بدهی، نام بدون عنوان هم فهمیده می‌شود', () => {
+  const owed = inObligations('حسن سه میلیون بدهکار شد');
+  assert.equal(owed.direction, 'receivable');
+  assert.equal(owed.amount, 3_000_000);
+  assert.equal(owed.contactName, 'حسن');
+
+  assert.equal(inObligations('از رضا دو میلیون طلب دارم').contactName, 'رضا');
+  assert.equal(inObligations('بدهکار شد حسن').contactName, 'حسن');
+  assert.equal(inObligations('به شرکت پارس بدهکارم').contactName, 'شرکت پارس');
+  // مسیر عمومی همچنان محافظه‌کار است؛ آنجا حدس نام خطای بیشتری می‌سازد تا فایده.
+  assert.equal(detect('حسن سه میلیون بدهکار شد').contactName, '');
+});
+
+// «بدهکار شد» و «بدهکار شدم» جهت مخالف دارند؛ اشتباه‌گرفتنشان طلب را بدهی ثبت می‌کند.
+test('صیغهٔ فعل، جهت را عوض می‌کند', () => {
+  assert.equal(inObligations('حسن بدهکار شد دو میلیون').direction, 'receivable');
+  assert.equal(inObligations('بدهکار شدم دو میلیون').direction, 'payable');
+  assert.equal(inObligations('به حسن یک میلیون قرض دادم').direction, 'receivable');
+  assert.equal(inObligations('از مغازه یک میلیون قرض گرفتم').direction, 'payable');
+  // فعل اول‌شخص نباید نام شمرده شود.
+  assert.equal(inObligations('بدهکار شدم دو میلیون').contactName, '');
+});
+
+test('جملهٔ بدون مبلغ روی این صفحه رد نمی‌شود، ناقص علامت می‌خورد', () => {
+  const partial = inObligations('حسن بدهکار شد');
+  assert.equal(partial.intent, 'obligation');
+  assert.equal(partial.direction, 'receivable');
+  assert.equal(partial.contactName, 'حسن');
+  assert.equal(partial.amount, 0);
+  assert.equal(partial.needsAmount, true);
+  // همان جمله در مسیر عمومی هیچ نیتی نمی‌سازد.
+  assert.equal(detect('حسن بدهکار شد'), null);
+});
+
+test('جملهٔ بی‌ربط روی صفحهٔ طلب و بدهی هم نیت نمی‌سازد', () => {
+  assert.equal(inObligations('قبض برق دادم'), null);
+  assert.equal(inObligations('دیروز ده میلیون فروختم'), null);
+});
