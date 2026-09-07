@@ -172,13 +172,29 @@ const COUNTED_UNITS = [
   [/(\d+)\s*ماه\s*(?:پیش|قبل|گذشته)/, 30, 'ماه'],
 ];
 
+// سررسید تقریباً همیشه آینده است و کاربر آن را نسبی می‌گوید: «سه روز دیگه»،
+// «هفتهٔ بعد»، «آخر ماه». بدون اینها تاریخ سررسید عملاً هیچ‌وقت فهمیده نمی‌شد.
+const FUTURE_UNITS = [
+  [/(\d+)\s*روز\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 1, 'روز'],
+  [/(\d+)\s*هفته\s*(?:ی|ٔ)?\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 7, 'هفته'],
+  [/(\d+)\s*ماه\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 30, 'ماه'],
+];
+
+const FUTURE_WORDS = [
+  [/هفته\s*(?:ی|ٔ)?\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 7, 'هفتهٔ بعد'],
+  [/(?:دو\s*هفته|۲\s*هفته)\s*(?:ی|ٔ)?\s*(?:دیگه|دیگر|بعد)/, 14, 'دو هفتهٔ بعد'],
+];
+
 /** عددهای گفتاری کوچک که پیش از «روز پیش» می‌آیند. */
 const SMALL_NUMBERS = new Map(CARDINALS.map((word, value) => [word, value]).filter(([word]) => word));
 
 function replaceSpokenCounts(text) {
   let output = text;
   for (const [word, value] of SMALL_NUMBERS) {
-    output = output.replace(new RegExp(`(?<![آ-ی])${word}(?=\\s*(?:روز|هفته|ماه)\\s*(?:پیش|قبل|گذشته))`, 'g'), String(value));
+    output = output.replace(
+      new RegExp(`(?<![آ-ی])${word}(?=\\s*(?:روز|هفته|ماه)\\s*(?:ی|ٔ)?\\s*(?:پیش|قبل|گذشته|دیگه|دیگر|بعد|آینده|بعدی))`, 'g'),
+      String(value),
+    );
   }
   return output;
 }
@@ -237,7 +253,48 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
     if (iso) return { iso, label: 'ماه پیش', kind: 'relative' };
   }
 
-  // ۵) امروز/دیروز/فردا
+  // ۵) شمارشی رو به آینده: «سه روز دیگه»، «۲ هفتهٔ بعد»
+  for (const [pattern, multiplier, unit] of FUTURE_UNITS) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const count = Number(match[1]);
+    if (!Number.isFinite(count) || count <= 0 || count > 400) continue;
+    const iso = isoAtTehranNoon(now, count * multiplier, timeZone);
+    if (iso) return { iso, label: `${count} ${unit} دیگر`, kind: 'relative' };
+  }
+
+  // ۶) آخر و اول ماه شمسی: طول ماه از تقویم پرسیده می‌شود، نه از قاعدهٔ حفظی.
+  if (/(?:آخر|اخر|پایان)\s*(?:این\s*)?ماه/.test(text)) {
+    const today = persianParts(now, timeZone);
+    const range = persianMonthRange(today.year, today.month, timeZone);
+    if (range) {
+      const lastDay = persianParts(new Date(new Date(range.toExclusive).getTime() - 86_400_000), timeZone);
+      const iso = persianToISO(lastDay.year, lastDay.month, lastDay.day, timeZone);
+      if (iso) return { iso, label: 'آخر ماه', kind: 'relative' };
+    }
+  }
+  if (/(?:اول|ابتدای|شروع)\s*ماه\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/.test(text)
+    || /ماه\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/.test(text)) {
+    const today = persianParts(now, timeZone);
+    const nextYear = today.month === 12 ? today.year + 1 : today.year;
+    const nextMonth = today.month === 12 ? 1 : today.month + 1;
+    // «ماه بعد» بدون روز یعنی همان روزِ ماه بعد؛ اگر آن روز در ماه بعد نباشد
+    // (مثل ۳۱ در ماه‌های دوم سال) روی آخرین روز همان ماه می‌نشیند.
+    const explicitFirst = /(?:اول|ابتدای|شروع)\s*ماه/.test(text);
+    let day = explicitFirst ? 1 : today.day;
+    let iso = persianToISO(nextYear, nextMonth, day, timeZone);
+    while (!iso && day > 28) { day -= 1; iso = persianToISO(nextYear, nextMonth, day, timeZone); }
+    if (iso) return { iso, label: explicitFirst ? 'اول ماه بعد' : 'ماه بعد', kind: 'relative' };
+  }
+
+  // ۷) واژه‌های تک رو به آینده: هفتهٔ بعد
+  for (const [pattern, offset, label] of FUTURE_WORDS) {
+    if (!pattern.test(text)) continue;
+    const iso = isoAtTehranNoon(now, offset, timeZone);
+    if (iso) return { iso, label, kind: 'relative' };
+  }
+
+  // ۸) امروز/دیروز/فردا
   for (const [pattern, offset, label] of RELATIVE_WORDS) {
     if (!pattern.test(` ${text} `)) continue;
     const iso = isoAtTehranNoon(now, offset, timeZone);

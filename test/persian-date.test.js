@@ -123,3 +123,39 @@ test('بازهٔ ماه شمسی از نیمه‌شب اول ماه تا نیم�
   const ordinary = persianMonthRange(1404, 12, TZ);
   assert.equal(persian(ordinary.to), '1404/12/29');
 });
+
+// سررسید تقریباً همیشه آینده است و کاربر آن را نسبی می‌گوید. بدون اینها تاریخ
+// سررسید عملاً هیچ‌وقت فهمیده نمی‌شد.
+test('تاریخ‌های رو به آینده فهمیده می‌شوند', () => {
+  const now = new Date(persianToISO(1405, 6, 16, TZ));
+  const at = (text) => extractDateMention(text, { now, timeZone: TZ, preferPast: false });
+
+  assert.equal(persian(at('سه روز دیگه').iso), '1405/06/19');
+  assert.equal(persian(at('۱۰ روز دیگر').iso), '1405/06/26');
+  assert.equal(persian(at('هفته بعد').iso), '1405/06/23');
+  assert.equal(persian(at('دو هفته دیگه').iso), '1405/06/30');
+
+  // «ماه بعد» یعنی همان روزِ ماه بعد؛ «اول ماه بعد» یعنی روز یک.
+  assert.equal(persian(at('ماه بعد').iso), '1405/07/16');
+  assert.equal(persian(at('اول ماه بعد').iso), '1405/07/01');
+
+  // طول ماه از تقویم پرسیده می‌شود: شهریور ۳۱ روز است.
+  assert.equal(persian(at('آخر ماه').iso), '1405/06/31');
+});
+
+test('روزی که در ماه بعد وجود ندارد، روی آخرین روز همان ماه می‌نشیند', () => {
+  // شش ماه اول ۳۱ روزند و پنج ماه بعد ۳۰ روز؛ «۳۱ شهریور، ماه بعد» تاریخ
+  // ناموجود «۳۱ مهر» نمی‌سازد.
+  const now = new Date(persianToISO(1405, 6, 31, TZ));
+  const next = extractDateMention('ماه بعد', { now, timeZone: TZ, preferPast: false });
+  assert.equal(persian(next.iso), '1405/07/30');
+});
+
+// گذشته و آینده نباید همدیگر را خراب کنند.
+test('عبارت‌های گذشته دست‌نخورده می‌مانند', () => {
+  const now = new Date(persianToISO(1405, 6, 16, TZ));
+  const at = (text) => extractDateMention(text, { now, timeZone: TZ });
+  assert.equal(persian(at('سه روز پیش').iso), '1405/06/13');
+  assert.equal(persian(at('هفته پیش').iso), '1405/06/09');
+  assert.equal(persian(at('دیروز').iso), '1405/06/15');
+});
