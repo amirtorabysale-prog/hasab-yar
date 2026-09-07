@@ -82,3 +82,47 @@ test('bedun-e carry, snapshot dast nakhorde mimanad', () => {
   assert.equal(mergeSpeechSegments('', snapshot), snapshot);
   assert.equal(mergeSpeechSegments('   ', snapshot), snapshot);
 });
+
+// تقویت واژه‌های مالی در بعضی نسخه‌های Chrome هست ولی فعال نمی‌شود و نشست را با
+// `phrases-not-supported` می‌کشد. تنظیم `phrases` خطا پرتاب نمی‌کند، پس نشست
+// بعداً می‌میرد و تشخیص زندهٔ مرورگر کاملاً از کار می‌افتد.
+test('نشستِ کشته‌شده با phrases-not-supported، بی‌سروصدا بدون تقویت دوباره شروع می‌شود', () => {
+  const built = [];
+  class FakeRecognition {
+    constructor() { this.phrases = []; this.started = 0; built.push(this); }
+    start() { this.started += 1; }
+    stop() { this.stopped = true; }
+  }
+  class FakePhrase {
+    constructor(phrase, boost) { this.phrase = phrase; this.boost = boost; }
+  }
+  global.window = { SpeechRecognition: FakeRecognition, SpeechRecognitionPhrase: FakePhrase };
+  const errors = [];
+  const ends = [];
+  const recognizer = createPersianRecognizer({ onError: (code) => errors.push(code), onEnd: () => ends.push(true) });
+  recognizer.start();
+  assert.equal(built.length, 1);
+  assert.ok(built[0].phrases.length > 0, 'نشست اول با تقویت شروع می‌شود');
+
+  built[0].onerror({ error: 'phrases-not-supported' });
+  assert.equal(built.length, 2, 'نشست تازه ساخته می‌شود');
+  assert.equal(built[1].phrases.length, 0, 'نشست دوم بدون تقویت است');
+  assert.equal(built[1].started, 1, 'نشست دوم خودش شروع می‌شود');
+  assert.deepEqual(errors, [], 'کاربر خطایی نمی‌بیند');
+
+  // پایانِ نشستِ کنارگذاشته‌شده، پایان کار کاربر نیست.
+  built[0].onend();
+  assert.deepEqual(ends, []);
+  built[1].onend();
+  assert.deepEqual(ends, [true]);
+
+  // اگر بار دوم هم نشد، دیگر حلقه نمی‌زند و خطا به کاربر می‌رسد.
+  built[1].onerror({ error: 'phrases-not-supported' });
+  assert.equal(built.length, 2);
+  assert.deepEqual(errors, ['phrases-not-supported']);
+
+  // بقیهٔ خطاها همان‌طور که بودند به کاربر می‌رسند.
+  built[1].onerror({ error: 'network' });
+  assert.deepEqual(errors, ['phrases-not-supported', 'network']);
+  delete global.window;
+});
