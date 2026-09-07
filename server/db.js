@@ -814,7 +814,7 @@ export function updateWorkspaceCommercialPlan(workspaceId, values = {}, updatedB
 
 export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primary', now = new Date()) {
   const planRecord = workspacePlanRecord(workspaceId);
-  const range = billingMonth('', now);
+  const range = billingMonth('', now, currentTimeZone());
   const usageRows = db.prepare(`SELECT capability,provider,status,SUM(request_count) AS requests,SUM(duration_ms) AS durationMs,
     SUM(COALESCE(estimated_cost_microusd,0)) AS estimatedCostMicrousd,
     SUM(CASE WHEN status='succeeded' AND capability!='realtime_session' AND estimated_cost_microusd IS NULL THEN 1 ELSE 0 END) AS unpriced
@@ -832,6 +832,8 @@ export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primar
   const usage = { smartVoiceRequests, receiptOcrPages, members, transactionEntries };
   return {
     month: range.month,
+    monthLabel: range.monthLabel,
+    monthEndsAt: range.toExclusive,
     plan: PLAN_CATALOG[planRecord.planId],
     catalog: Object.values(PLAN_CATALOG),
     usage,

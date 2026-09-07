@@ -1,3 +1,5 @@
+import { persianMonthRange, todayPersian } from '../shared/persianDate.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const PLAN_CATALOG = Object.freeze({
@@ -19,13 +21,28 @@ export function normalizePlanId(value) {
   return Object.hasOwn(PLAN_CATALOG, value) ? value : 'free';
 }
 
-export function billingMonth(value = '', now = new Date()) {
+const PERSIAN_MONTH_NAMES = Object.freeze(['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور',
+  'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']);
+
+/**
+ * دورهٔ سهمیه و مصرف، بر تقویم شمسی.
+ *
+ * پیش از این ماه میلادی بود. برای دفتری که با تقویم شمسی کار می‌کند، پیامی که
+ * می‌گوید «این ماه به سقف رسیدی» ولی وسط شهریور صفر می‌شود، هم گیج‌کننده است و
+ * هم با دورهٔ مالی خود دفتر نمی‌خواند. مرز ماه میلادی دقیقاً وسط ماه شمسی
+ * می‌افتد و «این ماه» را به دو تکه می‌برد.
+ */
+export function billingMonth(value = '', now = new Date(), timeZone = 'Asia/Tehran') {
   const requested = String(value || '').trim();
-  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(requested) ? requested : now.toISOString().slice(0, 7);
-  const [year, monthNumber] = month.split('-').map(Number);
-  const from = new Date(Date.UTC(year, monthNumber - 1, 1));
-  const toExclusive = new Date(Date.UTC(year, monthNumber, 1));
-  return { month, from: from.toISOString(), toExclusive: toExclusive.toISOString(), to: new Date(toExclusive.getTime() - 1).toISOString() };
+  const today = todayPersian(now, timeZone);
+  const [year, monthNumber] = /^\d{4}-(0[1-9]|1[0-2])$/.test(requested)
+    ? requested.split('-').map(Number)
+    : [today.year, today.month];
+  const range = persianMonthRange(year, monthNumber, timeZone);
+  // تقویم پلتفرم نباید شکست بخورد، ولی اگر خورد، دورهٔ خالی از دورهٔ غلط بهتر
+  // است: سهمیه بسته می‌ماند تا کسی بی‌سقف مصرف نکند.
+  if (!range) throw Object.assign(new Error('دورهٔ ماه شمسی ساخته نشد.'), { code: 'BILLING_MONTH_INVALID', status: 500 });
+  return { ...range, monthLabel: `${PERSIAN_MONTH_NAMES[monthNumber - 1]} ${year}`, calendar: 'persian' };
 }
 
 export function usageQuotaSnapshot(planId, usage = {}) {
@@ -38,6 +55,11 @@ export function usageQuotaSnapshot(planId, usage = {}) {
       remaining: Math.max(0, normalizedLimit - normalizedUsed),
       percent: normalizedLimit ? Math.min(100, Math.round((normalizedUsed / normalizedLimit) * 100)) : 0,
       exhausted: normalizedLimit > 0 && normalizedUsed >= normalizedLimit,
+      // «نزدیک سقف» پیش از رسیدن به صفر هشدار می‌دهد؛ کاربر نباید وسط کار
+      // غافلگیر شود. آستانه از هر دو طرف است: هم درصد، هم تعداد باقی‌مانده،
+      // چون ۲۵٪ از سهمیهٔ سه‌هزارتایی هنوز خیلی زیاد است و ۲۵٪ از سی‌تایی کم.
+      nearLimit: normalizedLimit > 0 && normalizedUsed < normalizedLimit
+        && (normalizedUsed / normalizedLimit >= 0.8 || normalizedLimit - normalizedUsed <= 5),
       note,
     };
   };
