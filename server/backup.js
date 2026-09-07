@@ -9,7 +9,10 @@ const FORMAT = 'hesab-yar-encrypted-backup';
 const AAD = Buffer.from('hesab-yar-backup:v1', 'utf8');
 const MAX_BACKUP_BYTES = 30 * 1024 * 1024;
 const MAX_BACKUP_ROWS = 500_000;
-const OPTIONAL_ACCOUNTING_TABLES = new Set(['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations']);
+export const OPTIONAL_BACKUP_TABLES = new Set(['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations',
+  // هستهٔ منابع نسخه‌دار بعد از این جدول‌ها اضافه شد؛ پشتیبان‌های پیش از آن
+  // بدونشان ساخته شده‌اند و باید همچنان قابل بازیابی بمانند.
+  'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors']);
 
 function backupError(message, code = 'BACKUP_INVALID') {
   return Object.assign(new Error(message), { status: 400, code });
@@ -37,7 +40,7 @@ export function validateFinancialBackup(snapshot) {
   if (!snapshot.tables || typeof snapshot.tables !== 'object') throw backupError('جدول‌های پشتیبان پیدا نشد.');
   let rows = 0;
   for (const table of FINANCIAL_BACKUP_TABLES) {
-    if (!Array.isArray(snapshot.tables[table]) && OPTIONAL_ACCOUNTING_TABLES.has(table)) snapshot.tables[table] = [];
+    if (!Array.isArray(snapshot.tables[table]) && OPTIONAL_BACKUP_TABLES.has(table)) snapshot.tables[table] = [];
     if (!Array.isArray(snapshot.tables[table])) throw backupError(`جدول ${table} در پشتیبان ناقص است.`);
     rows += snapshot.tables[table].length;
     if (rows > MAX_BACKUP_ROWS) throw backupError('تعداد رکوردهای پشتیبان بیش از حد مجاز است.', 'BACKUP_TOO_LARGE');

@@ -161,19 +161,31 @@ export const api = {
   removeMember: (userId) => request(`/api/workspace/members/${userId}`, { method: 'DELETE' }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
-  parseAudio: (blob, { signal, hint, fallbackReason, workspaceId } = {}) => {
+  // `attemptId` شناسهٔ همان ضبط است. نشست realtime و بررسی فایل با یک شناسه
+  // می‌روند تا سهمیه یک واحد کم کند، نه دو تا.
+  parseAudio: (blob, { signal, hint, fallbackReason, workspaceId, attemptId } = {}) => {
     const form = new FormData();
     const extension = blob.type === 'audio/wav' ? 'wav' : 'webm';
     form.append('audio', blob, `voice.${extension}`);
     if (hint) form.append('hint', String(hint).slice(0, 500));
     if (fallbackReason) form.append('fallbackReason', String(fallbackReason).slice(0, 160));
+    if (attemptId) form.append('attemptId', String(attemptId).slice(0, 80));
     return request('/api/parse/audio', {
       method: 'POST', body: form, signal,
-      headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined,
+      headers: {
+        ...(workspaceId ? { 'X-Workspace-Id': workspaceId } : {}),
+        ...(attemptId ? { 'X-Voice-Attempt': String(attemptId).slice(0, 80) } : {}),
+      },
     });
   },
-  createRealtimeTranscription: (sdp, { signal } = {}) => requestText('/api/voice/realtime/session', {
-    method: 'POST', body: sdp, signal, headers: { 'Content-Type': 'application/sdp' },
+  createRealtimeTranscription: (sdp, { signal, attemptId } = {}) => requestText('/api/voice/realtime/session', {
+    method: 'POST',
+    body: sdp,
+    signal,
+    headers: {
+      'Content-Type': 'application/sdp',
+      ...(attemptId ? { 'X-Voice-Attempt': String(attemptId).slice(0, 80) } : {}),
+    },
   }),
   recordVoiceMetric: (payload) => request('/api/voice/metrics', { method: 'POST', body: JSON.stringify(payload) }),
   saveTransactions: (payload, { workspaceId } = {}) => request('/api/transactions', {

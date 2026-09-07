@@ -98,6 +98,7 @@ export default function App() {
   const finalizeTimerRef = useRef(null);
   const pendingAudioBlobRef = useRef(null);
   const fastFinalizeDoneRef = useRef(false);
+  const voiceAttemptRef = useRef('');
   const fastVoiceAvailable = realtimeSpeechAvailable() || liveSpeechSupported();
   const rememberedOfflineScope = api.offlineScope();
   const offlineUserId = access.user?.id || rememberedOfflineScope?.userId || '';
@@ -278,6 +279,7 @@ export default function App() {
         signal: controller.signal,
         hint: speechSnapshotRef.current.transcript,
         fallbackReason,
+        attemptId: voiceAttemptRef.current,
       });
       if (isCorrectionCommand(result.transcript)) await openCorrection(result.transcript);
       else if (routeIntent(result.transcript)) { /* نیت ساختاری، نه ثبت سادهٔ تراکنش */ }
@@ -452,6 +454,9 @@ export default function App() {
     setLiveVoiceNote('');
     setLivePreview([]);
     pendingAudioBlobRef.current = null;
+    // یک شناسه برای کل این ضبط: نشست realtime و بررسی فایل با همین شناسه
+    // می‌روند تا سهمیه یک واحد کم کند، نه دو تا.
+    voiceAttemptRef.current = crypto.randomUUID();
     fastFinalizeDoneRef.current = false;
     firstTranscriptMsRef.current = 0;
     speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: '' };
@@ -540,7 +545,7 @@ export default function App() {
           let realtime;
           realtime = createRealtimeTranscriber({
             stream,
-            createSession: api.createRealtimeTranscription,
+            createSession: (sdp) => api.createRealtimeTranscription(sdp, { attemptId: voiceAttemptRef.current }),
             onUpdate: (snapshot) => {
               if (realtimeSpeechRef.current !== realtime) return;
               const next = {
@@ -910,6 +915,8 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
     success: ['ثبت شد', 'تا چند ثانیه می‌توانی برگردانی'],
   };
   const latestClosing = data.closings?.find((item) => item.day === data.closingPreview?.day) || null;
+  const commercial = data.overview?.commercial || {};
+  const voiceQuota = commercial.quotas?.find((item) => item.id === 'smartVoiceRequests') || null;
   const pulse = buildTodayPulse({ summary: data.summary, overview: data.overview, transactions: data.transactions });
   const tasks = buildTodayTasks({ transactions: data.transactions, overview: data.overview, closing: latestClosing, profileType, pendingAudioCount });
   const chooseExample = (example) => {
@@ -935,6 +942,16 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
           </div>
 
           {readOnly && <div className="mt-3 rounded-[10px] border-r-4 border-accent bg-warn-bg px-3 py-3 text-sm leading-6">دسترسی تو «فقط مشاهده» است؛ می‌توانی گزارش‌ها و ثبت‌ها را ببینی اما چیزی تغییر نمی‌کند.</div>}
+          {/* سهمیه پیش از رسیدن به صفر گفته می‌شود؛ غافلگیرشدن وسط ثبت روزانه،
+              همان تجربه‌ای است که کاربر را از ابزار دور می‌کند. */}
+          {!readOnly && voiceQuota && (voiceQuota.exhausted || voiceQuota.nearLimit) && (
+            <div className={`mt-3 rounded-[10px] border-r-4 px-3 py-3 text-[12px] leading-6 ${voiceQuota.exhausted ? 'border-expense bg-expense/5' : 'border-accent bg-warn-bg'}`}>
+              {voiceQuota.exhausted
+                ? <><b>سهمیهٔ پردازش صوت هوشمند {commercial.monthLabel || 'این ماه'} تمام شد.</b> ضبط و تایپ زندهٔ Chrome و ثبت دستی همچنان کار می‌کنند؛ فقط بررسی فایل روی سرور تا شروع سهمیهٔ تازه بسته است.</>
+                : <><b>{toPersianDigits(voiceQuota.remaining)} پردازش صوت هوشمند</b> تا پایان {commercial.monthLabel || 'این ماه'} مانده است. تایپ Chrome و ثبت دستی از این سهمیه کم نمی‌کنند.</>}
+              {commercial.monthEndsAt && <span className="mt-1 block text-muted">سهمیهٔ تازه از {persianDate(commercial.monthEndsAt)}.</span>}
+            </div>
+          )}
           <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} disabled={readOnly} />
 
           <div className="my-2 flex items-center gap-3 text-[11px] text-muted"><span className="h-px flex-1 bg-line" /><span>یا بنویس</span><span className="h-px flex-1 bg-line" /></div>

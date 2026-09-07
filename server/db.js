@@ -49,11 +49,19 @@ import { normalizeTemplateLines } from './journalWorkflow.js';
 import { importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows } from './ledgerImport.js';
 import { analyticRowsFromFile, chartRowsFromFile, openingRowsFromFile } from './spreadsheetImport.js';
 import { buildFirmPortfolio, parseStoredMoment } from './firm.js';
+import { OPTIONAL_BACKUP_TABLES } from './backup.js';
 import {
   askTaxAssistant as askTaxAssistantCore, ensureTaxAssistantSchema,
   listTaxAssistantQuestions as listTaxAssistantQuestionsCore, listTaxKnowledgeSources as listTaxKnowledgeSourcesCore,
   resolveTaxAssistantQuestion as resolveTaxAssistantQuestionCore, saveTaxKnowledgeSource as saveTaxKnowledgeSourceCore,
 } from './taxAssistant.js';
+import {
+  citableVersionsAt, ensureTaxKnowledgeSchema, getTaxDocument as getTaxDocumentCore,
+  getTaxDocumentVersion as getTaxDocumentVersionCore, listTaxDocuments as listTaxDocumentsCore,
+  listTaxReviewQueue as listTaxReviewQueueCore, migrateTaxKnowledgeSources,
+  publishTaxDocumentVersion as publishTaxDocumentVersionCore, rejectTaxDocumentVersion as rejectTaxDocumentVersionCore,
+  saveTaxDocumentDraft as saveTaxDocumentDraftCore, saveTaxDocumentRelation as saveTaxDocumentRelationCore,
+} from './taxKnowledge.js';
 import {
   DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance,
   importChartOfAccounts, installDefaultChartTemplate, listAnalyticAccounts, listChartAccounts, listCostCenters,
@@ -438,12 +446,21 @@ function ensureCollaborationSchema(database) {
       duration_ms INTEGER NOT NULL DEFAULT 0,
       estimated_cost_microusd INTEGER,
       error_code TEXT NOT NULL DEFAULT '',
+      -- شناسهٔ همان «تلاش» کاربر: یک ضبط ممکن است هم نشست realtime بسازد و هم
+      -- فایل را روی سرور بفرستد. هزینهٔ provider دو تاست، ولی از دید کاربر یک
+      -- بار حرف زده و سهمیه باید یک واحد کم شود.
+      attempt_id TEXT,
       created_by TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       completed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_provider_usage_month ON provider_usage(created_at,capability,status);
   `);
+  // دیتابیس‌های موجود ستون تلاش را ندارند. ردیف قدیمی NULL می‌ماند و هرکدام یک
+  // تلاش شمرده می‌شود، پس مصرف ثبت‌شدهٔ گذشته بازنویسی نمی‌شود. ایندکس بعد از
+  // ستون ساخته می‌شود، وگرنه روی دیتابیس قدیمی به ستون ناموجود اشاره می‌کرد.
+  ensureColumnOn(database, 'provider_usage', 'attempt_id TEXT');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_provider_usage_attempt ON provider_usage(attempt_id) WHERE attempt_id IS NOT NULL');
 }
 
 function ensureCommercialSchema(database) {
@@ -582,6 +599,8 @@ ensureAccountingTransferSchema(controlDb);
 ensureInventorySchema(controlDb);
 ensureTaxSchema(controlDb);
 ensureTaxAssistantSchema(controlDb);
+ensureTaxKnowledgeSchema(controlDb);
+migrateTaxKnowledgeSources(controlDb);
 
 // دسته‌ها یک منبع حقیقت دارند: همان جدولی که پارسر با آن تصمیم می‌گیرد. اگر
 // این دو از هم جدا شوند، پارسر دسته‌ای پیشنهاد می‌دهد که در کشوی کارت تأیید
@@ -655,6 +674,8 @@ function workspaceDatabase(workspaceId) {
   ensureInventorySchema(database);
   ensureTaxSchema(database);
   ensureTaxAssistantSchema(database);
+  ensureTaxKnowledgeSchema(database);
+  migrateTaxKnowledgeSources(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   workspaceConnections.set(workspaceId, database);
@@ -802,14 +823,19 @@ export function updateWorkspaceCommercialPlan(workspaceId, values = {}, updatedB
 
 export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primary', now = new Date()) {
   const planRecord = workspacePlanRecord(workspaceId);
-  const range = billingMonth('', now);
+  const range = billingMonth('', now, currentTimeZone());
   const usageRows = db.prepare(`SELECT capability,provider,status,SUM(request_count) AS requests,SUM(duration_ms) AS durationMs,
     SUM(COALESCE(estimated_cost_microusd,0)) AS estimatedCostMicrousd,
     SUM(CASE WHEN status='succeeded' AND capability!='realtime_session' AND estimated_cost_microusd IS NULL THEN 1 ELSE 0 END) AS unpriced
     FROM provider_usage WHERE created_at>=datetime(?) AND created_at<datetime(?) GROUP BY capability,provider,status
     ORDER BY capability,provider,status`).all(range.from, range.toExclusive);
-  const smartVoiceRequests = usageRows.filter((item) => item.status !== 'failed' && ['server_voice', 'realtime_session'].includes(item.capability))
-    .reduce((sum, item) => sum + Number(item.requests || 0), 0);
+  // سهمیهٔ صدا بر «تلاش» شمرده می‌شود، نه بر تماس provider. یک ضبط می‌تواند هم
+  // نشست realtime باز کند و هم فایل بفرستد؛ هزینهٔ ما دو تاست ولی کاربر یک بار
+  // حرف زده. ردیف‌های قدیمی `attempt_id` ندارند و هرکدام یک تلاش شمرده می‌شوند،
+  // یعنی مصرف گذشته بازنویسی نمی‌شود.
+  const smartVoiceRequests = Number(db.prepare(`SELECT COUNT(DISTINCT COALESCE(attempt_id,id)) AS attempts
+    FROM provider_usage WHERE status!='failed' AND capability IN ('server_voice','realtime_session')
+      AND created_at>=datetime(?) AND created_at<datetime(?)`).get(range.from, range.toExclusive)?.attempts || 0);
   const receiptOcrPages = usageRows.filter((item) => item.status !== 'failed' && item.capability === 'receipt_ocr')
     .reduce((sum, item) => sum + Number(item.requests || 0), 0);
   const members = Number(controlDb.prepare('SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=?').get(workspaceId)?.count || 0);
@@ -820,6 +846,8 @@ export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primar
   const usage = { smartVoiceRequests, receiptOcrPages, members, transactionEntries };
   return {
     month: range.month,
+    monthLabel: range.monthLabel,
+    monthEndsAt: range.toExclusive,
     plan: PLAN_CATALOG[planRecord.planId],
     catalog: Object.values(PLAN_CATALOG),
     usage,
@@ -845,7 +873,7 @@ function quotaItemForCapability(status, capability) {
   return status.quotas.find((item) => item.id === id);
 }
 
-export function beginProviderUsage(capability, provider = 'unknown') {
+export function beginProviderUsage(capability, provider = 'unknown', { attemptId = '' } = {}) {
   if (!['server_voice', 'realtime_session', 'receipt_ocr'].includes(capability)) throw invalidInput('قابلیت provider معتبر نیست.');
   const status = commercialStatus();
   const quota = quotaItemForCapability(status, capability);
@@ -854,8 +882,9 @@ export function beginProviderUsage(capability, provider = 'unknown') {
     status: 402, code: 'PROVIDER_BUDGET_EXCEEDED', details: { provider: status.provider },
   });
   const id = randomUUID();
-  db.prepare(`INSERT INTO provider_usage (id,capability,provider,status,request_count,created_by)
-    VALUES (?,?,?,'started',1,?)`).run(id, capability, String(provider || 'unknown').slice(0, 40), currentWorkspace()?.userId || null);
+  db.prepare(`INSERT INTO provider_usage (id,capability,provider,status,request_count,attempt_id,created_by)
+    VALUES (?,?,?,'started',1,?,?)`).run(id, capability, String(provider || 'unknown').slice(0, 40),
+    String(attemptId || '').trim().slice(0, 80) || null, currentWorkspace()?.userId || null);
   return id;
 }
 
@@ -3127,6 +3156,58 @@ export function saveTaxKnowledgeSource(values = {}) {
   return item;
 }
 
+// --- هستهٔ منابع نسخه‌دار (فاز ۰) ---
+// این توابع فقط می‌خوانند. مسیر پاسخ دستیار هنوز از `tax_knowledge_sources`
+// می‌آید و در فاز ۲ و ۳ جابه‌جا می‌شود، پس امروز هیچ رفتاری عوض نمی‌شود.
+
+export function listTaxDocuments(filters = {}) {
+  return listTaxDocumentsCore(db, filters);
+}
+
+export function getTaxDocument(id) {
+  return getTaxDocumentCore(db, id);
+}
+
+export function citableTaxVersions(filters = {}) {
+  return citableVersionsAt(db, filters);
+}
+
+export function saveTaxDocumentRelation(values = {}) {
+  const item = saveTaxDocumentRelationCore(db, values);
+  audit('create-relation', 'tax_document_relation', item.id, {
+    relation: item.relation, effectFrom: item.effect_from,
+  });
+  return item;
+}
+
+export function saveTaxDocumentDraft(values = {}) {
+  const item = saveTaxDocumentDraftCore(db, values, currentWorkspace());
+  audit('create-draft', 'tax_document_version', item.id, {
+    documentId: item.documentId, versionLabel: item.versionLabel, provisions: item.provisions.length,
+  });
+  return item;
+}
+
+export function getTaxDocumentVersion(id) {
+  return getTaxDocumentVersionCore(db, id);
+}
+
+export function listTaxReviewQueue() {
+  return listTaxReviewQueueCore(db);
+}
+
+export function publishTaxDocumentVersion(id) {
+  const item = publishTaxDocumentVersionCore(db, id, currentWorkspace());
+  if (item) audit('publish', 'tax_document_version', item.id, { versionLabel: item.versionLabel, verifiedBy: item.verifiedBy });
+  return item;
+}
+
+export function rejectTaxDocumentVersion(id, reason = '') {
+  const item = rejectTaxDocumentVersionCore(db, id, reason, currentWorkspace());
+  if (item) audit('reject', 'tax_document_version', item.id, { reason: String(reason).slice(0, 200) });
+  return item;
+}
+
 export function askTaxAssistant(values = {}) {
   const item = askTaxAssistantCore(db, values, currentWorkspace());
   audit(item.status === 'answered' ? 'answer-from-source' : 'refer-to-expert', 'tax_assistant_question', item.id, {
@@ -3489,6 +3570,7 @@ export const FINANCIAL_BACKUP_TABLES = [
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
   'tax_knowledge_sources', 'tax_assistant_questions',
+  'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
@@ -3497,6 +3579,7 @@ const BACKUP_DELETE_ORDER = [
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
+  'tax_document_mirrors', 'tax_document_relations', 'tax_provisions', 'tax_document_versions', 'tax_documents',
   'tax_assistant_questions', 'tax_knowledge_sources', 'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',
 ];
@@ -3517,7 +3600,9 @@ export function restoreFinancialSnapshot(snapshot) {
   try {
     for (const table of BACKUP_DELETE_ORDER) db.prepare(`DELETE FROM ${table}`).run();
     for (const table of FINANCIAL_BACKUP_TABLES) {
-      const rows = snapshot.tables[table];
+      // جدولی که بعد از ساخت آن پشتیبان به محصول اضافه شده، خالی بازیابی می‌شود؛
+      // پشتیبان قدیمی نباید به‌خاطر قابلیتی که آن روز وجود نداشته رد شود.
+      const rows = snapshot.tables[table] ?? (OPTIONAL_BACKUP_TABLES.has(table) ? [] : undefined);
       if (!Array.isArray(rows)) throw invalidInput(`جدول ${table} در پشتیبان کامل نیست.`);
       const validColumns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
       for (const row of rows) {

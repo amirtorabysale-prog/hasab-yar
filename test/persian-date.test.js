@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { extractDateMention, persianToISO, todayPersian } from '../shared/persianDate.js';
+import { extractDateMention, persianMonthRange, persianToISO, todayPersian } from '../shared/persianDate.js';
 
 const TZ = 'Asia/Tehran';
 const persian = (iso) => {
@@ -106,4 +106,20 @@ test('برچسب تاریخ برای نمایش به کاربر ساخته می�
 
 test('امروزِ شمسی از ساعت سیستم درست خوانده می‌شود', () => {
   assert.deepEqual(todayPersian(NOW, TZ), { year: 1405, month: 6, day: 6 });
+});
+
+test('بازهٔ ماه شمسی از نیمه‌شب اول ماه تا نیمه‌شب اول ماه بعد است', () => {
+  const shahrivar = persianMonthRange(1405, 6, TZ);
+  assert.equal(shahrivar.month, '1405-06');
+  assert.equal(persian(shahrivar.from), '1405/06/01');
+  // یک میلی‌ثانیه پیش از پایان، هنوز داخل همان ماه است.
+  assert.equal(persian(shahrivar.to), '1405/06/31');
+  assert.equal(persian(shahrivar.toExclusive), '1405/07/01');
+
+  // اسفند در سال کبیسه ۳۰ روز و در سال عادی ۲۹ روز است؛ قاعده از تقویم پلتفرم
+  // می‌آید، نه از حفظ.
+  const leap = persianMonthRange(1403, 12, TZ);
+  assert.equal(persian(leap.to), '1403/12/30');
+  const ordinary = persianMonthRange(1404, 12, TZ);
+  assert.equal(persian(ordinary.to), '1404/12/29');
 });

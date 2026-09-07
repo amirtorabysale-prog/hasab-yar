@@ -29,6 +29,31 @@ test('tracks quota and configured provider cost without limiting core entries', 
   assert.equal(status.provider.estimatedCostMicrousd, 20_000);
 }));
 
+// یک ضبط می‌تواند هم نشست realtime بسازد و هم فایل بفرستد. هزینهٔ provider دو
+// تاست، ولی از دید کاربر یک بار حرف زده و سهمیه باید یک واحد کم شود.
+test('یک ضبط با دو تماس provider، یک واحد سهمیه مصرف می‌کند', () => {
+  const workspace = database.createWorkspace(owner.id, { name: 'دفتر شمارش تلاش', profileType: 'business' });
+  database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, () => {
+    const attemptId = 'attempt-one';
+    const realtime = database.beginProviderUsage('realtime_session', 'openai', { attemptId });
+    database.finishProviderUsage(realtime, { provider: 'openai', durationMs: 5_000 });
+    const file = database.beginProviderUsage('server_voice', 'openai', { attemptId });
+    database.finishProviderUsage(file, { provider: 'openai', durationMs: 5_000 });
+    assert.equal(database.commercialStatus(workspace.id).usage.smartVoiceRequests, 1);
+
+    // ضبط دوم، تلاش دوم است.
+    const second = database.beginProviderUsage('server_voice', 'openai', { attemptId: 'attempt-two' });
+    database.finishProviderUsage(second, { provider: 'openai', durationMs: 5_000 });
+    assert.equal(database.commercialStatus(workspace.id).usage.smartVoiceRequests, 2);
+
+    // ردیف بدون شناسهٔ تلاش — مثل مصرف ثبت‌شدهٔ پیش از این تغییر — همچنان یک
+    // تلاش شمرده می‌شود، پس سابقهٔ مصرف بازنویسی نمی‌شود.
+    const legacy = database.beginProviderUsage('server_voice', 'openai');
+    database.finishProviderUsage(legacy, { provider: 'openai', durationMs: 5_000 });
+    assert.equal(database.commercialStatus(workspace.id).usage.smartVoiceRequests, 3);
+  });
+});
+
 test('stops the paid provider before overage but still accepts a manual ledger entry', () => {
   const workspace = database.createWorkspace(owner.id, { name: 'دفتر کنترل سهمیه', profileType: 'business' });
   database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, () => {

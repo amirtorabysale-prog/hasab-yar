@@ -242,7 +242,7 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
   try {
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
     durationMs = audioDurationMs(request.file.buffer, request.file.mimetype) || Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0));
-    usageId = beginProviderUsage('server_voice', 'pipeline');
+    usageId = beginProviderUsage('server_voice', 'pipeline', { attemptId: request.body?.attemptId || request.get('x-voice-attempt') || '' });
     const parsed = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
     const result = applyDnaSignals(parsed, dnaProfiles());
     recordVoiceMetric({
@@ -265,7 +265,9 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
 app.post('/api/voice/realtime/session', express.text({ type: ['application/sdp', 'text/plain'], limit: '128kb' }), async (request, response, next) => {
   let usageId = null;
   try {
-    usageId = beginProviderUsage('realtime_session', 'openai');
+    // شناسهٔ تلاش از کلاینت می‌آید تا نشست realtime و بررسی فایلِ همان ضبط، یک
+    // واحد سهمیه شمرده شوند، نه دو تا.
+    usageId = beginProviderUsage('realtime_session', 'openai', { attemptId: request.get('x-voice-attempt') || '' });
     const answer = await createRealtimeTranscriptionCall({
       sdp: request.body,
       categories: getCategories(),
@@ -428,6 +430,47 @@ app.post('/api/tax-assistant/sources', (request, response, next) => {
 });
 app.put('/api/tax-assistant/sources/:id', (request, response, next) => {
   try { return response.json({ item: saveTaxKnowledgeSource({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
+});
+// هستهٔ منابع نسخه‌دار (فاز ۰ و ۱). مسیر پاسخ دستیار هنوز از منابع قدیمی است.
+app.get('/api/tax-knowledge/documents', (request, response, next) => {
+  try { return response.json({ items: listTaxDocuments({ documentClass: request.query.documentClass || '' }) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/documents/:id', (request, response) => {
+  const item = getTaxDocument(request.params.id);
+  return item ? response.json({ item }) : response.status(404).json({ message: 'سند مالیاتی پیدا نشد.' });
+});
+app.post('/api/tax-knowledge/documents', (request, response, next) => {
+  try { return response.status(201).json({ item: saveTaxDocumentDraft(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/review-queue', (_request, response, next) => {
+  try { return response.json({ items: listTaxReviewQueue() }); } catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/versions/:id', (request, response) => {
+  const item = getTaxDocumentVersion(request.params.id);
+  return item ? response.json({ item }) : response.status(404).json({ message: 'نسخهٔ سند پیدا نشد.' });
+});
+app.post('/api/tax-knowledge/versions/:id/publish', (request, response, next) => {
+  try {
+    const item = publishTaxDocumentVersion(request.params.id);
+    return item ? response.json({ item }) : response.status(404).json({ message: 'نسخهٔ سند پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
+app.post('/api/tax-knowledge/versions/:id/reject', (request, response, next) => {
+  try {
+    const item = rejectTaxDocumentVersion(request.params.id, request.body?.reason || '');
+    return item ? response.json({ item }) : response.status(404).json({ message: 'نسخهٔ سند پیدا نشد.' });
+  } catch (error) { return next(error); }
+});
+app.post('/api/tax-knowledge/relations', (request, response, next) => {
+  try { return response.status(201).json({ item: saveTaxDocumentRelation(request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.get('/api/tax-knowledge/citable', (request, response, next) => {
+  try {
+    return response.json({ items: citableTaxVersions({ asOf: request.query.asOf, fiscalYear: request.query.fiscalYear }) });
+  } catch (error) { return next(error); }
 });
 app.get('/api/tax-assistant/questions', (request, response) => response.json({ items: listTaxAssistantQuestions(request.query) }));
 app.post('/api/tax-assistant/questions', (request, response, next) => {

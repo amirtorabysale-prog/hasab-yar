@@ -102,6 +102,54 @@ export function persianToISO(year, month, day, timeZone = 'Asia/Tehran') {
   return null;
 }
 
+/**
+ * نیمه‌شب یک روز میلادی در یک منطقهٔ زمانی.
+ * جست‌وجوی کوتاه به‌جای محاسبهٔ افست، تا تغییر ساعت تابستانی هم درست بیفتد.
+ */
+function zonedMidnight(gregorianDay, timeZone) {
+  const [year, month, day] = gregorianDay.split('-').map(Number);
+  const target = Date.UTC(year, month - 1, day);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  let guess = target;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(guess))
+      .filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+    const represented = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    guess -= represented - target;
+  }
+  return new Date(guess);
+}
+
+/**
+ * بازهٔ یک ماه شمسی، از نیمه‌شب اول ماه تا نیمه‌شب اول ماه بعد.
+ *
+ * دورهٔ سهمیه و هر چیز دیگری که به کاربر «این ماه» گفته می‌شود باید با همان
+ * تقویمی بسته شود که کاربر با آن کار می‌کند. مرز ماه میلادی وسط ماه شمسی
+ * می‌افتد و «این ماه» را به دو تکه می‌برد.
+ */
+export function persianMonthRange(year, month, timeZone = 'Asia/Tehran') {
+  const startNoon = persianToISO(year, month, 1, timeZone);
+  if (!startNoon) return null;
+  const nextYear = month === 12 ? Number(year) + 1 : Number(year);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const endNoon = persianToISO(nextYear, nextMonth, 1, timeZone);
+  if (!endNoon) return null;
+  const gregorianDay = (iso) => new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(iso));
+  const from = zonedMidnight(gregorianDay(startNoon), timeZone);
+  const toExclusive = zonedMidnight(gregorianDay(endNoon), timeZone);
+  return {
+    month: `${year}-${String(month).padStart(2, '0')}`,
+    from: from.toISOString(),
+    toExclusive: toExclusive.toISOString(),
+    to: new Date(toExclusive.getTime() - 1).toISOString(),
+  };
+}
+
 function isoAtTehranNoon(now, offsetDays, timeZone) {
   const shifted = new Date(now.getTime() + offsetDays * 86_400_000);
   const { year, month, day } = persianParts(shifted, timeZone);

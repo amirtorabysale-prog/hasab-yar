@@ -37,6 +37,8 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath === '/import/template') return 'viewer';
   if (normalizedPath.startsWith('/import/')) return 'manager';
   if (normalizedPath.startsWith('/tax/rates')) return 'manager';
+  // منبع قانونی، دادهٔ پایهٔ دفتر است نه ثبت روزانه؛ ورود و انتشارش کار مدیر است.
+  if (normalizedPath.startsWith('/tax-knowledge/')) return 'manager';
   if (normalizedPath.startsWith('/tax-assistant/sources') && !['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return 'manager';
   if (normalizedPath.startsWith('/tax-assistant/questions/') && normalizedPath.endsWith('/resolve')) return 'manager';
   if (normalizedPath.startsWith('/tax-assistant/')) return 'viewer';

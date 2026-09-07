@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  audioDurationMs, estimateProviderCostMicrousd, monthlyPackageChecklist, pilotRetentionSummary,
+  audioDurationMs, billingMonth, estimateProviderCostMicrousd, monthlyPackageChecklist, pilotRetentionSummary,
   usageQuotaSnapshot,
 } from '../server/collaboration.js';
 import { encodePcm16Wav } from '../src/lib/wavRecorder.js';
@@ -47,4 +47,58 @@ test('pilot retention excludes workspaces that have not reached week four', () =
   ]);
   assert.equal(summary.retentionPercent, 50);
   assert.equal(summary.willingnessPercent, 33);
+});
+
+// دورهٔ سهمیه پیش از این ماه میلادی بود. برای دفتری که با تقویم شمسی کار می‌کند،
+// «این ماه» که وسط شهریور صفر می‌شود هم گیج‌کننده است و هم با دورهٔ مالی دفتر
+// نمی‌خواند.
+test('دورهٔ سهمیه با ماه شمسی بسته می‌شود، نه میلادی', () => {
+  const middleOfShahrivar = billingMonth('', new Date('2026-09-07T10:00:00Z'));
+  assert.equal(middleOfShahrivar.month, '1405-06');
+  assert.equal(middleOfShahrivar.calendar, 'persian');
+  assert.match(middleOfShahrivar.monthLabel, /شهریور/);
+
+  // اول سپتامبر وسط شهریور است: با تقویم میلادی سهمیه اینجا صفر می‌شد.
+  const firstOfSeptember = billingMonth('', new Date('2026-09-01T10:00:00Z'));
+  assert.equal(firstOfSeptember.month, '1405-06');
+  assert.equal(firstOfSeptember.from, middleOfShahrivar.from);
+
+  // مرز واقعی، اول مهر است.
+  const mehr = billingMonth('', new Date('2026-09-25T10:00:00Z'));
+  assert.equal(mehr.month, '1405-07');
+  assert.notEqual(mehr.from, middleOfShahrivar.from);
+  assert.equal(mehr.from, middleOfShahrivar.toExclusive);
+});
+
+test('ماه شمسی درخواستی هم پذیرفته می‌شود و اسفند کبیسه ۳۰ روز است', () => {
+  const requested = billingMonth('1403-12', new Date('2026-09-07T10:00:00Z'));
+  assert.equal(requested.month, '1403-12');
+  const days = (new Date(requested.toExclusive) - new Date(requested.from)) / 86_400_000;
+  assert.equal(days, 30, 'اسفند ۱۴۰۳ کبیسه است');
+  const ordinary = billingMonth('1404-12', new Date('2026-09-07T10:00:00Z'));
+  assert.equal((new Date(ordinary.toExclusive) - new Date(ordinary.from)) / 86_400_000, 29);
+});
+
+// کاربر نباید وسط ثبت روزانه غافلگیر شود.
+test('نزدیک‌شدن به سقف سهمیه پیش از رسیدن به صفر اعلام می‌شود', () => {
+  const near = usageQuotaSnapshot('free', { smartVoiceRequests: 26, receiptOcrPages: 0, members: 1 })
+    .find((item) => item.id === 'smartVoiceRequests');
+  assert.equal(near.nearLimit, true);
+  assert.equal(near.exhausted, false);
+  assert.equal(near.remaining, 4);
+
+  const early = usageQuotaSnapshot('free', { smartVoiceRequests: 5, receiptOcrPages: 0, members: 1 })
+    .find((item) => item.id === 'smartVoiceRequests');
+  assert.equal(early.nearLimit, false);
+
+  // سهمیهٔ تمام‌شده «نزدیک سقف» نیست؛ دو حالت جدا با دو پیام جدا.
+  const done = usageQuotaSnapshot('free', { smartVoiceRequests: 30, receiptOcrPages: 0, members: 1 })
+    .find((item) => item.id === 'smartVoiceRequests');
+  assert.equal(done.nearLimit, false);
+  assert.equal(done.exhausted, true);
+
+  // ۲۵٪ از سهمیهٔ بزرگ هنوز زیاد است؛ آستانهٔ تعدادی نباید آنجا روشن شود.
+  const big = usageQuotaSnapshot('accountant', { smartVoiceRequests: 2_000, receiptOcrPages: 0, members: 1 })
+    .find((item) => item.id === 'smartVoiceRequests');
+  assert.equal(big.nearLimit, false);
 });
