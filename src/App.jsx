@@ -18,6 +18,7 @@ import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
 import { describeVoiceAvailability, pointerReleaseAction, realtimeWorthTrying, voicePathLabel } from './lib/voiceStatus.js';
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from './lib/todayExperience.js';
 import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
+import { normalizePersian } from '../shared/normalize.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
 import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload } from '../shared/voiceIntent.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
@@ -3001,12 +3002,69 @@ function ObligationsPanel({ contacts: initialContacts, notify, refresh }) {
   const [items, setItems] = useState([]);
   const [contactName, setContactName] = useState('');
   const [draft, setDraft] = useState({ title: '', amount: '', direction: 'receivable', contactId: '', dueAt: '' });
+  const [dictating, setDictating] = useState(false);
+  const [heard, setHeard] = useState('');
+  const recognizerRef = useRef(null);
   const load = useCallback(async () => { const [people, obligations] = await Promise.all([api.contacts(), api.obligations('open')]); setContacts(people.items); setItems(obligations.items); }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => () => recognizerRef.current?.stop?.(), []);
   const addContact = async () => { if (!contactName.trim()) return; await api.saveContact({ name: contactName }); setContactName(''); notify('شخص اضافه شد.'); load(); refresh(); };
-  const add = async (event) => { event.preventDefault(); await api.saveObligation(draft); setDraft({ title: '', amount: '', direction: 'receivable', contactId: '', dueAt: '' }); notify('سررسید ذخیره شد.'); load(); refresh(); };
+  const add = async (event) => {
+    event.preventDefault();
+    // نام گفته‌شده همراه ثبت می‌رود؛ سرور شخص را پیدا یا ایجاد می‌کند تا کاربر
+    // مجبور نباشد اول شخص را دستی بسازد.
+    await api.saveObligation({ ...draft, contactName: draft.contactId ? '' : draft.spokenName || '' });
+    setDraft({ title: '', amount: '', direction: 'receivable', contactId: '', dueAt: '' });
+    setHeard('');
+    notify('سررسید ذخیره شد.');
+    load();
+    refresh();
+  };
+
+  /**
+   * گفتهٔ کاربر روی همین صفحه تفسیر می‌شود، نه به‌عنوان تراکنش.
+   *
+   * تشخیص با تایپ زندهٔ مرورگر انجام می‌شود؛ نه سهمیهٔ صوت هوشمند مصرف می‌کند و
+   * نه منتظر سرور می‌ماند. چیزی خودکار ذخیره نمی‌شود: فرم پر می‌شود و ثبت با
+   * دکمهٔ خود کاربر است.
+   */
+  const applySpokenObligation = (transcript) => {
+    const found = detectVoiceIntent(transcript, { context: 'obligation' });
+    if (!found || !['obligation', 'cheque'].includes(found.intent)) {
+      notify('از این جمله طلب یا بدهی برداشت نشد. مثلاً بگو «حسن سه میلیون بدهکار شد».');
+      return;
+    }
+    const matched = found.contactName
+      ? contacts.find((item) => normalizePersian(item.name) === normalizePersian(found.contactName))
+      : null;
+    setDraft((current) => ({
+      ...current,
+      title: found.contactName || found.title || current.title,
+      amount: found.amount ? String(found.amount) : '',
+      direction: found.direction || current.direction,
+      contactId: matched?.id || '',
+      spokenName: matched ? '' : found.contactName || '',
+      dueAt: found.dueAt || current.dueAt,
+    }));
+    if (found.ambiguous) notify('جمله هم نشانهٔ طلب داشت هم بدهی؛ جهت را خودت انتخاب کن.');
+    else if (!found.amount) notify(`«${found.contactName || 'طرف حساب'}» ثبت شد؛ مبلغ را بنویس.`);
+  };
+
+  const toggleDictation = () => {
+    if (dictating) { recognizerRef.current?.stop(); setDictating(false); return; }
+    if (!liveSpeechSupported()) return notify('تایپ زندهٔ فارسی در این مرورگر فعال نیست؛ فعلاً دستی بنویس.');
+    setHeard('');
+    let latest = '';
+    const recognizer = createPersianRecognizer({
+      onUpdate: (snapshot) => { latest = snapshot.transcript; setHeard(snapshot.transcript); },
+      onEnd: () => { setDictating(false); if (latest.trim()) applySpokenObligation(latest); },
+      onError: (code) => { setDictating(false); notify(liveSpeechErrorMessage(code)); },
+    });
+    recognizerRef.current = recognizer;
+    try { recognizer.start(); setDictating(true); } catch { notify('میکروفن شروع نشد.'); }
+  };
   const settle = async (id) => { await api.settleObligation(id); notify('تسویه شد و تراکنش آن در دفتر ثبت شد.'); load(); refresh(); };
-  return <section className="mt-5 space-y-6"><div><h2 className="font-extrabold">اشخاص</h2><div className="mt-2 flex gap-2"><input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="نام شخص یا مشتری" className="tap min-w-0 flex-1 rounded-lg border border-line bg-surface px-3" /><button onClick={addContact} className="tap rounded-lg bg-ink px-4 font-bold text-white">افزودن</button></div><div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto">{contacts.map((contact) => <span key={contact.id} className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-xs"><b>{contact.name}</b>{Number(contact.balance) !== 0 && <span className={`numbers mr-2 ${contact.balance > 0 ? 'text-income' : 'text-expense'}`}>{formatAmount(Math.abs(contact.balance))}</span>}</span>)}</div></div><form onSubmit={add} className="rounded-[10px] border border-line bg-surface p-3"><h2 className="font-extrabold">طلب یا بدهی تازه</h2><div className="mt-3 grid gap-2 sm:grid-cols-2"><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً طلب از حسن" className="tap rounded-lg border border-line px-3" /><input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3" /><select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="receivable">طلب دارم</option><option value="payable">بدهکارم</option></select><select value={draft.contactId} onChange={(event) => setDraft({ ...draft, contactId: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="">بدون شخص</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select><input type="date" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value ? new Date(`${event.target.value}T09:00:00`).toISOString() : '' })} className="tap rounded-lg border border-line px-3" /><button className="tap rounded-lg bg-accent font-bold text-white">ذخیره سررسید</button></div></form><div className="divide-y divide-line border-y border-line">{items.length ? items.map((item) => <article key={item.id} className="flex min-h-[76px] items-center gap-3 py-3"><HandCoins className={item.direction === 'receivable' ? 'text-income' : 'text-expense'} /><div className="min-w-0 flex-1"><p className="font-bold">{item.title}</p><p className="mt-1 text-xs text-muted">{item.contactName || 'بدون شخص'}{item.dueAt ? ` · سررسید ${new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(item.dueAt))}` : ''}</p></div><b className="numbers text-sm">{formatAmount(item.amount)}</b><button onClick={() => settle(item.id)} className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">تسویه</button></article>) : <p className="py-10 text-center text-sm text-muted">طلب یا بدهی بازی نداری.</p>}</div></section>;
+  return <section className="mt-5 space-y-6"><div><h2 className="font-extrabold">اشخاص</h2><div className="mt-2 flex gap-2"><input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="نام شخص یا مشتری" className="tap min-w-0 flex-1 rounded-lg border border-line bg-surface px-3" /><button onClick={addContact} className="tap rounded-lg bg-ink px-4 font-bold text-white">افزودن</button></div><div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto">{contacts.map((contact) => <span key={contact.id} className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-xs"><b>{contact.name}</b>{Number(contact.balance) !== 0 && <span className={`numbers mr-2 ${contact.balance > 0 ? 'text-income' : 'text-expense'}`}>{formatAmount(Math.abs(contact.balance))}</span>}</span>)}</div></div><form onSubmit={add} className="rounded-[10px] border border-line bg-surface p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">طلب یا بدهی تازه</h2><p className="mt-1 text-[11px] leading-5 text-muted">می‌توانی بگویی «حسن سه میلیون بدهکار شد». شخص تازه خودش ساخته می‌شود و ثبت با دکمهٔ خودت انجام می‌شود.</p></div><button type="button" onClick={toggleDictation} className={`tap grid shrink-0 place-items-center rounded-lg border px-3 ${dictating ? 'border-expense bg-expense/10 text-expense' : 'border-line text-accent'}`} aria-label={dictating ? 'توقف گفتن' : 'گفتن طلب یا بدهی'}><Mic size={19} /></button></div>{heard && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{heard}»</blockquote>}{draft.spokenName && <p className="mt-2 text-[11px] leading-5 text-accent">شخص «{draft.spokenName}» در دفتر نیست و با ذخیره‌شدن این ثبت ساخته می‌شود.</p>}<div className="mt-3 grid gap-2 sm:grid-cols-2"><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً طلب از حسن" className="tap rounded-lg border border-line px-3" /><input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3" /><select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="receivable">طلب دارم</option><option value="payable">بدهکارم</option></select><select value={draft.contactId} onChange={(event) => setDraft({ ...draft, contactId: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="">بدون شخص</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select><input type="date" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value ? new Date(`${event.target.value}T09:00:00`).toISOString() : '' })} className="tap rounded-lg border border-line px-3" /><button className="tap rounded-lg bg-accent font-bold text-white">ذخیره سررسید</button></div></form><div className="divide-y divide-line border-y border-line">{items.length ? items.map((item) => <article key={item.id} className="flex min-h-[76px] items-center gap-3 py-3"><HandCoins className={item.direction === 'receivable' ? 'text-income' : 'text-expense'} /><div className="min-w-0 flex-1"><p className="font-bold">{item.title}</p><p className="mt-1 text-xs text-muted">{item.contactName || 'بدون شخص'}{item.dueAt ? ` · سررسید ${new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(item.dueAt))}` : ''}</p></div><b className="numbers text-sm">{formatAmount(item.amount)}</b><button onClick={() => settle(item.id)} className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">تسویه</button></article>) : <p className="py-10 text-center text-sm text-muted">طلب یا بدهی بازی نداری.</p>}</div></section>;
 }
 
 function InvoicesPanel({ contacts, accounts, categories, notify, refresh }) {

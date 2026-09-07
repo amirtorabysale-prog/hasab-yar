@@ -86,6 +86,30 @@ test('tracks lightweight inventory and low-stock warnings', () => {
   assert.throws(() => core.adjustStock(product.id, { quantity: -10 }), /منفی/);
 });
 
+// «حسن بدهکار شد» نباید کاربر را مجبور کند اول شخص را دستی بسازد — ولی شخص
+// تکراری هم نباید ساخته شود، وگرنه ماندهٔ یک نفر بین دو ردیف پخش می‌شود.
+test('نام گفته‌شده به شخص موجود وصل می‌شود و نبودنش شخص تازه می‌سازد', () => {
+  const before = core.listContacts().length;
+  const created = core.saveObligation({ title: 'طلب از حسن', amount: 3_000_000, direction: 'receivable', contactName: 'حسن رضایی' });
+  assert.equal(created.contactName, 'حسن رضایی');
+  assert.equal(core.listContacts().length, before + 1);
+
+  // همان نام با املای عربیِ «ی»؛ باید همان شخص باشد، نه یک ردیف تازه.
+  const again = core.saveObligation({ title: 'طلب دوم', amount: 1_000_000, direction: 'receivable', contactName: 'حسن رضايی' });
+  assert.equal(again.contactId, created.contactId);
+  assert.equal(core.listContacts().length, before + 1);
+
+  // شناسهٔ صریح همیشه مقدم است.
+  const explicit = core.saveObligation({ title: 'طلب سوم', amount: 500_000, direction: 'receivable', contactId: created.contactId, contactName: 'کس دیگر' });
+  assert.equal(explicit.contactId, created.contactId);
+  assert.equal(core.listContacts().length, before + 1);
+
+  // نام خیلی کوتاه شخص نمی‌سازد؛ ثبت بدون شخص می‌ماند.
+  const nameless = core.saveObligation({ title: 'طلب بی‌نام', amount: 200_000, direction: 'receivable', contactName: 'ح' });
+  assert.equal(nameless.contactId, null);
+  assert.equal(core.listContacts().length, before + 1);
+});
+
 test.after(() => {
   core.db.close();
   removeTempDatabase(databasePath);

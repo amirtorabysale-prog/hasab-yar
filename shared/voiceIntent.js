@@ -15,11 +15,19 @@ import { parseFinancialText } from './parser.js';
 
 // «بدهکاره» و «بدهکارم» جهت مخالف دارند: اولی طلب ماست، دومی بدهی ما.
 // اشتباه‌گرفتنشان یعنی طلب به‌عنوان بدهی وارد دفتر می‌شود.
+// «بدهکار شد» و «بدهکار شدم» یک حرف نیستند: اولی طرف مقابل بدهکار شده (طلب ما)
+// و دومی خودِ ما. فاصله بین «بدهکار» و فعل باید پذیرفته شود — گفتار محاوره‌ای
+// تقریباً همیشه فاصله دارد — ولی صیغهٔ اول‌شخص باید از طلب بیرون بماند، وگرنه
+// «بدهکار شدم» طلب ثبت می‌شد.
 const RECEIVABLE_PATTERNS = [
-  /بدهکار(?:ه|است|هست|شد|ند)/, /طلب\s*دار(?:م|یم)/, /از\s*\S+\s*طلب/, /باید\s*به\s*(?:ما|من)\s*بده/,
+  /بدهکار\s*(?:ه|است|هست(?:ند)?|شد(?!\s*(?:م|یم))|شده(?!\s*(?:ام|ایم))|ند)/,
+  /طلب\s*دار(?:م|یم)/, /طلبم\s*شد/, /از\s*\S+\s*طلب/, /باید\s*به\s*(?:ما|من)\s*بده/,
+  /قرض\s*داد(?:م|یم)/,
 ];
 const PAYABLE_PATTERNS = [
-  /بدهکار(?:م|یم)/, /طلبکار(?:ه|است|هست|ند)/, /بدهی\s*دار(?:م|یم)/, /باید\s*(?:بهش|به\s*\S+)\s*بدم/,
+  /بدهکار(?:م|یم)(?![آ-ی])/, /بدهکار\s*شد(?:م|یم)/, /بدهکار\s*هست(?:م|یم)/,
+  /طلبکار(?:ه|است|هست|ند)/, /بدهی\s*دار(?:م|یم)/, /بدهیم\s*شد/,
+  /باید\s*(?:بهش|به\s*\S+)\s*بدم/, /قرض\s*گرفت(?:م|یم)/,
 ];
 
 // `\b` با حروف فارسی کار نمی‌کند — برای جاوااسکریپت حرف فارسی «word» نیست، پس
@@ -64,6 +72,17 @@ const NUMBER_WORDS = new Set(['صفر', 'یک', 'یه', 'دو', 'سه', 'چها�
 const ASSET_STOP_WORDS = new Set(['خریدم', 'خریدیم', 'گرفتم', 'گرفتیم', 'ثبت', 'کن', 'بزن', 'به', 'عنوان',
   'یک', 'بابت', 'برای', 'با', 'از', 'در', 'و', 'را', 'رو', 'شد', 'است', 'هست', 'دارایی', 'ثابت', 'اموال', 'تجهیزات']);
 
+// فعل و حرف اضافه هرگز نام طرف حساب نیستند؛ رد می‌شوند تا نام پشتشان پیدا شود.
+const CURRENCY_WORDS = new Set(['تومان', 'تومن', 'ریال', 'هزارتومان', 'میلیونی']);
+
+const FILLER_WORDS = new Set(['شد', 'شده', 'شدم', 'شدیم', 'شدند', 'شدن', 'هست', 'هستم', 'هستیم', 'هستند',
+  'است', 'میشه', 'بشه', 'دارم', 'داریم', 'داره', 'دارند', 'دادم', 'دادیم', 'گرفتم', 'گرفتیم', 'بده', 'بدم',
+  'به', 'از', 'برای', 'با', 'رو', 'را']);
+
+// واژه‌هایی که خودشان جهت را می‌سازند؛ نام طرف حساب کنارشان می‌نشیند، نه رویشان.
+const DIRECTION_WORDS = new Set(['بدهکار', 'بدهکاره', 'بدهکارم', 'بدهکاریم', 'بدهکارند',
+  'طلبکار', 'طلبکاره', 'طلبکارم', 'طلبکارند', 'طلب', 'طلبم', 'بدهی', 'بدهیم', 'قرض', 'قرضی']);
+
 const TITLE_PREFIXES = ['آقای', 'اقای', 'خانم', 'جناب', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار خانم', 'شرکت'];
 
 /**
@@ -103,7 +122,58 @@ function matchesAny(text, patterns) {
  * حدس‌زدن نام از میان واژه‌های عادی خطای بیشتری می‌سازد تا فایده — پس نامی
  * برنمی‌گردد و کاربر خودش می‌نویسد.
  */
-export function extractContactName(input) {
+/**
+ * نام بدون عنوان، فقط وقتی صفحه خودش می‌گوید موضوع چیست.
+ *
+ * در ثبت آزاد، حدس‌زدن نام از میان واژه‌های عادی خطای بیشتری می‌سازد تا فایده —
+ * «قبض» و «پیک» و «تعمیر» همه می‌توانند به‌جای نام برداشته شوند. ولی وقتی کاربر
+ * روی صفحهٔ طلب و بدهی ایستاده و می‌گوید «حسن بدهکار شد»، موضوع از قبل روشن است
+ * و واژهٔ چسبیده به فعلِ جهت، تقریباً همیشه نام طرف حساب است. پس این حالت فقط
+ * با `allowBare` روشن می‌شود، نه در مسیر عمومی.
+ */
+function bareContactName(text) {
+  const words = text.split(' ').filter(Boolean);
+  const usable = (word) => word
+    && !CONTACT_STOP_WORDS.has(word) && !NUMBER_WORDS.has(word)
+    && !DIRECTION_WORDS.has(word) && !/\d/.test(word) && word.length > 1;
+  // «از رضا دو میلیون طلب دارم»: نام به حرف اضافه چسبیده، نه به فعل جهت.
+  for (let index = 0; index < words.length - 1; index += 1) {
+    if (!['از', 'به'].includes(words[index])) continue;
+    const picked = [];
+    for (let ahead = index + 1; ahead < words.length && picked.length < 2; ahead += 1) {
+      if (!usable(words[ahead])) break;
+      picked.push(words[ahead]);
+    }
+    if (picked.length) return picked.join(' ');
+  }
+  for (let index = 0; index < words.length; index += 1) {
+    if (!DIRECTION_WORDS.has(words[index])) continue;
+    // «حسن بدهکار شد» → واژهٔ پیش از فعل؛ تا دو واژه برای نام‌های دوقسمتی.
+    // مبلغ از وسط رد می‌شود: در «حسن سه میلیون بدهکار شد» نام پشت عدد است و
+    // ایستادن روی اولین واژهٔ عددی، نام را از دست می‌داد.
+    let back = index - 1;
+    while (back >= 0 && (NUMBER_WORDS.has(words[back]) || CURRENCY_WORDS.has(words[back]) || /\d/.test(words[back]) || words[back] === 'و')) back -= 1;
+    const before = [];
+    for (; back >= 0 && before.length < 2; back -= 1) {
+      if (!usable(words[back])) break;
+      before.unshift(words[back]);
+    }
+    if (before.length) return before.join(' ');
+    // «بدهکار شد حسن» یا «طلب دارم از حسن» → واژهٔ پس از فعل. واژه‌های پرکنندهٔ
+    // میانی رد می‌شوند، وگرنه «شد» جلوی رسیدن به نام را می‌گرفت.
+    const after = [];
+    let ahead = index + 1;
+    while (ahead < words.length && FILLER_WORDS.has(words[ahead])) ahead += 1;
+    for (; ahead < words.length && after.length < 2; ahead += 1) {
+      if (!usable(words[ahead])) break;
+      after.push(words[ahead]);
+    }
+    if (after.length) return after.join(' ');
+  }
+  return '';
+}
+
+export function extractContactName(input, { allowBare = false } = {}) {
   const words = normalizePersian(input).split(' ').filter(Boolean);
   for (let index = 0; index < words.length; index += 1) {
     const prefix = TITLE_PREFIXES.find((title) => {
@@ -120,7 +190,7 @@ export function extractContactName(input) {
     }
     if (picked.length) return `${prefix === 'شرکت' ? 'شرکت ' : ''}${picked.join(' ')}`.trim();
   }
-  return '';
+  return allowBare ? bareContactName(normalizePersian(input)) : '';
 }
 
 /**
@@ -145,12 +215,22 @@ function dueDate(input, now) {
   return found?.iso || null;
 }
 
-export function detectVoiceIntent(input, { now = new Date() } = {}) {
+/**
+ * تشخیص نیت گفته.
+ *
+ * `context` می‌گوید کاربر کجا ایستاده. در مسیر عمومی («امروز چه اتفاقی افتاد؟»)
+ * هیچ فرضی دربارهٔ موضوع نمی‌شود. روی صفحهٔ طلب و بدهی، موضوع از قبل روشن است و
+ * دو چیز عوض می‌شود: نام بدون عنوان هم پذیرفته می‌شود، و جملهٔ بدون مبلغ رد
+ * نمی‌شود — «حسن بدهکار شد» یک ثبت ناقص است، نه یک جملهٔ بی‌معنا؛ فرم با نام و
+ * جهت پر می‌شود و مبلغ را کاربر می‌نویسد.
+ */
+export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}) {
   const text = normalizePersian(input);
   if (!text) return null;
+  const obligationContext = context === 'obligation';
 
   const amount = spokenAmount(input);
-  const contactName = extractContactName(input);
+  const contactName = extractContactName(input, { allowBare: obligationContext });
   const isCheque = matchesAny(text, CHEQUE_PATTERNS);
 
   if (matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) {
@@ -200,7 +280,7 @@ export function detectVoiceIntent(input, { now = new Date() } = {}) {
   const payable = matchesAny(text, PAYABLE_PATTERNS)
     || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(text));
   if (!receivable && !payable) return null;
-  if (!amount) return null;
+  if (!amount && !obligationContext) return null;
 
   // هر دو نشانه یعنی جمله واقعاً مبهم است؛ اجرا نمی‌شود تا کاربر روشنش کند.
   const direction = receivable && payable ? null : receivable ? 'receivable' : 'payable';
@@ -209,6 +289,8 @@ export function detectVoiceIntent(input, { now = new Date() } = {}) {
     direction,
     ambiguous: !direction,
     amount,
+    // مبلغ خالی یعنی «هنوز گفته نشده»، نه صفر؛ کارت تأیید تا نوشتنش پیش نمی‌رود.
+    needsAmount: !amount,
     contactName,
     dueAt: dueDate(input, now),
     title: [isCheque ? 'چک' : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
