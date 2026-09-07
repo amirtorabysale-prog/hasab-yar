@@ -74,25 +74,84 @@ export function mergeSpeechSegments(carried, snapshot) {
   };
 }
 
+const PHRASE_FLAG_KEY = 'hesab-yar:phrase-biasing-blocked';
+
+/**
+ * تقویت واژه‌های مالی (context biasing) در بعضی نسخه‌های Chrome هست ولی فعال
+ * نمی‌شود و نشست را با خطای `phrases-not-supported` می‌کشد.
+ *
+ * تنظیم `phrases` خطا پرتاب نمی‌کند؛ نشست بعداً می‌میرد. پس try/catch دور
+ * انتساب هیچ‌چیز را نمی‌گرفت و تشخیص زندهٔ مرورگر روی آن دستگاه‌ها کاملاً از کار
+ * می‌افتاد — بدون اینکه معلوم باشد چرا. یادداشت این ناتوانی در حافظهٔ مرورگر
+ * می‌ماند تا نشست‌های بعدی از همان اول بدون تقویت شروع شوند.
+ */
+function phraseBiasingBlocked() {
+  try { return window.localStorage?.getItem(PHRASE_FLAG_KEY) === '1'; } catch { return false; }
+}
+
+function blockPhraseBiasing() {
+  try { window.localStorage?.setItem(PHRASE_FLAG_KEY, '1'); } catch { /* حافظهٔ مرورگر ممکن است بسته باشد */ }
+}
+
 export function createPersianRecognizer({ phrases = [], onUpdate, onEnd, onError }) {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) return null;
-  const recognition = new Recognition();
-  recognition.lang = 'fa-IR';
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.maxAlternatives = 3;
 
-  const Phrase = window.SpeechRecognitionPhrase;
-  if (Phrase && 'phrases' in recognition) {
-    try {
-      const uniquePhrases = [...new Set([...FINANCIAL_SPEECH_PHRASES, ...phrases].map(normalizePersian).filter(Boolean))];
-      recognition.phrases = uniquePhrases.slice(0, 80).map((phrase) => new Phrase(phrase, 5));
-    } catch { /* Context biasing is experimental; recognition still works without it. */ }
-  }
+  let active = null;
+  let swapping = false;
+  let retriedWithoutPhrases = phraseBiasingBlocked();
 
-  recognition.onresult = (event) => onUpdate?.(snapshotResults(event.results));
-  recognition.onerror = (event) => onError?.(event.error || 'unknown');
-  recognition.onend = () => onEnd?.();
-  return recognition;
+  const build = (usePhrases) => {
+    const recognition = new Recognition();
+    recognition.lang = 'fa-IR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
+
+    const Phrase = window.SpeechRecognitionPhrase;
+    if (usePhrases && Phrase && 'phrases' in recognition) {
+      try {
+        const uniquePhrases = [...new Set([...FINANCIAL_SPEECH_PHRASES, ...phrases].map(normalizePersian).filter(Boolean))];
+        recognition.phrases = uniquePhrases.slice(0, 80).map((phrase) => new Phrase(phrase, 5));
+      } catch { /* Context biasing is experimental; recognition still works without it. */ }
+    }
+
+    recognition.onresult = (event) => onUpdate?.(snapshotResults(event.results));
+    recognition.onerror = (event) => {
+      const code = event.error || 'unknown';
+      // یک‌بار بدون تقویت دوباره امتحان می‌شود؛ کاربر نباید بفهمد چه شد، فقط
+      // باید تشخیص کار کند.
+      if (code === 'phrases-not-supported' && !retriedWithoutPhrases) {
+        retriedWithoutPhrases = true;
+        blockPhraseBiasing();
+        swapping = true;
+        active = build(false);
+        try { active.start(); return; } catch { /* شروع دوباره نشد؛ خطا به کاربر می‌رسد */ }
+        swapping = false;
+      }
+      onError?.(code);
+    };
+    // نشستِ کنارگذاشته‌شده هنگام جایگزینی `onend` می‌دهد؛ آن پایانِ کار کاربر
+    // نیست و نباید نتیجه را زودتر از موعد ببندد.
+    recognition.onend = () => {
+      if (swapping) { swapping = false; return; }
+      onEnd?.();
+    };
+    return recognition;
+  };
+
+  active = build(!retriedWithoutPhrases);
+  // نشست ممکن است وسط کار با نشست بدون تقویت جایگزین شود، ولی صداکننده همان یک
+  // شیء را نگه می‌دارد؛ پس دسترسی‌ها به نشست فعالِ همان لحظه هدایت می‌شوند.
+  return new Proxy({}, {
+    get(_target, property) {
+      if (property === 'start') return () => active.start();
+      if (property === 'stop') return () => active.stop();
+      if (property === 'abort') return () => active.abort?.();
+      const value = Reflect.get(active, property);
+      return typeof value === 'function' ? value.bind(active) : value;
+    },
+    set(_target, property, value) { return Reflect.set(active, property, value); },
+    has(_target, property) { return Reflect.has(active, property); },
+  });
 }
