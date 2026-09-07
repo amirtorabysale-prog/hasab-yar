@@ -242,7 +242,7 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
   try {
     if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
     durationMs = audioDurationMs(request.file.buffer, request.file.mimetype) || Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0));
-    usageId = beginProviderUsage('server_voice', 'pipeline');
+    usageId = beginProviderUsage('server_voice', 'pipeline', { attemptId: request.body?.attemptId || request.get('x-voice-attempt') || '' });
     const parsed = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
     const result = applyDnaSignals(parsed, dnaProfiles());
     recordVoiceMetric({
@@ -265,7 +265,9 @@ app.post('/api/parse/audio', upload.single('audio'), async (request, response, n
 app.post('/api/voice/realtime/session', express.text({ type: ['application/sdp', 'text/plain'], limit: '128kb' }), async (request, response, next) => {
   let usageId = null;
   try {
-    usageId = beginProviderUsage('realtime_session', 'openai');
+    // شناسهٔ تلاش از کلاینت می‌آید تا نشست realtime و بررسی فایلِ همان ضبط، یک
+    // واحد سهمیه شمرده شوند، نه دو تا.
+    usageId = beginProviderUsage('realtime_session', 'openai', { attemptId: request.get('x-voice-attempt') || '' });
     const answer = await createRealtimeTranscriptionCall({
       sdp: request.body,
       categories: getCategories(),

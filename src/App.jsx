@@ -98,6 +98,7 @@ export default function App() {
   const finalizeTimerRef = useRef(null);
   const pendingAudioBlobRef = useRef(null);
   const fastFinalizeDoneRef = useRef(false);
+  const voiceAttemptRef = useRef('');
   const fastVoiceAvailable = realtimeSpeechAvailable() || liveSpeechSupported();
   const rememberedOfflineScope = api.offlineScope();
   const offlineUserId = access.user?.id || rememberedOfflineScope?.userId || '';
@@ -278,6 +279,7 @@ export default function App() {
         signal: controller.signal,
         hint: speechSnapshotRef.current.transcript,
         fallbackReason,
+        attemptId: voiceAttemptRef.current,
       });
       if (isCorrectionCommand(result.transcript)) await openCorrection(result.transcript);
       else if (routeIntent(result.transcript)) { /* نیت ساختاری، نه ثبت سادهٔ تراکنش */ }
@@ -452,6 +454,9 @@ export default function App() {
     setLiveVoiceNote('');
     setLivePreview([]);
     pendingAudioBlobRef.current = null;
+    // یک شناسه برای کل این ضبط: نشست realtime و بررسی فایل با همین شناسه
+    // می‌روند تا سهمیه یک واحد کم کند، نه دو تا.
+    voiceAttemptRef.current = crypto.randomUUID();
     fastFinalizeDoneRef.current = false;
     firstTranscriptMsRef.current = 0;
     speechSnapshotRef.current = { transcript: '', finalTranscript: '', candidates: [], error: null, ended: false, source: '' };
@@ -540,7 +545,7 @@ export default function App() {
           let realtime;
           realtime = createRealtimeTranscriber({
             stream,
-            createSession: api.createRealtimeTranscription,
+            createSession: (sdp) => api.createRealtimeTranscription(sdp, { attemptId: voiceAttemptRef.current }),
             onUpdate: (snapshot) => {
               if (realtimeSpeechRef.current !== realtime) return;
               const next = {

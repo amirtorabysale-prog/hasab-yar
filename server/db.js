@@ -446,12 +446,21 @@ function ensureCollaborationSchema(database) {
       duration_ms INTEGER NOT NULL DEFAULT 0,
       estimated_cost_microusd INTEGER,
       error_code TEXT NOT NULL DEFAULT '',
+      -- شناسهٔ همان «تلاش» کاربر: یک ضبط ممکن است هم نشست realtime بسازد و هم
+      -- فایل را روی سرور بفرستد. هزینهٔ provider دو تاست، ولی از دید کاربر یک
+      -- بار حرف زده و سهمیه باید یک واحد کم شود.
+      attempt_id TEXT,
       created_by TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       completed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_provider_usage_month ON provider_usage(created_at,capability,status);
   `);
+  // دیتابیس‌های موجود ستون تلاش را ندارند. ردیف قدیمی NULL می‌ماند و هرکدام یک
+  // تلاش شمرده می‌شود، پس مصرف ثبت‌شدهٔ گذشته بازنویسی نمی‌شود. ایندکس بعد از
+  // ستون ساخته می‌شود، وگرنه روی دیتابیس قدیمی به ستون ناموجود اشاره می‌کرد.
+  ensureColumnOn(database, 'provider_usage', 'attempt_id TEXT');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_provider_usage_attempt ON provider_usage(attempt_id) WHERE attempt_id IS NOT NULL');
 }
 
 function ensureCommercialSchema(database) {
@@ -820,8 +829,13 @@ export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primar
     SUM(CASE WHEN status='succeeded' AND capability!='realtime_session' AND estimated_cost_microusd IS NULL THEN 1 ELSE 0 END) AS unpriced
     FROM provider_usage WHERE created_at>=datetime(?) AND created_at<datetime(?) GROUP BY capability,provider,status
     ORDER BY capability,provider,status`).all(range.from, range.toExclusive);
-  const smartVoiceRequests = usageRows.filter((item) => item.status !== 'failed' && ['server_voice', 'realtime_session'].includes(item.capability))
-    .reduce((sum, item) => sum + Number(item.requests || 0), 0);
+  // سهمیهٔ صدا بر «تلاش» شمرده می‌شود، نه بر تماس provider. یک ضبط می‌تواند هم
+  // نشست realtime باز کند و هم فایل بفرستد؛ هزینهٔ ما دو تاست ولی کاربر یک بار
+  // حرف زده. ردیف‌های قدیمی `attempt_id` ندارند و هرکدام یک تلاش شمرده می‌شوند،
+  // یعنی مصرف گذشته بازنویسی نمی‌شود.
+  const smartVoiceRequests = Number(db.prepare(`SELECT COUNT(DISTINCT COALESCE(attempt_id,id)) AS attempts
+    FROM provider_usage WHERE status!='failed' AND capability IN ('server_voice','realtime_session')
+      AND created_at>=datetime(?) AND created_at<datetime(?)`).get(range.from, range.toExclusive)?.attempts || 0);
   const receiptOcrPages = usageRows.filter((item) => item.status !== 'failed' && item.capability === 'receipt_ocr')
     .reduce((sum, item) => sum + Number(item.requests || 0), 0);
   const members = Number(controlDb.prepare('SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=?').get(workspaceId)?.count || 0);
@@ -859,7 +873,7 @@ function quotaItemForCapability(status, capability) {
   return status.quotas.find((item) => item.id === id);
 }
 
-export function beginProviderUsage(capability, provider = 'unknown') {
+export function beginProviderUsage(capability, provider = 'unknown', { attemptId = '' } = {}) {
   if (!['server_voice', 'realtime_session', 'receipt_ocr'].includes(capability)) throw invalidInput('قابلیت provider معتبر نیست.');
   const status = commercialStatus();
   const quota = quotaItemForCapability(status, capability);
@@ -868,8 +882,9 @@ export function beginProviderUsage(capability, provider = 'unknown') {
     status: 402, code: 'PROVIDER_BUDGET_EXCEEDED', details: { provider: status.provider },
   });
   const id = randomUUID();
-  db.prepare(`INSERT INTO provider_usage (id,capability,provider,status,request_count,created_by)
-    VALUES (?,?,?,'started',1,?)`).run(id, capability, String(provider || 'unknown').slice(0, 40), currentWorkspace()?.userId || null);
+  db.prepare(`INSERT INTO provider_usage (id,capability,provider,status,request_count,attempt_id,created_by)
+    VALUES (?,?,?,'started',1,?,?)`).run(id, capability, String(provider || 'unknown').slice(0, 40),
+    String(attemptId || '').trim().slice(0, 80) || null, currentWorkspace()?.userId || null);
   return id;
 }
 
