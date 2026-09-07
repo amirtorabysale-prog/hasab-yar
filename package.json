@@ -15,7 +15,7 @@
     "seed": "node server/seed.js"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^5.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.21",
     "concurrently": "^10.0.5",
     "express": "^5.1.0",
