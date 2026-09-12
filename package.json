@@ -12,6 +12,7 @@
     "start": "node server/index.js",
     "test": "node --test",
     "smoke:production": "node scripts/production-smoke.mjs",
+    "verify:parsian": "node scripts/verify-parsian-roundtrip.mjs",
     "seed": "node server/seed.js"
   },
   "dependencies": {
