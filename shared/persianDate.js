@@ -165,6 +165,27 @@ export function persianMonthRange(year, month, timeZone = 'Asia/Tehran') {
   };
 }
 
+/**
+ * چند ماه شمسی جلو یا عقب، روی همان روزِ ماه.
+ *
+ * «یک ماه دیگه» را نباید ۳۰ روز حساب کرد: ماه‌های شمسی ۲۹ تا ۳۱ روزند، پس
+ * نتیجه با «ماه بعد» — که تقویمی حساب می‌شد — یکی درنمی‌آمد. برای سررسید چک
+ * همین یک روز اختلاف یعنی سند در ماه اشتباه می‌نشیند.
+ *
+ * روزی که در ماه مقصد وجود ندارد (مثل ۳۱ در نیمهٔ دوم سال) روی آخرین روز
+ * همان ماه می‌نشیند، نه اینکه به ماه بعدی سر برود.
+ */
+function isoAtPersianMonthOffset(now, offsetMonths, timeZone) {
+  const today = persianParts(now, timeZone);
+  const total = (today.year * 12) + (today.month - 1) + offsetMonths;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  let day = today.day;
+  let iso = persianToISO(year, month, day, timeZone);
+  while (!iso && day > 28) { day -= 1; iso = persianToISO(year, month, day, timeZone); }
+  return iso;
+}
+
 function isoAtTehranNoon(now, offsetDays, timeZone) {
   const shifted = new Date(now.getTime() + offsetDays * 86_400_000);
   const { year, month, day } = persianParts(shifted, timeZone);
@@ -184,7 +205,7 @@ const RELATIVE_WORDS = [
 const COUNTED_UNITS = [
   [/(\d+)\s*روز\s*(?:پیش|قبل|گذشته)/, 1, 'روز'],
   [/(\d+)\s*هفته\s*(?:ی|ٔ)?\s*(?:پیش|قبل|گذشته)/, 7, 'هفته'],
-  [/(\d+)\s*ماه\s*(?:پیش|قبل|گذشته)/, 30, 'ماه'],
+  [/(\d+)\s*ماه\s*(?:پیش|قبل|گذشته)/, 'month', 'ماه'],
 ];
 
 // سررسید تقریباً همیشه آینده است و کاربر آن را نسبی می‌گوید: «سه روز دیگه»،
@@ -192,7 +213,7 @@ const COUNTED_UNITS = [
 const FUTURE_UNITS = [
   [/(\d+)\s*روز\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 1, 'روز'],
   [/(\d+)\s*هفته\s*(?:ی|ٔ)?\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 7, 'هفته'],
-  [/(\d+)\s*ماه\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 30, 'ماه'],
+  [/(\d+)\s*ماه\s*(?:دیگه|دیگر|بعد|آینده|بعدی)/, 'month', 'ماه'],
 ];
 
 const FUTURE_WORDS = [
@@ -235,7 +256,10 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
   }
 
   // ۲) روز و ماه: «دوم شهریور»، «۲ شهریور ۱۴۰۴»، «شهریور دوم» شمرده نمی‌شود.
-  const dayMonth = text.match(new RegExp(`(?<![آ-ی])(${DAY_WORD_PATTERN}|\\d{1,2})\\s*(?:ام|م)?\\s*(?:ماه\\s*)?(${MONTH_PATTERN})(?:\\s*(?:ماه)?\\s*(\\d{4}|\\d{2}))?`));
+  // نام ماه باید مرز راست داشته باشد، وگرنه «دیگه» با «دی» تطبیق می‌خورد و
+  // «یک ماه دیگه» به اول دی ماه تبدیل می‌شود. «شهریورماه» همچنان باید بخورد،
+  // پس «ماه» چسبیده پیش از مرز پذیرفته می‌شود.
+  const dayMonth = text.match(new RegExp(`(?<![آ-ی])(${DAY_WORD_PATTERN}|\\d{1,2})\\s*(?:ام|م)?\\s*(?:ماه\\s*)?(${MONTH_PATTERN})(?:\\s*ماه)?(?![آ-ی])(?:\\s*(\\d{4}|\\d{2}))?`));
   if (dayMonth) {
     const token = dayMonth[1];
     const day = PERSIAN_DIGITS.test(token) ? Number(token) : DAY_WORDS.get(token);
@@ -256,7 +280,9 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
     if (!match) continue;
     const count = Number(match[1]);
     if (!Number.isFinite(count) || count <= 0 || count > 400) continue;
-    const iso = isoAtTehranNoon(now, -count * multiplier, timeZone);
+    const iso = multiplier === 'month'
+      ? isoAtPersianMonthOffset(now, -count, timeZone)
+      : isoAtTehranNoon(now, -count * multiplier, timeZone);
     if (iso) return { iso, label: `${count} ${unit} پیش`, kind: 'relative' };
   }
 
@@ -266,7 +292,8 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
     if (iso) return { iso, label: 'هفتهٔ پیش', kind: 'relative' };
   }
   if (/ماه\s*(?:پیش|قبل|گذشته)/.test(text)) {
-    const iso = isoAtTehranNoon(now, -30, timeZone);
+    // «ماه پیش» هم تقویمی است، وگرنه با «یک ماه پیش» یک روز اختلاف داشت.
+    const iso = isoAtPersianMonthOffset(now, -1, timeZone);
     if (iso) return { iso, label: 'ماه پیش', kind: 'relative' };
   }
 
@@ -276,7 +303,9 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
     if (!match) continue;
     const count = Number(match[1]);
     if (!Number.isFinite(count) || count <= 0 || count > 400) continue;
-    const iso = isoAtTehranNoon(now, count * multiplier, timeZone);
+    const iso = multiplier === 'month'
+      ? isoAtPersianMonthOffset(now, count, timeZone)
+      : isoAtTehranNoon(now, count * multiplier, timeZone);
     if (iso) return { iso, label: `${count} ${unit} دیگر`, kind: 'relative' };
   }
 

@@ -58,7 +58,8 @@ test('شمارش گفتاری و عددی روز، هفته و ماه', () => {
   assert.equal(on('سه روز پیش پنج میلیون خرید کردم'), '1405/06/03');
   assert.equal(on('۵ روز قبل حقوق دادم'), '1405/06/01');
   assert.equal(on('دو هفته پیش فاکتور زدم'), '1405/05/23');
-  assert.equal(on('یک ماه پیش اجاره دادم'), '1405/05/07');
+  // ماه تقویمی است نه سی روز: همان روزِ ماه قبل.
+  assert.equal(on('یک ماه پیش اجاره دادم'), '1405/05/06');
 });
 
 test('روز و ماه گفته‌شده دقیقاً همان روز را می‌گیرد', () => {
@@ -158,4 +159,45 @@ test('عبارت‌های گذشته دست‌نخورده می‌مانند', (
   assert.equal(persian(at('سه روز پیش').iso), '1405/06/13');
   assert.equal(persian(at('هفته پیش').iso), '1405/06/09');
   assert.equal(persian(at('دیروز').iso), '1405/06/15');
+});
+
+// «دیگه» با نام ماه «دی» تطبیق می‌خورد و «یک ماه دیگه» را به اول دی می‌برد —
+// یعنی سررسید چک سه ماه جلوتر از چیزی که کاربر گفته.
+test('نام ماه مرز راست دارد و درون واژهٔ دیگر پیدا نمی‌شود', () => {
+  const now = new Date(persianToISO(1405, 6, 21, TZ));
+  const future = (text) => {
+    const found = extractDateMention(text, { now, timeZone: TZ, preferPast: false });
+    return found ? persian(found.iso) : null;
+  };
+  assert.equal(future('یک ماه دیگه'), '1405/07/21');
+  assert.equal(future('دو ماه دیگه'), '1405/08/21');
+  // «مهربان» نباید «مهر» خوانده شود.
+  assert.equal(future('پنج مهربان'), null);
+  // ولی «شهریورماه» باید همچنان بخورد.
+  assert.equal(future('۱۰ شهریورماه'), '1405/06/10');
+  assert.equal(future('بیستم مهرماه'), '1405/07/20');
+});
+
+// ماه‌های شمسی ۲۹ تا ۳۱ روزند؛ شمردن ماه به‌صورت ۳۰ روز، «یک ماه دیگه» را با
+// «ماه بعد» یک روز اختلاف می‌داد و سررسید در ماه اشتباه می‌نشست.
+test('شمارش ماه تقویمی است، نه سی‌روزه', () => {
+  const now = new Date(persianToISO(1405, 6, 21, TZ));
+  const on = (text, preferPast) => persian(extractDateMention(text, { now, timeZone: TZ, preferPast }).iso);
+  assert.equal(on('یک ماه دیگه', false), on('ماه بعد', false));
+  assert.equal(on('یک ماه پیش', true), on('ماه پیش', true));
+  assert.equal(on('یک ماه دیگه', false), '1405/07/21');
+  assert.equal(on('یک ماه پیش', true), '1405/05/21');
+});
+
+test('روزی که در ماه مقصد نیست، روی آخرین روز همان ماه می‌نشیند', () => {
+  // شهریور ۳۱ روز دارد ولی مهر ۳۰ روز.
+  const endOfMonth = new Date(persianToISO(1405, 6, 31, TZ));
+  const found = extractDateMention('یک ماه دیگه', { now: endOfMonth, timeZone: TZ, preferPast: false });
+  assert.equal(persian(found.iso), '1405/07/30');
+});
+
+test('شمارش ماه از مرز سال هم درست رد می‌شود', () => {
+  const endOfYear = new Date(persianToISO(1405, 12, 29, TZ));
+  const found = extractDateMention('یک ماه دیگه', { now: endOfYear, timeZone: TZ, preferPast: false });
+  assert.equal(persian(found.iso), '1406/01/29');
 });
