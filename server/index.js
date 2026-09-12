@@ -10,7 +10,8 @@ import {
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit,
+  pendingConfirmations, confirmPending, handOverPending, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
@@ -424,6 +425,20 @@ app.put('/api/chart/mappings/:ledgerAccountId', (request, response, next) => {
 });
 app.post('/api/chart/mappings/suggest', (request, response, next) => {
   try { return response.json(applyChartSuggestions({ refine: request.body?.refine === true })); } catch (error) { return next(error); }
+});
+// پرسش‌های صاحب کسب‌وکار.
+//
+// عمداً بیرون از `/financial-events` است: آن بخش ابزار حسابدار است و در تجربهٔ
+// ساده بسته می‌ماند. این مسیر همان دادهٔ زیرین را می‌خواند ولی فقط مواردی که
+// کاربر می‌تواند جوابشان را بدهد و بدون هیچ عدد و اصطلاح حسابداری.
+app.get('/api/confirmations', (request, response, next) => {
+  try { return response.json(pendingConfirmations(Number(request.query.limit) || 5)); } catch (error) { return next(error); }
+});
+app.post('/api/confirmations/:id/confirm', (request, response, next) => {
+  try { return response.json({ item: confirmPending(request.params.id) }); } catch (error) { return next(error); }
+});
+app.post('/api/confirmations/:id/handover', (request, response, next) => {
+  try { return response.json({ item: handOverPending(request.params.id) }); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/review-queue', (request, response, next) => {
   try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }

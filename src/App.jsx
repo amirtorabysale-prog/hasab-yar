@@ -962,6 +962,7 @@ export default function App() {
               voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
               navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision} onSnoozeAlert={snoozeAlert}
+              notify={notify} refreshToday={load}
             />
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={ledgerTab} />}
@@ -1001,7 +1002,7 @@ export default function App() {
   );
 }
 
-function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert }) {
+function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday }) {
   const profileType = data.settings.profileType || 'business';
   const examples = todayExamples(profileType);
   const composerState = todayComposerState({ recordState, manualText, reviewing, savedRecently });
@@ -1063,6 +1064,9 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
           {!readOnly && <div className="scrollbar-none -mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1" aria-label="نمونه‌های ثبت"><span className="self-center whitespace-nowrap text-[11px] text-muted">نمونه:</span>{examples.map((example) => <button type="button" key={example} onClick={() => chooseExample(example)} className="min-h-9 shrink-0 rounded-full border border-line bg-surface/75 px-3 text-[11px] font-bold text-muted hover:border-accent hover:text-accent">{example}</button>)}</div>}
         </section>
 
+        {/* پیش از هر خلاصه‌ای: اگر چیزی مبهم مانده، همان اول پرسیده می‌شود. */}
+        {!readOnly && <PendingQuestionCard notify={notify} refresh={refreshToday} reloadKey={data.transactions.length} />}
+
         <section className={`today-pulse pulse-${pulse.tone} rounded-[12px] border border-line bg-surface px-4 py-3.5`}>
           <div className="flex items-start gap-3"><span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-current" /><div className="min-w-0 flex-1"><p className="text-[11px] font-extrabold opacity-75">{pulse.eyebrow}</p><h2 className="mt-1 text-[16px] font-extrabold">{toPersianDigits(pulse.title)}</h2><p className="mt-1 text-[12px] leading-6 text-muted">{toPersianDigits(pulse.detail)}</p></div>{pulse.action && <div className="flex shrink-0 flex-col gap-1"><button onClick={() => navigate(pulse.action, pulse.actionTarget)} className="tap rounded-lg border border-current px-3 text-xs font-extrabold">{pulse.actionLabel || 'رسیدگی'}</button>{pulse.alertId && <button onClick={() => onSnoozeAlert?.(pulse.alertId)} className="min-h-7 text-[10px] font-bold opacity-70">۲۴ ساعت بعد</button>}</div>}</div>
         </section>
@@ -1081,6 +1085,54 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
       </div>
     </main>
   );
+}
+
+/**
+ * پرسش سادهٔ صاحب کسب‌وکار.
+ *
+ * فقط وقتی دیده می‌شود که واقعاً چیزی مبهم باشد، و هر بار فقط یک مورد. فهرست
+ * کردنشان، صفحهٔ اصلی را به کارتابل تبدیل می‌کند — دقیقاً همان چیزی که این
+ * کاربر نباید داشته باشد.
+ *
+ * هیچ عدد اطمینانی، نام مسیری یا اصطلاح حسابداری اینجا نمی‌آید؛ سرور هم آن‌ها
+ * را نمی‌فرستد.
+ */
+function PendingQuestionCard({ notify, refresh, reloadKey = 0 }) {
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setItems((await api.confirmations()).items || []); }
+    catch { setItems([]); }
+  }, []);
+
+  useEffect(() => { load(); }, [load, reloadKey]);
+
+  const question = items[0];
+  if (!question) return null;
+
+  const answer = async (action) => {
+    setBusy(true);
+    try {
+      if (action === 'yes') { await api.confirmPending(question.id); notify('ثبت شد.'); }
+      else { await api.handOverPending(question.id); notify('به حسابدار سپرده شد.'); }
+      await load();
+      await refresh?.();
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
+  return <section className="rounded-[12px] border-r-4 border-accent bg-warn-bg px-4 py-3.5" aria-label="یک پرسش">
+    <p className="text-[11px] font-extrabold text-accent">یک سؤال کوتاه</p>
+    <h2 className="mt-1 text-[16px] font-extrabold">{toPersianDigits(question.question)}</h2>
+    {question.hint && <p className="mt-1 text-[12px] leading-6 text-muted">{question.hint}</p>}
+    {question.evidence && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{question.evidence}»</blockquote>}
+    <div className="mt-3 grid grid-cols-[2fr_1fr] gap-2">
+      <button disabled={busy} onClick={() => answer('yes')} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">بله، درست است</button>
+      <button disabled={busy} onClick={() => answer('handover')} className="tap rounded-lg border border-line bg-surface text-[13px] font-bold disabled:opacity-40">مطمئن نیستم</button>
+    </div>
+    {items.length > 1 && <p className="mt-2 text-[11px] text-muted">{toPersianDigits(items.length - 1)} مورد دیگر بعد از این پرسیده می‌شود.</p>}
+  </section>;
 }
 
 function SummaryCard({ summary, loading, profileType = 'business', context = 'today' }) {

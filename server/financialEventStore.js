@@ -265,14 +265,40 @@ function describeStored(database, row) {
   };
 }
 
-/** صف بررسی حسابدار: هرچه ثبت نشده و رد هم نشده. */
-export function listReviewQueue(database, { limit = 50 } = {}) {
+/**
+ * صف بررسی: هرچه ثبت نشده و رد هم نشده.
+ *
+ * `route` صف را تنگ می‌کند. حسابدار همه را می‌بیند، ولی صاحب کسب‌وکار فقط
+ * مسیر `confirm` را — یعنی چیزهایی که خودش می‌تواند جواب بدهد. موردی که به
+ * دانش حسابداری نیاز دارد اصلاً به او نشان داده نمی‌شود.
+ */
+export function listReviewQueue(database, { limit = 50, route = '' } = {}) {
   ensureFinancialEventSchema(database);
+  const filter = ROUTE_VALUES.includes(route) ? ' AND route=?' : '';
+  const params = filter ? [route] : [];
   const rows = database.prepare(`SELECT * FROM financial_events
-    WHERE status='pending' ORDER BY
+    WHERE status='pending'${filter} ORDER BY
       CASE route WHEN 'accountant-review' THEN 0 ELSE 1 END, created_at DESC
-    LIMIT ?`).all(Math.max(1, Math.min(200, Number(limit) || 50)));
+    LIMIT ?`).all(...params, Math.max(1, Math.min(200, Number(limit) || 50)));
   return rows.map((row) => describeStored(database, row));
+}
+
+const ROUTE_VALUES = Object.freeze(Object.values(ROUTES));
+
+/**
+ * سپردن یک مورد به حسابدار.
+ *
+ * وقتی صاحب کسب‌وکار می‌گوید «نمی‌دانم»، جواب درست پاک کردن نیست. مورد همان‌جا
+ * می‌ماند و فقط مسیرش عوض می‌شود تا در صف کسی بنشیند که می‌تواند جوابش را بدهد.
+ */
+export function handOverToAccountant(database, eventId, { actor = null, reason = '' } = {}) {
+  ensureFinancialEventSchema(database);
+  const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
+  if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
+  if (row.status !== 'pending') throw storeError('این مورد دیگر در انتظار نیست.', 'EVENT_NOT_PENDING', 409);
+  database.prepare("UPDATE financial_events SET route='accountant-review',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
+  writeAudit(database, row.id, 'handed-over', { reason: String(reason || '').slice(0, 300) }, actor);
+  return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
 
 /** تاریخچهٔ کامل یک رویداد، از گفته تا برگشت. */

@@ -266,6 +266,10 @@ export const api = {
   journalBatch: (documents, approvalState = 'draft') => request('/api/accounting/journal/batch', { method: 'POST', body: JSON.stringify({ documents, approvalState }) }),
   journalWorklist: () => request('/api/accounting/journal/worklist'),
   setJournalApproval: (id, state, reason = '') => request(`/api/accounting/journal/${encodeURIComponent(id)}/approval`, { method: 'POST', body: JSON.stringify({ state, reason }) }),
+  // پرسش‌های خودِ کاربر — در محیط ساده هم در دسترس است.
+  confirmations: () => request('/api/confirmations'),
+  confirmPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({}) }),
+  handOverPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/handover`, { method: 'POST', body: JSON.stringify({}) }),
   // صف بررسی حسابدار: رویدادهایی که موتور اطمینان ثبتشان را متوقف کرده است.
   reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
   eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),

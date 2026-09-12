@@ -9,10 +9,10 @@ import { CATEGORY_DEFINITIONS } from '../shared/categoryRules.js';
 import { persianMonthRange } from '../shared/persianDate.js';
 import { ensureDepreciationSchema, listFixedAssets, runDepreciation, saveFixedAssetSettings } from './depreciationLedger.js';
 import {
-  approveFinancialEvent, ensureFinancialEventSchema, financialEventAudit, findEventBySource, listReviewQueue,
-  recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent,
+  approveFinancialEvent, ensureFinancialEventSchema, financialEventAudit, findEventBySource,
+  handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent,
 } from './financialEventStore.js';
-import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
+import { EVENT_KINDS, describeEvent, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { routeEvent } from '../shared/confidenceEngine.js';
 import { transactionEventDecision } from './transactionEvent.js';
 import { roleAllows } from './access.js';
@@ -3994,6 +3994,46 @@ export function submitFinancialEvent(event, options = {}) {
 
 export function reviewQueue(options = {}) {
   return { items: listReviewQueue(activeWorkspaceDatabase(), options) };
+}
+
+/**
+ * پرسش‌های بازِ صاحب کسب‌وکار.
+ *
+ * فقط مسیر `confirm` — یعنی مواردی که خودِ کاربر می‌تواند جوابشان را بدهد.
+ * چیزی که به دانش حسابداری نیاز دارد به او نشان داده نمی‌شود؛ آن در صف
+ * حسابدار می‌ماند.
+ *
+ * خروجی عمداً تنگ است: نه نمرهٔ اطمینان، نه نام مسیر، نه مؤلفه‌ها، نه نقشهٔ
+ * سند. کاربری که دانش حسابداری ندارد با دیدن این‌ها تصمیم بهتری نمی‌گیرد،
+ * فقط اعتمادش را از دست می‌دهد.
+ */
+export function pendingConfirmations(limit = 5) {
+  const items = listReviewQueue(activeWorkspaceDatabase(), { limit, route: 'confirm' });
+  return {
+    items: items.map((item) => ({
+      id: item.id,
+      question: item.confidence?.summary || describeEvent(item.event),
+      // یک دلیل، به زبان ساده. فهرست دلایل، پرسش را به بازجویی تبدیل می‌کند.
+      hint: item.confidence?.reasons?.[0] || '',
+      amount: item.amount,
+      occurredAt: item.occurredAt,
+      evidence: String(item.event?.evidence || '').slice(0, 300),
+    })),
+  };
+}
+
+/** «بله، درست است» — همان تأیید، با همان مسیر سند. */
+export function confirmPending(eventId) {
+  return approveEvent(eventId);
+}
+
+/** «نمی‌دانم» — مورد به حسابدار سپرده می‌شود، نه پاک. */
+export function handOverPending(eventId) {
+  const item = handOverToAccountant(activeWorkspaceDatabase(), eventId, {
+    actor: currentWorkspace()?.userId || null, reason: 'کاربر گفت مطمئن نیست.',
+  });
+  audit('handover', 'financial-event', eventId, { route: item.route });
+  return item;
 }
 
 export function approveEvent(eventId) {
