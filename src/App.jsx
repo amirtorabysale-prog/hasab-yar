@@ -879,6 +879,11 @@ export default function App() {
   };
 
   const navigate = (target, section = '') => {
+    // صفحه‌ای که این کاربر اجازه‌اش را ندارد حتی با ناوبری مستقیم باز نمی‌شود.
+    // سرور هم همین مرز را دارد، پس این فقط تجربه را تمیز نگه می‌دارد — ولی
+    // نبودش یعنی کاربر ساده می‌تواند به صفحه‌ای برود که همهٔ درخواست‌هایش ۴۰۳
+    // می‌گیرند و فقط خطا می‌بیند.
+    if (allowedScreens(access).length && !allowedScreens(access).some((item) => item.id === target)) return;
     if (target === 'ledger' && ['transactions', 'obligations', 'invoices', 'reconciliation', 'recurring', 'inventory', 'tools'].includes(section)) setLedgerTab(section);
     setScreen(target); setDrawer(false);
     window.setTimeout(() => section && document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
@@ -971,7 +976,7 @@ export default function App() {
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
       </div>
 
-      <BottomNav screen={screen} navigate={navigate} />
+      <BottomNav screen={screen} navigate={navigate} access={access} />
       {drawer && <Drawer profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
       {parseResult && (
         <ConfirmationSheet
@@ -3040,14 +3045,26 @@ function PilotPortfolioPanel({ portfolio, updatePlan }) {
   return <section className="mt-4 rounded-[12px] border border-line bg-surface p-4"><h2 className="font-extrabold">داشبورد مدیر پایلوت</h2><p className="mt-1 text-xs leading-6 text-muted">نرخ‌ها فقط از رفتار و مصاحبهٔ ثبت‌شدهٔ دفترها ساخته می‌شوند؛ دفترهای کمتر از چهار هفته وارد مخرج ماندگاری نمی‌شوند.</p><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">دفتر پایلوت</span><b className="numbers mt-2 block">{toPersianDigits(summary.workspaceCount || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">واجد هفته چهارم</span><b className="numbers mt-2 block">{toPersianDigits(summary.eligibleWeekFour || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">ماندگاری / هدف ۴۰٪</span><b className="numbers mt-2 block">{summary.retentionPercent == null ? '—' : `${toPersianDigits(summary.retentionPercent)}٪`}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">آمادگی پرداخت / هدف ۳۰٪</span><b className="numbers mt-2 block">{summary.willingnessPercent == null ? '—' : `${toPersianDigits(summary.willingnessPercent)}٪`}</b></div></div><div className="mt-4 divide-y divide-line border-y border-line">{portfolio.workspaces?.map((item) => { const draft = drafts[item.workspace.id] || { planId: item.commercial.plan.id, budgetUsd: item.commercial.provider.budgetUsd }; return <div key={item.workspace.id} className="grid gap-3 py-3 md:grid-cols-[minmax(0,1fr)_150px_130px_100px]"><div><p className="text-sm font-bold">{item.workspace.name}</p><p className="mt-1 text-[11px] text-muted">{toPersianDigits(item.activeWeeks)} هفته فعال · {item.willingnessToPay === 'yes' ? 'حاضر به پرداخت' : 'پرداخت تأیید نشده'}</p></div><select value={draft.planId} onChange={(event) => setDrafts({ ...drafts, [item.workspace.id]: { ...draft, planId: event.target.value } })} className="tap rounded-lg border border-line px-2 text-xs"><option value="free">رایگان</option><option value="professional">حرفه‌ای</option><option value="accountant">همکاری حسابدار</option></select><input type="number" min="0" step="0.01" value={draft.budgetUsd} onChange={(event) => setDrafts({ ...drafts, [item.workspace.id]: { ...draft, budgetUsd: event.target.value } })} placeholder="بودجه دلار" dir="ltr" className="tap rounded-lg border border-line px-2 text-left text-xs" /><button onClick={() => updatePlan(item.workspace.id, draft.planId, draft.budgetUsd)} className="tap rounded-lg bg-ink px-2 text-xs font-bold text-white">ذخیره پلن</button></div>; })}</div></section>;
 }
 
+/**
+ * آیکن هر صفحه.
+ *
+ * فهرست صفحه‌ها از سرور می‌آید تا فرانت‌اند نسخهٔ موازی نسازد؛ همان قاعده‌ای
+ * که دروازهٔ سرور با آن کار می‌کند. فقط آیکن اینجا می‌ماند، چون داده نیست.
+ */
+const SCREEN_ICONS = {
+  home: Home, wallet: WalletCards, chart: BarChart3, settings: Settings,
+  grid: LayoutGrid, inbox: ReceiptText, book: BookOpenCheck, landmark: Landmark,
+  coins: HandCoins, users: Users,
+};
+
+/** صفحه‌های مجاز این کاربر؛ تا وقتی دسترسی نرسیده، ناوبری خالی می‌ماند نه حدسی. */
+function allowedScreens(access) {
+  return Array.isArray(access?.screens) ? access.screens : [];
+}
+
 function DesktopNav({ screen, navigate, businessName, profileType = 'business', access }) {
   // میز کار فقط وقتی معنا دارد که کاربر بیش از یک پرونده داشته باشد.
-  const items = [
-    ['firm', 'میز کار دفتر', LayoutGrid],
-    ['today', 'امروز', Home], ['ledger', 'دفتر مالی', WalletCards], ['report', 'گزارش', BarChart3],
-    ...(profileType === 'business' ? [['accounting', 'حسابداری', BookOpenCheck], ['chart', 'کدینگ حساب‌ها', Landmark], ['tax', 'مالیات', HandCoins], ...(['owner', 'manager', 'accountant'].includes(access?.workspace?.role) ? [['collaboration', 'همکاری حسابدار', Users]] : [])] : []),
-    ['learning', 'یادگیری‌ها', BookOpenCheck], ['settings', 'تنظیمات', Settings],
-  ];
+  const items = allowedScreens(access).map((item) => [item.id, item.label, SCREEN_ICONS[item.icon] || Home]);
   const profile = profileDefinition(profileType);
   return <aside className="desktop-nav hidden border-l border-line bg-surface px-4 py-6 lg:block"><div className="sticky top-6"><div className="mb-8 border-b border-line pb-5"><p className="text-xl font-extrabold">حساب‌یار</p><p className="mt-1 truncate text-xs text-muted">{businessName || profile.label}</p><p className="mt-1 text-[11px] leading-5 text-muted">دستیار ثبت و مدیریت نقدینگی</p></div><nav className="space-y-1">{items.map(([id, label, Icon]) => <button key={id} onClick={() => navigate(id)} className={`tap flex w-full items-center gap-3 rounded-lg px-3 text-right text-sm font-bold ${screen === id ? 'bg-warn-bg text-accent' : 'text-muted hover:bg-paper hover:text-ink'}`}><Icon size={20} />{label}</button>)}</nav></div></aside>;
 }
@@ -3537,8 +3554,10 @@ function ToolsPanel({ profileType = 'business', accounts = [], categories = [], 
   </section>;
 }
 
-function BottomNav({ screen, navigate }) {
-  const items = [{ id: 'today', label: 'امروز', icon: Home }, { id: 'ledger', label: 'دفتر', icon: WalletCards }, { id: 'report', label: 'گزارش', icon: BarChart3 }];
+function BottomNav({ screen, navigate, access }) {
+  // فقط صفحه‌های اصلی در نوار پایین جا می‌شوند؛ بقیه در کشو می‌مانند.
+  const items = allowedScreens(access).filter((item) => item.primary).slice(0, 4)
+    .map((item) => ({ id: item.id, label: item.label, icon: SCREEN_ICONS[item.icon] || Home }));
   return <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex h-[76px] max-w-[640px] items-start justify-around border-t border-line bg-surface px-3 pb-[env(safe-area-inset-bottom)] pt-2 lg:hidden">{items.map((item) => { const Icon = item.icon; const active = screen === item.id; return <button key={item.id} onClick={() => navigate(item.id)} className={`tap flex min-w-20 flex-col items-center justify-center gap-1 rounded-lg text-[12px] font-bold ${active ? 'text-accent' : 'text-muted'}`}><Icon size={21} strokeWidth={active ? 2.6 : 2} />{item.label}</button>; })}</nav>;
 }
 
@@ -3548,16 +3567,11 @@ function Drawer({ profileType = 'business', close, navigate, access }) {
     <aside className="sheet-in h-full w-[82%] max-w-[330px] bg-paper px-4 py-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">{profile.label} · دستیار نقدینگی</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div>
       <div className="mt-8 space-y-2">
-        <DrawerItem icon={LayoutGrid} label="میز کار دفتر" onClick={() => navigate('firm')} />
-        <DrawerItem icon={Home} label="امروز" onClick={() => navigate('today')} />
-        <DrawerItem icon={WalletCards} label="دفتر مالی" onClick={() => navigate('ledger')} />
-        <DrawerItem icon={BarChart3} label="گزارش" onClick={() => navigate('report')} />
-        {profileType === 'business' && <DrawerItem icon={BookOpenCheck} label="دفتر کل و حسابداری" onClick={() => navigate('accounting')} />}
-        {profileType === 'business' && <DrawerItem icon={Landmark} label="کدینگ حساب‌ها" onClick={() => navigate('chart')} />}
-        {profileType === 'business' && <DrawerItem icon={HandCoins} label="مالیات و ارزش افزوده" onClick={() => navigate('tax')} />}
-        {profileType === 'business' && ['owner', 'manager', 'accountant'].includes(access?.workspace?.role) && <DrawerItem icon={Users} label="همکاری حسابدار و پایلوت" onClick={() => navigate('collaboration')} />}
-        <DrawerItem icon={BookOpenCheck} label="آنچه یاد گرفته‌ام" onClick={() => navigate('learning')} />
-        <DrawerItem icon={Settings} label="تنظیمات" onClick={() => navigate('settings')} />
+        {/* همان فهرستی که سرور اجازه داده؛ کشو نسخهٔ دوم نمی‌سازد. */}
+        {allowedScreens(access).map((item) => {
+          const Icon = SCREEN_ICONS[item.icon] || Home;
+          return <DrawerItem key={item.id} icon={Icon} label={item.label} onClick={() => navigate(item.id)} />;
+        })}
       </div>
       <div className="absolute bottom-6 right-4 left-4 border-t border-line pt-4 text-xs leading-6 text-muted">هیچ مبلغی بدون تأیید تو ثبت نمی‌شود.</div>
     </aside>

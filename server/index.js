@@ -25,6 +25,7 @@ import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
+import { EXPERIENCES, experienceForRole, pathNeedsProfessional, screensFor } from '../shared/experience.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
   openEncryptedBackup, restorePortableBackup, writeServerBackup,
@@ -71,10 +72,15 @@ function workspaceCookie(workspaceId) {
 function accessPayload(user, requestedWorkspaceId = '') {
   const workspaces = listUserWorkspaces(user.id);
   const workspace = workspaceForUser(user.id, requestedWorkspaceId) || workspaces[0] || null;
+  const experience = workspace ? experienceForRole(workspace.role, workspace.experiencePreference) : EXPERIENCES.SIMPLE;
   return {
     user: { id: user.id, username: user.username, displayName: user.displayName || user.username, mustChangePassword: Boolean(user.mustChangePassword), isSystemAdmin: user.username === String(process.env.ADMIN_USERNAME || 'admin').trim().toLowerCase() },
-    workspaces,
-    workspace,
+    workspaces: workspaces.map((item) => ({ ...item, experience: experienceForRole(item.role, item.experiencePreference) })),
+    workspace: workspace ? { ...workspace, experience } : null,
+    experience,
+    // ناوبری از همین‌جا می‌آید تا فرانت‌اند فهرست موازی نسازد؛ یک منبع تصمیم
+    // برای هر دو طرف، و همان قاعده‌ای که دروازهٔ بالا با آن کار می‌کند.
+    screens: workspace ? screensFor({ role: workspace.role, experience, profileType: workspace.profileType }) : [],
   };
 }
 
@@ -152,7 +158,20 @@ app.use('/api', (request, response, next) => {
     return response.status(403).json({ code: 'PASSWORD_CHANGE_REQUIRED', message: 'پیش از ادامه رمز موقت را تغییر بده.' });
   }
   const minimum = minimumRoleForRequest(request.method, path);
-  return requireRank(request, response, minimum) ? next() : undefined;
+  if (!requireRank(request, response, minimum)) return undefined;
+  // مرز تجربه در سرور هم اعمال می‌شود.
+  //
+  // مخفی‌کردن منو امنیت نیست: کسی که آدرس را بداند همچنان صدا می‌زند. و کنترل
+  // رتبه‌ای اینجا کمکی نمی‌کند، چون صاحب کسب‌وکار بالاترین رتبه را دارد و از
+  // همهٔ کنترل‌های رتبه‌ای رد می‌شود.
+  const experience = experienceForRole(request.workspace?.role, request.workspace?.experiencePreference);
+  if (experience !== EXPERIENCES.PROFESSIONAL && pathNeedsProfessional(path)) {
+    return response.status(403).json({
+      code: 'EXPERIENCE_FORBIDDEN',
+      message: 'این بخش ابزار حسابدار است و در محیط سادهٔ کسب‌وکار در دسترس نیست.',
+    });
+  }
+  return next();
 });
 app.post('/api/auth/logout', (request, response) => {
   deleteSession(request.sessionToken);

@@ -324,6 +324,11 @@ function ensureColumnOn(database, table, definition) {
   }
 }
 
+// ترجیح تجربه روی عضویت می‌نشیند، نه روی کاربر: یک حسابدار در پروندهٔ خودش
+// صاحب کسب‌وکار است و در پروندهٔ مشتری، حسابدار. تجربه باید در هر پرونده
+// جداگانه تصمیم گرفته شود.
+ensureColumnOn(controlDb, 'workspace_members', 'experience TEXT');
+
 function ensureVoiceMetricSchema(database) {
   ensureColumnOn(database, 'voice_metrics', 'first_transcript_ms INTEGER NOT NULL DEFAULT 0');
 }
@@ -710,7 +715,7 @@ export function activeWorkspaceDatabase() {
 
 export function listUserWorkspaces(userId) {
   return controlDb.prepare(`SELECT workspaces.id,workspaces.name,workspaces.profile_type AS profileType,
-    workspace_members.role,workspaces.created_at AS createdAt
+    workspace_members.role,workspace_members.experience AS experiencePreference,workspaces.created_at AS createdAt
     FROM workspace_members JOIN workspaces ON workspaces.id=workspace_members.workspace_id
     WHERE workspace_members.user_id=? ORDER BY CASE workspace_members.role WHEN 'owner' THEN 0 ELSE 1 END,workspaces.created_at`).all(userId);
 }
@@ -718,7 +723,8 @@ export function listUserWorkspaces(userId) {
 export function workspaceForUser(userId, requestedId = '') {
   const requested = String(requestedId || '').trim();
   const row = requested
-    ? controlDb.prepare(`SELECT workspaces.id,workspaces.name,workspaces.profile_type AS profileType,workspace_members.role
+    ? controlDb.prepare(`SELECT workspaces.id,workspaces.name,workspaces.profile_type AS profileType,workspace_members.role,
+        workspace_members.experience AS experiencePreference
         FROM workspace_members JOIN workspaces ON workspaces.id=workspace_members.workspace_id
         WHERE workspace_members.user_id=? AND workspaces.id=?`).get(userId, requested)
     : listUserWorkspaces(userId)[0];
@@ -4034,4 +4040,19 @@ function postObligationSettled(obligationId, item, { occurredAt, accountId, tran
     actor: currentWorkspace()?.userId || null,
     rawInput: `تسویه ${item.title}`,
   });
+}
+
+/**
+ * ترجیح تجربهٔ کاربر در یک پرونده.
+ *
+ * فقط مالک می‌تواند انتخاب کند؛ حسابدار و مدیر همیشه محیط حرفه‌ای می‌گیرند چون
+ * ابزار کارشان آنجاست. تلاش برای پایین‌آوردنشان بی‌صدا رد می‌شود، نه اینکه خطا
+ * بدهد — درخواستش بی‌اثر است، نه نامعتبر.
+ */
+export function setExperiencePreference(workspaceId, userId, preference) {
+  const value = ['simple', 'professional'].includes(preference) ? preference : null;
+  controlDb.prepare('UPDATE workspace_members SET experience=?,updated_at=CURRENT_TIMESTAMP WHERE workspace_id=? AND user_id=?')
+    .run(value, String(workspaceId || ''), String(userId || ''));
+  audit('update', 'workspace-member', `${workspaceId}:${userId}`, { experience: value });
+  return workspaceForUser(userId, workspaceId);
 }
