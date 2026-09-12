@@ -189,3 +189,31 @@ test('سررسید نسبی روی صفحهٔ طلب و بدهی فهمیده م
   // سررسید آینده نباید به سال گذشته پرت شود.
   assert.equal(persianDay(inObligations('حسن سه میلیون بدهکار شد سررسید دهم مهر').dueAt), '1405/07/10');
 });
+
+// جملهٔ واقعی کاربر در production. سه ایراد هم‌زمان داشت و بدترینش مبلغ بود:
+// «۱۵ ۵ ۱۴۰۵ ۱۳» همه در یک عدد جمع می‌شدند و سند با ۱٬۴۳۸٬۰۰۰٬۰۰۰ ثبت می‌شد،
+// یعنی صد برابر، بی‌صدا.
+test('رقم‌های تاریخ وارد مبلغ نمی‌شوند', () => {
+  const found = detect('در تاریخ 15 5 1405 13 میلیون تومان به شرکت آزاد بدهکار شدیم');
+  assert.equal(found.amount, 13_000_000);
+  assert.equal(found.direction, 'payable');
+  assert.equal(found.contactName, 'شرکت آزاد', 'واژهٔ جهت نباید بخشی از نام شود');
+  assert.equal(persianDay(found.dueAt), '1405/05/15');
+});
+
+test('تاریخ عددی با فاصله هم فهمیده می‌شود', () => {
+  const spaced = detect('۱۵ ۵ ۱۴۰۵ ده میلیون به آقای احمدی بدهکارم');
+  assert.equal(spaced.amount, 10_000_000);
+  assert.equal(persianDay(spaced.dueAt), '1405/05/15');
+
+  const slashed = detect('1405/07/10 ده میلیون به آقای احمدی بدهکارم');
+  assert.equal(slashed.amount, 10_000_000);
+  assert.equal(persianDay(slashed.dueAt), '1405/07/10');
+});
+
+test('عدد سه‌تایی بدون بخش چهاررقمی تاریخ شمرده نمی‌شود', () => {
+  // «۱۲ ۵ ۳» می‌تواند هر چیزی باشد؛ تاریخ‌خواندنش یعنی مبلغ از بین می‌رود.
+  const found = detect('دوازده میلیون به آقای احمدی بدهکارم');
+  assert.equal(found.amount, 12_000_000);
+  assert.equal(found.dueAt, null);
+});

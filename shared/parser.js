@@ -258,12 +258,18 @@ function classify(context, learnings = []) {
 }
 
 export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
-  const { text, spans } = extractAmounts(input);
-  // تاریخ از متن اصلی خوانده می‌شود، نه از متنِ مبلغ‌زدوده، تا واژه‌های تاریخ
-  // دست‌نخورده بمانند. یک گفته یک مرجع زمانی دارد، پس همهٔ ثبت‌های آن گفته
-  // همان تاریخ را می‌گیرند.
+  // تاریخ پیش از مبلغ خوانده می‌شود، چون رقم‌های تاریخ نباید مبلغ شمرده شوند.
+  //
+  // «در تاریخ 15 5 1405 13 میلیون تومان» مبلغ را ۱٬۴۳۸٬۰۰۰٬۰۰۰ می‌خواند:
+  // ۱۵ و ۵ و ۱۴۰۵ و ۱۳ همه در یک عدد جمع می‌شدند. این بدترین نوع خطاست، چون
+  // سند با مبلغی صد برابر ثبت می‌شود و هیچ نشانه‌ای هم ندارد.
   const mentionedDate = extractDateMention(input, { now, preferPast: true });
   const occurredAt = mentionedDate?.iso || null;
+  // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
+  const amountSource = mentionedDate?.match
+    ? normalizePersian(input).replace(mentionedDate.match, " ".repeat(mentionedDate.match.length))
+    : input;
+  const { text, spans } = extractAmounts(amountSource);
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word))];
   const transactions = spans.map((span, index) => {
     const previousEnd = spans[index - 1]?.end ?? 0;

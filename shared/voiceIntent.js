@@ -186,7 +186,10 @@ export function extractContactName(input, { allowBare = false } = {}) {
     const picked = [];
     for (let offset = index + skip; offset < words.length && picked.length < 2; offset += 1) {
       const word = words[offset];
-      if (CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || /\d/.test(word)) break;
+      // واژهٔ جهت هرگز بخشی از نام نیست: «به شرکت آزاد بدهکار شدیم» نام را
+      // «شرکت آزاد بدهکار» می‌ساخت و همان نام، یک طرف حساب جعلی در دفتر
+      // می‌ساخت که با طرف حساب واقعی یکی نمی‌شد.
+      if (CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || DIRECTION_WORDS.has(word) || /\d/.test(word)) break;
       picked.push(word);
     }
     if (picked.length) return `${prefix === 'شرکت' ? 'شرکت ' : ''}${picked.join(' ')}`.trim();

@@ -248,11 +248,35 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
   const text = replaceSpokenCounts(normalizePersian(input));
   if (!text) return null;
 
-  // ۱) تاریخ کامل عددی: ۱۴۰۵/۰۶/۰۲ یا ۱۴۰۵-۶-۲
-  const numeric = text.match(/(?<![\d/])(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})(?![\d/])/);
+  // ۱) تاریخ کامل عددی.
+  //
+  // موتور گفتار تاریخِ گفته‌شده را با **فاصله** می‌نویسد، نه با اسلش: «پانزده
+  // پنج هزار و چهارصد و پنج» به «15 5 1405» تبدیل می‌شود. تا وقتی فقط اسلش و
+  // خط تیره پذیرفته می‌شد، این تاریخ اصلاً دیده نمی‌شد و — بدتر — رقم‌هایش به
+  // مبلغ می‌چسبید.
+  //
+  // ترتیب هم ثابت نیست: «۱۴۰۵/۰۶/۰۲» سال‌اول است و «۱۵ ۵ ۱۴۰۵» روزاول. کدام
+  // بخش سال است از چهاررقمی‌بودنش فهمیده می‌شود، نه از جای آن.
+  const numeric = text.match(/(?<![\d/\-.])(\d{1,4})\s*[/\-.\s]\s*(\d{1,2})\s*[/\-.\s]\s*(\d{1,4})(?![\d/\-.])/);
   if (numeric) {
-    const iso = persianToISO(Number(numeric[1]), Number(numeric[2]), Number(numeric[3]), timeZone);
-    if (iso) return { iso, label: `${numeric[1]}/${String(numeric[2]).padStart(2, '0')}/${String(numeric[3]).padStart(2, '0')}`, kind: 'explicit' };
+    const [matched, first, middle, last] = numeric;
+    const yearFirst = first.length === 4;
+    const yearLast = last.length === 4;
+    // بدون یک بخش چهاررقمی، این عدد تاریخ نیست؛ «۱۲ ۵ ۳» می‌تواند هر چیزی باشد.
+    if (yearFirst || yearLast) {
+      const year = Number(yearFirst ? first : last);
+      const month = Number(middle);
+      const day = Number(yearFirst ? last : first);
+      const iso = persianToISO(year, month, day, timeZone);
+      if (iso) {
+        return {
+          iso,
+          label: `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
+          kind: 'explicit',
+          match: matched,
+        };
+      }
+    }
   }
 
   // ۲) روز و ماه: «دوم شهریور»، «۲ شهریور ۱۴۰۴»، «شهریور دوم» شمرده نمی‌شود.
