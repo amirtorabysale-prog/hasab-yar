@@ -14,6 +14,7 @@ import {
 } from './financialEventStore.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { routeEvent } from '../shared/confidenceEngine.js';
+import { transactionEventDecision } from './transactionEvent.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
@@ -598,6 +599,13 @@ ensureColumn('transactions', "note TEXT NOT NULL DEFAULT ''");
 ensureColumn('transactions', "status TEXT NOT NULL DEFAULT 'confirmed'");
 ensureColumn('transactions', 'due_at TEXT');
 ensureColumn('transactions', 'updated_at TEXT');
+// سندِ عمداً نگه‌داشته‌شده.
+//
+// وقتی موتور اطمینان جلوی ثبت خودکار را می‌گیرد، ردیف تراکنش نوشته می‌شود ولی
+// سندش منتظر تأیید می‌ماند. این ستون همان «منتظر» است و بدونش
+// `migrateAccountingLedger` که هر تراکنش بی‌سند را سند می‌زند، همان سندی را
+// می‌ساخت که قرار بود نگه داشته شود.
+ensureColumn('transactions', 'journal_deferred INTEGER NOT NULL DEFAULT 0');
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
@@ -1104,6 +1112,52 @@ function jsonText(value, fallback) {
   catch { return JSON.stringify(fallback); }
 }
 
+/**
+ * سندِ یک تراکنش، به همان شکل همیشگی‌اش.
+ *
+ * این تابع به لایهٔ رویداد تزریق می‌شود تا «چه وقت ثبت شود» را موتور اطمینان
+ * تصمیم بگیرد ولی «سند چه شکلی باشد» همان‌جا بماند که هست و آزمون دارد.
+ */
+function transactionJournalPoster(row) {
+  return (database) => syncTransactionJournal(database, row, { createdBy: currentWorkspace()?.userId });
+}
+
+/**
+ * عبور دادن یک تراکنش از موتور اطمینان.
+ *
+ * برمی‌گرداند: آیا لایهٔ رویداد مسئولیت سند را گرفت؟ اگر نه، فراخوان باید مثل
+ * قبل خودش سند بزند.
+ *
+ * شکست اینجا نباید ثبت کاربر را از بین ببرد. کاربر هزینه‌اش را گفته و آن
+ * واقعیت دارد؛ اگر لایهٔ رویداد به هر دلیلی نتواند تصمیم بگیرد، مسیر قبلی —
+ * که همچنان درست است — کار می‌کند.
+ */
+function routeTransactionThroughEvents(row, item, transcript) {
+  try {
+    const draft = transactionEventDecision({
+      ...item, amount: row.amount, occurredAt: row.occurredAt, accountId: row.accountId, rawText: row.rawText,
+    }, { transcript });
+    if (!draft) return false;
+    const result = recordFinancialEvent(db, draft.event, {
+      sourceEventId: `transaction:${row.id}`,
+      decision: draft.decision,
+      actor: currentWorkspace()?.userId || null,
+      transcript,
+      rawInput: row.rawText || transcript,
+      timeZone: currentTimeZone(),
+      withinTransaction: true,
+      journalSource: { type: 'transaction', id: row.id },
+      postJournal: transactionJournalPoster(row),
+    });
+    // مسیر غیرخودکار یعنی سند منتظر می‌ماند. ردیف تراکنش سر جایش است — کاربر
+    // ثبتش را می‌بیند و ماندهٔ صندوقش درست است — ولی دفتر تا تأیید تکان نمی‌خورد.
+    if (result.status !== 'posted') {
+      db.prepare('UPDATE transactions SET journal_deferred=1 WHERE id=?').run(row.id);
+    }
+    return true;
+  } catch { return false; }
+}
+
 function insertTransactionRows({ transcript, transactions }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
     (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
@@ -1129,7 +1183,14 @@ function insertTransactionRows({ transcript, transactions }) {
     if (result.changes) {
       ids.push(id);
       audit('create', 'transaction', id, { amount, type: item.type, category: item.category });
-      if (!item.journalManaged) syncTransactionJournal(db, { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
+      if (!item.journalManaged) {
+        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt };
+        // اگر لایهٔ رویداد کار را به عهده گرفت، سند اینجا زده نمی‌شود؛ یا خودش
+        // زده یا عمداً نگه داشته است.
+        if (!routeTransactionThroughEvents(row, item, transcript)) {
+          syncTransactionJournal(db, row, { createdBy: currentWorkspace()?.userId });
+        }
+      }
     } else if (item.clientId) {
       const existing = db.prepare('SELECT id FROM transactions WHERE client_id=?').get(item.clientId);
       if (existing) ids.push(existing.id);
@@ -3936,9 +3997,22 @@ export function reviewQueue(options = {}) {
 }
 
 export function approveEvent(eventId) {
-  const item = approveFinancialEvent(activeWorkspaceDatabase(), eventId, {
-    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  const database = activeWorkspaceDatabase();
+  // رویدادی که روی یک تراکنش نشسته، سندش را از همان مسیر تراکنش می‌گیرد. اگر
+  // اینجا نقشهٔ نقش‌محور اجرا شود، دو تراکنش هم‌شکل بسته به اینکه خودکار ثبت
+  // شده‌اند یا با تأیید، دو سند متفاوت می‌گیرند.
+  const row = database.prepare('SELECT journal_source AS journalSource FROM financial_events WHERE id=?').get(String(eventId || ''));
+  const source = row?.journalSource ? JSON.parse(row.journalSource) : null;
+  let postJournal = null;
+  if (source?.type === 'transaction') {
+    const transaction = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,
+      account_id AS accountId,occurred_at AS occurredAt FROM transactions WHERE id=?`).get(source.id);
+    if (transaction) postJournal = transactionJournalPoster(transaction);
+  }
+  const item = approveFinancialEvent(database, eventId, {
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal,
   });
+  if (source?.type === 'transaction') database.prepare('UPDATE transactions SET journal_deferred=0 WHERE id=?').run(source.id);
   audit('approve', 'financial-event', eventId, { status: item.status });
   return item;
 }

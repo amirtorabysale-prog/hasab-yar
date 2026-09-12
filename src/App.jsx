@@ -89,6 +89,7 @@ import { detectSettleIntent, matchSettleTargets } from '../shared/settleSpeech.j
 import { persianToISO } from '../shared/persianDate.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
+import { CONFIDENCE_COMPONENT_LABELS, ROUTE_LABELS } from '../shared/confidenceEngine.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 import ExcelImportPanel from './features/accounting/ExcelImportPanel.jsx';
@@ -965,6 +966,7 @@ export default function App() {
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={ledgerTab} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
+          {screen === 'review' && <ReviewQueuePage notify={notify} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} />}
@@ -1297,7 +1299,7 @@ function ConfirmationSheet({ result, categories, accounts = [], onCancel, onConf
 }
 
 function ConfidencePanel({ assessment }) {
-  return <section className="mt-4 rounded-[10px] border border-line bg-surface p-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold">چرا این تصمیم؟</h3><span className="numbers text-xs text-muted">اطمینان کلی {toPersianDigits(assessment.percent)}٪</span></div><div className="mt-3 space-y-2">{Object.entries(assessment.fields).map(([field, detail]) => <div key={field} className="rounded-lg bg-paper px-3 py-2"><div className="flex items-center justify-between gap-2"><b className="text-xs">{REVIEW_FIELD_LABELS[field]}</b><span className={`numbers text-xs font-bold ${detail.score >= 0.82 ? 'text-income' : detail.score >= 0.7 ? 'text-accent' : 'text-expense'}`}>{toPersianDigits(Math.round(detail.score * 100))}٪</span></div><p className="mt-1 text-[11px] leading-5 text-muted">{detail.reason}</p></div>)}</div>{assessment.reasons.length > 0 && <div className="mt-3 border-t border-line pt-2">{assessment.reasons.map((reason) => <p key={reason} className="mt-1 text-[11px] leading-5 text-expense">• {reason}</p>)}</div>}</section>;
+  return <section className="mt-4 rounded-[10px] border border-line bg-surface p-3"><div className="flex items-center justify-between"><h3 className="text-sm font-extrabold">چرا این تصمیم؟</h3><span className="numbers text-xs text-muted">اطمینان کلی {toPersianDigits(assessment.percent)}٪</span></div><div className="mt-3 space-y-2">{Object.entries(assessment.fields).map(([field, detail]) => <div key={field} className="rounded-lg bg-paper px-3 py-2"><div className="flex items-center justify-between gap-2"><b className="text-xs">{REVIEW_FIELD_LABELS[field] || CONFIDENCE_COMPONENT_LABELS[field] || field}</b><span className={`numbers text-xs font-bold ${detail.score >= 0.82 ? 'text-income' : detail.score >= 0.7 ? 'text-accent' : 'text-expense'}`}>{toPersianDigits(Math.round(detail.score * 100))}٪</span></div><p className="mt-1 text-[11px] leading-5 text-muted">{detail.reason}</p></div>)}</div>{assessment.reasons.length > 0 && <div className="mt-3 border-t border-line pt-2">{assessment.reasons.map((reason) => <p key={reason} className="mt-1 text-[11px] leading-5 text-expense">• {reason}</p>)}</div>}</section>;
 }
 
 function CorrectionSheet({ draft, accounts, close, confirm }) {
@@ -1360,6 +1362,133 @@ function ReportPage({ profileType = 'business', navigate, notify }) {
 function currentPersianPeriod(date = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit' }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}`;
+}
+
+const ROUTE_STYLE = {
+  'accountant-review': 'border-expense/40 bg-expense/5 text-expense',
+  confirm: 'border-accent/40 bg-accent/5 text-accent',
+  auto: 'border-income/40 bg-income/5 text-income',
+};
+
+/**
+ * یک ردیف از صف بررسی.
+ *
+ * چرا تاریخچه فقط با درخواست باز می‌شود: صف ممکن است ده‌ها ردیف داشته باشد و
+ * گرفتن تاریخچهٔ همه، هم کند است و هم چیزی است که حسابدار فقط برای موارد
+ * مشکوک می‌خواهد.
+ */
+function ReviewQueueRow({ item, busy, onApprove, onReject }) {
+  const [open, setOpen] = useState(false);
+  const [trail, setTrail] = useState(null);
+  const confidence = item.confidence || {};
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !trail) {
+      try { setTrail((await api.eventAudit(item.id)).items); }
+      catch { setTrail([]); }
+    }
+  };
+
+  return <article className="py-3">
+    <div className="flex flex-wrap items-center gap-3">
+      <span className={`rounded border px-2 py-0.5 text-[11px] font-bold ${ROUTE_STYLE[item.route] || ROUTE_STYLE.confirm}`}>
+        {ROUTE_LABELS[item.route] || 'در انتظار'}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13px] font-bold">{confidence.summary || item.kind}</p>
+        <p className="mt-0.5 text-[11px] text-muted">
+          {persianDate(item.occurredAt)} · <span className="numbers">{formatAmount(item.amount)}</span> تومان
+          {item.dueAt && <> · سررسید {persianDate(item.dueAt)}</>}
+        </p>
+      </div>
+      <span className={`numbers text-[12px] font-bold ${confidence.percent >= 80 ? 'text-accent' : 'text-expense'}`}>
+        {toPersianDigits(confidence.percent ?? 0)}٪
+      </span>
+      <div className="flex gap-1.5">
+        <button disabled={busy} onClick={() => onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40"><Check size={15} />تأیید و ثبت سند</button>
+        <button disabled={busy} onClick={() => onReject(item)} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense disabled:opacity-40">رد</button>
+        <button onClick={toggle} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">{open ? 'بستن' : 'چرا؟'}</button>
+      </div>
+    </div>
+
+    {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
+    {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-[11px] leading-5 text-muted">• {confidence.reasons[0]}</p>}
+
+    {open && <div className="mt-2">
+      {item.event?.evidence && <blockquote className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{item.event.evidence}»</blockquote>}
+      <ConfidencePanel assessment={{ percent: confidence.percent ?? 0, fields: confidence.components || {}, reasons: confidence.reasons || [] }} />
+      <div className="mt-3 rounded-[10px] border border-line bg-surface p-3">
+        <p className="text-xs font-extrabold">تاریخچهٔ رویداد</p>
+        {trail === null && <p className="mt-2 text-[11px] text-muted">در حال خواندن…</p>}
+        {trail?.length === 0 && <p className="mt-2 text-[11px] text-muted">رویدادی ثبت نشده است.</p>}
+        {trail?.map((entry, index) => <p key={`${entry.stage}-${index}`} className="mt-1.5 text-[11px] leading-5 text-muted">
+          <b className="text-ink">{entry.stage}</b> · {persianDate(entry.createdAt)}
+        </p>)}
+      </div>
+    </div>}
+  </article>;
+}
+
+/**
+ * صف بررسی حسابدار.
+ *
+ * این صفحه فقط رویدادهای «در انتظار» را نشان می‌دهد؛ یعنی چیزهایی که موتور
+ * اطمینان جلوی ثبت خودکارشان را گرفته است. سند این‌ها هنوز زده نشده و تأیید
+ * حسابدار همان لحظه سند را می‌زند.
+ */
+function ReviewQueuePage({ notify }) {
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState('');
+
+  const load = useCallback(async () => {
+    try { setItems((await api.reviewQueue()).items); }
+    catch (error) { notify(error.message); setItems([]); }
+  }, [notify]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const approve = async (item) => {
+    setBusy(item.id);
+    try { await api.approveEvent(item.id); notify('سند ثبت شد.'); await load(); }
+    catch (error) { notify(error.message); }
+    setBusy('');
+  };
+
+  const reject = async (item) => {
+    // رد کردن پاک کردن نیست: رویداد با دلیلش در تاریخچه می‌ماند.
+    const reason = window.prompt('دلیل رد این مورد چیست؟');
+    if (!reason) return;
+    setBusy(item.id);
+    try { await api.rejectEvent(item.id, reason); notify('مورد رد شد و دلیلش ثبت شد.'); await load(); }
+    catch (error) { notify(error.message); }
+    setBusy('');
+  };
+
+  const needsAccountant = (items || []).filter((item) => item.route === 'accountant-review').length;
+
+  return <section className="mt-5 rounded-[10px] border border-line bg-surface p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="font-bold">صف بررسی</p>
+      {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-[12px]">
+        <span className={`rounded border px-2 py-0.5 font-bold ${ROUTE_STYLE['accountant-review']}`}>نیازمند بررسی: <span className="numbers">{toPersianDigits(needsAccountant)}</span></span>
+        <span className={`rounded border px-2 py-0.5 font-bold ${ROUTE_STYLE.confirm}`}>در انتظار تأیید: <span className="numbers">{toPersianDigits(items.length - needsAccountant)}</span></span>
+      </div>}
+    </div>
+
+    <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
+      این‌ها مواردی‌اند که سیستم به‌جای حدس زدن، ثبتشان را متوقف کرده است. سند هیچ‌کدام هنوز زده نشده
+      و تأیید تو همان لحظه سند را می‌زند.
+    </p>
+
+    {items === null && <p className="mt-3 text-[13px] text-muted">در حال خواندن صف…</p>}
+    {items?.length === 0 && <p className="mt-3 text-[13px] text-income">چیزی در صف بررسی نمانده است.</p>}
+
+    {items?.length > 0 && <div className="mt-1 divide-y divide-line">
+      {items.map((item) => <ReviewQueueRow key={item.id} item={item} busy={busy === item.id} onApprove={approve} onReject={reject} />)}
+    </div>}
+  </section>;
 }
 
 function AccountingPage({ access, notify }) {

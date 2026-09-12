@@ -58,6 +58,13 @@ export function ensureFinancialEventSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS idx_financial_event_audit_event ON financial_event_audit(event_id,created_at);
   `);
+  // لنگر سند باید تا لحظهٔ تأیید زنده بماند.
+  //
+  // بدون این، رویدادی که روی یک تراکنش نشسته و منتظر حسابدار مانده، هنگام تأیید
+  // سندش را به نام خودِ رویداد می‌زند و `migrateAccountingLedger` که آن تراکنش را
+  // همچنان بی‌سند می‌بیند، سند دومی می‌سازد.
+  try { database.exec('ALTER TABLE financial_events ADD COLUMN journal_source TEXT'); }
+  catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
 }
 
 function writeAudit(database, eventId, stage, detail, actor) {
@@ -89,6 +96,13 @@ export function recordFinancialEvent(database, event, {
   // دوم و شناسایی دوبارهٔ درآمد است — دقیقاً همان چیزی که این معماری قرار بود
   // جلویش را بگیرد.
   journalSource = null,
+  // چه کسی سند را می‌زند.
+  //
+  // پیش‌فرض، نقشهٔ نقش‌محورِ `shared/accountingRules.js` است. ولی رویدادی که
+  // روی یک تراکنش نشسته، سندش شکل جاافتاده و آزموده‌شدهٔ خودش را دارد؛ عوض کردن
+  // آن شکل کار این تغییر نیست. تصمیمِ «ثبت بشود یا نه» اینجا گرفته می‌شود،
+  // «چطور ثبت بشود» همان‌جایی می‌ماند که بود.
+  postJournal = null,
 } = {}) {
   ensureFinancialEventSchema(database);
   const source = String(sourceEventId || '').trim();
@@ -109,10 +123,11 @@ export function recordFinancialEvent(database, event, {
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare(`INSERT INTO financial_events
-      (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by,journal_source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, source, event.kind, event.amount, event.occurredAt, event.dueAt || null,
-        JSON.stringify(event), JSON.stringify(decision), decision.route, 'pending', actor);
+        JSON.stringify(event), JSON.stringify(decision), decision.route, 'pending', actor,
+        journalSource ? JSON.stringify(journalSource) : null);
 
     writeAudit(database, id, 'captured', {
       rawInput: String(rawInput || '').slice(0, 1000),
@@ -125,8 +140,13 @@ export function recordFinancialEvent(database, event, {
 
     let journalEntryId = null;
     if (decision.route === ROUTES.AUTO) {
-      const posted = postEventJournal(database, id, event, plan, { actor, timeZone, journalSource });
-      journalEntryId = posted.id;
+      const posted = postJournal
+        ? postJournal(database, { event, plan, eventId: id, actor, timeZone })
+        : postEventJournal(database, id, event, plan, { actor, timeZone, journalSource });
+      journalEntryId = posted?.id || null;
+      // مسیر تزریقی وضعیت و ردپا را خودش نمی‌نویسد؛ ردپا نباید به انتخاب
+      // ثبت‌کننده وابسته باشد.
+      if (postJournal && journalEntryId) markEventPosted(database, id, posted, plan.lines, actor);
     }
     if (!withinTransaction) database.exec('COMMIT');
     return { id, sourceEventId: source, route: decision.route, status: journalEntryId ? 'posted' : 'pending', journalEntryId, plan, duplicate: false };
@@ -152,14 +172,19 @@ function postEventJournal(database, eventId, event, plan, { actor = null, timeZo
     lines,
   }, { createdBy: actor, timeZone });
 
-  database.prepare("UPDATE financial_events SET status='posted',journal_entry_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-    .run(posted.id, eventId);
-  writeAudit(database, eventId, 'posted', { journalEntryId: posted.id, documentNumber: posted.documentNumber, lines }, actor);
+  markEventPosted(database, eventId, posted, lines, actor);
   return posted;
 }
 
+/** وضعیت «ثبت شد» و ردپایش — مستقل از اینکه کدام لایه سند را زده است. */
+function markEventPosted(database, eventId, posted, lines, actor) {
+  database.prepare("UPDATE financial_events SET status='posted',journal_entry_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+    .run(posted.id, eventId);
+  writeAudit(database, eventId, 'posted', { journalEntryId: posted.id, documentNumber: posted.documentNumber, lines }, actor);
+}
+
 /** تأیید کاربر یا حسابدار روی رویدادی که منتظر مانده بود. */
-export function approveFinancialEvent(database, eventId, { actor = null, timeZone = 'Asia/Tehran' } = {}) {
+export function approveFinancialEvent(database, eventId, { actor = null, timeZone = 'Asia/Tehran', postJournal = null } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
@@ -168,9 +193,18 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
 
   const event = JSON.parse(row.payload);
   const plan = planJournal(event);
+  // همان لنگری که در لحظهٔ ثبت تصمیم گرفته شد، نه لنگر تازه.
+  const journalSource = row.journal_source ? JSON.parse(row.journal_source) : null;
   database.exec('BEGIN IMMEDIATE');
   try {
-    postEventJournal(database, row.id, event, plan, { actor, timeZone });
+    // سندِ رویدادی که روی تراکنش نشسته باید همان شکلی را داشته باشد که اگر
+    // خودکار ثبت می‌شد داشت. تأیید حسابدار زمانِ ثبت را عوض می‌کند، نه سند را.
+    if (postJournal) {
+      const posted = postJournal(database, { event, plan, eventId: row.id, actor, timeZone });
+      if (posted?.id) markEventPosted(database, row.id, posted, plan.lines, actor);
+    } else {
+      postEventJournal(database, row.id, event, plan, { actor, timeZone, journalSource });
+    }
     writeAudit(database, row.id, 'approved', { by: actor }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }

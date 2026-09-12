@@ -266,6 +266,12 @@ export const api = {
   journalBatch: (documents, approvalState = 'draft') => request('/api/accounting/journal/batch', { method: 'POST', body: JSON.stringify({ documents, approvalState }) }),
   journalWorklist: () => request('/api/accounting/journal/worklist'),
   setJournalApproval: (id, state, reason = '') => request(`/api/accounting/journal/${encodeURIComponent(id)}/approval`, { method: 'POST', body: JSON.stringify({ state, reason }) }),
+  // صف بررسی حسابدار: رویدادهایی که موتور اطمینان ثبتشان را متوقف کرده است.
+  reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
+  eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),
+  approveEvent: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({}) }),
+  reverseEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  rejectEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
   journalTemplates: () => request('/api/accounting/templates'),
   saveJournalTemplate: (payload) => request(payload.id ? `/api/accounting/templates/${encodeURIComponent(payload.id)}` : '/api/accounting/templates', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   deleteJournalTemplate: (id) => request(`/api/accounting/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),

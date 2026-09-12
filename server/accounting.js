@@ -480,13 +480,19 @@ export function nextLedgerCode(database, type) {
 
 export function migrateAccountingLedger(database, { createdBy = null } = {}) {
   ensureAccountingSchema(database);
+  // دفترهایی که پیش از این قابلیت ساخته شده‌اند این ستون را ندارند و پرس‌وجوی
+  // پایین بدون آن می‌شکند.
+  try { database.exec('ALTER TABLE transactions ADD COLUMN journal_deferred INTEGER NOT NULL DEFAULT 0'); }
+  catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
   const accounts = database.prepare('SELECT id FROM accounts').all();
   for (const account of accounts) {
     const exists = database.prepare("SELECT 1 FROM journal_entries WHERE source_type='opening_balance' AND source_id=?").get(account.id);
     if (!exists) syncOpeningBalanceJournal(database, account.id, { createdBy });
   }
+  // تراکنشی که سندش عمداً منتظر تأیید مانده، «بی‌سند» نیست؛ نباید اینجا سند بخورد.
   const transactions = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,account_id AS accountId,occurred_at AS occurredAt
-    FROM transactions WHERE status NOT IN ('deleted','allocated') ORDER BY occurred_at,id`).all();
+    FROM transactions WHERE status NOT IN ('deleted','allocated')
+      AND COALESCE(journal_deferred,0)=0 ORDER BY occurred_at,id`).all();
   for (const transaction of transactions) {
     const exists = database.prepare("SELECT 1 FROM journal_entries WHERE source_type='transaction' AND source_id=?").get(transaction.id);
     if (!exists) syncTransactionJournal(database, transaction, { createdBy });

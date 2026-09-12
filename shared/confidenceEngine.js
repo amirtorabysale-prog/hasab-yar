@@ -43,10 +43,36 @@ const COMPONENT_WEIGHTS = Object.freeze({
   [CONFIDENCE_COMPONENTS.AI]: 0.03,
 });
 
+/**
+ * نام فارسی هر مؤلفه.
+ *
+ * اینجا می‌ماند و نه در رابط کاربری، چون همان لحظه که دو نسخه از این نام‌ها
+ * وجود داشته باشد، حسابدار در صف بررسی یک عنوان می‌بیند و در تاریخچهٔ همان
+ * رویداد عنوانی دیگر.
+ */
+export const CONFIDENCE_COMPONENT_LABELS = Object.freeze({
+  [CONFIDENCE_COMPONENTS.AMOUNT]: 'قطعیت مبلغ',
+  [CONFIDENCE_COMPONENTS.DIRECTION]: 'جهت پول',
+  [CONFIDENCE_COMPONENTS.COMPLETENESS]: 'کامل‌بودن اطلاعات',
+  [CONFIDENCE_COMPONENTS.BANK]: 'تطبیق با گردش بانکی',
+  [CONFIDENCE_COMPONENTS.DATE]: 'قطعیت تاریخ',
+  [CONFIDENCE_COMPONENTS.COUNTERPARTY]: 'شناخت طرف حساب',
+  [CONFIDENCE_COMPONENTS.ACCOUNT]: 'قطعیت حساب',
+  [CONFIDENCE_COMPONENTS.DNA]: 'سابقهٔ مشابه',
+  [CONFIDENCE_COMPONENTS.AI]: 'برداشت مدل زبانی',
+});
+
 export const ROUTES = Object.freeze({
   AUTO: 'auto',
   CONFIRM: 'confirm',
   ACCOUNTANT_REVIEW: 'accountant-review',
+});
+
+/** چرا این رویداد اینجاست — به زبان حسابدار، نه نام فنی مسیر. */
+export const ROUTE_LABELS = Object.freeze({
+  [ROUTES.AUTO]: 'ثبت خودکار',
+  [ROUTES.CONFIRM]: 'در انتظار تأیید کاربر',
+  [ROUTES.ACCOUNTANT_REVIEW]: 'نیازمند بررسی حسابدار',
 });
 
 export const CONFIDENCE_THRESHOLDS = Object.freeze({ auto: 0.95, confirm: 0.80 });
