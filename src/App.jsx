@@ -33,6 +33,7 @@ function isoToDateInput(iso, timeZone = 'Asia/Tehran') {
 }
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
 import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload, invoiceLinesTotal } from '../shared/voiceIntent.js';
+import { detectSettleIntent, matchSettleTargets } from '../shared/settleSpeech.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
@@ -82,6 +83,7 @@ export default function App() {
   const [voicePath, setVoicePath] = useState('ready');
   const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
   const [intentDraft, setIntentDraft] = useState(null);
+  const [settleDraft, setSettleDraft] = useState(null);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
   const voiceSystemStatusRef = useRef(null);
@@ -642,10 +644,29 @@ export default function App() {
    */
   const routeIntent = (transcript) => {
     if (!canWrite) return false;
+    // تسویه پیش از ساخت سنجیده می‌شود: «طلب رضایی وصول شد» هم واژهٔ «طلب» دارد
+    // هم فعل تسویه، و اگر اول مسیر ساخت برود یک طلب تازه می‌سازد به‌جای بستن
+    // طلب موجود.
+    const settle = detectSettleIntent(transcript);
+    if (settle) { setSettleDraft(settle); return true; }
     const found = detectVoiceIntent(transcript);
     if (!found) return false;
     setIntentDraft(found);
     return true;
+  };
+
+  /** تسویهٔ سندی که کاربر روی کارت انتخاب کرده؛ هیچ سندی خودکار بسته نمی‌شود. */
+  const applySettlement = async (target, { occurredAt = null } = {}) => {
+    try {
+      if (target.kind === 'invoice') {
+        await api.recordInvoicePayment(target.id, { occurredAt: occurredAt || undefined });
+      } else {
+        await api.settleObligation(target.id, occurredAt ? { occurredAt } : {});
+      }
+      setSettleDraft(null);
+      await load();
+      notify(`${target.label} تسویه شد.`);
+    } catch (error) { notify(error.message); }
   };
 
   const saveIntentDraft = async (draft) => {
@@ -908,6 +929,7 @@ export default function App() {
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
       {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
       {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} accounts={data.accounts || []} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
+      {settleDraft && <SettleSheet draft={settleDraft} obligations={data.obligations || []} close={() => setSettleDraft(null)} confirm={applySettlement} />}
       {selectedDecision && <DecisionDetailsSheet item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
       {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} ثبت ذخیره شد.` : 'تراکنش ثبت شد.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
@@ -3674,6 +3696,88 @@ function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) {
           {busy ? 'در حال ثبت…' : isInvoice ? 'پیش‌نویس بساز' : 'ثبت کن'}
         </button>
         <button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
+      </div>
+    </section>
+  </div>;
+}
+
+/**
+ * انتخاب و تأیید تسویهٔ یک سند موجود.
+ *
+ * خطر این مسیر از ساختن سند بیشتر است: تسویهٔ سند اشتباه یعنی پول در جای
+ * اشتباه جابه‌جا می‌شود و یک سند باز، بسته اعلام می‌شود. پس هیچ سندی خودکار
+ * تسویه نمی‌شود — حتی وقتی فقط یک گزینه بخورد، کاربر باید همان یکی را تأیید کند.
+ */
+function SettleSheet({ draft, obligations = [], close, confirm }) {
+  const [invoices, setInvoices] = useState([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(true);
+  const [selectedId, setSelectedId] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (draft.bounced) { setLoadingInvoices(false); return undefined; }
+    let cancelled = false;
+    api.invoices()
+      .then((response) => { if (!cancelled) setInvoices(response.items || []); })
+      .catch(() => { if (!cancelled) setInvoices([]); })
+      .finally(() => { if (!cancelled) setLoadingInvoices(false); });
+    return () => { cancelled = true; };
+  }, [draft.bounced]);
+
+  const targets = draft.bounced ? [] : matchSettleTargets(draft, { invoices, obligations });
+  const selected = targets.find((item) => item.id === selectedId) || null;
+  const submit = async () => {
+    if (!selected) return;
+    setBusy(true);
+    await confirm(selected, { occurredAt: draft.occurredAt });
+    setBusy(false);
+  };
+
+  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
+    <section role="dialog" aria-modal="true" aria-label="تأیید تسویه" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
+      <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
+      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">تسویه</span>
+      <h2 className="mt-3 text-xl font-extrabold">{draft.bounced ? 'چک برگشتی تسویه نمی‌شود' : 'کدام سند تسویه شود؟'}</h2>
+      <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
+
+      {draft.bounced ? <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+        برگشت چک، تسویه نیست: سند همچنان باز می‌ماند و معمولاً پیگیری حقوقی یا ثبت هزینهٔ جداگانه می‌خواهد.
+        حساب‌یار عمداً کاری انجام نمی‌دهد تا یک سند باز، بسته اعلام نشود.
+      </p> : <>
+        {loadingInvoices && <p className="mt-4 text-sm text-muted">در حال خواندن سندهای باز…</p>}
+
+        {!loadingInvoices && !targets.length && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+          سند بازی که با این توضیح بخورد پیدا نشد. شاید نام یا مبلغ فرق دارد، یا سند هنوز صادر نشده است
+          — پیش‌نویس تسویه نمی‌شود.
+        </p>}
+
+        {targets.length > 1 && <p className="mt-4 text-[12px] leading-6 text-expense">
+          {toPersianDigits(targets.length)} سند با این توضیح می‌خورد. خودت انتخاب کن؛ حساب‌یار حدس نمی‌زند
+          چون تسویهٔ سند اشتباه، پول را در جای اشتباه جابه‌جا می‌کند.
+        </p>}
+
+        <div className="mt-3 space-y-2">
+          {targets.map((target) => (
+            <button key={target.id} onClick={() => setSelectedId(target.id)}
+              className={`tap flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-3 text-right ${selectedId === target.id ? 'border-accent bg-accent/10' : 'border-line bg-surface'}`}>
+              <span className="min-w-0">
+                <b className="block truncate text-sm">{target.label}</b>
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  {target.kind === 'invoice' ? 'فاکتور' : target.direction === 'receivable' ? 'طلب ما' : 'بدهی ما'}
+                  {target.name ? ` · ${target.name}` : ''}
+                </span>
+              </span>
+              <b className="numbers shrink-0 text-sm">{formatAmount(target.amount)}</b>
+            </button>
+          ))}
+        </div>
+
+        {draft.occurredAt && <p className="mt-3 text-xs text-muted">تاریخ تسویه: <b className="text-ink">{persianDate(draft.occurredAt)}</b></p>}
+      </>}
+
+      <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
+        {!draft.bounced && <button disabled={busy || !selected} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
+        <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''}`}>{draft.bounced ? 'باشه' : 'لغو'}</button>
       </div>
     </section>
   </div>;

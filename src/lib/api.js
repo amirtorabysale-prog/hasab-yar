@@ -223,7 +223,7 @@ export const api = {
   deleteContact: (id) => request(`/api/contacts/${id}`, { method: 'DELETE' }),
   obligations: (status = 'open') => request(`/api/obligations?status=${encodeURIComponent(status)}`),
   saveObligation: (payload) => request(payload.id ? `/api/obligations/${payload.id}` : '/api/obligations', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
-  settleObligation: (id) => request(`/api/obligations/${id}/settle`, { method: 'POST', body: '{}' }),
+  settleObligation: (id, payload = {}) => request(`/api/obligations/${id}/settle`, { method: 'POST', body: JSON.stringify(payload) }),
   deleteObligation: (id) => request(`/api/obligations/${id}`, { method: 'DELETE' }),
   recurring: () => request('/api/recurring'),
   saveRecurring: (payload) => request('/api/recurring', { method: 'POST', body: JSON.stringify(payload) }),
