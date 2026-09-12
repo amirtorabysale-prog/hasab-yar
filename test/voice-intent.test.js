@@ -256,3 +256,41 @@ test('نام شرکت چندبخشی کامل برداشته می‌شود', () 
   assert.equal(extractContactName('به شرکت آراد گستره آسیا بدهکار شدیم'), 'شرکت آراد گستره آسیا');
   assert.equal(extractContactName('آقای محمد رضا موسوی نژاد بدهکار شد'), 'محمد رضا موسوی نژاد');
 });
+
+// جملهٔ واقعی کاربر. کل نیت null می‌شد و هیچ فیلدی پر نمی‌شد، چون «طلبکار
+// شدیم» در هیچ الگویی نبود.
+test('جملهٔ کامل طلبکارشدن از یک شرکت', () => {
+  const found = detect('مبلغ 23 میلیون تومان در تاریخ 15/3/1405 از شرکت آراد گستر آسیا طلبکار شدیم');
+  assert.equal(found.amount, 23_000_000);
+  assert.equal(found.direction, 'receivable');
+  assert.equal(found.contactName, 'شرکت آراد گستر آسیا');
+  assert.equal(persianDay(found.occurredAt), '1405/03/15');
+  assert.equal(found.dueAt, null);
+});
+
+/**
+ * صیغه جهت را وارونه می‌کند و اشتباهش یعنی طلب به‌جای بدهی وارد دفتر می‌شود.
+ *
+ * «طلبکار شدیم» یعنی خودِ ما طلبکاریم (طرف مقابل بدهکار است → طلب ما)، ولی
+ * «طلبکار شد» یعنی طرف مقابل طلبکار شده (→ بدهی ما). یک حرف فرق دارند.
+ */
+test('صیغهٔ طلبکار و بدهکار جهت را وارونه می‌کند', () => {
+  const cases = [
+    ['از حسن طلبکار شدیم', 'receivable'],
+    ['از شرکت آراد گستر آسیا طلبکار شدیم', 'receivable'],
+    ['از حسن طلبکارم', 'receivable'],
+    ['حسن طلبکار است', 'payable'],
+    ['حسن طلبکار شد', 'payable'],
+    ['حسن طلبکاره', 'payable'],
+    ['حسن طلبکار هستند', 'payable'],
+    ['حسن بدهکار شد', 'receivable'],
+    ['حسن بدهکاره', 'receivable'],
+    ['به حسن بدهکارم', 'payable'],
+    ['بدهکار شدیم به حسن', 'payable'],
+  ];
+  for (const [sentence, direction] of cases) {
+    const found = detect(`${sentence} ده میلیون`);
+    assert.ok(found, `${sentence} تشخیص داده نشد`);
+    assert.equal(found.direction, direction, sentence);
+  }
+});
