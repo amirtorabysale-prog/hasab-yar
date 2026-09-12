@@ -2,6 +2,7 @@ import { normalizePersian } from './normalize.js';
 import { extractDateMention } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
 import { detectTaxMention, parseInvoiceLines, wantsImmediateIssue } from './invoiceSpeech.js';
+import { EVENT_KINDS, normalizeFinancialEvent } from './financialEvent.js';
 
 /**
  * نیت گفته را تشخیص می‌دهد.
@@ -433,4 +434,82 @@ export function capitalEntryPayload(draft = {}) {
     occurredAt: draft.occurredAt || null,
     note: String(draft.transcript || '').slice(0, 300),
   };
+}
+
+/**
+ * از نیتِ گفتار به رویداد مالی.
+ *
+ * این تابع عمداً همین‌جاست و نه در یک ماژول جدا: نیت و رویداد دو نمایش از یک
+ * چیزند و جداکردنشان یک لایهٔ ترجمهٔ اضافه می‌ساخت که باید با هر تغییر نیت
+ * هم‌زمان نگه داشته می‌شد.
+ *
+ * خروجی `null` یعنی این نیت هنوز رویداد کاملی نیست — مبلغ ندارد، جهتش مبهم
+ * است، یا هنوز پیش‌نویس است. تصمیم دربارهٔ چنین نیتی کار رابط کاربر است، نه
+ * موتور حسابداری.
+ */
+export function intentToFinancialEvent(intent, { now = new Date(), accountId = 'cash' } = {}) {
+  if (!intent || !intent.amount) return null;
+  const shared = {
+    amount: intent.amount,
+    occurredAt: intent.occurredAt || now.toISOString(),
+    counterparty: intent.contactName || null,
+    source: 'voice',
+    evidence: intent.transcript || null,
+    accountId,
+  };
+
+  if (intent.intent === 'cheque') {
+    if (!intent.direction) return null;
+    return normalizeFinancialEvent({
+      ...shared,
+      kind: intent.direction === 'receivable' ? EVENT_KINDS.CHEQUE_RECEIVED : EVENT_KINDS.CHEQUE_ISSUED,
+      dueAt: intent.dueAt || null,
+      description: intent.title || null,
+    });
+  }
+  if (intent.intent === 'obligation') {
+    if (!intent.direction) return null;
+    return normalizeFinancialEvent({
+      ...shared,
+      kind: intent.direction === 'receivable' ? EVENT_KINDS.RECEIVABLE_OPENED : EVENT_KINDS.PAYABLE_OPENED,
+      dueAt: intent.dueAt || null,
+      description: intent.title || null,
+    });
+  }
+  if (intent.intent === 'capital') {
+    return normalizeFinancialEvent({ ...shared, kind: EVENT_KINDS.CAPITAL_CONTRIBUTION, description: intent.title || null });
+  }
+  if (intent.intent === 'fixed-asset') {
+    if (!String(intent.title || '').trim()) return null;
+    return normalizeFinancialEvent({ ...shared, kind: EVENT_KINDS.FIXED_ASSET_PURCHASE, description: intent.title });
+  }
+  if (intent.intent === 'invoice') {
+    return normalizeFinancialEvent({
+      ...shared,
+      kind: intent.documentType === 'purchase' ? EVENT_KINDS.PURCHASE_INVOICE : EVENT_KINDS.SALES_INVOICE,
+      category: intent.documentType === 'purchase' ? 'مواد و کالا' : 'فروش',
+    });
+  }
+  return null;
+}
+
+/**
+ * اطمینان میدان‌به‌میدان یک نیت، برای موتور اطمینان.
+ *
+ * عددها از همان چیزی می‌آیند که تشخیص واقعاً می‌داند: مبلغ صریح گفته شده یا
+ * حدس زده شده، جهت از فعل آمده یا مبهم مانده، تاریخ صریح بوده یا نسبی.
+ */
+export function intentConfidenceFields(intent) {
+  if (!intent) return { fields: {}, blockers: ['گفته به هیچ رویداد مالی نرسید.'] };
+  const blockers = [];
+  if (!intent.amount) blockers.push('مبلغ در جمله گفته نشد.');
+  if (['obligation', 'cheque'].includes(intent.intent) && !intent.direction) blockers.push('جهت پول از جمله روشن نشد.');
+  if (intent.intent === 'fixed-asset' && !String(intent.title || '').trim()) blockers.push('نام دارایی ثابت گفته نشد.');
+
+  const fields = { amount: intent.amount ? 0.95 : 0.2, kind: intent.ambiguous ? 0.55 : 0.94 };
+  if (['obligation', 'cheque', 'invoice'].includes(intent.intent)) {
+    fields.counterparty = intent.contactName ? 0.9 : 0.5;
+  }
+  if (intent.occurredAt || intent.dueAt) fields.date = 0.93;
+  return { fields, blockers };
 }
