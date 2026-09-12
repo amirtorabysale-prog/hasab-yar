@@ -127,6 +127,9 @@ export function routeEvent(event, { components = {}, blockers = [], policy: poli
   }
 
   const guards = [];
+  if (policy.manualOnly) {
+    guards.push('این دفتر روی «هیچ ثبت خودکاری» تنظیم شده است.');
+  }
   if (policy.neverAutomatic.includes(event?.kind)) {
     guards.push('این نوع سند همیشه تأیید می‌خواهد، چون برگرداندنش ساده نیست.');
   }

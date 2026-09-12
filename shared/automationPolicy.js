@@ -32,6 +32,14 @@ export const DEFAULT_AUTOMATION_POLICY = Object.freeze({
   allowAiOnlyAutoPost: false,
   /** حداقل اطمینان مبلغ برای ثبت خودکار، فارغ از میانگین کل. */
   minimumAmountCertainty: 0.9,
+  /**
+   * «هیچ‌چیز بدون تأیید انسان وارد دفتر نشود.»
+   *
+   * چرا کلید جداگانه و نه بردن آستانه روی ۱: مقایسه `>=` است، پس رویدادی با
+   * اطمینان کامل از آستانهٔ ۱ هم رد می‌شود. عددی که بشود با آن «هرگز» را بیان
+   * کرد وجود ندارد، و دفتری که این را می‌خواهد نباید به یک ترفند عددی تکیه کند.
+   */
+  manualOnly: false,
 });
 
 const clamp01 = (value, fallback) => {
@@ -56,5 +64,6 @@ export function resolveAutomationPolicy(overrides = {}) {
       : [...DEFAULT_AUTOMATION_POLICY.neverAutomatic]),
     allowAiOnlyAutoPost: overrides.allowAiOnlyAutoPost === true,
     minimumAmountCertainty: clamp01(overrides.minimumAmountCertainty, DEFAULT_AUTOMATION_POLICY.minimumAmountCertainty),
+    manualOnly: overrides.manualOnly === true,
   });
 }

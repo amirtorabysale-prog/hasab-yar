@@ -266,6 +266,8 @@ export const api = {
   journalBatch: (documents, approvalState = 'draft') => request('/api/accounting/journal/batch', { method: 'POST', body: JSON.stringify({ documents, approvalState }) }),
   journalWorklist: () => request('/api/accounting/journal/worklist'),
   setJournalApproval: (id, state, reason = '') => request(`/api/accounting/journal/${encodeURIComponent(id)}/approval`, { method: 'POST', body: JSON.stringify({ state, reason }) }),
+  automationPolicy: () => request('/api/automation-policy'),
+  saveAutomationPolicy: (payload) => request('/api/automation-policy', { method: 'PUT', body: JSON.stringify(payload) }),
   // پرسش‌های خودِ کاربر — در محیط ساده هم در دسترس است.
   confirmations: () => request('/api/confirmations'),
   confirmPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({}) }),

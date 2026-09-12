@@ -11,7 +11,7 @@ import {
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit,
-  pendingConfirmations, confirmPending, handOverPending, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
@@ -27,6 +27,7 @@ import { previewCorrection } from '../shared/correction.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
 import { EXPERIENCES, experienceForRole, pathNeedsProfessional, screensFor } from '../shared/experience.js';
+import { DEFAULT_AUTOMATION_POLICY } from '../shared/automationPolicy.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
   openEncryptedBackup, restorePortableBackup, writeServerBackup,
@@ -439,6 +440,12 @@ app.post('/api/confirmations/:id/confirm', (request, response, next) => {
 });
 app.post('/api/confirmations/:id/handover', (request, response, next) => {
   try { return response.json({ item: handOverPending(request.params.id) }); } catch (error) { return next(error); }
+});
+app.get('/api/automation-policy', (_request, response, next) => {
+  try { return response.json({ policy: automationPolicy(), defaults: DEFAULT_AUTOMATION_POLICY }); } catch (error) { return next(error); }
+});
+app.put('/api/automation-policy', (request, response, next) => {
+  try { return response.json({ policy: saveAutomationPolicy(request.body || {}) }); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/review-queue', (request, response, next) => {
   try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }

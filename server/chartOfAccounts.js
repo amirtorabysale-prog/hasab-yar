@@ -696,7 +696,10 @@ export function analyticForContact(database, contactId, name) {
 
 export function listAnalyticAccounts(database, { includeInactive = false } = {}) {
   ensureChartSchema(database);
-  return database.prepare(`SELECT id,code,name,kind,source_kind AS sourceKind,source_key AS sourceKey,active
+  // کد مقصد هم برمی‌گردد، وگرنه حسابدار نمی‌بیند کدام طرف حساب هنوز در نرم‌افزار
+  // دفتر کدی ندارد — و همان‌ها در فایل انتقال بی‌نام بالا می‌آیند.
+  return database.prepare(`SELECT id,code,name,kind,source_kind AS sourceKind,source_key AS sourceKey,active,
+    external_code AS externalCode
     FROM analytic_accounts ${includeInactive ? '' : 'WHERE active=1'} ORDER BY code`).all()
     .map((row) => ({ ...row, active: Boolean(row.active), kindLabel: ANALYTIC_KINDS[row.kind] || ANALYTIC_KINDS.custom }));
 }

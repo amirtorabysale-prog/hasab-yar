@@ -149,6 +149,9 @@ const PROFESSIONAL_PATHS = [
   /^\/accounting(\/|$)/,
   /^\/chart(\/|$)/,
   /^\/financial-events(\/|$)/,
+  // این اعداد تعیین می‌کنند چه چیزی بدون نگاه انسان وارد دفتر می‌شود؛ تنظیمشان
+  // کار حسابدار است، نه کسی که فقط ثبت روزانه می‌زند.
+  /^\/automation-policy(\/|$)/,
   /^\/reconciliation(\/|$)/,
   /^\/accountant-transfer(\/|$)/,
   /^\/collaboration(\/|$)/,

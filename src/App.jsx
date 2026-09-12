@@ -967,7 +967,7 @@ export default function App() {
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={ledgerTab} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
-          {screen === 'review' && <ReviewQueuePage notify={notify} />}
+          {screen === 'review' && <ReviewQueuePage notify={notify} access={access} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} />}
@@ -1490,7 +1490,86 @@ function ReviewQueueRow({ item, busy, onApprove, onReject }) {
  * اطمینان جلوی ثبت خودکارشان را گرفته است. سند این‌ها هنوز زده نشده و تأیید
  * حسابدار همان لحظه سند را می‌زند.
  */
-function ReviewQueuePage({ notify }) {
+/**
+ * تنظیم قوانین ثبت خودکار.
+ *
+ * کنار صف بررسی می‌نشیند چون همین اعداد تعیین می‌کنند چه چیزی وارد این صف
+ * می‌شود؛ جای دیگری، حسابدار باید بین دو صفحه رفت‌وبرگشت کند تا اثر تغییرش را
+ * ببیند.
+ */
+function AutomationPolicyPanel({ canManage, notify, onChanged }) {
+  const [policy, setPolicy] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => { api.automationPolicy().then((result) => setPolicy(result.policy)).catch(() => setPolicy(null)); }, []);
+
+  if (!policy) return null;
+  const percent = (value) => toPersianDigits(Math.round(value * 100));
+
+  const save = async (changes) => {
+    setBusy(true);
+    try {
+      const result = await api.saveAutomationPolicy({ ...policy, ...changes });
+      setPolicy(result.policy);
+      notify('قانون ثبت خودکار به‌روز شد.');
+      await onChanged?.();
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
+  const everythingReviewed = policy.manualOnly === true;
+
+  return <section className="mt-4 rounded-[10px] border border-line bg-paper p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <p className="text-xs font-extrabold">قانون ثبت خودکار</p>
+        <p className="mt-0.5 text-[11px] text-muted">
+          {everythingReviewed
+            ? 'الان هیچ ثبتی بدون تأیید وارد دفتر نمی‌شود.'
+            : <>بالای <span className="numbers">{percent(policy.autoThreshold)}</span>٪ خودکار · از <span className="numbers">{percent(policy.confirmThreshold)}</span>٪ سؤال از کاربر · پایین‌تر، همین صف</>}
+        </p>
+      </div>
+      {canManage && <button onClick={() => setOpen(!open)} className="tap rounded-lg border border-line bg-surface px-3 text-[12px] font-bold">{open ? 'بستن' : 'تغییر'}</button>}
+    </div>
+    {!canManage && <p className="mt-2 text-[11px] text-muted">تغییر این قانون با نقش مدیر است.</p>}
+
+    {open && canManage && <div className="mt-3 space-y-3 border-t border-line pt-3">
+      <button disabled={busy} onClick={() => save({ manualOnly: !everythingReviewed })}
+        className={`tap w-full rounded-lg border px-3 text-[12px] font-bold ${everythingReviewed ? 'border-line bg-surface' : 'border-accent bg-accent/5 text-accent'}`}>
+        {everythingReviewed ? 'برگرد به ثبت خودکار بالای ۹۵٪' : 'هیچ‌چیز بدون تأیید من ثبت نشود'}
+      </button>
+
+      {[['autoThreshold', 'آستانهٔ ثبت خودکار'], ['confirmThreshold', 'آستانهٔ سؤال از کاربر'], ['minimumAmountCertainty', 'حداقل اطمینان مبلغ']].map(([key, label]) =>
+        <label key={key} className="block">
+          <span className="text-[11px] font-bold text-muted">{label}</span>
+          <span className="mt-1 flex items-center gap-2">
+            <input
+              type="range" min="0" max="100" step="1" disabled={busy}
+              value={Math.round(policy[key] * 100)}
+              onChange={(event) => setPolicy({ ...policy, [key]: Number(event.target.value) / 100 })}
+              onMouseUp={(event) => save({ [key]: Number(event.target.value) / 100 })}
+              onTouchEnd={(event) => save({ [key]: Number(event.target.value) / 100 })}
+              className="flex-1"
+            />
+            <b className="numbers w-10 text-[12px]">{percent(policy[key])}٪</b>
+          </span>
+        </label>)}
+
+      <label className="flex items-center gap-2 text-[12px]">
+        <input type="checkbox" disabled={busy} checked={policy.allowAiOnlyAutoPost}
+          onChange={(event) => save({ allowAiOnlyAutoPost: event.target.checked })} />
+        برداشت مدل زبانی به‌تنهایی اجازهٔ ثبت خودکار داشته باشد
+      </label>
+      <p className="text-[11px] leading-5 text-muted">
+        وقتی خاموش است، برداشتی که هیچ شاهد دیگری — پارسر محلی، تطبیق بانکی یا سابقهٔ پرونده — پشتش نباشد
+        هرگز بی‌پرسش ثبت نمی‌شود.
+      </p>
+    </div>}
+  </section>;
+}
+
+function ReviewQueuePage({ notify, access }) {
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
 
@@ -1533,6 +1612,8 @@ function ReviewQueuePage({ notify }) {
       این‌ها مواردی‌اند که سیستم به‌جای حدس زدن، ثبتشان را متوقف کرده است. سند هیچ‌کدام هنوز زده نشده
       و تأیید تو همان لحظه سند را می‌زند.
     </p>
+
+    <AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} />
 
     {items === null && <p className="mt-3 text-[13px] text-muted">در حال خواندن صف…</p>}
     {items?.length === 0 && <p className="mt-3 text-[13px] text-income">چیزی در صف بررسی نمانده است.</p>}
@@ -2285,6 +2366,40 @@ function ChartPage({ access, notify }) {
   </section>;
 }
 
+/**
+ * کد تفصیلی در نرم‌افزار مقصد.
+ *
+ * چرا مهم است: فایل انتقال با همین کد، تفصیلی را به شخصِ تعریف‌شده در نرم‌افزار
+ * دفتر وصل می‌کند. تفصیلی بدون این کد، در فایل با `TafsiliCode` صفر بالا می‌رود
+ * و طرف حساب آنجا اصلاً دیده نمی‌شود — سند هست، ولی معلوم نیست طلب از کیست.
+ */
+function AnalyticTargetCode({ item, canManage, notify, onSaved }) {
+  const [value, setValue] = useState(item.externalCode || '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setValue(item.externalCode || ''); }, [item.externalCode]);
+
+  const commit = async () => {
+    const next = digitsOnly(value);
+    if (next === (item.externalCode || '')) return;
+    setSaving(true);
+    try { await api.saveAnalytic({ ...item, externalCode: next }); await onSaved?.(); notify('کد مقصد ذخیره شد.'); }
+    catch (error) { notify(error.message); setValue(item.externalCode || ''); }
+    setSaving(false);
+  };
+
+  if (!canManage) {
+    return <span className={`numbers text-[11px] ${item.externalCode ? 'text-muted' : 'text-expense'}`}>
+      {item.externalCode ? toPersianDigits(item.externalCode) : 'بدون کد مقصد'}
+    </span>;
+  }
+  return <input
+    dir="ltr" inputMode="numeric" disabled={saving} value={value} placeholder="کد مقصد"
+    onChange={(event) => setValue(event.target.value)} onBlur={commit}
+    onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+    className={`tap numbers w-24 rounded-lg border px-2 text-left text-[12px] ${item.externalCode ? 'border-line bg-paper' : 'border-expense/50 bg-expense/5'}`}
+  />;
+}
+
 function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setDimension }) {
   const [analyticName, setAnalyticName] = useState('');
   const [analyticKind, setAnalyticKind] = useState('project');
@@ -2317,8 +2432,9 @@ function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setD
           <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-white">افزودن</button>
         </form>}
         <ul className="mt-3 divide-y divide-line text-[13px]">
-          {(overview?.analytics || []).map((item) => <li key={item.id} className="flex items-center justify-between py-2">
-            <span><b className="numbers text-muted">{toPersianDigits(item.code)}</b> · {item.name}</span>
+          {(overview?.analytics || []).map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+            <span className="min-w-0 flex-1 truncate"><b className="numbers text-muted">{toPersianDigits(item.code)}</b> · {item.name}</span>
+            <AnalyticTargetCode item={item} canManage={canManage} notify={notify} onSaved={refresh} />
             <span className="text-[11px] text-muted">{item.kindLabel}</span>
           </li>)}
           {!overview?.analytics?.length && <li className="py-3 text-muted">هنوز تفصیلی‌ای تعریف نشده؛ طرف‌حساب‌های فاکتور خودکار اضافه می‌شوند.</li>}

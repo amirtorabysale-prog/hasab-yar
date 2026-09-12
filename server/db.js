@@ -14,6 +14,7 @@ import {
 } from './financialEventStore.js';
 import { EVENT_KINDS, describeEvent, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { routeEvent } from '../shared/confidenceEngine.js';
+import { resolveAutomationPolicy } from '../shared/automationPolicy.js';
 import { transactionEventDecision } from './transactionEvent.js';
 import { roleAllows } from './access.js';
 import {
@@ -967,6 +968,44 @@ export function getSettings() {
   return Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map((row) => [row.key, row.value]));
 }
 
+/**
+ * سیاست خودکارسازی این دفتر.
+ *
+ * سیاست ذخیره‌نشده یا خرابْ دروازه را باز نمی‌کند؛ `resolveAutomationPolicy`
+ * هر مقدار نامعتبر را به پیش‌فرض امن برمی‌گرداند.
+ */
+export function automationPolicy() {
+  let stored = {};
+  try { stored = JSON.parse(db.prepare("SELECT value FROM settings WHERE key='automationPolicy'").get()?.value || '{}'); }
+  catch { stored = {}; }
+  return resolveAutomationPolicy(stored);
+}
+
+/**
+ * تغییر سیاست.
+ *
+ * هر تغییر در Audit Log می‌نشیند: این اعداد تعیین می‌کنند چه چیزی بدون نگاه
+ * انسان وارد دفتر می‌شود، پس «چه کسی و کی عوضش کرد» بخشی از زنجیرهٔ حسابرسی است.
+ */
+export function saveAutomationPolicy(values = {}) {
+  const previous = automationPolicy();
+  const next = resolveAutomationPolicy({
+    autoThreshold: values.autoThreshold,
+    confirmThreshold: values.confirmThreshold,
+    neverAutomatic: values.neverAutomatic,
+    allowAiOnlyAutoPost: values.allowAiOnlyAutoPost,
+    minimumAmountCertainty: values.minimumAmountCertainty,
+    manualOnly: values.manualOnly,
+  });
+  db.prepare("INSERT INTO settings (key,value) VALUES ('automationPolicy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(JSON.stringify(next));
+  audit('update', 'automation-policy', 'automationPolicy', {
+    from: { autoThreshold: previous.autoThreshold, confirmThreshold: previous.confirmThreshold },
+    to: { autoThreshold: next.autoThreshold, confirmThreshold: next.confirmThreshold },
+  });
+  return next;
+}
+
 export function saveSettings(values) {
   const allowed = ['businessName', 'currency', 'timezone', 'profileType', 'onboardingDone', 'openingBalance', 'ownerName', 'lowBalanceThreshold', 'alertSensitivity'];
   const statement = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
@@ -1136,7 +1175,7 @@ function routeTransactionThroughEvents(row, item, transcript) {
   try {
     const draft = transactionEventDecision({
       ...item, amount: row.amount, occurredAt: row.occurredAt, accountId: row.accountId, rawText: row.rawText,
-    }, { transcript });
+    }, { transcript, policy: automationPolicy() });
     if (!draft) return false;
     const result = recordFinancialEvent(db, draft.event, {
       sourceEventId: `transaction:${row.id}`,
@@ -4111,6 +4150,7 @@ function postObligationOpened(obligationId, { amount, direction, title, contactI
         amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1,
         ...(contact?.name ? { counterpartyCertainty: 1 } : {}),
       },
+      policy: automationPolicy(),
     });
     return recordFinancialEvent(db, event, {
       sourceEventId: `obligation:${obligationId}`,
@@ -4142,6 +4182,7 @@ function postObligationSettled(obligationId, item, { occurredAt, accountId, tran
   });
   const decision = routeEvent(event, {
     components: { amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1 },
+    policy: automationPolicy(),
   });
   // تسویه داخل تراکنش خودش اجرا می‌شود؛ تراکنش تودرتو را SQLite نمی‌پذیرد.
   return recordFinancialEvent(db, event, {
