@@ -223,15 +223,23 @@ export function reverseFinancialEvent(database, eventId, { actor = null, reason 
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
   if (row.status !== 'posted') throw storeError('فقط رویداد ثبت‌شده معکوس می‌شود.', 'EVENT_NOT_POSTED', 409);
 
+  // سند این رویداد ممکن است به تراکنش لنگر خورده باشد، نه به خودِ رویداد.
+  // جست‌وجوی لنگر اشتباه چیزی پیدا نمی‌کند و `reverseJournalEntry` بی‌صدا
+  // `null` برمی‌گرداند — رویداد «معکوس‌شده» علامت می‌خورد ولی سندش سر جایش
+  // می‌ماند. بدترین نوع خطا: دفتر غلط است و هیچ نشانه‌ای ندارد.
+  const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   database.exec('BEGIN IMMEDIATE');
   try {
     const reversal = reverseJournalEntry(database, {
-      sourceType: 'financial-event', sourceId: row.id,
+      sourceType: anchor?.type || 'financial-event', sourceId: anchor?.id || row.id,
       memo: reason ? `برگشت: ${reason}`.slice(0, 200) : 'برگشت رویداد مالی',
       createdBy: actor, timeZone,
     });
+    // رویدادی که «ثبت‌شده» است حتماً سندی دارد. اگر پیدا نشد، یعنی لنگر غلط
+    // است؛ علامت‌زدن «معکوس شد» در این حالت فقط ردپا را دروغ می‌کند.
+    if (!reversal) throw storeError('سند این رویداد پیدا نشد؛ برگشت انجام نشد.', 'EVENT_JOURNAL_MISSING', 409);
     database.prepare("UPDATE financial_events SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
-    writeAudit(database, row.id, 'reversed', { reason: String(reason || '').slice(0, 300), reversalEntryId: reversal?.id || null }, actor);
+    writeAudit(database, row.id, 'reversed', { reason: String(reason || '').slice(0, 300), reversalEntryId: reversal.id }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));

@@ -4107,6 +4107,27 @@ export function confirmPending(eventId) {
   return approveEvent(eventId);
 }
 
+/**
+ * ردیف تراکنشی که رویدادش رد یا معکوس شده.
+ *
+ * چرا لازم است: ماندهٔ حساب و گزارش‌های کاربر از جدول `transactions` ساخته
+ * می‌شوند، نه از دفتر کل. اگر فقط رویداد رد شود، ردیف تراکنش سر جایش می‌ماند و
+ * تا ابد در ماندهٔ صندوق و گزارش ماه دیده می‌شود — درحالی‌که هیچ سندی ندارد و
+ * هیچ‌وقت هم نخواهد داشت. دفتر و برنامه دائم اختلاف نشان می‌دهند و هیچ‌کس
+ * نمی‌فهمد چرا.
+ *
+ * حذف فیزیکی نمی‌شود: همان `status='deleted'` که مسیر حذف عادی استفاده می‌کند.
+ */
+function retireTransactionBehind(eventId, action) {
+  const database = activeWorkspaceDatabase();
+  const row = database.prepare('SELECT journal_source AS journalSource FROM financial_events WHERE id=?').get(String(eventId || ''));
+  const source = row?.journalSource ? JSON.parse(row.journalSource) : null;
+  if (source?.type !== 'transaction') return;
+  const changed = database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=? AND status!='deleted'")
+    .run(new Date().toISOString(), source.id).changes;
+  if (changed) audit(action, 'transaction', source.id, { because: 'financial-event', eventId });
+}
+
 /** «نمی‌دانم» — مورد به حسابدار سپرده می‌شود، نه پاک. */
 export function handOverPending(eventId) {
   const item = handOverToAccountant(activeWorkspaceDatabase(), eventId, {
@@ -4141,6 +4162,7 @@ export function reverseEvent(eventId, reason = '') {
   const item = reverseFinancialEvent(activeWorkspaceDatabase(), eventId, {
     actor: currentWorkspace()?.userId || null, reason, timeZone: currentTimeZone(),
   });
+  retireTransactionBehind(eventId, 'reverse');
   audit('reverse', 'financial-event', eventId, { reason: String(reason || '').slice(0, 200) });
   return item;
 }
@@ -4149,6 +4171,7 @@ export function rejectEvent(eventId, reason = '') {
   const item = rejectFinancialEvent(activeWorkspaceDatabase(), eventId, {
     actor: currentWorkspace()?.userId || null, reason,
   });
+  retireTransactionBehind(eventId, 'reject');
   audit('reject', 'financial-event', eventId, { reason: String(reason || '').slice(0, 200) });
   return item;
 }
