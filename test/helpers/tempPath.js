@@ -25,7 +25,26 @@ export function tempDatabase(name) {
   return join(mkdtempSync(join(tmpdir(), `hesab-yar-${name}-`)), 'db.sqlite');
 }
 
-/** کل پوشهٔ موقت را برمی‌دارد؛ فایل‌های `-wal`، `-shm` و دیتابیس دفترها هم با آن می‌روند. */
+/**
+ * کل پوشهٔ موقت را برمی‌دارد؛ فایل‌های `-wal`، `-shm` و دیتابیس دفترها هم با آن می‌روند.
+ *
+ * **شکست پاک‌سازی هرگز آزمون را قرمز نمی‌کند.** ویندوز فایلِ بازِ SQLite را قفل
+ * نگه می‌دارد و `rmSync` خطای EPERM می‌دهد؛ روی لینوکس چون unlink روی فایل باز
+ * مجاز است این اتفاق نمی‌افتد. نتیجه‌اش این بود که ۲۱ فایل آزمون روی ویندوز قرمز
+ * می‌شدند درحالی‌که همهٔ assertionها پاس بودند — و یک شکست واقعی میان آن نویز
+ * دیده نمی‌شد.
+ *
+ * پوشهٔ جامانده ضرری ندارد: در پوشهٔ موقت سیستم است و نام تصادفی دارد، پس اجرای
+ * بعدی را آلوده نمی‌کند.
+ */
 export function removeTempDatabase(databasePath) {
-  rmSync(dirname(databasePath), { recursive: true, force: true });
+  const directory = dirname(databasePath);
+  // قفل ویندوز معمولاً چند میلی‌ثانیه پس از بسته‌شدن اتصال آزاد می‌شود.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 40 });
+      return true;
+    } catch { /* تلاش بعدی */ }
+  }
+  return false;
 }

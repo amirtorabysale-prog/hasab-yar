@@ -55,10 +55,25 @@ function dayOfPersianYear(month, day) {
   return total;
 }
 
+// ساخت Intl.DateTimeFormat گران است و این تابع در حلقهٔ تبدیل تاریخ ده‌ها بار
+// صدا زده می‌شود. پارسر هم روی هر کلیدِ تایپ زنده اجرا می‌شود، پس ساخت دوبارهٔ
+// formatter بودجهٔ پیش‌نمایش زنده را می‌سوزاند: ۲۰۰۰ پارس از زیر یک ثانیه به
+// بیش از یک ثانیه رفته بود.
+const persianFormatters = new Map();
+
+function persianFormatter(timeZone) {
+  let formatter = persianFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US-u-ca-persian', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    persianFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function persianParts(date, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-US-u-ca-persian', {
-    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(date);
+  const parts = persianFormatter(timeZone).formatToParts(date);
   const part = (type) => Number(parts.find((item) => item.type === type)?.value || 0);
   return { year: part('year'), month: part('month'), day: part('day') };
 }
@@ -188,14 +203,16 @@ const FUTURE_WORDS = [
 /** عددهای گفتاری کوچک که پیش از «روز پیش» می‌آیند. */
 const SMALL_NUMBERS = new Map(CARDINALS.map((word, value) => [word, value]).filter(([word]) => word));
 
+// این تابع روی هر پارس اجرا می‌شود. ساخت یک RegExp تازه به ازای هر واژهٔ
+// عددی یعنی حدود ۴۵ شیء در هر فراخوانی — گران‌ترین بخش مسیر تاریخ.
+const SPOKEN_COUNT_PATTERNS = [...SMALL_NUMBERS].map(([word, value]) => [
+  new RegExp(`(?<![آ-ی])${word}(?=\\s*(?:روز|هفته|ماه)\\s*(?:ی|ٔ)?\\s*(?:پیش|قبل|گذشته|دیگه|دیگر|بعد|آینده|بعدی))`, 'g'),
+  String(value),
+]);
+
 function replaceSpokenCounts(text) {
   let output = text;
-  for (const [word, value] of SMALL_NUMBERS) {
-    output = output.replace(
-      new RegExp(`(?<![آ-ی])${word}(?=\\s*(?:روز|هفته|ماه)\\s*(?:ی|ٔ)?\\s*(?:پیش|قبل|گذشته|دیگه|دیگر|بعد|آینده|بعدی))`, 'g'),
-      String(value),
-    );
-  }
+  for (const [pattern, value] of SPOKEN_COUNT_PATTERNS) output = output.replace(pattern, value);
   return output;
 }
 

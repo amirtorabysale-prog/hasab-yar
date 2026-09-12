@@ -916,6 +916,20 @@ export function closeWorkspaceDatabases() {
   workspaceConnections.clear();
 }
 
+/**
+ * همهٔ اتصال‌ها، شامل دیتابیس کنترل و دفتر اصلی.
+ *
+ * ویندوز فایلِ باز را قفل نگه می‌دارد، پس تا وقتی این اتصال‌ها باز باشند پوشهٔ
+ * موقت آزمون پاک نمی‌شود و `rmSync` خطای EPERM می‌دهد. روی لینوکس مشکلی دیده
+ * نمی‌شد چون unlink روی فایل باز مجاز است — برای همین فقط اجرای محلی قرمز بود.
+ */
+export function closeAllDatabases() {
+  closeWorkspaceDatabases();
+  for (const connection of new Set([db, controlDb])) {
+    try { connection.close(); } catch { /* از قبل بسته است */ }
+  }
+}
+
 export function revokeWorkspaceSessions(workspaceId, exceptUserId = '') {
   const members = controlDb.prepare('SELECT user_id AS userId FROM workspace_members WHERE workspace_id=?').all(workspaceId);
   const remove = controlDb.prepare('DELETE FROM sessions WHERE user_id=?');
