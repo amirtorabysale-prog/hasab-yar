@@ -184,7 +184,9 @@ export function extractContactName(input, { allowBare = false } = {}) {
     if (!prefix) continue;
     const skip = prefix.split(' ').length;
     const picked = [];
-    for (let offset = index + skip; offset < words.length && picked.length < 2; offset += 1) {
+    // نام شرکت اغلب سه یا چهار بخشی است («شرکت آراد گستره آسیا»). سقف دو
+    // واژه، نام را نصفه می‌کرد و یک طرف حسابِ ناقص در دفتر می‌ساخت.
+    for (let offset = index + skip; offset < words.length && picked.length < 4; offset += 1) {
       const word = words[offset];
       // واژهٔ جهت هرگز بخشی از نام نیست: «به شرکت آزاد بدهکار شدیم» نام را
       // «شرکت آزاد بدهکار» می‌ساخت و همان نام، یک طرف حساب جعلی در دفتر
@@ -214,9 +216,52 @@ function spokenAmount(input) {
  * سررسید همیشه آینده است، پس ترجیح گذشته خاموش می‌شود؛ وگرنه «سررسید دهم مهر»
  * در شهریور روی مهرِ سال گذشته می‌نشست و چکِ آینده تاریخ‌گذشته ثبت می‌شد.
  */
-function dueDate(input, now) {
-  const found = extractDateMention(input, { now, preferPast: false });
+/**
+ * دو تاریخِ متفاوت در یک جمله.
+ *
+ * «در تاریخ ۱۵/۵/۱۴۰۵ به شرکت آزاد بدهکار شدیم» تاریخِ **بدهکارشدن** است، نه
+ * سررسید. نشاندن آن روی سررسید یعنی سندی که همین امروز بدهکار شده، سررسیدش در
+ * گذشته نشان داده می‌شود و در فهرست عقب‌افتاده‌ها می‌نشیند — گزارشی که کاملاً
+ * غلط است.
+ *
+ * پس نقش هر تاریخ از واژهٔ معرفی‌کننده‌اش فهمیده می‌شود، نه از جایش در جمله.
+ */
+const DUE_MARKERS = /(?:سررسید|سر\s*رسید|مهلت|تا\s*تاریخ|موعد|تسویه\s*تا|پرداخت\s*تا)/;
+const OCCURRED_MARKERS = /(?:در\s*تاریخ|مورخ|تاریخِ?)/;
+
+function dateAfter(text, marker, now, preferPast) {
+  const match = text.match(marker);
+  if (!match) return null;
+  const rest = text.slice(match.index + match[0].length);
+  const found = extractDateMention(rest, { now, preferPast });
   return found?.iso || null;
+}
+
+/**
+ * برمی‌گرداند { occurredAt, dueAt }.
+ *
+ * وقتی هیچ واژهٔ معرفی‌کننده‌ای نیست، تاریخِ تنها برای چک سررسید است — چک اصلاً
+ * دربارهٔ سررسید است — و برای طلب و بدهی عادی، تاریخ رویداد. این پیش‌فرض
+ * محافظه‌کارانه است: سررسیدِ خالی فقط یعنی «نمی‌دانیم»، ولی سررسیدِ غلط سند را
+ * در فهرست عقب‌افتاده می‌نشاند.
+ */
+function splitDateRoles(input, { now, isCheque = false } = {}) {
+  const text = normalizePersian(input);
+  const dueAt = dateAfter(text, DUE_MARKERS, now, false);
+  const occurredAt = dateAfter(text, OCCURRED_MARKERS, now, true);
+  if (dueAt || occurredAt) return { occurredAt, dueAt };
+
+  // چک اصلاً دربارهٔ سررسید است، پس تاریخِ تنها در جملهٔ چک سررسید است.
+  if (isCheque) {
+    const cheque = extractDateMention(input, { now, preferPast: false });
+    return { occurredAt: null, dueAt: cheque?.iso || null };
+  }
+  // برای طلب و بدهی، خودِ تاریخ نقشش را می‌گوید: کسی در آینده بدهکار نمی‌شود،
+  // پس تاریخ آینده فقط می‌تواند سررسید باشد و تاریخ گذشته فقط رویداد.
+  const forward = extractDateMention(input, { now, preferPast: false });
+  if (forward && new Date(forward.iso).getTime() > now.getTime()) return { occurredAt: null, dueAt: forward.iso };
+  const lone = extractDateMention(input, { now, preferPast: true });
+  return { occurredAt: lone?.iso || null, dueAt: null };
 }
 
 /**
@@ -301,7 +346,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
     // مبلغ خالی یعنی «هنوز گفته نشده»، نه صفر؛ کارت تأیید تا نوشتنش پیش نمی‌رود.
     needsAmount: !amount,
     contactName,
-    dueAt: dueDate(input, now),
+    ...splitDateRoles(input, { now, isCheque }),
     title: [isCheque ? 'چک' : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
     transcript: text,
   };

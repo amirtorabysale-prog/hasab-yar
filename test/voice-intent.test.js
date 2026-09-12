@@ -198,16 +198,20 @@ test('رقم‌های تاریخ وارد مبلغ نمی‌شوند', () => {
   assert.equal(found.amount, 13_000_000);
   assert.equal(found.direction, 'payable');
   assert.equal(found.contactName, 'شرکت آزاد', 'واژهٔ جهت نباید بخشی از نام شود');
-  assert.equal(persianDay(found.dueAt), '1405/05/15');
+  // «در تاریخ» تاریخ رویداد را معرفی می‌کند، نه سررسید.
+  assert.equal(persianDay(found.occurredAt), '1405/05/15');
+  assert.equal(found.dueAt, null);
 });
 
 test('تاریخ عددی با فاصله هم فهمیده می‌شود', () => {
   const spaced = detect('۱۵ ۵ ۱۴۰۵ ده میلیون به آقای احمدی بدهکارم');
   assert.equal(spaced.amount, 10_000_000);
-  assert.equal(persianDay(spaced.dueAt), '1405/05/15');
+  // تاریخ گذشته، تاریخ رویداد است نه سررسید.
+  assert.equal(persianDay(spaced.occurredAt), '1405/05/15');
 
   const slashed = detect('1405/07/10 ده میلیون به آقای احمدی بدهکارم');
   assert.equal(slashed.amount, 10_000_000);
+  // ۱۰ مهر از ۶ شهریور جلوتر است، پس سررسید.
   assert.equal(persianDay(slashed.dueAt), '1405/07/10');
 });
 
@@ -216,4 +220,39 @@ test('عدد سه‌تایی بدون بخش چهاررقمی تاریخ شمر�
   const found = detect('دوازده میلیون به آقای احمدی بدهکارم');
   assert.equal(found.amount, 12_000_000);
   assert.equal(found.dueAt, null);
+});
+
+// «در تاریخ X بدهکار شدیم» تاریخِ رویداد است، نه سررسید. یکی‌کردنشان یعنی
+// سندی که همین امروز بدهکار شده، سررسیدش در گذشته دیده می‌شود و در فهرست
+// عقب‌افتاده‌ها می‌نشیند — گزارشی که کاملاً غلط است.
+test('تاریخ بدهکارشدن با سررسید یکی نمی‌شود', () => {
+  const found = detect('در تاریخ 15 5 1405 15 میلیون تومان به شرکت آراد گستره آسیا بدهکار شدیم');
+  assert.equal(found.amount, 15_000_000);
+  assert.equal(persianDay(found.occurredAt), '1405/05/15');
+  assert.equal(found.dueAt, null, 'بدون واژهٔ سررسید، تاریخ رویداد است نه سررسید');
+  assert.equal(found.contactName, 'شرکت آراد گستره آسیا', 'نام شرکت نباید نصفه شود');
+});
+
+test('هر دو تاریخ در یک جمله از هم جدا می‌شوند', () => {
+  const found = detect('در تاریخ 15 5 1405 به شرکت آراد بدهکار شدیم 10 میلیون سررسید دهم مهر');
+  assert.equal(persianDay(found.occurredAt), '1405/05/15');
+  assert.equal(persianDay(found.dueAt), '1405/07/10');
+});
+
+// چک اصلاً دربارهٔ سررسید است، پس تاریخِ تنها در جملهٔ چک سررسید است.
+test('در جملهٔ چک، تاریخ تنها سررسید است', () => {
+  const cheque = detect('چک پنج میلیون دادم دهم مهر');
+  assert.equal(persianDay(cheque.dueAt), '1405/07/10');
+  assert.equal(cheque.occurredAt, null);
+});
+
+test('در طلب و بدهی عادی، تاریخ تنها رویداد است نه سررسید', () => {
+  const found = detect('آقای احمدی سه میلیون بدهکار شد دوم شهریور');
+  assert.equal(persianDay(found.occurredAt), '1405/06/02');
+  assert.equal(found.dueAt, null);
+});
+
+test('نام شرکت چندبخشی کامل برداشته می‌شود', () => {
+  assert.equal(extractContactName('به شرکت آراد گستره آسیا بدهکار شدیم'), 'شرکت آراد گستره آسیا');
+  assert.equal(extractContactName('آقای محمد رضا موسوی نژاد بدهکار شد'), 'محمد رضا موسوی نژاد');
 });

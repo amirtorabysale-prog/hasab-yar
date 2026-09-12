@@ -323,6 +323,9 @@ function ensureVoiceMetricSchema(database) {
 }
 
 function ensureTransactionReviewSchema(database) {
+  // تاریخ بدهکار/طلبکار شدن، جدا از سررسید. یکی‌کردنشان یعنی سندی که امروز
+  // بدهکار شده، سررسیدش در گذشته دیده می‌شود و در فهرست عقب‌افتاده‌ها می‌نشیند.
+  ensureColumnOn(database, 'obligations', 'occurred_at TEXT');
   ensureColumnOn(database, 'transactions', "confidence_details TEXT NOT NULL DEFAULT '{}'");
   ensureColumnOn(database, 'transactions', "review_reasons TEXT NOT NULL DEFAULT '[]'");
   ensureColumnOn(database, 'transactions', "review_state TEXT NOT NULL DEFAULT 'ready'");
@@ -2508,6 +2511,7 @@ export function listObligations({ status = 'open' } = {}) {
   const args = where ? [status] : [];
   return db.prepare(`SELECT obligations.id,obligations.contact_id AS contactId,contacts.name AS contactName,
     obligations.title,obligations.amount,obligations.direction,obligations.due_at AS dueAt,
+    obligations.occurred_at AS occurredAt,
     obligations.status,obligations.note,obligations.created_at AS createdAt
     FROM obligations LEFT JOIN contacts ON contacts.id=obligations.contact_id ${where}
     ORDER BY CASE WHEN obligations.due_at IS NULL THEN 1 ELSE 0 END,obligations.due_at,obligations.created_at DESC`).all(...args);
@@ -2539,10 +2543,10 @@ export function saveObligation(values = {}) {
   if (!title) throw invalidInput('عنوان طلب یا بدهی را وارد کن.');
   const contactId = values.contactId || (values.contactName ? contactIdForName(values.contactName) : null);
   const id = values.id || randomUUID();
-  db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,status,note) VALUES (?,?,?,?,?,?,?,?)
+  db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,occurred_at,status,note) VALUES (?,?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,title=excluded.title,amount=excluded.amount,
-      direction=excluded.direction,due_at=excluded.due_at,status=excluded.status,note=excluded.note,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, contactId, title, amount, direction, values.dueAt || null, ['open', 'paid', 'cancelled'].includes(values.status) ? values.status : 'open', String(values.note || '').slice(0, 500));
+      direction=excluded.direction,due_at=excluded.due_at,occurred_at=excluded.occurred_at,status=excluded.status,note=excluded.note,updated_at=CURRENT_TIMESTAMP`)
+    .run(id, contactId, title, amount, direction, values.dueAt || null, values.occurredAt || null, ['open', 'paid', 'cancelled'].includes(values.status) ? values.status : 'open', String(values.note || '').slice(0, 500));
   audit(values.id ? 'update' : 'create', 'obligation', id, { amount, direction, title });
   return listObligations({ status: 'all' }).find((item) => item.id === id);
 }
