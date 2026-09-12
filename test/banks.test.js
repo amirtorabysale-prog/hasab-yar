@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BANKS, bankById, detectBank, mentionsMultipleBanks } from '../shared/banks.js';
+import { BANKS, bankById, detectBank, mentionsMultipleBanks, pickBankAccount } from '../shared/banks.js';
 
 const idOf = (text) => detectBank(text)?.bankId ?? null;
 
@@ -82,4 +82,36 @@ test('ارقام فارسی و نیم‌فاصله مانع تشخیص نمی‌
   assert.equal(idOf('۵۰۰ هزار از بانک ملي'), 'melli');
   assert.equal(idOf('کارآفرین'), 'karafarin');
   assert.equal(idOf('کار آفرین'), 'karafarin');
+});
+
+// ------------------------------------------------- انتخاب حساب از بانک
+
+/**
+ * این قاعده یک بار در دو جا نوشته شده بود و از هم جدا افتاد.
+ *
+ * برگهٔ تأیید پیش از ارسال، حساب را روی صندوق می‌گذاشت و سرور دیگر فرصت نداشت
+ * از روی نام بانک تصمیم بگیرد؛ یعنی گفتنِ نام بانک روی مسیر واقعی هیچ اثری
+ * نداشت، درحالی‌که آزمون‌های سرور سبز بودند.
+ */
+test('حساب بانک وقتی یکتا باشد انتخاب می‌شود', () => {
+  const accounts = [
+    { id: 'cash', kind: 'cash', active: true },
+    { id: 'a1', kind: 'bank', bankId: 'mellat', active: true },
+  ];
+  assert.equal(pickBankAccount(accounts, 'mellat').id, 'a1');
+  assert.equal(pickBankAccount(accounts, 'saman'), null);
+  assert.equal(pickBankAccount(accounts, ''), null);
+});
+
+test('دو حساب از یک بانک یعنی هیچ‌کدام', () => {
+  const accounts = [
+    { id: 'a1', kind: 'bank', bankId: 'saman', active: true },
+    { id: 'a2', kind: 'bank', bankId: 'saman', active: true },
+  ];
+  assert.equal(pickBankAccount(accounts, 'saman'), null);
+});
+
+test('حساب بسته یا غیربانکی انتخاب نمی‌شود', () => {
+  assert.equal(pickBankAccount([{ id: 'a1', kind: 'bank', bankId: 'mellat', active: false }], 'mellat'), null);
+  assert.equal(pickBankAccount([{ id: 'a1', kind: 'cash', bankId: 'mellat', active: true }], 'mellat'), null);
 });

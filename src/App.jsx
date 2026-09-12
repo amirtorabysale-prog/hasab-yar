@@ -90,7 +90,7 @@ import { persianToISO } from '../shared/persianDate.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { CONFIDENCE_COMPONENT_LABELS, ROUTE_LABELS } from '../shared/confidenceEngine.js';
-import { BANKS, bankById, detectBank } from '../shared/banks.js';
+import { BANKS, bankById, detectBank, pickBankAccount } from '../shared/banks.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 import ExcelImportPanel from './features/accounting/ExcelImportPanel.jsx';
@@ -963,7 +963,7 @@ export default function App() {
               voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
               navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision} onSnoozeAlert={snoozeAlert}
-              notify={notify} refreshToday={load}
+              notify={notify} refreshToday={load} experience={access.experience}
             />
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={ledgerTab} />}
@@ -1003,7 +1003,7 @@ export default function App() {
   );
 }
 
-function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday }) {
+function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple' }) {
   const profileType = data.settings.profileType || 'business';
   const examples = todayExamples(profileType);
   const composerState = todayComposerState({ recordState, manualText, reviewing, savedRecently });
@@ -1052,7 +1052,7 @@ function TodayPage({ data, loading, manualText, setManualText, parseManual, reco
               {commercial.monthEndsAt && <span className="mt-1 block text-muted">سهمیهٔ تازه از {persianDate(commercial.monthEndsAt)}.</span>}
             </div>
           )}
-          <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} disabled={readOnly} />
+          <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} disabled={readOnly} showDiagnostics={experience === 'professional'} />
 
           <div className="my-2 flex items-center gap-3 text-[11px] text-muted"><span className="h-px flex-1 bg-line" /><span>یا بنویس</span><span className="h-px flex-1 bg-line" /></div>
           <form onSubmit={parseManual} className="rounded-[10px] border border-line bg-surface p-2">
@@ -1204,13 +1204,20 @@ function CloseDaySheet({ data, close, onComplete }) {
   </section></div>;
 }
 
-function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath = 'ready', voiceSystemStatus, disabled = false }) {
+function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath = 'ready', voiceSystemStatus, disabled = false, showDiagnostics = false }) {
   const recording = state === 'recording';
   const processing = state === 'processing';
   const requesting = state === 'requesting';
   const finalizing = state === 'finalizing';
   const pointerRef = useRef({ action: '', startedAt: 0 });
-  const availability = voiceSystemStatus
+  /**
+   * وضعیت مسیرهای صدا فقط در محیط حرفه‌ای.
+   *
+   * «فایل پشتیبان: تنظیم نشده» تشخیص زیرساخت است، نه چیزی که صاحب کسب‌وکار
+   * بتواند دربارهٔ آن کاری کند — و چون هشدارگونه دیده می‌شود، اولین برداشتش از
+   * برنامه این است که چیزی خراب است. همان «لاگ فنی» که نباید ببیند.
+   */
+  const availability = !showDiagnostics ? [] : voiceSystemStatus
     ? describeVoiceAvailability(voiceSystemStatus, { browserSupported: liveSpeechSupported() })
     : [{ tone: 'neutral', label: 'در حال بررسی مسیرهای صدا…' }];
   const press = (event) => {
@@ -1288,14 +1295,7 @@ function ConfirmationSheet({ result, categories, accounts = [], onCancel, onConf
    *
    * دو حساب از یک بانک یعنی جمله روشن نیست؛ همان قاعدهٔ سرور، اینجا هم.
    */
-  const accountFor = (item) => {
-    if (item.accountId) return item.accountId;
-    if (item.bankId) {
-      const matches = accounts.filter((account) => account.active && account.kind === 'bank' && account.bankId === item.bankId);
-      if (matches.length === 1) return matches[0].id;
-    }
-    return defaultAccountId;
-  };
+  const accountFor = (item) => item.accountId || pickBankAccount(accounts, item.bankId)?.id || defaultAccountId;
   const [items, setItems] = useState(() => result.transactions.map((item) => ({ ...item, accountId: accountFor(item), originalCategory: item.category })));
   const [index, setIndex] = useState(0);
   const [editAmount, setEditAmount] = useState(false);

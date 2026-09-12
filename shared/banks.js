@@ -104,6 +104,24 @@ export function detectBank(text) {
   return { bankId: hit.bank.id, bankName: hit.bank.name, matchedText: hit.matchedText, index: hit.index };
 }
 
+/**
+ * حسابِ متناظر با یک بانک، از میان حساب‌های دفتر.
+ *
+ * اینجا می‌ماند تا رابط کاربری و سرور یک قاعده داشته باشند. یک بار همین قاعده
+ * در دو جا نوشته شده بود و برگهٔ تأیید پیش از ارسال حساب را روی صندوق می‌گذاشت؛
+ * نتیجه‌اش این بود که گفتنِ نام بانک روی مسیر واقعی هیچ اثری نداشت، درحالی‌که
+ * آزمون‌های سرور سبز بودند.
+ *
+ * دو حساب از یک بانک یعنی جمله روشن نیست و هیچ‌کدام انتخاب نمی‌شود: برداشت از
+ * حساب اشتباه بدتر از نپرسیدن است.
+ */
+export function pickBankAccount(accounts = [], bankId = '') {
+  if (!bankId) return null;
+  const matches = accounts.filter((account) => account
+    && account.active !== false && account.kind === 'bank' && account.bankId === bankId);
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /** آیا جمله بیش از یک بانک نام می‌برد؟ یعنی احتمالاً انتقال بین حساب‌هاست. */
 export function mentionsMultipleBanks(text) {
   const normalized = normalizePersian(text);
