@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { ROLES } from '../shared/accountingRules.js';
-import { analyticForContact } from './chartOfAccounts.js';
+import {
+  analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount,
+} from './chartOfAccounts.js';
 
 /**
  * نگاشت نقش به حساب واقعی دفتر.
@@ -38,6 +40,7 @@ function linkedAccount(database, sourceKind, sourceKey, name, type, normalSide =
   while (used.has(code)) code += 1;
   database.prepare('INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key) VALUES (?,?,?,?,?,?,?)')
     .run(id, String(code), String(name).slice(0, 120), type, side, sourceKind, key);
+  autoMapToChart(database, { id, type, sourceKind, sourceKey: key, name });
   return id;
 }
 
@@ -130,4 +133,29 @@ export function resolveEventAnalytic(database, role, event = {}) {
   // کلید از شناسهٔ شخص می‌آید نه از نامش، تا تغییر نام تفصیلی تازه‌ای نسازد.
   const analytic = analyticForContact(database, contactId, name || 'طرف حساب');
   return analytic?.id || null;
+}
+
+/**
+ * حساب تازه همان لحظه به کدینگ دفتر نگاشت می‌شود.
+ *
+ * بدون این، هر حسابی که مسیر رویداد می‌سازد بدون معین مقصد می‌ماند و چون
+ * «هر حساب استفاده‌شده باید معین داشته باشد» یک کنترل بازدارنده است، **کل
+ * خروجی پارسیان قفل می‌شود**.
+ *
+ * پیشنهاد از همان `suggestChartAccount` می‌آید که معین اختصاصی هر دسته را
+ * می‌شناسد؛ پس اجاره روی حساب اجاره می‌نشیند نه روی «سایر هزینه‌ها».
+ *
+ * شکست اینجا بی‌صداست و عمدی: کدینگ ممکن است هنوز نصب نشده باشد یا معین
+ * متناسبی نداشته باشد. نگاشت‌نشدن یک ایراد قابل‌دیدن در صفحهٔ آمادگی است، ولی
+ * نباید جلوی ثبت خودِ سند را بگیرد.
+ */
+function autoMapToChart(database, ledgerAccount) {
+  try {
+    const chart = listChartAccounts(database);
+    if (!chart.length) return;
+    // فقط نگاشت مطمئن: دستهٔ ناشناخته بدون نگاشت می‌ماند تا حسابدار خودش
+    // تصمیم بگیرد، نه اینکه بی‌صدا روی معین عمومی بنشیند.
+    const suggestion = suggestChartAccount(ledgerAccount, chart, { confidentOnly: true });
+    if (suggestion) mapLedgerAccountToChart(database, ledgerAccount.id, suggestion.id);
+  } catch { /* کدینگ هنوز آمادهٔ نگاشت نیست؛ صفحهٔ آمادگی آن را نشان می‌دهد. */ }
 }

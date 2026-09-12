@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { analyticForContact, ensureChartSchema, resolveLineDimensions } from './chartOfAccounts.js';
+import {
+  analyticForContact, ensureChartSchema, listChartAccounts, mapLedgerAccountToChart,
+  resolveLineDimensions, suggestChartAccount,
+} from './chartOfAccounts.js';
 import {
   APPROVAL_STATES, assertApprovalTransition, backfillDocumentNumbers, ensureJournalWorkflowSchema,
   nextDocumentNumber, normalizeApprovalState, worklistSummary,
@@ -96,7 +99,33 @@ function linkedLedgerAccount(database, sourceKind, sourceKey, name, type, forced
   const normalSide = forcedNormalSide || (['asset', 'expense'].includes(type) ? 'debit' : 'credit');
   database.prepare(`INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key)
     VALUES (?,?,?,?,?,?,?)`).run(id, nextCode(database, type), name, type, normalSide, sourceKind, sourceKey);
+  autoMapNewAccount(database, { id, type, sourceKind, sourceKey, name });
   return id;
+}
+
+/**
+ * حساب تازه همان لحظه به معین کدینگ نگاشت می‌شود.
+ *
+ * تا امروز هر حساب تازه بدون معین مقصد می‌ماند و کاربر باید دستی «اعمال
+ * پیشنهادها» را می‌زد. نتیجه‌اش در فایل انتقال دیده شد: همهٔ هزینه‌ها روی یک
+ * معین عمومی، چون هیچ‌کس آن دکمه را نزده بود.
+ *
+ * پیشنهاد از `suggestChartAccount` می‌آید که معین اختصاصی هر دسته را می‌شناسد،
+ * پس اجاره روی حساب اجاره می‌نشیند نه روی «سایر هزینه‌های عملیاتی».
+ *
+ * شکست بی‌صداست و عمدی: کدینگ ممکن است نصب نشده باشد یا معین متناسبی نداشته
+ * باشد. نگاشت‌نشدن در صفحهٔ آمادگی دیده می‌شود، ولی نباید جلوی ثبت سند را
+ * بگیرد — سندِ ثبت‌نشده بدتر از سندِ نگاشت‌نشده است.
+ */
+function autoMapNewAccount(database, ledgerAccount) {
+  try {
+    const chart = listChartAccounts(database);
+    if (!chart.length) return;
+    // فقط نگاشت مطمئن: دستهٔ ناشناخته بدون نگاشت می‌ماند تا حسابدار خودش
+    // تصمیم بگیرد، نه اینکه بی‌صدا روی معین عمومی بنشیند.
+    const suggestion = suggestChartAccount(ledgerAccount, chart, { confidentOnly: true });
+    if (suggestion) mapLedgerAccountToChart(database, ledgerAccount.id, suggestion.id);
+  } catch { /* کدینگ هنوز آمادهٔ نگاشت نیست. */ }
 }
 
 function operationalLedgerAccount(database, accountId) {

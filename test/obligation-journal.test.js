@@ -217,3 +217,52 @@ test('طرف حساب بدون کد مقصد هشدار می‌گیرد، ولی
   assert.equal(check.severity, 'advisory', 'نبود کد تفصیلی نباید ساخت فایل را قفل کند');
   assert.equal(check.unmappedAnalytics[0].name, 'شرکت بی‌کد');
 });
+
+/**
+ * ریشهٔ «همه‌چیز روی یک معین» در فایل انتقال کاربر.
+ *
+ * حساب تازه بدون نگاشت ساخته می‌شد و کاربر باید دستی «اعمال پیشنهادها» را
+ * می‌زد. چون کسی آن دکمه را نزده بود، همهٔ هزینه‌ها روی یک معین عمومی رفتند.
+ */
+test('حساب تازه همان لحظه به معین خودش نگاشت می‌شود', () => {
+  inPrimary(() => {
+    database.installChartTemplate();
+    const expected = [
+      ['اجاره', 'expense', '8102'],
+      ['حمل‌ونقل', 'expense', '8103'],
+      ['قبوض', 'expense', '8104'],
+      ['حقوق و دستمزد', 'expense', '8101'],
+      ['فروش', 'income', '6101'],
+      ['خدمات', 'income', '6102'],
+    ];
+    for (const [category, type] of expected) {
+      database.insertTransactions({ transcript: category, transactions: [{ amount: 1_000_000, type, category, rawText: category }] });
+    }
+    const accounts = accounting.listLedgerAccounts(db());
+    for (const [category, , chartCode] of expected) {
+      const account = accounts.find((item) => item.name === category);
+      assert.ok(account, `حساب «${category}» ساخته نشد`);
+      assert.equal(account.chartCode, chartCode, `«${category}» باید روی ${chartCode} بنشیند، نه روی معین عمومی`);
+    }
+  });
+});
+
+test('حساب طرف حساب هم خودکار نگاشت می‌شود', () => {
+  inPrimary(() => {
+    const contact = database.saveContact({ name: 'شرکت نگاشت خودکار' });
+    database.saveObligation({ title: 'طلب', amount: 2_000_000, direction: 'receivable', contactId: contact.id });
+    const account = accounting.listLedgerAccounts(db())
+      .find((item) => item.name.includes('حساب دریافتنی') && item.name.includes('نگاشت خودکار'));
+    assert.equal(account.chartCode, '1201', 'حساب دریافتنی باید روی معین دریافتنی تجاری بنشیند');
+  });
+});
+
+// سند نگاشت‌نشده بهتر از سند ثبت‌نشده است؛ نبود کدینگ نباید ثبت را بشکند.
+test('نبود کدینگ، ثبت سند را نمی‌شکند', () => {
+  inPrimary(() => {
+    const item = database.saveObligation({ title: 'طلب بدون کدینگ', amount: 900_000, direction: 'receivable' });
+    const event = store.findEventBySource(db(), `obligation:${item.id}`);
+    assert.equal(event.status, 'posted');
+    balanced();
+  });
+});

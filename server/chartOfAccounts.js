@@ -523,7 +523,7 @@ const ROLE_BY_SOURCE_KEY = {
  * برای یک حساب داخلی، مناسب‌ترین معین کدینگ را پیشنهاد می‌دهد.
  * اگر نقش دقیق پیدا نشود، اولین معین هم‌نوع پیشنهاد می‌شود و اگر آن هم نبود null.
  */
-export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specific = true } = {}) {
+export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specific = true, confidentOnly = false } = {}) {
   const postable = chartAccounts.filter((item) => item.postable !== false && item.level === 'subsidiary' && item.active !== false);
   const byRole = (role) => postable.find((item) => item.role === role) || null;
 
@@ -539,10 +539,14 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
   //
   // `specific: false` عمداً همان پیشنهادِ عمومیِ قبلی را برمی‌گرداند تا بشود
   // تشخیص داد یک نگاشت موجود، خودکارِ عمومی بوده یا انتخاب آگاهانهٔ حسابدار.
-  if (specific && ['income-category', 'expense-category'].includes(sourceKind)) {
-    const code = chartCodeForCategory(sourceKey);
+  if (['income-category', 'expense-category'].includes(sourceKind)) {
+    const code = specific ? chartCodeForCategory(sourceKey) : null;
     const exact = code ? postable.find((item) => normalizeChartCode(item.code) === code) : null;
     if (exact) return exact;
+    // نقشِ `operating-expense` یک سطل عمومی است، نه نگاشت. برای پیشنهاد به
+    // کاربر قابل قبول است، ولی نگاشت خودکارِ بی‌صدا با آن یعنی هر دستهٔ تازه
+    // در «سایر هزینه‌ها» دفن می‌شود و هیچ‌وقت به چشم حسابدار نمی‌آید.
+    if (confidentOnly) return null;
   }
   if (sourceKind === 'operational-account') {
     const name = String(ledgerAccount.name || '');
@@ -553,6 +557,10 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
     const match = byRole(role);
     if (match) return match;
   }
+  // آخرین چاره: اولین معین هم‌نوع. این «حدس» است نه نگاشت، پس برای نگاشت
+  // خودکار پذیرفته نمی‌شود — دستهٔ ناشناخته باید به چشم حسابدار بیاید، نه
+  // اینکه بی‌صدا روی یک معین عمومی بنشیند و بعداً کسی نفهمد چرا آنجاست.
+  if (confidentOnly) return null;
   return postable.find((item) => item.type === ledgerAccount.type) || null;
 }
 
