@@ -105,6 +105,10 @@ export function ensureChartSchema(database) {
   `);
   // ابعاد روی آرتیکل سند می‌نشینند، نه روی حساب — این تعریف «شناور» بودن تفصیلی است.
   ensureColumn(database, 'journal_lines', 'analytic_id TEXT REFERENCES analytic_accounts(id) ON DELETE RESTRICT');
+  // کد تفصیلی در نرم‌افزار مقصد. کد داخلی ما خودکار ساخته می‌شود و هیچ ربطی به
+  // کدهای پارسیان ندارد؛ فرستادنش یعنی ردیف به شخص اشتباهی می‌چسبد — خطایی که
+  // از گم‌شدن طرف حساب بدتر است.
+  ensureColumn(database, 'analytic_accounts', 'external_code TEXT');
   ensureColumn(database, 'journal_lines', 'cost_center_id TEXT REFERENCES cost_centers(id) ON DELETE RESTRICT');
   ensureColumn(database, 'chart_accounts', "level_code TEXT NOT NULL DEFAULT ''");
   ensureColumn(database, 'ledger_accounts', 'chart_account_id TEXT REFERENCES chart_accounts(id) ON DELETE RESTRICT');
@@ -665,9 +669,12 @@ export function saveAnalyticAccount(database, values = {}) {
   const code = normalizeChartCode(values.code) || existing?.code || nextDimensionCode(database, 'analytic_accounts', '');
   if (!chartCodeIsValid(code)) throw chartError('کد تفصیلی باید فقط رقم باشد.');
   const id = existing?.id || randomUUID();
-  database.prepare(`INSERT INTO analytic_accounts (id,code,name,kind,source_kind,source_key,active) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,kind=excluded.kind,active=excluded.active`)
-    .run(id, code, name, kind, sourceKind, sourceKey, values.active === false ? 0 : 1);
+  const externalCode = values.externalCode === undefined ? existing?.external_code || null : (normalizeChartCode(values.externalCode) || null);
+  if (externalCode && !chartCodeIsValid(externalCode)) throw chartError('کد تفصیلی مقصد باید فقط رقم باشد.');
+  database.prepare(`INSERT INTO analytic_accounts (id,code,name,kind,source_kind,source_key,active,external_code) VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,kind=excluded.kind,
+      active=excluded.active,external_code=excluded.external_code`)
+    .run(id, code, name, kind, sourceKind, sourceKey, values.active === false ? 0 : 1, externalCode);
   return database.prepare('SELECT * FROM analytic_accounts WHERE id=?').get(id);
 }
 

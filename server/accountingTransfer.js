@@ -134,6 +134,23 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
     ? { id: 'chart', label: 'هر حساب استفاده‌شده به معین کدینگ دفتر نگاشت شده', count: unmappedUsedAccounts.length, passed: unmappedUsedAccounts.length === 0, severity: 'blocker' }
     : { id: 'chart', label: 'کدینگ دفتر حسابداری هنوز وارد نشده است', count: 1, passed: false, severity: 'advisory' });
 
+  // طرف حسابی که کد تفصیلی مقصد ندارد، روی معین می‌نشیند و در پارسیان گم
+  // می‌شود. این بازدارنده نیست — فایل باید ساخته شود — ولی سکوت هم نباید بکند،
+  // چون همان چیزی است که کاربر در پارسیان دنبالش می‌گردد و پیدا نمی‌کند.
+  const unmappedAnalytics = [...new Map(journalRows
+    .filter((item) => item.analyticId && !String(item.tafsiliCode ?? '').trim())
+    .map((item) => [item.analyticId, { id: item.analyticId, name: item.tafsiliName || 'طرف حساب' }])).values()];
+  checks.push({
+    id: 'analytic-mapping',
+    label: unmappedAnalytics.length
+      ? 'طرف حساب‌هایی هنوز کد تفصیلی پارسیان ندارند'
+      : 'کد تفصیلی همهٔ طرف حساب‌ها نگاشت شده',
+    count: unmappedAnalytics.length,
+    passed: unmappedAnalytics.length === 0,
+    severity: 'advisory',
+    unmappedAnalytics: unmappedAnalytics.slice(0, 40),
+  });
+
   // فایل انتقال پارسیان بدون الگو ساخته نمی‌شود، و بدون کد کل/معین روی هر ردیف
   // هم نه — چون فایل انتقال حساب نمی‌سازد و کد باید از قبل در مقصد باشد.
   if (normalizeTransferFileFormat(settings.fileFormat) === 'mdb') {

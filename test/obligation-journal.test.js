@@ -129,3 +129,91 @@ test.after(() => {
   database.closeAllDatabases?.();
   removeTempDatabase(databasePath);
 });
+
+/**
+ * این همان چیزی است که در فایل انتقال کاربر غایب بود: هفتادوهشت ردیف با تفصیلی
+ * صفر. در پارسیان اشخاص در تفصیلی زندگی می‌کنند، نه در معین.
+ */
+test('سطر طرف حساب تفصیلی می‌گیرد', () => {
+  inPrimary(() => {
+    const contact = database.saveContact({ name: 'شرکت تفصیلی' });
+    const item = database.saveObligation({
+      title: 'طلب تفصیلی', amount: 7_000_000, direction: 'receivable', contactId: contact.id,
+    });
+    const event = store.findEventBySource(db(), `obligation:${item.id}`);
+    const lines = db().prepare(`SELECT jl.analytic_id AS analyticId, la.name AS accountName, aa.name AS analyticName
+      FROM journal_lines jl
+      JOIN ledger_accounts la ON la.id=jl.account_id
+      LEFT JOIN analytic_accounts aa ON aa.id=jl.analytic_id
+      WHERE jl.entry_id=?`).all(event.journalEntryId);
+
+    const receivableLine = lines.find((line) => line.accountName.includes('حساب دریافتنی'));
+    assert.ok(receivableLine.analyticId, 'سطر حساب دریافتنی باید تفصیلی داشته باشد');
+    assert.equal(receivableLine.analyticName, 'شرکت تفصیلی');
+
+    // تفصیلی روی حساب درآمد بی‌معناست؛ گذاشتنش داده‌ای می‌سازد که کسی نمی‌فهمد.
+    const incomeLine = lines.find((line) => !line.accountName.includes('حساب دریافتنی'));
+    assert.equal(incomeLine.analyticId, null, 'حساب درآمد نباید تفصیلی بگیرد');
+  });
+});
+
+test('تعهد بدون طرف حساب تفصیلی جعلی نمی‌سازد', () => {
+  inPrimary(() => {
+    const item = database.saveObligation({ title: 'بدهی بی‌نام', amount: 1_200_000, direction: 'payable' });
+    const event = store.findEventBySource(db(), `obligation:${item.id}`);
+    const lines = db().prepare('SELECT analytic_id AS analyticId FROM journal_lines WHERE entry_id=?').all(event.journalEntryId);
+    assert.ok(lines.every((line) => !line.analyticId), 'بدون طرف حساب، تفصیلی ساخته نمی‌شود');
+  });
+});
+
+test('تفصیلی همان شخص با ثبت دوم تکرار نمی‌شود', () => {
+  inPrimary(() => {
+    const contact = database.saveContact({ name: 'شرکت تکراری' });
+    database.saveObligation({ title: 'اول', amount: 1_000_000, direction: 'receivable', contactId: contact.id });
+    database.saveObligation({ title: 'دوم', amount: 2_000_000, direction: 'receivable', contactId: contact.id });
+    const count = db().prepare("SELECT COUNT(*) AS count FROM analytic_accounts WHERE name='شرکت تکراری'").get().count;
+    assert.equal(count, 1, 'یک شخص باید یک تفصیلی داشته باشد، نه یکی به‌ازای هر ثبت');
+  });
+});
+
+// کد داخلی تفصیلی خودکار ساخته می‌شود و در پارسیان یعنی شخص دیگری. تا وقتی
+// نگاشت نشده باید خالی برود — فرستادن کد اشتباه از گم‌شدن طرف حساب بدتر است.
+test('کد تفصیلی مقصد جدا از کد داخلی است', () => {
+  inPrimary(() => {
+    const contact = database.saveContact({ name: 'شرکت نگاشتی' });
+    database.saveObligation({ title: 'طلب نگاشتی', amount: 4_000_000, direction: 'receivable', contactId: contact.id });
+
+    const analytic = db().prepare("SELECT id,code,external_code AS externalCode FROM analytic_accounts WHERE name='شرکت نگاشتی'").get();
+    assert.ok(analytic.code, 'کد داخلی باید ساخته شود');
+    assert.equal(analytic.externalCode, null, 'کد مقصد تا نگاشت نشدن خالی می‌ماند');
+
+    const saved = database.saveAnalytic({ id: analytic.id, name: 'شرکت نگاشتی', externalCode: '۵۰۲۱' });
+    assert.equal(saved.external_code, '5021', 'رقم فارسی باید لاتین شود');
+  });
+});
+
+test('کد تفصیلی غیرعددی پذیرفته نمی‌شود', () => {
+  inPrimary(() => {
+    const analytic = db().prepare("SELECT id FROM analytic_accounts WHERE name='شرکت نگاشتی'").get();
+    assert.throws(
+      () => database.saveAnalytic({ id: analytic.id, name: 'شرکت نگاشتی', externalCode: 'AB12' }),
+      /کد تفصیلی مقصد/,
+    );
+  });
+});
+
+test('طرف حساب بدون کد مقصد هشدار می‌گیرد، ولی خروجی را قفل نمی‌کند', async () => {
+  const { accountingTransferReadiness } = await import(`../server/accountingTransfer.js?obligation=${process.pid}`);
+  const readiness = accountingTransferReadiness({
+    journalRows: [
+      { entryId: 'e1', accountId: 'a1', analyticId: 'an1', tafsiliName: 'شرکت بی‌کد', tafsiliCode: null, debit: 1000, credit: 0, chartCode: '1201' },
+      { entryId: 'e1', accountId: 'a2', analyticId: null, tafsiliCode: null, debit: 0, credit: 1000, chartCode: '6101' },
+    ],
+    chart: { installed: true },
+  });
+  const check = readiness.checks.find((item) => item.id === 'analytic-mapping');
+  assert.equal(check.count, 1);
+  assert.equal(check.passed, false);
+  assert.equal(check.severity, 'advisory', 'نبود کد تفصیلی نباید ساخت فایل را قفل کند');
+  assert.equal(check.unmappedAnalytics[0].name, 'شرکت بی‌کد');
+});

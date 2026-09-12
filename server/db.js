@@ -1759,7 +1759,10 @@ function accountingTransferJournalRows(range) {
     -- پارسیان حساب را سه ستون عددی جدا می‌خواهد: کل، معین، تفصیلی.
     chart_parent.level_code AS kolCode,chart_parent.name AS kolName,
     chart_accounts.level_code AS moeenCode,chart_accounts.name AS moeenName,
-    analytic_accounts.code AS tafsiliCode,analytic_accounts.name AS tafsiliName,
+    -- کد مقصد، نه کد داخلی. کد داخلی خودکار ساخته می‌شود و در پارسیان یعنی
+    -- شخص دیگری؛ تا وقتی نگاشت نشده، خالی می‌رود و هشدار داده می‌شود.
+    analytic_accounts.external_code AS tafsiliCode,analytic_accounts.name AS tafsiliName,
+    analytic_accounts.id AS analyticId,
     analytic_accounts.code AS analyticCode,analytic_accounts.name AS analyticName,
     cost_centers.code AS costCenterCode,cost_centers.name AS costCenterName
     FROM journal_entries JOIN journal_lines ON journal_lines.entry_id=journal_entries.id

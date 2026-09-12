@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ROLES } from '../shared/accountingRules.js';
+import { analyticForContact } from './chartOfAccounts.js';
 
 /**
  * نگاشت نقش به حساب واقعی دفتر.
@@ -99,4 +100,34 @@ export function resolveEventRole(database, role, key, event = {}) {
     default:
       throw resolverError(`نقش «${role}» به هیچ حسابی نگاشت نشده است.`);
   }
+}
+
+/**
+ * تفصیلی یک سطر — یعنی «این ردیف مال کدام شخص است».
+ *
+ * در پارسیان اشخاص در تفصیلی زندگی می‌کنند، نه در معین. یک معین «حساب‌های
+ * دریافتنی» داریم و هر مشتری زیرش یک تفصیلی است. اگر تفصیلی خالی برود، ردیف
+ * روی معین می‌نشیند و طرف حساب کاملاً گم می‌شود — همان چیزی که در فایل انتقال
+ * دیده شد: هفتادوهشت ردیف با تفصیلی صفر.
+ *
+ * فقط نقش‌هایی تفصیلی می‌گیرند که واقعاً طرف حساب دارند. گذاشتن تفصیلی روی
+ * صندوق یا حساب هزینه، داده‌ای می‌سازد که هیچ معنایی ندارد.
+ */
+const COUNTERPARTY_ROLES = new Set([
+  ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE,
+]);
+
+export function resolveEventAnalytic(database, role, event = {}) {
+  if (!COUNTERPARTY_ROLES.has(role)) return null;
+  // تفصیلی فقط از شخصِ تعریف‌شده ساخته می‌شود، نه از یک متن آزاد.
+  //
+  // وقتی طرف حسابی ثبت نشده، عنوان تعهد («بدهی بابت اجاره») می‌تواند به‌جای نام
+  // برداشته شود و یک تفصیلیِ جعلی بسازد که نه در پارسیان وجود دارد و نه با
+  // هیچ شخص واقعی یکی می‌شود. نبودِ تفصیلی صادقانه‌تر از تفصیلی ساختگی است.
+  const contactId = String(event.counterpartyId || '').trim();
+  if (!contactId) return null;
+  const name = String(event.counterparty || '').trim();
+  // کلید از شناسهٔ شخص می‌آید نه از نامش، تا تغییر نام تفصیلی تازه‌ای نسازد.
+  const analytic = analyticForContact(database, contactId, name || 'طرف حساب');
+  return analytic?.id || null;
 }

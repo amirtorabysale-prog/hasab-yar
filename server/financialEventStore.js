@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
 import { ensureAccountingSchema, postJournalEntry, reverseJournalEntry } from './accounting.js';
-import { resolveEventRole } from './roleResolver.js';
+import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
 
 /**
  * دفتر رویدادهای مالی — یکتایی، ردیابی و صف بررسی.
@@ -137,6 +137,9 @@ export function recordFinancialEvent(database, event, {
 function postEventJournal(database, eventId, event, plan, { actor = null, timeZone = 'Asia/Tehran', journalSource = null } = {}) {
   const lines = plan.lines.map((line) => ({
     accountId: resolveEventRole(database, line.role, line.key, event),
+    // تفصیلی همان‌جا به سطر می‌چسبد، چون فقط اینجا می‌دانیم این سطر مال کدام
+    // نقش است. بدون آن، طرف حساب در فایل انتقال گم می‌شود.
+    analyticId: resolveEventAnalytic(database, line.role, event),
     debit: line.debit,
     credit: line.credit,
     description: plan.memoHint || null,
