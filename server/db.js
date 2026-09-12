@@ -3327,7 +3327,9 @@ export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
   const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
     occurred_at AS occurredAt,created_at AS createdAt
     FROM transactions WHERE status='confirmed' AND capital_flow='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
-  return financialDna(rows, { timeZone: currentTimeZone(), now, months });
+  // فشار پرداخت تنها صفتی است که به آینده نگاه می‌کند و ورودی‌اش تعهدهای باز
+  // است، نه تراکنش‌های گذشته.
+  return financialDna(rows, { timeZone: currentTimeZone(), now, months, obligations: listObligations({ status: 'open' }) });
 }
 
 /**

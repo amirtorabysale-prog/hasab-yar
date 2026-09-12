@@ -257,6 +257,138 @@ function voiceAdoption(rows) {
  * پروفایل یک‌نگاهی برای دفتر: شکل پرونده، بار کاری ماهانه و آنچه باید بداند.
  * عمداً هیچ عدد پیش‌بینی‌شده‌ای ندارد؛ فقط آنچه واقعاً ثبت شده است.
  */
+/** جمع ماهانهٔ یک نوع، به ترتیب تقویم شمسی. */
+function monthlyTotals(rows, type) {
+  const totals = new Map();
+  for (const row of rows) {
+    if (row.type !== type) continue;
+    totals.set(row.fiscalMonth, (totals.get(row.fiscalMonth) || 0) + row.amount);
+  }
+  return [...totals.entries()].sort(([left], [right]) => left.localeCompare(right));
+}
+
+/**
+ * روند درآمد، ماه‌به‌ماه.
+ *
+ * ماه جاری عمداً کنار گذاشته می‌شود: ماهی که هنوز تمام نشده همیشه کوچک‌تر از
+ * ماه‌های کامل است و «کاهش شدید» جعلی می‌سازد — بدترین نوع گزارش، چون حسابدار
+ * بر پایه‌اش زنگ می‌زند.
+ */
+function trendShape(rows, currentFiscalMonth) {
+  const complete = rows.filter((row) => row.fiscalMonth !== currentFiscalMonth);
+  const income = monthlyTotals(complete, 'income');
+  const expense = monthlyTotals(complete, 'expense');
+  // دو ماه کامل کمینهٔ چیزی است که «روند» نام دارد؛ با یک ماه فقط یک نقطه داریم.
+  if (income.length < 2) return null;
+
+  const half = Math.max(1, Math.floor(income.length / 2));
+  const older = income.slice(0, half).map(([, value]) => value);
+  const newer = income.slice(half).map(([, value]) => value);
+  if (!newer.length) return null;
+  const olderAverage = older.reduce((sum, value) => sum + value, 0) / older.length;
+  const newerAverage = newer.reduce((sum, value) => sum + value, 0) / newer.length;
+  if (!olderAverage) return null;
+  const changePercent = Math.round(((newerAverage - olderAverage) / olderAverage) * 100);
+
+  // زیر ۱۵٪ نوسان عادی یک کسب‌وکار است، نه روند.
+  const direction = Math.abs(changePercent) < 15 ? 'ثابت' : changePercent > 0 ? 'رو به رشد' : 'رو به کاهش';
+  const [lastMonth, lastIncome] = income.at(-1);
+  const lastExpense = expense.find(([month]) => month === lastMonth)?.[1] || 0;
+  return {
+    id: 'trend',
+    title: 'روند درآمد',
+    value: direction,
+    evidence: direction === 'ثابت'
+      ? `میانگین درآمد ماهانه در ${income.length} ماه کامل تقریباً ثابت مانده (تغییر ${Math.abs(changePercent)}٪).`
+      : `میانگین درآمد ماهانه ${Math.abs(changePercent)}٪ ${changePercent > 0 ? 'بالاتر' : 'پایین‌تر'} از نیمهٔ اول همین بازه است.`,
+    sample: income.length,
+    detail: { months: income.length, changePercent, lastMonth, lastIncome, lastExpense, lastMargin: lastIncome - lastExpense },
+  };
+}
+
+/**
+ * فشار پرداخت سی روز آینده.
+ *
+ * تعهدهای سررسیددار در برابر درآمد معمول یک ماه. این تنها صفتی است که به آینده
+ * نگاه می‌کند و دقیقاً همان چیزی است که دفتر می‌خواهد بداند: «این ماه از پس
+ * تعهدهایش برمی‌آید؟»
+ *
+ * بدون تعهد سررسیددار هیچ ادعایی نمی‌شود — نبودِ داده یعنی سکوت، نه «مشکلی
+ * نیست».
+ */
+function cashPressure(rows, obligations, now) {
+  const horizon = now.getTime() + 30 * DAY_MS;
+  const due = (obligations || [])
+    .map((item) => ({
+      amount: Math.round(Number(item.amount) || 0),
+      direction: item.direction,
+      dueAt: parseMoment(item.dueAt),
+    }))
+    .filter((item) => item.amount > 0 && item.dueAt && item.dueAt.getTime() <= horizon && item.direction === 'payable');
+  if (!due.length) return null;
+
+  const payable = due.reduce((sum, item) => sum + item.amount, 0);
+  const incomeMonths = monthlyTotals(rows, 'income');
+  if (!incomeMonths.length) return null;
+  const typicalIncome = median(incomeMonths.map(([, value]) => value));
+  if (typicalIncome <= 0) return null;
+
+  const ratio = payable / typicalIncome;
+  const level = ratio >= 1 ? 'بالا' : ratio >= 0.5 ? 'متوسط' : 'پایین';
+  const overdue = due.filter((item) => item.dueAt.getTime() < now.getTime());
+  return {
+    id: 'cash-pressure',
+    title: 'فشار پرداخت سی روز آینده',
+    value: level,
+    evidence: `${due.length} تعهد پرداختنی تا سی روز آینده سررسید دارد و جمعشان ${Math.round(ratio * 100)}٪ درآمد معمول یک ماه این پرونده است.`
+      + (overdue.length ? ` ${overdue.length} مورد از سررسید گذشته است.` : ''),
+    sample: due.length,
+    detail: { payable, typicalIncome, ratio: Math.round(ratio * 100) / 100, overdueCount: overdue.length },
+  };
+}
+
+/**
+ * دسته‌ای که این ماه از عادت خودش بیرون زده.
+ *
+ * مقایسه با میانهٔ ماهانهٔ خودِ همان دسته است، نه با میانگین کلی. ماه جاری فقط
+ * وقتی سنجیده می‌شود که دست‌کم نیمی از ماه گذشته باشد؛ روز سوم ماه همیشه کمتر
+ * از میانه است و گزارش «افت شدید» بی‌معنا می‌شود.
+ */
+function monthOutliers(rows, currentFiscalMonth, fiscalDayOfMonth) {
+  if (fiscalDayOfMonth < 15) return null;
+  const byCategory = new Map();
+  for (const row of rows) {
+    if (row.type !== 'expense') continue;
+    if (!byCategory.has(row.category)) byCategory.set(row.category, new Map());
+    const months = byCategory.get(row.category);
+    months.set(row.fiscalMonth, (months.get(row.fiscalMonth) || 0) + row.amount);
+  }
+  const findings = [];
+  for (const [category, months] of byCategory) {
+    const current = months.get(currentFiscalMonth) || 0;
+    const past = [...months.entries()].filter(([month]) => month !== currentFiscalMonth).map(([, value]) => value);
+    // سه ماه کامل کمینهٔ چیزی است که «معمول» نام دارد.
+    if (past.length < 3 || !current) continue;
+    const typical = median(past);
+    if (typical <= 0) continue;
+    const ratio = current / typical;
+    if (ratio < 1.6 && ratio > 0.4) continue;
+    findings.push({ category, current, typical, ratio: Math.round(ratio * 100) / 100 });
+  }
+  if (!findings.length) return null;
+  findings.sort((left, right) => Math.abs(right.ratio - 1) - Math.abs(left.ratio - 1));
+  const top = findings[0];
+  return {
+    id: 'month-outlier',
+    title: 'دستهٔ خارج از عادت این ماه',
+    value: top.category,
+    evidence: `هزینهٔ «${top.category}» این ماه ${top.ratio >= 1 ? `${top.ratio} برابر` : `${Math.round(top.ratio * 100)}٪`} معمول ماهانهٔ خودش در این پرونده است.`,
+    sample: findings.length,
+    detail: { findings: findings.slice(0, 5) },
+  };
+}
+
+
 function accountantBrief(rows, months, traits) {
   const income = rows.filter((row) => row.type === 'income');
   const expense = rows.filter((row) => row.type === 'expense');
@@ -284,7 +416,7 @@ function accountantBrief(rows, months, traits) {
  * اثر انگشت مالی یک پرونده.
  * `rows` همان ردیف‌های تراکنش دورهٔ موردنظر است؛ این تابع هیچ کوئری نمی‌زند.
  */
-export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Date(), months = 0 } = {}) {
+export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Date(), months = 0, obligations = [] } = {}) {
   const normalized = normalizeDnaRows(rows, timeZone);
   const sufficiency = sufficiencyOf(normalized);
   // مخرج باید ماه‌هایی باشد که واقعاً داده دارند، نه پنجره‌ای که درخواست شده.
@@ -303,6 +435,7 @@ export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Da
     };
   }
 
+  const nowParts = persianParts(now, timeZone);
   const traits = [
     incomeRhythm(normalized, monthCount),
     weekdayPattern(normalized),
@@ -310,6 +443,9 @@ export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Da
     incomeConcentration(normalized),
     entryDiscipline(normalized),
     voiceAdoption(normalized),
+    trendShape(normalized, nowParts.month),
+    cashPressure(normalized, obligations, now),
+    monthOutliers(normalized, nowParts.month, nowParts.day),
   ].filter(Boolean);
 
   return {
