@@ -90,6 +90,7 @@ import { persianToISO } from '../shared/persianDate.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { CONFIDENCE_COMPONENT_LABELS, ROUTE_LABELS } from '../shared/confidenceEngine.js';
+import { BANKS, bankById, detectBank } from '../shared/banks.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 import ExcelImportPanel from './features/accounting/ExcelImportPanel.jsx';
@@ -974,7 +975,7 @@ export default function App() {
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /></>}
+          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
       </div>
@@ -1801,6 +1802,85 @@ function LearningPage({ categories, notify }) {
   const update = async (item, category) => { await api.updateLearning(item.id, { keyword: item.keyword, category }); load(); };
   const remove = async (id) => { await api.deleteLearning(id); notify('این یادگیری حذف شد.'); load(); };
   return <main className="px-4 py-5"><h1 className="text-xl font-extrabold">آنچه یاد گرفته‌ام</h1><p className="mt-2 text-sm leading-7 text-muted">فقط نگاشت‌هایی اینجا می‌مانند که خودت صریحاً تأیید کرده‌ای یا دستی ساخته‌ای. هر مورد را هر زمان بخواهی می‌توانی تغییر بدهی یا پاک کنی.</p><div className="mt-5 flex gap-2 rounded-[10px] border border-line bg-surface p-2"><input value={draft.keyword} onChange={(event) => setDraft({ ...draft, keyword: event.target.value })} placeholder="مثلاً اسنپ‌فود" className="tap min-w-0 flex-1 px-2 outline-none" /><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="tap max-w-32 rounded-lg border border-line px-2">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={save} className="tap grid place-items-center rounded-lg bg-accent text-white" aria-label="افزودن"><Plus size={21} /></button></div><div className="mt-5 divide-y divide-line border-y border-line">{items.length ? items.map((item) => <div key={item.id} className="flex min-h-[64px] items-center gap-2"><span className="min-w-0 flex-1 truncate font-bold">{item.keyword}</span><ChevronLeft size={17} className="text-muted" /><select value={item.category} onChange={(event) => update(item, event.target.value)} className="tap max-w-36 bg-transparent text-sm text-muted outline-none">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={() => remove(item.id)} className="tap grid place-items-center text-expense" aria-label={`حذف ${item.keyword}`}><Trash2 size={18} /></button></div>) : <p className="py-10 text-center text-sm text-muted">هنوز نگاشت تأییدشده‌ای ندارم.</p>}</div></main>;
+}
+
+const ACCOUNT_KINDS = [['cash', 'صندوق'], ['bank', 'بانک'], ['wallet', 'کیف پول'], ['other', 'سایر']];
+
+/**
+ * تعریف حساب‌های مالی دفتر.
+ *
+ * چرا بانک فیلد جداست و در نام حساب حل نمی‌شود: کاربر می‌گوید «از ملت دادم»
+ * ولی حسابش را «جاری شرکت» اسم گذاشته. بدون هویت مشترک، گفتار به حساب نمی‌رسد
+ * و هر ثبت بانکی در صندوق می‌نشیند.
+ */
+function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const blank = { name: '', kind: 'bank', bankId: '', openingBalance: 0, active: true };
+  const guessed = draft && draft.kind === 'bank' && !draft.bankId ? detectBank(draft.name)?.bankId : null;
+
+  const save = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api.saveAccount({ ...draft, openingBalance: Number(digitsOnly(String(draft.openingBalance)) || 0) });
+      setDraft(null);
+      await refresh();
+      notify('حساب ذخیره شد.');
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
+  return <section className="mt-5 rounded-[10px] border border-line bg-surface p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <p className="font-bold">حساب‌های مالی</p>
+        <p className="mt-0.5 text-[11px] text-muted">وقتی نام بانک را در گفتار بگویی، ثبت روی همین حساب‌ها می‌نشیند.</p>
+      </div>
+      {canManage && <button onClick={() => setDraft(draft ? null : blank)} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">
+        {draft ? 'بستن' : 'حساب تازه'}
+      </button>}
+    </div>
+
+    <ul className="mt-3 divide-y divide-line text-[13px]">
+      {accounts.map((account) => {
+        const bank = account.bankId ? bankById(account.bankId) : null;
+        return <li key={account.id} className="flex flex-wrap items-center gap-2 py-2">
+          <span className="min-w-0 flex-1 truncate">
+            <b>{account.name}</b>
+            <span className="mr-2 text-[11px] text-muted">{ACCOUNT_KINDS.find(([id]) => id === account.kind)?.[1]}</span>
+            {/* حساب بانکی بی‌هویت، همانی است که گفتار هیچ‌وقت پیدایش نمی‌کند. */}
+            {account.kind === 'bank' && <span className={`mr-2 text-[11px] ${bank ? 'text-muted' : 'text-expense'}`}>
+              {bank ? bank.name : 'بانکش مشخص نیست'}
+            </span>}
+          </span>
+          <span className="numbers text-[12px] text-muted">{formatAmount(account.balance || 0)}</span>
+          {canManage && <button onClick={() => setDraft({ ...account, bankId: account.bankId || '' })} className="tap grid place-items-center text-muted" aria-label={`ویرایش ${account.name}`}><Pencil size={16} /></button>}
+        </li>;
+      })}
+      {!accounts.length && <li className="py-3 text-muted">هنوز حسابی تعریف نشده است.</li>}
+    </ul>
+
+    {draft && <form onSubmit={save} className="mt-3 space-y-2 border-t border-line pt-3">
+      <input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+        placeholder="مثلاً جاری ملت شرکت" className="tap w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
+      <div className="grid grid-cols-2 gap-2">
+        <select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value })} className="tap rounded-lg border border-line bg-paper px-2 text-[13px]">
+          {ACCOUNT_KINDS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
+        {draft.kind === 'bank' && <select value={draft.bankId} onChange={(event) => setDraft({ ...draft, bankId: event.target.value })} className="tap rounded-lg border border-line bg-paper px-2 text-[13px]">
+          <option value="">{guessed ? `از روی نام: ${bankById(guessed).name}` : '— بانک را انتخاب کن —'}</option>
+          {BANKS.map((bank) => <option key={bank.id} value={bank.id}>{bank.name}</option>)}
+        </select>}
+      </div>
+      <label className="block text-[11px] text-muted">ماندهٔ ابتدای دوره
+        <input inputMode="numeric" value={draft.openingBalance} onChange={(event) => setDraft({ ...draft, openingBalance: event.target.value })}
+          className="tap numbers mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-[13px]" />
+      </label>
+      <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-white disabled:opacity-40">{busy ? 'در حال ذخیره…' : 'ذخیره حساب'}</button>
+    </form>}
+  </section>;
 }
 
 function SettingsPage({ initial, accounts = [], notify, refresh, onLogout, canManage = false }) {

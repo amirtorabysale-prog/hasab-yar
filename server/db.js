@@ -16,6 +16,7 @@ import { EVENT_KINDS, describeEvent, normalizeFinancialEvent } from '../shared/f
 import { routeEvent } from '../shared/confidenceEngine.js';
 import { resolveAutomationPolicy } from '../shared/automationPolicy.js';
 import { transactionEventDecision } from './transactionEvent.js';
+import { bankById, detectBank } from '../shared/banks.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
@@ -607,6 +608,11 @@ ensureColumn('transactions', 'updated_at TEXT');
 // `migrateAccountingLedger` که هر تراکنش بی‌سند را سند می‌زند، همان سندی را
 // می‌ساخت که قرار بود نگه داشته شود.
 ensureColumn('transactions', 'journal_deferred INTEGER NOT NULL DEFAULT 0');
+// هویت بانک، جدا از نام حساب.
+//
+// کاربر می‌گوید «از ملت دادم» ولی حسابش را «جاری شرکت» اسم گذاشته. بدون یک
+// شناسهٔ مشترک، این دو هیچ‌وقت به هم نمی‌رسند و هر ثبت بانکی در صندوق می‌نشیند.
+ensureColumn('accounts', 'bank_id TEXT');
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
 ensureColumn('users', 'must_change_password INTEGER NOT NULL DEFAULT 0');
@@ -1027,7 +1033,7 @@ export function saveSettings(values) {
 
 export function listAccounts() {
   return db.prepare(`SELECT accounts.id,accounts.name,accounts.kind,accounts.opening_balance AS openingBalance,accounts.active,
-    accounts.created_at AS createdAt,
+    accounts.created_at AS createdAt,accounts.bank_id AS bankId,
     accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' THEN
       CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
@@ -1040,19 +1046,27 @@ export function saveAccount(values = {}) {
   const kind = ['cash', 'bank', 'wallet', 'other'].includes(values.kind) ? values.kind : 'other';
   const openingBalance = Math.round(Number(values.openingBalance) || 0);
   if (!name) throw invalidInput('نام حساب را وارد کن.');
+  // بانک فقط روی حساب بانکی معنی دارد. اگر کاربر بانکی انتخاب نکرده، از نام
+  // خود حساب حدس زده می‌شود — «جاری ملت» همان بانک ملت است و پرسیدنش اضافه است.
+  let bankId = null;
+  if (kind === 'bank') {
+    const chosen = values.bankId ? String(values.bankId).trim() : '';
+    bankId = (chosen && bankById(chosen)?.id) || detectBank(name)?.bankId || null;
+    if (chosen && !bankId) throw invalidInput('بانک انتخاب‌شده در فهرست نیست.');
+  }
   if (!Number.isSafeInteger(openingBalance)) throw invalidInput('ماندهٔ ابتدای دوره معتبر نیست.');
   const current = db.prepare('SELECT created_at AS createdAt,opening_balance AS openingBalance FROM accounts WHERE id=?').get(id);
   if (current && Number(current.openingBalance) !== openingBalance) assertAccountingPeriodOpen(db, periodForDate(current.createdAt, currentTimeZone()));
   if (!current && openingBalance !== 0) assertAccountingPeriodOpen(db, periodForDate(new Date(), currentTimeZone()));
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active) VALUES (?,?,?,?,?)
+    db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active,bank_id) VALUES (?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,opening_balance=excluded.opening_balance,
-        active=excluded.active,updated_at=CURRENT_TIMESTAMP`)
-      .run(id, name, kind, openingBalance, values.active === false ? 0 : 1);
+        active=excluded.active,bank_id=excluded.bank_id,updated_at=CURRENT_TIMESTAMP`)
+      .run(id, name, kind, openingBalance, values.active === false ? 0 : 1, bankId);
     if (id === 'cash') insertSetting.run('openingBalance', String(openingBalance));
     if (!current || Number(current.openingBalance) !== openingBalance) syncOpeningBalanceJournal(db, id, { createdBy: currentWorkspace()?.userId });
-    audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance });
+    audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance, bankId });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return listAccounts().find((item) => item.id === id);
@@ -1132,7 +1146,26 @@ export function summarize(items) {
   return { income, expense, netCashFlow, profit: netCashFlow, comparison: null };
 }
 
+/**
+ * حسابِ بانکی که کاربر نامش را گفته.
+ *
+ * اگر دفتر دو حساب از یک بانک داشته باشد، هیچ‌کدام برنمی‌گردد: «از ملت دادم»
+ * وقتی دو حساب ملت هست، جمله را روشن نمی‌کند و انتخاب یکی از آن دو یعنی
+ * برداشت از حساب اشتباه.
+ */
+export function accountForBank(bankId) {
+  if (!bankId) return null;
+  const matches = db.prepare("SELECT id,name FROM accounts WHERE bank_id=? AND active=1 AND kind='bank' ORDER BY sort_order,name").all(String(bankId));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function resolveAccountId(item = {}) {
+  // نام بانکِ گفته‌شده بر پیش‌فرض مقدم است، ولی بر انتخاب صریح کاربر نه:
+  // اگر در فرم تأیید حسابی انتخاب شده، همان حرف آخر است.
+  if (!item.accountId && !item.account && item.bankId) {
+    const matched = accountForBank(item.bankId);
+    if (matched) return matched.id;
+  }
   const requested = String(item.accountId || item.account || 'cash').trim().slice(0, 80);
   const account = db.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(requested)
     || db.prepare('SELECT id FROM accounts WHERE name=? AND active=1').get(requested);
@@ -1210,11 +1243,19 @@ function insertTransactionRows({ transcript, transactions }) {
     const occurredAt = item.occurredAt || new Date().toISOString();
     assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
-    const reviewState = normalizeReviewState(item.reviewState, item.needsReview ? 'review' : 'ready');
+    // بانکی که گفته شده ولی حسابی در دفتر ندارد، بی‌صدا روی صندوق می‌نشیند.
+    // این همان خطایی است که کاربر هیچ‌وقت نمی‌بیند و آخر ماه ماندهٔ صندوق و
+    // بانک هر دو غلط است — پس به‌جای سکوت، سؤال می‌شود.
+    const bankSaidButUnknown = item.bankId && !item.accountId && !item.account && !accountForBank(item.bankId);
+    const entry = bankSaidButUnknown
+      ? { ...item, reviewReasons: [...(Array.isArray(item.reviewReasons) ? item.reviewReasons : []),
+        `حسابی برای «${item.bankName || 'این بانک'}» تعریف نشده؛ فعلاً روی حساب پیش‌فرض نشسته است.`] }
+      : item;
+    const reviewState = normalizeReviewState(entry.reviewState, entry.needsReview ? 'review' : 'ready');
     const result = insert.run(
       id, item.clientId || null, amount, item.type, String(item.category || 'سایر').slice(0, 80),
       String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1),
-      item.needsReview ? 1 : 0, jsonText(item.confidenceDetails, {}), jsonText(item.reviewReasons, []), reviewState,
+      entry.needsReview ? 1 : 0, jsonText(entry.confidenceDetails, {}), jsonText(entry.reviewReasons, []), reviewState,
       item.restoredFrom || null, CAPITAL_FLOWS.includes(item.capitalFlow) ? item.capitalFlow : '',
       occurredAt, item.contactId || null, accountId, accountId,
       String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt,
@@ -1226,7 +1267,7 @@ function insertTransactionRows({ transcript, transactions }) {
         const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt };
         // اگر لایهٔ رویداد کار را به عهده گرفت، سند اینجا زده نمی‌شود؛ یا خودش
         // زده یا عمداً نگه داشته است.
-        if (!routeTransactionThroughEvents(row, item, transcript)) {
+        if (!routeTransactionThroughEvents(row, entry, transcript)) {
           syncTransactionJournal(db, row, { createdBy: currentWorkspace()?.userId });
         }
       }

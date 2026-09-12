@@ -2,6 +2,7 @@ import { withReviewAssessment } from './review.js';
 import { normalizePersian } from './normalize.js';
 import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
 import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
+import { detectBank } from './banks.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -265,10 +266,16 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   // سند با مبلغی صد برابر ثبت می‌شود و هیچ نشانه‌ای هم ندارد.
   const mentionedDate = extractDateMention(input, { now, preferPast: true });
   const occurredAt = mentionedDate?.iso || null;
+  // بانک روی متن اصلی خوانده می‌شود، پیش از هر ماسکی، تا جای تطبیق جابه‌جا نشود.
+  const bank = detectBank(input);
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
-  const amountSource = mentionedDate?.match
-    ? normalizePersian(input).replace(mentionedDate.match, " ".repeat(mentionedDate.match.length))
+  let amountSource = mentionedDate?.match || bank
+    ? normalizePersian(input)
     : input;
+  if (mentionedDate?.match) amountSource = amountSource.replace(mentionedDate.match, ' '.repeat(mentionedDate.match.length));
+  // نام بانک هم ماسک می‌شود، وگرنه «بانک صادرات» دستهٔ «صادرات» می‌سازد و
+  // «بانک مسکن» را هزینهٔ اجاره می‌خواند.
+  if (bank) amountSource = amountSource.replace(bank.matchedText, ' '.repeat(bank.matchedText.length));
   const { text, spans } = extractAmounts(amountSource);
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word))];
   const transactions = spans.map((span, index) => {
@@ -303,6 +310,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous,
       source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),
+      // شناسهٔ بانک می‌رود، نه شناسهٔ حساب: پارسر دفتر را نمی‌شناسد و نمی‌داند
+      // این کاربر کدام حساب را به کدام بانک بسته است. نگاشت کار سرور است.
+      ...(bank ? { bankId: bank.bankId, bankName: bank.bankName } : {}),
       confidenceDetails: {
         amount: {
           score: span.bareScale ? 0.3 : colloquialThousands ? 0.66 : source === 'voice' ? 0.93 : 0.98,
@@ -314,7 +324,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
         },
         type: { score: classified.typeConfidence, reason: classified.typeReason },
         category: { score: classified.categoryConfidence, reason: classified.categoryReason },
-        account: { score: 0.82, reason: 'حساب پیش‌فرض دفتر انتخاب می‌شود؛ قبل از ثبت قابل تغییر است.' },
+        account: bank
+          ? { score: 0.97, reason: `حساب از نام «${bank.bankName}» در گفتار مشخص شد.` }
+          : { score: 0.82, reason: 'حساب پیش‌فرض دفتر انتخاب می‌شود؛ قبل از ثبت قابل تغییر است.' },
       },
       reviewReasons,
       warning: span.bareScale
