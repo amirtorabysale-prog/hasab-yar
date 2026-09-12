@@ -9,7 +9,7 @@ import {
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
-  applyChartSuggestions, chartOverview, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
@@ -404,6 +404,15 @@ app.put('/api/chart/mappings/:ledgerAccountId', (request, response, next) => {
 });
 app.post('/api/chart/mappings/suggest', (request, response, next) => {
   try { return response.json(applyChartSuggestions({ refine: request.body?.refine === true })); } catch (error) { return next(error); }
+});
+app.get('/api/fixed-assets', (request, response, next) => {
+  try { return response.json(fixedAssetOverview({ throughMonth: String(request.query.month || '') })); } catch (error) { return next(error); }
+});
+app.put('/api/fixed-assets/:assetKey', (request, response, next) => {
+  try { return response.json({ item: saveFixedAsset({ ...request.body, assetKey: request.params.assetKey }) }); } catch (error) { return next(error); }
+});
+app.post('/api/fixed-assets/depreciation', (request, response, next) => {
+  try { return response.json(postDepreciation({ throughMonth: String(request.body?.month || '') })); } catch (error) { return next(error); }
 });
 app.get('/api/chart/dimensions/balance', (request, response, next) => {
   try { return response.json(dimensionReport(request.query)); } catch (error) { return next(error); }

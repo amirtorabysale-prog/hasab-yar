@@ -83,7 +83,7 @@ function nextCode(database, type) {
   throw accountingError('شماره حساب آزاد پیدا نشد.', 'LEDGER_CODE_EXHAUSTED');
 }
 
-function linkedLedgerAccount(database, sourceKind, sourceKey, name, type) {
+function linkedLedgerAccount(database, sourceKind, sourceKey, name, type, forcedNormalSide = null) {
   ensureAccountingSchema(database);
   const existing = database.prepare('SELECT * FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(sourceKind, sourceKey);
   if (existing) {
@@ -91,7 +91,9 @@ function linkedLedgerAccount(database, sourceKind, sourceKey, name, type) {
     return existing.id;
   }
   const id = randomUUID();
-  const normalSide = ['asset', 'expense'].includes(type) ? 'debit' : 'credit';
+  // حساب کاهنده (مثل استهلاک انباشته) نوعش دارایی است ولی ماهیتش بستانکار؛
+  // بدون این استثنا، انباشته به‌جای کم‌کردن، دارایی را زیاد نشان می‌دهد.
+  const normalSide = forcedNormalSide || (['asset', 'expense'].includes(type) ? 'debit' : 'credit');
   database.prepare(`INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key)
     VALUES (?,?,?,?,?,?,?)`).run(id, nextCode(database, type), name, type, normalSide, sourceKind, sourceKey);
   return id;
@@ -664,4 +666,49 @@ export function reopenAccountingPeriod(database, period, userId, reason) {
     WHERE period=? AND status='locked'`).run(userId || null, cleanReason, period);
   if (!result.changes) throw accountingError('دورهٔ بسته‌شده پیدا نشد.', 'ACCOUNTING_PERIOD_NOT_LOCKED', 404);
   return accountingPeriods(database).find((item) => item.period === period);
+}
+
+/**
+ * سند استهلاک یک ماه برای یک دارایی ثابت.
+ *
+ * بدهکار: هزینهٔ استهلاک (یک حساب مشترک، چون گزارش سود و زیان استهلاک را یکجا
+ * می‌خواهد). بستانکار: استهلاک انباشتهٔ همان دارایی — حسابی جدا از خودِ دارایی،
+ * چون بهای تمام‌شده باید دست‌نخورده بماند و انباشته کنارش دیده شود.
+ *
+ * `sourceId` ترکیب دارایی و ماه است تا دو بار ثبت یک ماه، در همان لایهٔ سند
+ * قابل تشخیص باشد و نه فقط با کنترل بالادستی.
+ */
+export function postDepreciationJournal(database, entry, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const amount = Math.round(Number(entry.amount));
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ استهلاک معتبر نیست.');
+  const title = String(entry.title || '').trim().slice(0, 100);
+  if (!title) throw accountingError('نام دارایی برای سند استهلاک لازم است.');
+  const month = String(entry.month || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(month)) throw accountingError('ماه استهلاک معتبر نیست.');
+
+  const sourceId = `${entry.assetKey || title}:${month}`;
+  const existing = database.prepare("SELECT id FROM journal_entries WHERE source_type='depreciation' AND source_id=? AND entry_kind='normal'").get(sourceId);
+  if (existing) throw accountingError(`استهلاک «${title}» برای ${month} قبلاً ثبت شده است.`, 'DEPRECIATION_DUPLICATE', 409);
+
+  const lines = [
+    { accountId: linkedLedgerAccount(database, 'system', 'depreciation-expense', 'هزینهٔ استهلاک', 'expense'), debit: amount },
+    {
+      accountId: linkedLedgerAccount(database, 'accumulated-depreciation', entry.assetKey || title, `استهلاک انباشته — ${title}`, 'asset', 'credit'),
+      credit: amount,
+    },
+  ];
+  return insertJournal(database, {
+    sourceType: 'depreciation', sourceId,
+    revision: nextRevision(database, 'depreciation', sourceId), entryKind: 'normal',
+    occurredAt: entry.occurredAt, memo: `استهلاک ${title} — ${month}`, createdBy, timeZone, lines,
+  });
+}
+
+/** ماه‌هایی که برای یک دارایی سند استهلاک خورده‌اند. */
+export function postedDepreciationMonths(database, assetKey) {
+  ensureAccountingSchema(database);
+  return database.prepare("SELECT source_id AS sourceId FROM journal_entries WHERE source_type='depreciation' AND entry_kind='normal' AND source_id LIKE ?")
+    .all(`${assetKey}:%`)
+    .map((row) => String(row.sourceId).slice(String(assetKey).length + 1));
 }
