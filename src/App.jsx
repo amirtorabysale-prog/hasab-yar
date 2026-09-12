@@ -32,7 +32,7 @@ function isoToDateInput(iso, timeZone = 'Asia/Tehran') {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
-import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload } from '../shared/voiceIntent.js';
+import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload, invoiceLinesTotal } from '../shared/voiceIntent.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessTransactionReview, REVIEW_FIELD_LABELS, reviewBatchSummary } from '../shared/review.js';
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
@@ -651,14 +651,16 @@ export default function App() {
   const saveIntentDraft = async (draft) => {
     try {
       if (draft.intent === 'invoice') {
-        const payload = invoiceDraftPayload(draft);
+        const payload = invoiceDraftPayload(draft, { taxRateId: draft.taxRateId || null });
         if (!payload) return;
         const { item } = await api.saveInvoice({ ...payload, documentType: draft.documentType, customerName: draft.contactName || '' });
         setIntentDraft(null);
         await load();
-        // پیام عمداً می‌گوید سند ناتمام است؛ «ثبت شد» خالی، کاربر را به این
-        // باور می‌رساند که فاکتور صادر شده.
-        notify(`پیش‌نویس ${item.number} ساخته شد؛ ردیف کالا و مالیاتش را در برگهٔ فاکتورها کامل کن.`);
+        // پیام دقیقاً می‌گوید سند در چه وضعیتی است. «ثبت شد» خالی، کاربر را به
+        // این باور می‌رساند که فاکتور صادر شده درحالی‌که ممکن است پیش‌نویس باشد.
+        notify(payload.issueNow
+          ? `فاکتور ${item.number} صادر شد؛ در دفتر کل سند خورد و در گزارش مالیاتی می‌آید.`
+          : `پیش‌نویس ${item.number} ساخته شد؛ هر وقت خواستی از برگهٔ فاکتورها صادرش کن.`);
         return;
       }
       if (draft.intent === 'capital' || draft.intent === 'fixed-asset') {
@@ -3496,6 +3498,23 @@ function DrawerItem({ icon: Icon, label, onClick }) { return <button onClick={on
  */
 function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) {
   const [busy, setBusy] = useState(false);
+  const [availableTaxRates, setAvailableTaxRates] = useState([]);
+
+  // نرخ‌ها فقط وقتی گرفته می‌شوند که سند فاکتور باشد؛ بقیهٔ نیت‌ها مالیات ندارند.
+  useEffect(() => {
+    if (draft.intent !== 'invoice') return;
+    let cancelled = false;
+    api.taxRates()
+      .then((response) => { if (!cancelled) setAvailableTaxRates((response.items || []).filter((rate) => rate.active && rate.treatment === 'taxable')); })
+      .catch(() => { if (!cancelled) setAvailableTaxRates([]); });
+    return () => { cancelled = true; };
+  }, [draft.intent]);
+
+  const patchLine = (index, changes) => setDraft({
+    ...draft,
+    lines: (draft.lines || []).map((line, position) => (position === index ? { ...line, ...changes } : line)),
+  });
+  const linesTotal = invoiceLinesTotal(draft);
   const isCheque = draft.intent === 'cheque';
   const isInvoice = draft.intent === 'invoice';
   const isCapital = draft.intent === 'capital';
@@ -3569,12 +3588,66 @@ function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) {
             className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
         </label>
 
-        {/* مرز صریح: از یک جملهٔ گفتاری ردیف کالا و نرخ مالیات درنمی‌آید. */}
+        <div className="mt-3">
+          <p className="text-xs font-bold text-muted">ردیف‌ها</p>
+          <div className="mt-2 space-y-2">
+            {(draft.lines || []).map((line, index) => (
+              <div key={index} className="grid grid-cols-[minmax(0,1fr)_58px_minmax(0,110px)] gap-2">
+                <input value={line.title} onChange={(event) => patchLine(index, { title: event.target.value })}
+                  placeholder="نام کالا یا خدمت" className="tap rounded-lg border border-line bg-surface px-2 text-xs text-ink" />
+                <input dir="ltr" inputMode="numeric" value={line.quantity}
+                  onChange={(event) => patchLine(index, { quantity: Number(event.target.value) || 0 })}
+                  className="tap rounded-lg border border-line bg-surface px-2 text-center text-xs numbers" />
+                <input dir="ltr" inputMode="numeric" value={line.unitPrice}
+                  onChange={(event) => patchLine(index, { unitPrice: Number(event.target.value) || 0 })}
+                  className="tap rounded-lg border border-line bg-surface px-2 text-left text-xs numbers" />
+              </div>
+            ))}
+          </div>
+          {!(draft.lines || []).length && <p className="mt-1 text-[11px] leading-5 text-muted">
+            نرخ واحد در جمله گفته نشد، پس یک ردیف به کل مبلغ ساخته می‌شود. برای ردیف دقیق بگو
+            «ده عدد چای هرکدام پنجاه هزار تومان».
+          </p>}
+          {(draft.lines || []).length > 0 && <p className="numbers mt-2 text-right text-xs text-muted">
+            جمع ردیف‌ها: <b className="text-ink">{formatAmount(linesTotal)}</b> تومان
+          </p>}
+        </div>
+
+        {/* نرخ مالیات فقط از نرخ‌های تعریف‌شدهٔ همین دفتر می‌آید؛ ساختن نرخ از روی
+            حرف، عددی به سند می‌دهد که در دفتر وجود ندارد. */}
+        <div className="mt-3">
+          <p className="text-xs font-bold text-muted">مالیات</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button onClick={() => setDraft({ ...draft, taxRateId: null })}
+              className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${!draft.taxRateId ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>بدون مالیات</button>
+            {availableTaxRates.map((rate) => (
+              <button key={rate.id} onClick={() => setDraft({ ...draft, taxRateId: rate.id })}
+                className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.taxRateId === rate.id ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>
+                {rate.name} <span className="numbers">({toPersianDigits(rate.rate)}٪)</span>
+              </button>
+            ))}
+          </div>
+          {draft.tax?.wanted && !availableTaxRates.length && <p className="mt-1 text-[11px] leading-5 text-expense">
+            در جمله مالیات خواسته شد ولی هیچ نرخ فعالی در این دفتر تعریف نشده است. نرخ را در «مالیات» بساز؛
+            حساب‌یار نرخ نمی‌سازد چون سند باید به نرخ واقعی دفتر بخورد.
+          </p>}
+          {draft.tax?.wanted && draft.tax.ratePercent != null && !availableTaxRates.some((rate) => Math.round(rate.rate) === draft.tax.ratePercent) && availableTaxRates.length > 0 && (
+            <p className="mt-1 text-[11px] leading-5 text-accent">
+              نرخ <span className="numbers">{toPersianDigits(draft.tax.ratePercent)}٪</span> گفته شد ولی در نرخ‌های این دفتر نیست؛ خودت از بالا انتخاب کن.
+            </p>
+          )}
+        </div>
+
+        <label className="mt-3 flex items-start gap-2 text-[12px] leading-6">
+          <input type="checkbox" checked={draft.issueNow === true}
+            onChange={(event) => setDraft({ ...draft, issueNow: event.target.checked })} className="mt-1" />
+          <span>همین حالا صادر شود {draft.occurredAt ? <>با تاریخ <b>{persianDate(draft.occurredAt)}</b></> : '(با تاریخ امروز)'}</span>
+        </label>
+
         <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-[11px] leading-6 text-accent">
-          سند به‌صورت <b>پیش‌نویس</b> با یک ردیف به کل این مبلغ ساخته می‌شود و صادر نمی‌شود: نه در دفتر کل سند می‌خورد،
-          نه در گزارش مالیاتی می‌آید و نه در جمع طلب و بدهی. ردیف کالا، تعداد و نرخ مالیات را در برگهٔ «فاکتورها» کامل
-          کن و بعد خودت صادرش کن.
-          {draft.occurredAt && <> تاریخ گفته‌شده روی پیش‌نویس نمی‌نشیند؛ تاریخ فاکتور هنگام صدور تعیین می‌شود.</>}
+          {draft.issueNow
+            ? 'سند صادر می‌شود: در دفتر کل سند می‌خورد، در گزارش مالیاتی می‌آید و در جمع طلب و بدهی می‌نشیند. پس از صدور، اصلاحش سند برگشتی می‌خواهد.'
+            : 'سند به‌صورت پیش‌نویس می‌ماند: نه در دفتر کل سند می‌خورد، نه در گزارش مالیاتی می‌آید و نه در جمع طلب و بدهی. هر وقت خواستی از برگهٔ «فاکتورها» صادرش کن.'}
         </p>
       </> : <>
         <div className="mt-3">

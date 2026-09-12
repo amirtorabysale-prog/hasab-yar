@@ -1,6 +1,7 @@
 import { normalizePersian } from './normalize.js';
 import { extractDateMention } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
+import { detectTaxMention, parseInvoiceLines, wantsImmediateIssue } from './invoiceSpeech.js';
 
 /**
  * نیت گفته را تشخیص می‌دهد.
@@ -243,6 +244,11 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
       contactName,
       title: documentType === 'purchase' ? 'خرید' : 'فروش',
       occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
+      // ردیف‌ها فقط وقتی ساخته می‌شوند که جمله نرخ واحد را صریح گفته باشد؛
+      // وگرنه آرایه خالی می‌ماند و رابط همان ردیف تک‌خطی قبلی را می‌سازد.
+      lines: parseInvoiceLines(input),
+      tax: detectTaxMention(input),
+      issueNow: wantsImmediateIssue(input),
       transcript: text,
     };
   }
@@ -310,21 +316,45 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
  * تاریخ گفته‌شده عمداً روی سند نمی‌نشیند؛ تاریخ فاکتور هنگام صدور تعیین می‌شود و
  * نشاندن تاریخِ حرف روی پیش‌نویسِ ناتمام فقط یک عدد بی‌پشتوانه می‌ساخت.
  */
-export function invoiceDraftPayload(intent = {}) {
+export function invoiceDraftPayload(intent = {}, { taxRateId = null } = {}) {
   const documentType = intent.documentType === 'purchase' ? 'purchase' : 'sales';
-  const amount = Math.round(Number(intent.amount) || 0);
-  if (!amount || amount <= 0) return null;
+  const spoken = Array.isArray(intent.lines) ? intent.lines : [];
+  // ردیف‌های گفته‌شده بر مبلغ کل مقدم‌اند: کاربر خودش تعداد و نرخ واحد را گفته،
+  // پس جمعشان همان چیزی است که خواسته.
+  const items = spoken.length
+    ? spoken.map((line) => ({
+      title: String(line.title || '').slice(0, 120),
+      quantity: Math.max(0.01, Number(line.quantity) || 1),
+      unitPrice: Math.round(Number(line.unitPrice) || 0),
+      ...(taxRateId ? { taxRateId } : {}),
+    })).filter((line) => line.title && line.unitPrice > 0)
+    : [];
+  if (!items.length) {
+    const amount = Math.round(Number(intent.amount) || 0);
+    if (!amount || amount <= 0) return null;
+    items.push({
+      title: documentType === 'purchase' ? 'ردیف خرید — از گفتهٔ صوتی' : 'ردیف فروش — از گفتهٔ صوتی',
+      quantity: 1,
+      unitPrice: amount,
+      ...(taxRateId ? { taxRateId } : {}),
+    });
+  }
   return {
     documentType,
     customerName: intent.contactName || '',
     note: String(intent.transcript || '').slice(0, 300),
-    issueNow: false,
-    items: [{
-      title: documentType === 'purchase' ? 'ردیف خرید — از گفتهٔ صوتی' : 'ردیف فروش — از گفتهٔ صوتی',
-      quantity: 1,
-      unitPrice: amount,
-    }],
+    // صدور فقط وقتی که کاربر صریح خواسته باشد و روی کارت تأیید هم بماند.
+    issueNow: intent.issueNow === true,
+    ...(intent.issueNow === true && intent.occurredAt ? { issuedAt: intent.occurredAt } : {}),
+    items,
   };
+}
+
+/** جمع ردیف‌های گفته‌شده، برای نمایش روی کارت تأیید پیش از ذخیره. */
+export function invoiceLinesTotal(intent = {}) {
+  const spoken = Array.isArray(intent.lines) ? intent.lines : [];
+  if (!spoken.length) return Math.round(Number(intent.amount) || 0);
+  return spoken.reduce((sum, line) => sum + Math.round((Number(line.quantity) || 1) * (Number(line.unitPrice) || 0)), 0);
 }
 
 /**
