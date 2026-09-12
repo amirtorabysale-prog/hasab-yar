@@ -9,7 +9,11 @@ html { background: #F5F3ED; }
 body { margin: 0; min-width: 320px; min-height: 100vh; overscroll-behavior: none; }
 button, input, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
-.numbers { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; direction: ltr; unicode-bidi: isolate; }
+/* عدد باید از متن فارسی جدا بماند ولی چینشش را عوض نکند.
+   `direction: ltr` روی یک بلوک، چینش پیش‌فرضش را هم چپ می‌کرد: مبلغ به لبهٔ
+   چپ می‌پرید و برچسبش راست می‌ماند، انگار صفحه خراب است. `isolate` به‌تنهایی
+   همان محافظت دوسویه را می‌دهد بدون اینکه راست‌چینی صفحه را به هم بزند. */
+.numbers { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; unicode-bidi: isolate; }
 .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 96px); }
 .app-shell { display: block; }
 .voice-dock { position: relative; z-index: 1; }

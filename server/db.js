@@ -3621,7 +3621,13 @@ export function financialOverview(now = new Date()) {
     });
   }
 
-  if (cash < Number(settings.lowBalanceThreshold || 2_000_000)) {
+  // دفتری که هنوز هیچ پولی در آن جابه‌جا نشده، «کم‌پول» نیست — خالی است.
+  //
+  // هشدار نقدینگی روی دفتر تازه، اولین چیزی است که کاربر می‌بیند و هیچ معنایی
+  // ندارد؛ همان قاعدهٔ «بدون دادهٔ کافی هیچ ادعایی» که DNA رعایت می‌کند.
+  const ledgerHasMoved = Boolean(db.prepare("SELECT 1 FROM transactions WHERE status!='deleted' LIMIT 1").get())
+    || liquidAccounts.some((account) => Number(account.openingBalance || 0) !== 0);
+  if (ledgerHasMoved && cash < Number(settings.lowBalanceThreshold || 2_000_000)) {
     alerts.push({
       id: 'low-cash', type: 'low-cash', level: 'warning', priority: 60,
       title: 'ماندهٔ نقدی به حد هشدار رسیده', detail: `${money(cash)} تومان مانده در برابر حد ${money(settings.lowBalanceThreshold || 2_000_000)} تومان.`,

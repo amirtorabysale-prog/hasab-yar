@@ -975,7 +975,7 @@ export default function App() {
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /></>}
+          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
       </div>
@@ -1279,7 +1279,24 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoic
 
 function ConfirmationSheet({ result, categories, accounts = [], onCancel, onConfirm }) {
   const defaultAccountId = accounts.find((account) => account.id === 'cash' && account.active)?.id || accounts.find((account) => account.active)?.id || 'cash';
-  const [items, setItems] = useState(() => result.transactions.map((item) => ({ ...item, accountId: item.accountId || defaultAccountId, originalCategory: item.category })));
+  /**
+   * حسابی که این برداشت باید روی آن بنشیند.
+   *
+   * اگر نام بانک در جمله آمده، همان حساب انتخاب می‌شود. بدون این، برگهٔ تأیید
+   * پیش از ارسال `accountId` را روی صندوق می‌گذاشت و سرور دیگر فرصت نداشت از
+   * روی نام بانک تصمیم بگیرد — یعنی گفتنِ نام بانک هیچ اثری نداشت.
+   *
+   * دو حساب از یک بانک یعنی جمله روشن نیست؛ همان قاعدهٔ سرور، اینجا هم.
+   */
+  const accountFor = (item) => {
+    if (item.accountId) return item.accountId;
+    if (item.bankId) {
+      const matches = accounts.filter((account) => account.active && account.kind === 'bank' && account.bankId === item.bankId);
+      if (matches.length === 1) return matches[0].id;
+    }
+    return defaultAccountId;
+  };
+  const [items, setItems] = useState(() => result.transactions.map((item) => ({ ...item, accountId: accountFor(item), originalCategory: item.category })));
   const [index, setIndex] = useState(0);
   const [editAmount, setEditAmount] = useState(false);
   const initialSummary = reviewBatchSummary(result);
@@ -1320,7 +1337,10 @@ function ConfirmationSheet({ result, categories, accounts = [], onCancel, onConf
         <blockquote className="rounded-lg border border-line bg-surface/65 px-3 py-3 text-[14px] leading-7 text-muted">«{result.transcript}»</blockquote>
         {Number.isFinite(result.responseMs) && <p className="mt-2 text-center text-[12px] font-medium text-income">{result.engine === 'browser-live' ? 'تشخیص زنده' : 'تشخیص از صدای اصلی'}؛ نتیجه در {toPersianDigits((Math.max(1, result.responseMs) / 1000).toFixed(1))} ثانیه آماده شد</p>}
 
-        {quickConfirm ? <div className="mt-5"><div className="divide-y divide-line rounded-[10px] border border-line bg-surface px-3">{items.map((entry) => <div key={`${entry.amount}-${entry.rawText}`} className="flex items-center justify-between gap-3 py-3"><div><b className={`numbers text-lg ${entry.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(entry)}</b><p className="mt-1 text-xs text-muted">{entry.category}</p></div><span className="rounded-full bg-income/10 px-2 py-1 text-[10px] font-bold text-income">آماده ثبت</span></div>)}</div><button onClick={() => onConfirm(confirmedItems())} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white"><Check size={19} />تأیید سریع همه</button><button onClick={() => setDetailsOpen(true)} className="tap mt-2 w-full text-sm font-bold text-muted">دیدن جزئیات و دلیل تصمیم</button></div> : <>
+        {quickConfirm ? <div className="mt-5"><div className="divide-y divide-line rounded-[10px] border border-line bg-surface px-3">{items.map((entry) => <div key={`${entry.amount}-${entry.rawText}`} className="flex items-center justify-between gap-3 py-3"><div><b className={`numbers text-lg ${entry.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(entry)}</b>{/* حساب و تاریخ باید پیش از تأیید دیده شوند، وگرنه «تأیید سریع» یعنی
+                تأیید چیزی که کاربر ندیده — و اگر حساب یا روز اشتباه باشد، بعداً
+                فقط در تراز پیدا می‌شود. */}
+              <p className="mt-1 text-xs text-muted">{entry.category} · {accounts.find((account) => account.id === entry.accountId)?.name || 'حساب پیش‌فرض'}{entry.occurredAtLabel ? ` · ${entry.occurredAtLabel}` : ''}</p></div><span className="rounded-full bg-income/10 px-2 py-1 text-[10px] font-bold text-income">آماده ثبت</span></div>)}</div><button onClick={() => onConfirm(confirmedItems())} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white"><Check size={19} />تأیید سریع همه</button><button onClick={() => setDetailsOpen(true)} className="tap mt-2 w-full text-sm font-bold text-muted">دیدن جزئیات و دلیل تصمیم</button></div> : <>
         <div className={`mt-4 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-bold ${assessment.state === 'ready' ? 'border-income/30 bg-income/5 text-income' : assessment.state === 'review' ? 'border-accent/40 bg-warn-bg text-accent' : 'border-expense/30 bg-expense/5 text-expense'}`}><span>{assessment.state === 'ready' ? 'آماده ثبت' : assessment.state === 'review' ? 'این مورد را بررسی کن' : 'این مورد نامفهوم است'}</span><span className="numbers">اطمینان {toPersianDigits(assessment.percent)}٪</span></div>
         <button onClick={() => setEditAmount(true)} className="my-4 w-full rounded-[10px] border border-transparent py-3 text-center hover:border-line">
           {editAmount ? (
@@ -1849,7 +1869,7 @@ function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
         return <li key={account.id} className="flex flex-wrap items-center gap-2 py-2">
           <span className="min-w-0 flex-1 truncate">
             <b>{account.name}</b>
-            <span className="mr-2 text-[11px] text-muted">{ACCOUNT_KINDS.find(([id]) => id === account.kind)?.[1]}</span>
+            <span className="mr-2 text-[11px] text-muted">· {ACCOUNT_KINDS.find(([id]) => id === account.kind)?.[1]}</span>
             {/* حساب بانکی بی‌هویت، همانی است که گفتار هیچ‌وقت پیدایش نمی‌کند. */}
             {account.kind === 'bank' && <span className={`mr-2 text-[11px] ${bank ? 'text-muted' : 'text-expense'}`}>
               {bank ? bank.name : 'بانکش مشخص نیست'}
@@ -1917,8 +1937,18 @@ function SettingsPage({ initial, accounts = [], notify, refresh, onLogout, canMa
       {stats && <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4"><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.total || 0)}</b><span className="text-[11px] text-muted">پردازش</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageFirstTranscript || 0)}</b><span className="text-[11px] text-muted">اولین متن؛ ms</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageLatency || 0)}</b><span className="text-[11px] text-muted">نتیجه؛ ms</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.reviewed || 0)}</b><span className="text-[11px] text-muted">نیاز به اصلاح</span></div></div>}
     </section>
     <section className="mt-5 rounded-[10px] border border-line bg-surface p-4"><h2 className="font-extrabold">محدوده محصول</h2><p className="mt-2 text-[13px] leading-6 text-muted">{PRODUCT_POSITIONING.accountingDisclaimer}</p></section>
-    <button onClick={onLogout} className="tap mt-5 w-full rounded-lg border border-expense/40 bg-surface font-bold text-expense">خروج از حساب</button>
   </main>;
+}
+
+/**
+ * خروج، آخرین چیز صفحهٔ تنظیمات است.
+ *
+ * پیش از این وسط صفحه بود و شش بخش دیگر — حساب‌ها، اعضای دفتر، پشتیبان، حریم
+ * خصوصی، نشست‌ها و رمز — زیرش می‌آمدند. کاربر یا آن‌ها را نمی‌دید، یا هنگام
+ * گشتن دنبالشان از کنار دکمهٔ خروج رد می‌شد.
+ */
+function LogoutPanel({ onLogout }) {
+  return <button onClick={onLogout} className="tap mt-5 w-full rounded-lg border border-expense/40 bg-surface font-bold text-expense">خروج از حساب</button>;
 }
 
 function DataPrivacyPanel({ access, notify }) {
