@@ -9,7 +9,8 @@ import {
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
-  applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
+  submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
@@ -404,6 +405,21 @@ app.put('/api/chart/mappings/:ledgerAccountId', (request, response, next) => {
 });
 app.post('/api/chart/mappings/suggest', (request, response, next) => {
   try { return response.json(applyChartSuggestions({ refine: request.body?.refine === true })); } catch (error) { return next(error); }
+});
+app.get('/api/financial-events/review-queue', (request, response, next) => {
+  try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }
+});
+app.get('/api/financial-events/:id/audit', (request, response, next) => {
+  try { return response.json(eventAudit(request.params.id)); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/:id/approve', (request, response, next) => {
+  try { return response.json({ item: approveEvent(request.params.id) }); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/:id/reverse', (request, response, next) => {
+  try { return response.json({ item: reverseEvent(request.params.id, String(request.body?.reason || '')) }); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/:id/reject', (request, response, next) => {
+  try { return response.json({ item: rejectEvent(request.params.id, String(request.body?.reason || '')) }); } catch (error) { return next(error); }
 });
 app.get('/api/fixed-assets', (request, response, next) => {
   try { return response.json(fixedAssetOverview({ throughMonth: String(request.query.month || '') })); } catch (error) { return next(error); }

@@ -1,20 +1,46 @@
-import { EVENT_KINDS, describeEvent } from './financialEvent.js';
+import { describeEvent } from './financialEvent.js';
+import { resolveAutomationPolicy } from './automationPolicy.js';
 
 /**
- * موتور اطمینان — تصمیم می‌گیرد یک رویداد خودکار ثبت شود، از کاربر پرسیده شود،
- * یا به صف بررسی حسابدار برود.
+ * موتور اطمینان — مؤلفه‌محور، نه یک عدد خام.
  *
- * این موتور عمداً از منطق حسابداری جداست. کارش فقط یک چیز است: «چقدر مطمئنیم
- * که این رویداد را درست فهمیده‌ایم؟» — و بر پایهٔ همان، مسیر را انتخاب می‌کند.
- *
- * آستانه‌ها سیاست محصول‌اند، نه عدد دلبخواه، پس یکجا و نام‌دار می‌مانند.
+ * یک عدد تنها از مدل زبانی هیچ نمی‌گوید: نمی‌شود فهمید مبلغ مشکوک است یا
+ * تاریخ، و نمی‌شود گفت چرا. وقتی اطمینان از مؤلفه‌های نام‌دار ساخته شود، هم
+ * تصمیم قابل توضیح است و هم می‌شود روی یک مؤلفهٔ خاص شرط گذاشت — مثل «مبلغ
+ * باید حتماً بالای این حد باشد، فارغ از میانگین کل».
  */
 
-export const CONFIDENCE_THRESHOLDS = Object.freeze({
-  /** بالای این حد، رویداد بدون پرسیدن ثبت می‌شود. */
-  auto: 0.95,
-  /** بالای این حد ولی زیر خودکار، یک خلاصهٔ ساده برای تأیید کاربر. */
-  confirm: 0.80,
+export const CONFIDENCE_COMPONENTS = Object.freeze({
+  COMPLETENESS: 'completeness',
+  AMOUNT: 'amountCertainty',
+  DATE: 'dateCertainty',
+  DIRECTION: 'moneyDirectionCertainty',
+  ACCOUNT: 'accountCertainty',
+  COUNTERPARTY: 'counterpartyCertainty',
+  DNA: 'historicalMatch',
+  BANK: 'bankReconciliationMatch',
+  AI: 'aiExtractionConfidence',
+});
+
+/**
+ * وزن هر مؤلفه.
+ *
+ * مبلغ و جهت پول بیشترین وزن را دارند چون خطایشان مستقیم پول است و هیچ لایهٔ
+ * بعدی نمی‌گیردشان. تطبیق بانکی وزن بالایی دارد چون تنها شاهد بیرونی است —
+ * بقیهٔ مؤلفه‌ها برداشت خودِ سیستم‌اند، این یکی واقعیت بانک است.
+ *
+ * برداشت مدل زبانی عمداً وزن کمی دارد: شاهد است، نه مرجع.
+ */
+const COMPONENT_WEIGHTS = Object.freeze({
+  [CONFIDENCE_COMPONENTS.AMOUNT]: 0.26,
+  [CONFIDENCE_COMPONENTS.DIRECTION]: 0.20,
+  [CONFIDENCE_COMPONENTS.COMPLETENESS]: 0.14,
+  [CONFIDENCE_COMPONENTS.BANK]: 0.12,
+  [CONFIDENCE_COMPONENTS.DATE]: 0.09,
+  [CONFIDENCE_COMPONENTS.COUNTERPARTY]: 0.07,
+  [CONFIDENCE_COMPONENTS.ACCOUNT]: 0.06,
+  [CONFIDENCE_COMPONENTS.DNA]: 0.03,
+  [CONFIDENCE_COMPONENTS.AI]: 0.03,
 });
 
 export const ROUTES = Object.freeze({
@@ -23,94 +49,76 @@ export const ROUTES = Object.freeze({
   ACCOUNTANT_REVIEW: 'accountant-review',
 });
 
-/**
- * وزن هر میدان در اطمینان کل.
- *
- * مبلغ بیشترین وزن را دارد چون خطایش مستقیم پول است و هیچ لایهٔ بعدی نمی‌گیردش.
- * دسته کمترین را دارد چون اصلاح‌شدنی است و DNA هم به مرور درستش می‌کند.
- */
-const FIELD_WEIGHTS = Object.freeze({
-  amount: 0.40,
-  kind: 0.25,
-  date: 0.15,
-  counterparty: 0.10,
-  category: 0.10,
-});
-
-/**
- * رویدادهایی که هرگز خودکار ثبت نمی‌شوند، حتی با اطمینان کامل.
- *
- * معیار ساده است: آیا برگرداندنش برای کاربر عادی آسان است؟ فاکتور صادرشده سند
- * برگشتی می‌خواهد، آورده و دارایی ثابت ساختار سرمایه را عوض می‌کنند، و استهلاک
- * تصمیم دوره‌ای حسابدار است. اینها با یک «باشه» از کاربر عادی رد نمی‌شوند.
- */
-const NEVER_AUTOMATIC = new Set([
-  EVENT_KINDS.SALES_INVOICE,
-  EVENT_KINDS.PURCHASE_INVOICE,
-  EVENT_KINDS.CAPITAL_CONTRIBUTION,
-  EVENT_KINDS.FIXED_ASSET_PURCHASE,
-  EVENT_KINDS.DEPRECIATION,
-]);
+export const CONFIDENCE_THRESHOLDS = Object.freeze({ auto: 0.95, confirm: 0.80 });
 
 const clamp = (value) => Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : 0));
 
+function componentScore(supplied) {
+  if (supplied == null) return null;
+  if (typeof supplied === 'number') return { score: clamp(supplied), reason: '' };
+  return { score: clamp(supplied.score), reason: String(supplied.reason || '') };
+}
+
 /**
- * اطمینان کل از اطمینان میدان‌ها.
+ * ترکیب مؤلفه‌ها.
  *
- * میدانی که اصلاً گفته نشده (مثل طرف حساب در یک هزینهٔ ساده) وزنش از محاسبه
- * بیرون می‌رود، نه اینکه صفر بگیرد — وگرنه هر جملهٔ کوتاه و کاملاً روشن هم
- * اطمینان پایین می‌گرفت و همه‌چیز به صف بررسی می‌رفت.
+ * مؤلفهٔ گزارش‌نشده وزنش از محاسبه بیرون می‌رود، نه اینکه صفر بگیرد. یک هزینهٔ
+ * نقدی ساده اصلاً طرف حساب و تطبیق بانکی ندارد؛ صفر دادن به آن‌ها یعنی هر
+ * جملهٔ کوتاه و کاملاً روشن هم به صف بررسی می‌رفت.
  */
-export function scoreConfidence(fields = {}) {
+export function scoreConfidence(components = {}) {
   let weighted = 0;
   let totalWeight = 0;
   const detail = {};
-  for (const [field, weight] of Object.entries(FIELD_WEIGHTS)) {
-    const supplied = fields[field];
-    if (supplied == null) continue;
-    const score = clamp(typeof supplied === 'number' ? supplied : supplied.score);
-    detail[field] = { score, reason: typeof supplied === 'object' ? String(supplied.reason || '') : '' };
-    weighted += score * weight;
+  for (const [name, weight] of Object.entries(COMPONENT_WEIGHTS)) {
+    const value = componentScore(components[name]);
+    if (!value) continue;
+    detail[name] = value;
+    weighted += value.score * weight;
     totalWeight += weight;
   }
-  if (!totalWeight) return { score: 0, fields: detail };
-  return { score: clamp(weighted / totalWeight), fields: detail };
+  if (!totalWeight) return { score: 0, components: detail };
+  return { score: clamp(weighted / totalWeight), components: detail };
 }
 
 /**
  * مسیر یک رویداد.
  *
- * `blockers` دلایلی هستند که فارغ از عدد اطمینان، ثبت خودکار را ممنوع می‌کنند —
- * مثل جهت مبهم پول یا نبود طرف حساب در یک تعهد. یک عدد بالا نباید بتواند روی
- * یک ایراد ساختاری سرپوش بگذارد.
+ * ترتیب کنترل‌ها عمدی است: مانع ساختاری پیش از عدد، و شرط‌های تک‌مؤلفه‌ای پیش
+ * از میانگین. یک میانگین بالا نباید بتواند روی «مبلغ را مطمئن نیستیم» یا «جهت
+ * پول مبهم است» سرپوش بگذارد.
  */
-export function routeEvent(event, { fields = {}, blockers = [] } = {}) {
-  const { score, fields: detail } = scoreConfidence(fields);
+export function routeEvent(event, { components = {}, blockers = [], policy: policyOverrides = {}, aiOnly = false } = {}) {
+  const policy = resolveAutomationPolicy(policyOverrides);
+  const { score, components: detail } = scoreConfidence(components);
+  const percent = Math.round(score * 100);
   const reasons = [...new Set(blockers.filter(Boolean))];
+  const summary = humanSummary(event);
+  const below = (route) => ({ route, score, percent, components: detail, reasons, summary, policy });
 
   if (reasons.length) {
-    return {
-      route: score >= CONFIDENCE_THRESHOLDS.confirm ? ROUTES.CONFIRM : ROUTES.ACCOUNTANT_REVIEW,
-      score, percent: Math.round(score * 100), fields: detail, reasons,
-      summary: humanSummary(event),
-    };
+    return below(score >= policy.confirmThreshold ? ROUTES.CONFIRM : ROUTES.ACCOUNTANT_REVIEW);
   }
-  const neverAuto = NEVER_AUTOMATIC.has(event?.kind);
-  const route = score >= CONFIDENCE_THRESHOLDS.auto && !neverAuto
-    ? ROUTES.AUTO
-    : score >= CONFIDENCE_THRESHOLDS.confirm
-      ? ROUTES.CONFIRM
-      : ROUTES.ACCOUNTANT_REVIEW;
-  return {
-    route,
-    score,
-    percent: Math.round(score * 100),
-    fields: detail,
-    reasons: neverAuto && score >= CONFIDENCE_THRESHOLDS.auto
-      ? ['این نوع سند همیشه تأیید می‌خواهد، چون برگرداندنش ساده نیست.']
-      : [],
-    summary: humanSummary(event),
-  };
+
+  const guards = [];
+  if (policy.neverAutomatic.includes(event?.kind)) {
+    guards.push('این نوع سند همیشه تأیید می‌خواهد، چون برگرداندنش ساده نیست.');
+  }
+  // برداشت مدل زبانی به‌تنهایی مرجع نیست. بدون شاهد دیگری، ثبت بی‌پرسش یعنی
+  // سپردن دفتر به یک برداشت آماری.
+  if (aiOnly && !policy.allowAiOnlyAutoPost) {
+    guards.push('این برداشت فقط از مدل زبانی آمده و شاهد دیگری ندارد.');
+  }
+  const amount = detail[CONFIDENCE_COMPONENTS.AMOUNT];
+  if (amount && amount.score < policy.minimumAmountCertainty) {
+    guards.push('اطمینان از مبلغ برای ثبت بی‌پرسش کافی نیست.');
+  }
+
+  if (score >= policy.autoThreshold && !guards.length) return below(ROUTES.AUTO);
+  if (score >= policy.confirmThreshold) {
+    return { ...below(ROUTES.CONFIRM), reasons: guards };
+  }
+  return { ...below(ROUTES.ACCOUNTANT_REVIEW), reasons: guards };
 }
 
 const money = (value) => new Intl.NumberFormat('fa-IR').format(Math.round(Number(value) || 0));
@@ -119,8 +127,7 @@ const money = (value) => new Intl.NumberFormat('fa-IR').format(Math.round(Number
  * خلاصهٔ رویداد به زبان ساده.
  *
  * قاعده: هیچ اصطلاح دفترداری. کاربر عادی «بدهکار» و «بستانکار» را در معنای
- * حسابداری نمی‌فهمد و بدتر، در معنای روزمره برعکس می‌فهمد. او باید فقط بداند
- * چه چیزی، چقدر، با چه کسی و چه تاریخی ثبت می‌شود.
+ * حسابداری نمی‌فهمد و بدتر، در معنای روزمره برعکس می‌فهمد.
  */
 export function humanSummary(event) {
   if (!event) return '';

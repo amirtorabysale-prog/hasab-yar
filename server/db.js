@@ -8,6 +8,10 @@ import { dnaCategoryProfiles, financialDna, overdueBackboneCategories } from './
 import { CATEGORY_DEFINITIONS } from '../shared/categoryRules.js';
 import { persianMonthRange } from '../shared/persianDate.js';
 import { ensureDepreciationSchema, listFixedAssets, runDepreciation, saveFixedAssetSettings } from './depreciationLedger.js';
+import {
+  approveFinancialEvent, ensureFinancialEventSchema, financialEventAudit, listReviewQueue,
+  recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent,
+} from './financialEventStore.js';
 import { roleAllows } from './access.js';
 import {
   assertAccountingPeriodOpen, ensureAccountingSchema, migrateAccountingLedger, periodForDate,
@@ -678,6 +682,7 @@ function workspaceDatabase(workspaceId) {
   ensureAccountingTransferSchema(database);
   ensureInventorySchema(database);
   ensureDepreciationSchema(database);
+  ensureFinancialEventSchema(database);
   ensureTaxSchema(database);
   ensureTaxAssistantSchema(database);
   ensureTaxKnowledgeSchema(database);
@@ -3873,4 +3878,56 @@ export function postDepreciation({ throughMonth = '', now = new Date() } = {}) {
   });
   if (result.posted) audit('post', 'depreciation', month, { posted: result.posted, amount: result.amount });
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// رویدادهای مالی و صف بررسی
+// ---------------------------------------------------------------------------
+
+/**
+ * ثبت یک رویداد مالی.
+ *
+ * تصمیمِ «سند چه باشد» اینجا گرفته نمی‌شود؛ `shared/accountingRules.js` آن را
+ * می‌گیرد و لایهٔ ثبت فقط اجرا می‌کند. این تابع فقط دروازهٔ ورود است.
+ */
+export function submitFinancialEvent(event, options = {}) {
+  const result = recordFinancialEvent(activeWorkspaceDatabase(), event, {
+    ...options,
+    actor: options.actor || currentWorkspace()?.userId || null,
+    timeZone: currentTimeZone(),
+  });
+  if (!result.duplicate) audit('create', 'financial-event', result.id, { kind: event.kind, amount: event.amount, route: result.route });
+  return result;
+}
+
+export function reviewQueue(options = {}) {
+  return { items: listReviewQueue(activeWorkspaceDatabase(), options) };
+}
+
+export function approveEvent(eventId) {
+  const item = approveFinancialEvent(activeWorkspaceDatabase(), eventId, {
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  });
+  audit('approve', 'financial-event', eventId, { status: item.status });
+  return item;
+}
+
+export function reverseEvent(eventId, reason = '') {
+  const item = reverseFinancialEvent(activeWorkspaceDatabase(), eventId, {
+    actor: currentWorkspace()?.userId || null, reason, timeZone: currentTimeZone(),
+  });
+  audit('reverse', 'financial-event', eventId, { reason: String(reason || '').slice(0, 200) });
+  return item;
+}
+
+export function rejectEvent(eventId, reason = '') {
+  const item = rejectFinancialEvent(activeWorkspaceDatabase(), eventId, {
+    actor: currentWorkspace()?.userId || null, reason,
+  });
+  audit('reject', 'financial-event', eventId, { reason: String(reason || '').slice(0, 200) });
+  return item;
+}
+
+export function eventAudit(eventId) {
+  return { items: financialEventAudit(activeWorkspaceDatabase(), eventId) };
 }

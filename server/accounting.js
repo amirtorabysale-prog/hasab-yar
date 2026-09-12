@@ -712,3 +712,71 @@ export function postedDepreciationMonths(database, assetKey) {
     .all(`${assetKey}:%`)
     .map((row) => String(row.sourceId).slice(String(assetKey).length + 1));
 }
+
+/**
+ * ورودی عمومی لایهٔ ثبت.
+ *
+ * `accounting.js` از این پس دو نقش دارد و باید به یکی برسد: مجموعهٔ توابع
+ * `postXJournal` که هم **تصمیم** می‌گیرند سند چه باشد و هم آن را **ثبت**
+ * می‌کنند. تصمیم باید به `shared/accountingRules.js` برود و اینجا فقط اجرا
+ * بماند.
+ *
+ * این تابع همان ورودیِ «فقط اجرا» است: یک سند از پیش تصمیم‌گرفته‌شده را ثبت
+ * می‌کند و هیچ نظری دربارهٔ محتوایش ندارد. توابع قدیمی دست‌نخورده می‌مانند تا
+ * مهاجرت تدریجی و بی‌ریسک باشد.
+ *
+ * `sourceType` و `sourceId` یکتایی را تضمین می‌کنند: ثبت دوبارهٔ یک رویداد
+ * همین‌جا رد می‌شود، نه در لایهٔ بالاتر که ممکن است دور زده شود.
+ */
+export function postJournalEntry(database, values, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const sourceType = String(values.sourceType || '').trim();
+  const sourceId = String(values.sourceId || '').trim();
+  if (!sourceType || !sourceId) throw accountingError('منبع سند برای ثبت لازم است.', 'JOURNAL_SOURCE_MISSING');
+  const occurredAt = values.occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+
+  const existing = database.prepare(
+    "SELECT id,document_number AS documentNumber FROM journal_entries WHERE source_type=? AND source_id=? AND entry_kind='normal'",
+  ).get(sourceType, sourceId);
+  if (existing) throw accountingError('برای این رویداد از قبل سند ثبت شده است.', 'JOURNAL_DUPLICATE', 409);
+
+  return insertJournal(database, {
+    sourceType,
+    sourceId,
+    revision: nextRevision(database, sourceType, sourceId),
+    entryKind: values.entryKind || 'normal',
+    occurredAt,
+    memo: values.memo || '',
+    createdBy,
+    timeZone,
+    approvalState: values.approvalState || 'approved',
+    lines: values.lines,
+  });
+}
+
+/**
+ * سند معکوس برای یک رویداد.
+ *
+ * سند ثبت‌شده هرگز حذف نمی‌شود. حسابرسی باید بتواند بگوید چه چیزی ثبت شد، چه
+ * کسی اصلاحش کرد و چرا؛ حذف، همین زنجیره را پاک می‌کند و هیچ راهی برای
+ * بازسازی‌اش نمی‌ماند.
+ */
+export function reverseJournalEntry(database, { sourceType, sourceId, occurredAt, memo = 'سند معکوس', createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const prior = database.prepare(
+    "SELECT id,occurred_at AS occurredAt FROM journal_entries WHERE source_type=? AND source_id=? AND entry_kind='normal' ORDER BY revision DESC LIMIT 1",
+  ).get(String(sourceType || ''), String(sourceId || ''));
+  if (!prior) return null;
+  const already = database.prepare("SELECT 1 FROM journal_entries WHERE reverses_entry_id=?").get(prior.id);
+  if (already) throw accountingError('این سند قبلاً معکوس شده است.', 'JOURNAL_ALREADY_REVERSED', 409);
+
+  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=?').all(prior.id)
+    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+  const at = occurredAt || prior.occurredAt;
+  assertAccountingPeriodOpen(database, periodForDate(at, timeZone));
+  return insertJournal(database, {
+    sourceType, sourceId, revision: nextRevision(database, sourceType, sourceId), entryKind: 'reversal',
+    occurredAt: at, memo, reversesEntryId: prior.id, createdBy, timeZone, lines,
+  });
+}

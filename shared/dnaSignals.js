@@ -72,3 +72,48 @@ export function applyDnaSignals(result, profiles) {
     }),
   };
 }
+
+/**
+ * سیگنال‌های زمینه‌ای برای موتور اطمینان.
+ *
+ * قاعدهٔ سخت: DNA **هرگز** سند نمی‌سازد و هیچ قاعدهٔ حسابداری را عوض نمی‌کند.
+ * فقط می‌گوید «در این پرونده معمولاً چه اتفاقی می‌افتد» و همان را به‌عنوان یک
+ * مؤلفهٔ کم‌وزن به موتور اطمینان می‌دهد.
+ *
+ * اگر DNA بتواند قاعده را عوض کند، منطق حسابداری به یک الگوی آماری سپرده
+ * می‌شود: پرونده‌ای که ده بار اشتباه ثبت کرده، اشتباهش را «عادت» می‌کند و از آن
+ * پس خودکار تکرار می‌شود.
+ */
+export function dnaContextSignals(profiles, event = {}) {
+  const category = String(event.category || '').trim();
+  const type = String(event.kind || '').includes('income') ? 'income' : 'expense';
+  const profile = profileFor(profiles, type, category);
+
+  const counterparty = String(event.counterparty || '').trim();
+  const known = counterparty
+    ? (profiles?.counterparties || []).find((item) => String(item.name || '').includes(counterparty)) || null
+    : null;
+
+  return {
+    // نقش محتمل طرف حساب: مشتری یا تأمین‌کننده. فقط زمینه، نه تصمیم.
+    counterpartyLikelyRole: known?.role || null,
+    // هدف محتمل هزینه، بر پایهٔ دسته‌های پرتکرار همین پرونده.
+    likelyExpensePurpose: profile ? profile.category : null,
+    // حسابی که این دسته معمولاً از آن پرداخت می‌شود.
+    usualPaymentAccount: profile?.usualAccountId || null,
+    // چقدر این رویداد به الگوی خودِ پرونده می‌خورد. ورودی مؤلفهٔ
+    // `historicalMatch` در موتور اطمینان است و وزنش عمداً کم است.
+    historicalMatchScore: historicalMatch(profile, event),
+  };
+}
+
+function historicalMatch(profile, event) {
+  if (!profile || !profile.count || profile.count < DNA_SIGNAL_MINIMUM_SAMPLES) return null;
+  const amount = Math.round(Number(event.amount) || 0);
+  if (!amount || !profile.median) return null;
+  const ratio = amount / profile.median;
+  // نزدیک به میانهٔ خودِ دسته یعنی الگوی آشنا؛ دور از آن یعنی چیز تازه، نه غلط.
+  if (ratio >= 0.5 && ratio <= 2) return 0.9;
+  if (ratio >= 0.25 && ratio <= 4) return 0.6;
+  return 0.3;
+}

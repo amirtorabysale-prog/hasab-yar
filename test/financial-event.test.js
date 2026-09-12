@@ -133,20 +133,20 @@ test('آستانه‌ها همان سیاست محصول‌اند', () => {
 
 test('اطمینان بالا، ثبت خودکار', () => {
   const event = build({ kind: EVENT_KINDS.CASH_EXPENSE, category: 'اجاره' });
-  const decision = routeEvent(event, { fields: { amount: 0.99, kind: 0.98, date: 0.97, category: 0.96 } });
+  const decision = routeEvent(event, { components: { amountCertainty: 0.99, moneyDirectionCertainty: 0.98, dateCertainty: 0.97, completeness: 0.96 } });
   assert.equal(decision.route, ROUTES.AUTO);
   assert.ok(decision.percent >= 95);
 });
 
 test('اطمینان متوسط، تأیید کاربر', () => {
   const event = build({ kind: EVENT_KINDS.CASH_EXPENSE, category: 'اجاره' });
-  const decision = routeEvent(event, { fields: { amount: 0.9, kind: 0.85, date: 0.8, category: 0.7 } });
+  const decision = routeEvent(event, { components: { amountCertainty: 0.9, moneyDirectionCertainty: 0.85, dateCertainty: 0.8, completeness: 0.7 } });
   assert.equal(decision.route, ROUTES.CONFIRM);
 });
 
 test('اطمینان پایین، صف بررسی حسابدار', () => {
   const event = build({ kind: EVENT_KINDS.CASH_EXPENSE, category: 'اجاره' });
-  const decision = routeEvent(event, { fields: { amount: 0.6, kind: 0.5, date: 0.9, category: 0.4 } });
+  const decision = routeEvent(event, { components: { amountCertainty: 0.6, moneyDirectionCertainty: 0.5, dateCertainty: 0.9, completeness: 0.4 } });
   assert.equal(decision.route, ROUTES.ACCOUNTANT_REVIEW);
 });
 
@@ -154,7 +154,7 @@ test('اطمینان پایین، صف بررسی حسابدار', () => {
 test('ایراد ساختاری، ثبت خودکار را قطع می‌کند', () => {
   const event = build({ kind: EVENT_KINDS.RECEIVABLE_OPENED, counterparty: 'حسن' });
   const decision = routeEvent(event, {
-    fields: { amount: 0.99, kind: 0.99, date: 0.99, counterparty: 0.99 },
+    components: { amountCertainty: 0.99, moneyDirectionCertainty: 0.99, dateCertainty: 0.99, counterpartyCertainty: 0.99 },
     blockers: ['جهت پول از جمله روشن نشد.'],
   });
   assert.notEqual(decision.route, ROUTES.AUTO);
@@ -164,10 +164,10 @@ test('ایراد ساختاری، ثبت خودکار را قطع می‌کند'
 // فاکتور صادرشده سند برگشتی می‌خواهد و آورده ساختار سرمایه را عوض می‌کند؛
 // اینها با یک «باشه» از کاربر عادی رد نمی‌شوند.
 test('سندهای سخت‌برگشت هرگز خودکار ثبت نمی‌شوند', () => {
-  const full = { amount: 1, kind: 1, date: 1, counterparty: 1, category: 1 };
+  const full = { amount: 1, moneyDirectionCertainty: 1, dateCertainty: 1, counterparty: 1, completeness: 1 };
   for (const kind of [EVENT_KINDS.SALES_INVOICE, EVENT_KINDS.PURCHASE_INVOICE, EVENT_KINDS.CAPITAL_CONTRIBUTION, EVENT_KINDS.FIXED_ASSET_PURCHASE, EVENT_KINDS.DEPRECIATION]) {
     const event = build({ kind, counterparty: 'حسن', category: 'فروش', description: 'دستگاه' });
-    const decision = routeEvent(event, { fields: full });
+    const decision = routeEvent(event, { components: full });
     assert.equal(decision.route, ROUTES.CONFIRM, kind);
     assert.ok(decision.reasons.length, `${kind} باید دلیلش را بگوید`);
   }
@@ -175,8 +175,8 @@ test('سندهای سخت‌برگشت هرگز خودکار ثبت نمی‌ش�
 
 // جملهٔ کوتاه و کاملاً روشن نباید به‌خاطر میدان‌های گفته‌نشده تنبیه شود.
 test('میدان گفته‌نشده وزنش از محاسبه بیرون می‌رود، نه اینکه صفر بگیرد', () => {
-  const withCounterparty = scoreConfidence({ amount: 1, kind: 1, date: 1, counterparty: 0 });
-  const without = scoreConfidence({ amount: 1, kind: 1, date: 1 });
+  const withCounterparty = scoreConfidence({ amount: 1, moneyDirectionCertainty: 1, dateCertainty: 1, counterpartyCertainty: 0 });
+  const without = scoreConfidence({ amount: 1, moneyDirectionCertainty: 1, dateCertainty: 1 });
   assert.equal(without.score, 1);
   assert.ok(withCounterparty.score < 1);
 });
@@ -243,6 +243,6 @@ test('نیت مبهم به صف بررسی می‌رود، نه ثبت خودک�
   const intent = detectVoiceIntent('آقای رضایی بدهکاره ولی من هم بهش بدهکارم پنج میلیون', { now: NOW, context: 'obligation' });
   const { fields, blockers } = intentConfidenceFields(intent);
   assert.ok(blockers.length, 'جهت مبهم باید مانع ساختاری بسازد');
-  const decision = routeEvent({ kind: EVENT_KINDS.RECEIVABLE_OPENED, amount: intent.amount }, { fields, blockers });
+  const decision = routeEvent({ kind: EVENT_KINDS.RECEIVABLE_OPENED, amount: intent.amount }, { components: fields, blockers });
   assert.notEqual(decision.route, ROUTES.AUTO);
 });

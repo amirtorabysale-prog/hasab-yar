@@ -79,3 +79,75 @@
 تطبیق بانکی فعلاً با ایمپورت اکسل است و API بانک بعداً به‌عنوان منبع دیگرِ همین رویدادها اضافه می‌شود.
 
 پارسیان فقط آداپتر خروجی است و هیچ منطق اصلی به آن وابسته نیست.
+
+---
+
+# مرحلهٔ دوم — بیرون‌بردن تصمیم از لایهٔ ثبت
+
+## Trace مسیر صدا (وضعیت پیش از این مرحله)
+
+```
+1. src/App.jsx:startRecording → src/lib/wavRecorder.js → WAV
+2. src/lib/api.js:parseAudio → POST /api/parse/audio
+3. server/index.js → parseFinancialAudio (server/voice.js)
+4. server/voice.js → server/openai.js (فقط متن) → shared/parser.js
+   └ fallback: server/gemini.js ← type/category مستقیم تولید می‌کند
+5. shared/dnaSignals.js → افزودن سیگنال
+6. پاسخ → ConfirmationSheet → تأیید کاربر
+7. POST /api/transactions → server/db.js:insertTransactions → insertTransactionRows
+8. insertTransactionRows → accounting.js:syncTransactionJournal ← تصمیم سند
+```
+
+نقاط تصمیم پراکنده بودند: خط ۸ در `db.js`، و یازده تابع `postXJournal` در `accounting.js` که هرکدام **هم تصمیم و هم ثبت** را با هم داشتند.
+
+## جریان تازه
+
+```
+گفته → نیت → رویداد مالی → موتور اطمینان → قواعد حسابداری → نقشهٔ سند
+                                  ↓
+                         financialEventStore
+                    (یکتایی + تاریخچه + صف بررسی)
+                                  ↓
+                      roleResolver (نقش → حساب)
+                                  ↓
+                    accounting.js:postJournalEntry (فقط اجرا)
+```
+
+## یکتایی
+
+هر رویداد `sourceEventId` اجباری دارد و ستون `UNIQUE` است. ثبت دوباره خطا نیست؛ همان نتیجهٔ قبلی برمی‌گردد با `duplicate: true`، تا فراخوان لازم نباشد بین «شکست» و «قبلاً انجام شده» فرق بگذارد.
+
+یکتایی در دو لایه تضمین می‌شود: جدول رویداد، و `postJournalEntry` که روی `source_type + source_id` کنترل می‌کند — تا دور زدن لایهٔ بالا هم سند دوم نسازد.
+
+## تاریخچه
+
+`financial_event_audit` برای هر رویداد نگه می‌دارد: ورودی خام، transcript، خود رویداد، اجزای اطمینان، قاعدهٔ استفاده‌شده، نقشهٔ سند، تأییدکننده، زمان، و هر برگشت بعدی.
+
+**سند حذف نمی‌شود.** `reverseFinancialEvent` سند معکوس می‌زند و هر دو در دفتر می‌مانند.
+
+## اطمینان مؤلفه‌محور
+
+نُه مؤلفه با وزن: `amountCertainty` ۲۶٪، `moneyDirectionCertainty` ۲۰٪، `completeness` ۱۴٪، `bankReconciliationMatch` ۱۲٪، `dateCertainty` ۹٪، `counterpartyCertainty` ۷٪، `accountCertainty` ۶٪، `historicalMatch` ۳٪، `aiExtractionConfidence` ۳٪.
+
+برداشت مدل زبانی عمداً کم‌وزن است: شاهد است، نه مرجع. تطبیق بانکی وزن بالایی دارد چون تنها شاهد **بیرونی** است.
+
+مؤلفهٔ گزارش‌نشده وزنش از محاسبه بیرون می‌رود، نه اینکه صفر بگیرد.
+
+## سیاست خودکارسازی
+
+`shared/automationPolicy.js` — آستانه‌ها، فهرست «هرگز خودکار»، اجازهٔ ثبت خودکارِ برداشت تنهای مدل، و حداقل اطمینان مبلغ. پیش‌فرض پایلوت همان ۹۵/۸۰ است. سیاست خرابِ ورودی به پیش‌فرض امن برمی‌گردد، نه اینکه دروازه را باز کند.
+
+## صف بررسی
+
+`GET /api/financial-events/review-queue` و `POST .../approve|reverse|reject`. تأیید و برگشت نقش `accountant` می‌خواهند.
+
+## تطبیق بانکی
+
+`server/bankFeed.js` فقط **قرارداد** است: ردیف بانکی نرمال‌شده و امتیاز تطبیق. خروجی‌اش یکی از مؤلفه‌های اطمینان است و هرگز به‌تنهایی سند نمی‌سازد. امروز ایمپورت اکسل، فردا API بانک از همین قرارداد.
+
+## آنچه هنوز legacy است
+
+- `insertTransactionRows` همچنان مستقیم `syncTransactionJournal` را صدا می‌زند. مسیر قدیمی دست‌نخورده کار می‌کند و مهاجرتش گام بعدی است.
+- `server/gemini.js` هنوز `type` و `category` برمی‌گرداند. باید به استخراج واقعیت معنایی محدود شود.
+- ده تابع `postXJournal` دیگر هنوز تصمیم و ثبت را با هم دارند.
+- `submitFinancialEvent` آماده است ولی هنوز مسیر ثبت اصلی از آن عبور نمی‌کند.
