@@ -78,6 +78,17 @@ export function recordFinancialEvent(database, event, {
   transcript = '',
   rawInput = '',
   timeZone = 'Asia/Tehran',
+  // فراخوانی که خودش تراکنش باز کرده، نباید تراکنش تودرتو بسازد؛ SQLite آن را
+  // نمی‌پذیرد و کل عملیات شکست می‌خورد.
+  withinTransaction = false,
+  // لنگر سند در دفتر.
+  //
+  // پیش‌فرض، خودِ رویداد است. ولی وقتی رویداد روی یک تراکنش موجود می‌نشیند، سند
+  // باید به همان تراکنش لنگر بخورد: `migrateAccountingLedger` هر تراکنشِ بی‌سند
+  // را خودش سند می‌زند و سندی که با منبع دیگری ثبت شده را نمی‌بیند. نتیجه‌اش سند
+  // دوم و شناسایی دوبارهٔ درآمد است — دقیقاً همان چیزی که این معماری قرار بود
+  // جلویش را بگیرد.
+  journalSource = null,
 } = {}) {
   ensureFinancialEventSchema(database);
   const source = String(sourceEventId || '').trim();
@@ -95,7 +106,7 @@ export function recordFinancialEvent(database, event, {
   // شود: حسابرسی باید بداند در لحظهٔ تصمیم، قاعده چه گفته بود.
   const plan = planJournal(event);
 
-  database.exec('BEGIN IMMEDIATE');
+  if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare(`INSERT INTO financial_events
       (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by)
@@ -114,16 +125,16 @@ export function recordFinancialEvent(database, event, {
 
     let journalEntryId = null;
     if (decision.route === ROUTES.AUTO) {
-      const posted = postEventJournal(database, id, event, plan, { actor, timeZone });
+      const posted = postEventJournal(database, id, event, plan, { actor, timeZone, journalSource });
       journalEntryId = posted.id;
     }
-    database.exec('COMMIT');
+    if (!withinTransaction) database.exec('COMMIT');
     return { id, sourceEventId: source, route: decision.route, status: journalEntryId ? 'posted' : 'pending', journalEntryId, plan, duplicate: false };
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  } catch (error) { if (!withinTransaction) database.exec('ROLLBACK'); throw error; }
 }
 
 /** نقشه را به سند تبدیل می‌کند؛ نقش‌ها اینجا به حساب واقعی نگاشت می‌شوند. */
-function postEventJournal(database, eventId, event, plan, { actor = null, timeZone = 'Asia/Tehran' } = {}) {
+function postEventJournal(database, eventId, event, plan, { actor = null, timeZone = 'Asia/Tehran', journalSource = null } = {}) {
   const lines = plan.lines.map((line) => ({
     accountId: resolveEventRole(database, line.role, line.key, event),
     debit: line.debit,
@@ -131,8 +142,8 @@ function postEventJournal(database, eventId, event, plan, { actor = null, timeZo
     description: plan.memoHint || null,
   }));
   const posted = postJournalEntry(database, {
-    sourceType: 'financial-event',
-    sourceId: eventId,
+    sourceType: journalSource?.type || 'financial-event',
+    sourceId: journalSource?.id || eventId,
     occurredAt: event.occurredAt,
     memo: plan.memoHint || event.kind,
     lines,
@@ -233,4 +244,18 @@ export function financialEventAudit(database, eventId) {
   return database.prepare('SELECT stage,actor,detail,created_at AS createdAt FROM financial_event_audit WHERE event_id=? ORDER BY created_at,rowid')
     .all(String(eventId || ''))
     .map((row) => ({ ...row, detail: JSON.parse(row.detail) }));
+}
+
+/**
+ * رویداد ثبت‌شده برای یک منبع، اگر وجود داشته باشد.
+ *
+ * مهاجرت تدریجی به این لازم دارد: تعهدی که پیش از این تغییر ساخته شده هیچ
+ * سندی در دفتر ندارد، پس تسویه‌اش نباید از حساب دریافتنی کم کند — آن حساب
+ * اصلاً موجودی ندارد و منفی می‌شود. مسیر تازه فقط برای تعهدهایی است که
+ * خودشان از این مسیر آمده‌اند.
+ */
+export function findEventBySource(database, sourceEventId) {
+  ensureFinancialEventSchema(database);
+  const row = database.prepare('SELECT * FROM financial_events WHERE source_event_id=?').get(String(sourceEventId || ''));
+  return row ? describeStored(database, row) : null;
 }

@@ -103,6 +103,10 @@ export function normalizeFinancialEvent(raw = {}) {
     accountId: eventMovesCash(kind) ? (cleanText(raw.accountId, 64) || 'cash') : null,
     // ارجاع به سندی که این رویداد رویش اثر می‌گذارد (تسویه، پرداخت فاکتور).
     reference: cleanText(raw.reference, 120) || null,
+    // جهت تسویه: طلبی وصول شد یا بدهی‌ای پرداخت. قواعد بدون این نمی‌دانند کدام
+    // طرف باید نقد شود، و چسباندنش بیرون از نرمال‌سازی یعنی رویدادی که از
+    // دیتابیس خوانده می‌شود آن را ندارد.
+    settlementDirection: ['receivable', 'payable'].includes(raw.settlementDirection) ? raw.settlementDirection : null,
     description: cleanText(raw.description, 300) || null,
     // منشأ رویداد: صدا، متن، ایمپورت، یا خودکار. برای ردیابی و برای DNA.
     source: ['voice', 'text', 'import', 'system'].includes(raw.source) ? raw.source : 'text',
