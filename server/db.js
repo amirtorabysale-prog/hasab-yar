@@ -39,6 +39,7 @@ import {
   taxReport as taxReportCore,
 } from './tax.js';
 import { normalizePersian } from '../shared/parser.js';
+import { ensureCounterpartyIdentitySchema, findCounterpartyByName, normalizedCounterpartyInput } from './counterparties.js';
 import {
   FINANCIAL_DISCLAIMER, FINANCIAL_UNIT, buildRunway, detectExpenseGrowth, exactWindow, financialScope,
   findUnusualTransaction, invoiceSource, isGuardedAdviceQuestion, obligationSource, prioritizeAlerts, transactionSource,
@@ -632,6 +633,7 @@ ensureTaxSchema(controlDb);
 ensureTaxAssistantSchema(controlDb);
 ensureTaxKnowledgeSchema(controlDb);
 migrateTaxKnowledgeSources(controlDb);
+ensureCounterpartyIdentitySchema(controlDb);
 
 // دسته‌ها یک منبع حقیقت دارند: همان جدولی که پارسر با آن تصمیم می‌گیرد. اگر
 // این دو از هم جدا شوند، پارسر دسته‌ای پیشنهاد می‌دهد که در کشوی کارت تأیید
@@ -709,6 +711,7 @@ function workspaceDatabase(workspaceId) {
   ensureTaxAssistantSchema(database);
   ensureTaxKnowledgeSchema(database);
   migrateTaxKnowledgeSources(database);
+  ensureCounterpartyIdentitySchema(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   workspaceConnections.set(workspaceId, database);
@@ -2646,14 +2649,19 @@ export function listContacts() {
 }
 
 export function saveContact(values = {}) {
-  const name = String(values.name || '').trim().slice(0, 100);
+  const { displayName: name, canonicalName } = normalizedCounterpartyInput(values.name);
   if (name.length < 2) throw invalidInput('نام شخص را کامل وارد کن.');
-  const id = values.id || randomUUID();
+  const matched = values.id ? null : findCounterpartyByName(db, name);
+  const id = values.id || matched?.id || randomUUID();
+  const storedName = matched?.name || name;
   const kind = ['person', 'customer', 'vendor'].includes(values.kind) ? values.kind : 'person';
-  db.prepare(`INSERT INTO contacts (id,name,kind,phone,note) VALUES (?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,phone=excluded.phone,note=excluded.note,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, name, kind, String(values.phone || '').slice(0, 30), String(values.note || '').slice(0, 500));
-  audit(values.id ? 'update' : 'create', 'contact', id, { name, kind });
+  db.prepare(`INSERT INTO contacts (id,name,canonical_name,kind,phone,note) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,canonical_name=excluded.canonical_name,
+      kind=CASE WHEN contacts.kind=excluded.kind THEN contacts.kind ELSE 'person' END,
+      phone=CASE WHEN excluded.phone='' THEN contacts.phone ELSE excluded.phone END,
+      note=CASE WHEN excluded.note='' THEN contacts.note ELSE excluded.note END,updated_at=CURRENT_TIMESTAMP`)
+    .run(id, storedName, canonicalName, kind, String(values.phone || '').slice(0, 30), String(values.note || '').slice(0, 500));
+  audit(values.id || matched ? 'update' : 'create', 'contact', id, { name: storedName, kind, canonicalName });
   return listContacts().find((item) => item.id === id);
 }
 
@@ -2685,9 +2693,7 @@ export function listObligations({ status = 'open' } = {}) {
 function contactIdForName(name) {
   const clean = String(name || '').trim().slice(0, 100);
   if (clean.length < 2) return null;
-  const target = normalizePersian(clean);
-  const existing = db.prepare('SELECT id,name FROM contacts').all()
-    .find((item) => normalizePersian(item.name) === target);
+  const existing = findCounterpartyByName(db, clean);
   if (existing) return existing.id;
   return saveContact({ name: clean })?.id || null;
 }
@@ -2891,7 +2897,9 @@ export function createInvoice(values = {}) {
   const year = new Intl.DateTimeFormat('en-u-ca-persian', { timeZone: currentTimeZone(), year: 'numeric' }).format(new Date());
   const count = db.prepare('SELECT COUNT(*) AS count FROM invoices').get().count + 1;
   const number = `${documentType === 'purchase' ? 'KH' : 'FR'}-${year}-${String(count).padStart(4, '0')}`;
-  const contact = values.contactId ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(values.contactId) : null;
+  const contact = values.contactId
+    ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(values.contactId)
+    : (values.customerName ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(contactIdForName(values.customerName)) : null);
   const counterpartyName = String(contact?.name || values.customerName || (documentType === 'purchase' ? 'تأمین‌کننده' : 'مشتری')).trim().slice(0, 100);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -3884,7 +3892,8 @@ export function ensureAdmin() {
   const primaryProfile = controlDb.prepare("SELECT value FROM settings WHERE key='profileType'").get()?.value === 'personal' ? 'personal' : 'business';
   controlDb.prepare(`INSERT OR IGNORE INTO workspaces (id,name,profile_type,created_by) VALUES ('primary',?,?,?)`)
     .run(primaryName, primaryProfile, existing.id);
-  controlDb.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id,user_id,role) VALUES ('primary',?,'owner')`).run(existing.id);
+  controlDb.prepare(`INSERT INTO workspace_members (workspace_id,user_id,role,experience) VALUES ('primary',?,'owner','professional')
+    ON CONFLICT(workspace_id,user_id) DO UPDATE SET role='owner',experience='professional'`).run(existing.id);
   return { configured: true, username };
 }
 
@@ -4069,12 +4078,19 @@ export function postDepreciation({ throughMonth = '', now = new Date() } = {}) {
  * می‌گیرد و لایهٔ ثبت فقط اجرا می‌کند. این تابع فقط دروازهٔ ورود است.
  */
 export function submitFinancialEvent(event, options = {}) {
-  const result = recordFinancialEvent(activeWorkspaceDatabase(), event, {
+  const normalized = normalizeFinancialEvent(event);
+  let resolvedEvent = normalized;
+  if (normalized.counterparty && !normalized.counterpartyId) {
+    const counterpartyId = contactIdForName(normalized.counterparty);
+    const contact = counterpartyId ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(counterpartyId) : null;
+    resolvedEvent = { ...normalized, counterpartyId, counterparty: contact?.name || normalized.counterparty };
+  }
+  const result = recordFinancialEvent(activeWorkspaceDatabase(), resolvedEvent, {
     ...options,
     actor: options.actor || currentWorkspace()?.userId || null,
     timeZone: currentTimeZone(),
   });
-  if (!result.duplicate) audit('create', 'financial-event', result.id, { kind: event.kind, amount: event.amount, route: result.route });
+  if (!result.duplicate) audit('create', 'financial-event', result.id, { kind: resolvedEvent.kind, amount: resolvedEvent.amount, route: result.route });
   return result;
 }
 

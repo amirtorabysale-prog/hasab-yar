@@ -110,6 +110,16 @@ test('نام گفته‌شده به شخص موجود وصل می‌شود و ن
   assert.equal(core.listContacts().length, before + 1);
 });
 
+test('یک شرکت در طلب، بدهی و فاکتور همیشه همان طرف حساب می‌ماند', () => {
+  const before = core.listContacts().length;
+  const receivable = core.saveObligation({ title: 'طلب فروش', amount: 4_000_000, direction: 'receivable', contactName: 'شرکت آرمان (سهامی خاص)' });
+  const payable = core.saveObligation({ title: 'بدهی خرید', amount: 900_000, direction: 'payable', contactName: 'آرمان' });
+  const invoice = core.createInvoice({ customerName: 'شرکت آرمان', items: [{ title: 'خدمت', quantity: 1, unitPrice: 1_200_000 }] });
+  assert.equal(payable.contactId, receivable.contactId);
+  assert.equal(invoice.contactId, receivable.contactId);
+  assert.equal(core.listContacts().length, before + 1);
+});
+
 test.after(() => {
   core.db.close();
   removeTempDatabase(databasePath);
