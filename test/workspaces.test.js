@@ -17,6 +17,15 @@ test('migrates the existing owner and data into a primary workspace', () => {
   assert.equal(admin.configured, true);
   assert.deepEqual(database.listUserWorkspaces(owner.id).map((item) => item.id), ['primary']);
   assert.equal(database.workspaceForUser(owner.id, 'primary').role, 'owner');
+  assert.equal(database.workspaceForUser(owner.id, 'primary').experiencePreference, 'professional');
+});
+
+test('repairs an existing primary admin membership to full professional access', () => {
+  database.db.prepare("UPDATE workspace_members SET role='manager',experience='simple' WHERE workspace_id='primary' AND user_id=?").run(owner.id);
+  database.ensureAdmin();
+  const repaired = database.workspaceForUser(owner.id, 'primary');
+  assert.equal(repaired.role, 'owner');
+  assert.equal(repaired.experiencePreference, 'professional');
 });
 
 test('isolates every financial table behind a separate workspace database', () => {

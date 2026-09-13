@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, BookOpenCheck, Check, ChevronLeft, CircleAlert, Contact, Download, FileText, Landmark,
   HandCoins, Home, LayoutGrid, ListFilter, Menu, Mic, PackageSearch, Pencil, Plus, Printer, ReceiptText, RotateCcw,
@@ -94,6 +94,8 @@ import { BANKS, bankById, detectBank, pickBankAccount } from '../shared/banks.js
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 import ExcelImportPanel from './features/accounting/ExcelImportPanel.jsx';
+
+const WorkspacePanel = lazy(() => import('./features/settings/WorkspacePanel.jsx'));
 
 const EMPTY_SUMMARY = { income: 0, expense: 0, netCashFlow: 0, profit: 0, comparison: null };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]);
@@ -975,7 +977,7 @@ export default function App() {
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
       </div>
@@ -2010,47 +2012,6 @@ function BackupPanel({ access, notify, refresh }) {
   };
   if (!canManage) return null;
   return <section className="mx-auto mt-5 max-w-[760px] px-4"><div className="rounded-[10px] border border-line bg-surface p-4"><div className="flex items-start gap-3"><Download className="mt-0.5 shrink-0 text-accent" size={22} /><div><h2 className="font-extrabold">پشتیبان امن و بازیابی</h2><p className="mt-1 text-[13px] leading-6 text-muted">فایل شامل تمام داده‌های دفتر فعال و تصاویر رسید است و با AES-256 رمزگذاری می‌شود. رمز فایل روی سرور ذخیره نمی‌شود.</p></div></div><label className="mt-4 block text-[13px] text-muted">رمز پشتیبان<input type="password" minLength={12} autoComplete="new-password" value={passphrase} onChange={(event) => { setPassphrase(event.target.value); setPreview(null); }} placeholder="حداقل ۱۲ نویسه؛ در جای امن یادداشت کن" dir="ltr" className="tap mt-2 w-full rounded-lg border border-line px-3 text-left" /></label><button disabled={busy || passphrase.length < 12} onClick={download} className="tap mt-3 w-full rounded-lg bg-ink font-bold text-white disabled:opacity-40">{busy === 'download' ? 'در حال ساخت…' : 'دانلود پشتیبان رمزگذاری‌شده'}</button><div className="mt-4 rounded-lg bg-paper px-3 py-3 text-[12px] leading-6 text-muted">{status?.configured ? <><b className="text-income">پشتیبان خودکار فعال است.</b> نگهداری: {toPersianDigits(status.retentionDays)} روز. {status.lastBackup ? `آخرین نسخه: ${new Intl.DateTimeFormat('fa-IR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(status.lastBackup.createdAt))}` : 'هنوز نسخه‌ای ساخته نشده است.'}</> : <><b className="text-expense">پشتیبان خودکار هنوز فعال نیست.</b> متغیر BACKUP_ENCRYPTION_KEY باید روی Railway تنظیم شود.</>}</div>{status?.configured && <button disabled={busy} onClick={snapshot} className="tap mt-2 w-full rounded-lg border border-line font-bold disabled:opacity-40">{busy === 'snapshot' ? 'در حال آزمایش و ذخیره…' : 'ساخت snapshot سرور همین حالا'}</button>}{isOwner && <div className="mt-5 border-t border-line pt-4"><h3 className="font-extrabold">بازیابی دفتر فعال</h3><p className="mt-1 text-[12px] leading-6 text-expense">بازیابی، اطلاعات مالی فعلی این دفتر را جایگزین می‌کند. پیش از جایگزینی، یک checkpoint رمزگذاری‌شده ساخته می‌شود.</p><input type="file" accept=".hybackup,application/octet-stream" onChange={(event) => { setFile(event.target.files?.[0] || null); setPreview(null); setConfirmation(''); }} className="mt-3 block w-full text-xs" /><button disabled={busy || !file || passphrase.length < 12} onClick={inspect} className="tap mt-3 w-full rounded-lg border border-accent font-bold text-accent disabled:opacity-40">{busy === 'preview' ? 'در حال رمزگشایی و بررسی…' : 'بررسی فایل پیش از بازیابی'}</button>{preview && <div className="mt-3 rounded-lg border border-line bg-paper p-3"><p className="text-sm font-bold text-income">فایل سالم و قابل بازیابی است</p><div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted"><span>تراکنش: <b className="numbers text-ink">{toPersianDigits(preview.transactions)}</b></span><span>رسید: <b className="numbers text-ink">{toPersianDigits(preview.receipts)}</b></span><span>درآمد: <b className="numbers text-income">{formatAmount(preview.income)}</b></span><span>هزینه: <b className="numbers text-expense">{formatAmount(preview.expense)}</b></span></div><label className="mt-3 block text-[12px] text-muted">برای تأیید بنویس: بازیابی دفتر<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="tap mt-2 w-full rounded-lg border border-expense px-3 text-ink" /></label><button disabled={busy || confirmation !== 'بازیابی دفتر'} onClick={restore} className="tap mt-3 w-full rounded-lg bg-expense font-bold text-white disabled:opacity-35">{busy === 'restore' ? 'در حال ساخت checkpoint و بازیابی…' : 'بازیابی قطعی دفتر'}</button></div>}</div>}</div></section>;
-}
-
-const ROLE_LABELS = { owner: 'مالک', manager: 'مدیر', accountant: 'حسابدار', viewer: 'فقط مشاهده' };
-
-function WorkspacePanel({ access, notify, switchWorkspace, refreshAccess }) {
-  const [members, setMembers] = useState([]);
-  const [workspaceDraft, setWorkspaceDraft] = useState({ name: '', profileType: 'business' });
-  const [memberDraft, setMemberDraft] = useState({ username: '', displayName: '', temporaryPassword: '', role: 'viewer' });
-  const role = access.workspace?.role || 'viewer';
-  const canViewMembers = ['owner', 'manager'].includes(role);
-  const isOwner = role === 'owner';
-  const loadMembers = useCallback(() => canViewMembers ? api.members().then((result) => setMembers(result.items)).catch((error) => notify(error.message)) : Promise.resolve(), [canViewMembers, notify]);
-  useEffect(() => { loadMembers(); }, [loadMembers, access.workspace?.id]);
-  const create = async (event) => {
-    event.preventDefault();
-    try {
-      const result = await api.createWorkspace(workspaceDraft);
-      setWorkspaceDraft({ name: '', profileType: 'business' });
-      await switchWorkspace(result.workspace.id);
-      notify('دفتر تازه و پایگاه‌دادهٔ جدا ساخته شد.');
-    } catch (error) { notify(error.message); }
-  };
-  const add = async (event) => {
-    event.preventDefault();
-    try {
-      await api.addMember(memberDraft);
-      setMemberDraft({ username: '', displayName: '', temporaryPassword: '', role: 'viewer' });
-      await loadMembers();
-      notify('دسترسی عضو ذخیره شد.');
-    } catch (error) { notify(error.message); }
-  };
-  const updateRole = async (userId, nextRole) => {
-    try { await api.updateMember(userId, nextRole); await loadMembers(); notify('نقش عضو تغییر کرد.'); }
-    catch (error) { notify(error.message); }
-  };
-  const remove = async (userId) => {
-    if (!window.confirm('دسترسی این عضو از دفتر حذف شود؟')) return;
-    try { await api.removeMember(userId); await loadMembers(); await refreshAccess(); notify('دسترسی عضو حذف شد.'); }
-    catch (error) { notify(error.message); }
-  };
-  return <section className="mx-auto mt-1 max-w-[760px] px-4"><div className="rounded-[10px] border border-line bg-surface p-4"><div className="flex items-start gap-3"><Users className="mt-0.5 shrink-0 text-accent" size={22} /><div><h2 className="font-extrabold">دفترها و دسترسی تیم</h2><p className="mt-1 text-[13px] leading-6 text-muted">اطلاعات هر دفتر در پایگاه‌داده‌ای جدا نگه‌داری می‌شود. نقش فعلی تو: <b className="text-ink">{ROLE_LABELS[role]}</b></p></div></div><label className="mt-4 block text-[13px] text-muted">دفتر فعال<select value={access.workspace?.id || ''} onChange={(event) => switchWorkspace(event.target.value)} className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3 font-bold text-ink">{access.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name} — {ROLE_LABELS[workspace.role]}</option>)}</select></label><form onSubmit={create} className="mt-4 grid gap-2 border-t border-line pt-4 sm:grid-cols-[1fr_150px_120px]"><input required minLength={2} value={workspaceDraft.name} onChange={(event) => setWorkspaceDraft({ ...workspaceDraft, name: event.target.value })} placeholder="نام دفتر تازه" className="tap rounded-lg border border-line px-3" /><select value={workspaceDraft.profileType} onChange={(event) => setWorkspaceDraft({ ...workspaceDraft, profileType: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="business">کسب‌وکار</option><option value="personal">شخصی</option></select><button className="tap rounded-lg bg-ink px-3 text-sm font-bold text-white">ساخت دفتر</button></form>{canViewMembers && <div className="mt-5 border-t border-line pt-4"><div className="flex items-center justify-between"><h3 className="font-extrabold">اعضای این دفتر</h3><span className="text-xs text-muted">{toPersianDigits(members.length)} نفر</span></div><div className="mt-3 divide-y divide-line border-y border-line">{members.map((member) => <div key={member.id} className="flex min-h-[68px] items-center gap-2 py-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{member.displayName || member.username}</p><p className="mt-1 truncate text-xs text-muted" dir="ltr">@{member.username}</p></div>{isOwner ? <select value={member.role} onChange={(event) => updateRole(member.id, event.target.value)} className="tap max-w-32 rounded-lg border border-line bg-surface px-2 text-xs font-bold"><option value="owner">مالک</option><option value="manager">مدیر</option><option value="accountant">حسابدار</option><option value="viewer">فقط مشاهده</option></select> : <span className="rounded-md border border-line px-2 py-1 text-xs">{ROLE_LABELS[member.role]}</span>}{isOwner && member.id !== access.user?.id && <button onClick={() => remove(member.id)} className="tap grid place-items-center text-expense" aria-label="حذف دسترسی"><Trash2 size={17} /></button>}</div>)}</div>{isOwner && <form onSubmit={add} className="mt-4 grid gap-2 sm:grid-cols-2"><input required value={memberDraft.username} onChange={(event) => setMemberDraft({ ...memberDraft, username: event.target.value })} placeholder="نام کاربری انگلیسی" dir="ltr" className="tap rounded-lg border border-line px-3 text-left" /><input value={memberDraft.displayName} onChange={(event) => setMemberDraft({ ...memberDraft, displayName: event.target.value })} placeholder="نام نمایشی" className="tap rounded-lg border border-line px-3" /><input value={memberDraft.temporaryPassword} onChange={(event) => setMemberDraft({ ...memberDraft, temporaryPassword: event.target.value })} placeholder="رمز موقت ۱۴ نویسه‌ای (برای کاربر تازه)" dir="ltr" type="password" autoComplete="new-password" className="tap rounded-lg border border-line px-3 text-left" /><select value={memberDraft.role} onChange={(event) => setMemberDraft({ ...memberDraft, role: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="viewer">فقط مشاهده</option><option value="accountant">حسابدار</option><option value="manager">مدیر</option><option value="owner">مالک</option></select><button className="tap rounded-lg bg-accent font-bold text-white sm:col-span-2">افزودن یا به‌روزرسانی عضو</button></form>}<p className="mt-3 text-[11px] leading-5 text-muted">کاربر تازه در اولین ورود باید رمز موقت را عوض کند. حسابدار ثبت‌های مالی را مدیریت می‌کند؛ مدیر تنظیمات دفتر را هم تغییر می‌دهد؛ فقط مالک اعضا را مدیریت می‌کند.</p></div>}</div></section>;
 }
 
 function SessionsPanel({ notify }) {
