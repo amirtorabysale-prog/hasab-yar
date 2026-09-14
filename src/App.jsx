@@ -112,6 +112,25 @@ function useOnlineStatus() {
   return online;
 }
 
+/**
+ * دسترسی کامل از پاسخ سرور.
+ *
+ * سرور در ورود، وضعیت نشست و فهرست دفترها همیشه `screens` و `experience` را
+ * هم می‌فرستد. پیش از این چهار جا فقط سه فیلد را برمی‌داشتند و بقیه را دور
+ * می‌ریختند؛ نتیجه‌اش این بود که پس از ورود یا تغییر نقش، ناوبری از روی
+ * فهرست خالی ساخته می‌شد و صفحه‌هایی مثل «همکاری حسابدار» — که خروجی پارسیان
+ * آنجاست — تا بارگذاری کامل بعدی دیده نمی‌شدند.
+ */
+function accessFromPayload(result = {}) {
+  return {
+    user: result.user || null,
+    workspaces: result.workspaces || [],
+    workspace: result.workspace || null,
+    experience: result.experience || result.workspace?.experience || 'simple',
+    screens: Array.isArray(result.screens) ? result.screens : [],
+  };
+}
+
 export default function App() {
   const online = useOnlineStatus();
   const [authenticated, setAuthenticated] = useState(null);
@@ -210,7 +229,7 @@ export default function App() {
     const requireAuth = () => { localStorage.removeItem('hesab-yar-authenticated'); api.clearOfflineSession(); setAuthenticated(false); };
     window.addEventListener('hesabyar:auth-required', requireAuth);
     if (!navigator.onLine && localStorage.getItem('hesab-yar-authenticated') === '1') setAuthenticated(true);
-    else api.authStatus().then((result) => { setAuthenticated(result.authenticated); if (result.authenticated) setAccess({ user: result.user, workspaces: result.workspaces || [], workspace: result.workspace }); }).catch((error) => { setAuthError(error.message); setAuthenticated(false); });
+    else api.authStatus().then((result) => { setAuthenticated(result.authenticated); if (result.authenticated) setAccess(accessFromPayload(result)); }).catch((error) => { setAuthError(error.message); setAuthenticated(false); });
     return () => window.removeEventListener('hesabyar:auth-required', requireAuth);
   }, []);
 
@@ -898,7 +917,7 @@ export default function App() {
     setAuthError('');
     try {
       const result = await api.login(username, password);
-      setAccess({ user: result.user, workspaces: result.workspaces || [], workspace: result.workspace });
+      setAccess(accessFromPayload(result));
       localStorage.setItem('hesab-yar-authenticated', '1');
       setAuthenticated(true);
     } catch (error) { setAuthError(error.message); }
@@ -973,11 +992,11 @@ export default function App() {
           {screen === 'review' && <ReviewQueuePage notify={notify} access={access} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
-          {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} />}
+          {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} />}
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess({ user: result.user, workspaces: result.workspaces, workspace: result.workspace }); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
       </div>

@@ -7,7 +7,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, previewDayClosing,
+  correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit,
@@ -26,7 +26,7 @@ import { parseFinancialText } from './parser.js';
 import { previewCorrection } from '../shared/correction.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
-import { EXPERIENCES, experienceForRole, pathNeedsProfessional, screensFor } from '../shared/experience.js';
+import { EXPERIENCES, canChooseExperience, experienceForRole, pathNeedsProfessional, screensFor } from '../shared/experience.js';
 import { DEFAULT_AUTOMATION_POLICY } from '../shared/automationPolicy.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
@@ -218,6 +218,23 @@ app.get('/api/workspace/members', (request, response) => {
 app.post('/api/workspace/members', (request, response, next) => {
   try { return response.status(201).json({ item: addWorkspaceMember(request.workspace.id, request.body || {}) }); }
   catch (error) { error.status ||= 400; return next(error); }
+});
+// انتخاب محیط ساده یا حرفه‌ای.
+//
+// مالک به‌طور پیش‌فرض در محیط ساده است؛ بدون این مسیر هیچ راهی برای رسیدن به
+// ابزار حسابدار — از جمله خروجی پارسیان — نداشت، مگر اینکه همان کاربرِ
+// ADMIN_USERNAME روی سرور باشد. عمداً بیرون از مرز حرفه‌ای است: کسی که در
+// محیط ساده گیر افتاده باید بتواند از آن بیرون بیاید.
+app.put('/api/workspace/experience', (request, response) => {
+  const preference = request.body?.experience;
+  if (!canChooseExperience(request.workspace.role)) {
+    return response.status(403).json({ code: 'EXPERIENCE_FIXED', message: 'محیط این نقش ثابت است و قابل تغییر نیست.' });
+  }
+  if (!Object.values(EXPERIENCES).includes(preference)) {
+    return response.status(400).json({ code: 'EXPERIENCE_INVALID', message: 'محیط انتخاب‌شده معتبر نیست.' });
+  }
+  setExperiencePreference(request.workspace.id, request.user.id, preference);
+  return response.json(accessPayload(request.user, request.workspace.id));
 });
 app.put('/api/workspace/members/:userId', (request, response, next) => {
   try {

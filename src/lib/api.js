@@ -158,6 +158,8 @@ export const api = {
   members: () => request('/api/workspace/members'),
   addMember: (payload) => request('/api/workspace/members', { method: 'POST', body: JSON.stringify(payload) }),
   updateMember: (userId, role) => request(`/api/workspace/members/${userId}`, { method: 'PUT', body: JSON.stringify({ role }) }),
+  // انتخاب محیط ساده یا حرفه‌ای؛ پاسخ، دسترسی کامل تازه است.
+  setExperience: (experience) => request('/api/workspace/experience', { method: 'PUT', body: JSON.stringify({ experience }) }),
   removeMember: (userId) => request(`/api/workspace/members/${userId}`, { method: 'DELETE' }),
   bootstrap: () => request('/api/bootstrap'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),

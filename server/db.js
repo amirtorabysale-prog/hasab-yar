@@ -2655,9 +2655,13 @@ export function saveContact(values = {}) {
   const id = values.id || matched?.id || randomUUID();
   const storedName = matched?.name || name;
   const kind = ['person', 'customer', 'vendor'].includes(values.kind) ? values.kind : 'person';
+  // ویرایش صریح (با شناسه) انتخاب کاربر را می‌نشاند. قاعدهٔ «در تعارض، شخص» فقط
+  // برای وقتی است که ثبتی تازه به طرف حساب موجود رسیده؛ اعمالش روی ویرایش یعنی
+  // تغییر «شخص» به «مشتری» هیچ‌وقت ذخیره نمی‌شد.
+  const explicitEdit = values.id ? 1 : 0;
   db.prepare(`INSERT INTO contacts (id,name,canonical_name,kind,phone,note) VALUES (?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET name=excluded.name,canonical_name=excluded.canonical_name,
-      kind=CASE WHEN contacts.kind=excluded.kind THEN contacts.kind ELSE 'person' END,
+      kind=CASE WHEN ${explicitEdit} THEN excluded.kind WHEN contacts.kind=excluded.kind THEN contacts.kind ELSE 'person' END,
       phone=CASE WHEN excluded.phone='' THEN contacts.phone ELSE excluded.phone END,
       note=CASE WHEN excluded.note='' THEN contacts.note ELSE excluded.note END,updated_at=CURRENT_TIMESTAMP`)
     .run(id, storedName, canonicalName, kind, String(values.phone || '').slice(0, 30), String(values.note || '').slice(0, 500));
