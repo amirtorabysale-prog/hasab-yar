@@ -910,7 +910,10 @@ export default function App() {
     if (target === 'ledger' && ['transactions', 'obligations', 'invoices', 'reconciliation', 'recurring', 'inventory', 'tools'].includes(section)) setLedgerTab(section);
     setScreen(target); setDrawer(false);
     window.setTimeout(() => section && document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
-    if (!section) window.scrollTo({ top: 0, behavior: 'smooth' });
+    // صفحهٔ تازه از بالا باز می‌شود، فوری. اسکرول نرم پیش از عوض‌شدن محتوا شروع
+    // می‌شد و جابه‌جایی صفحه آن را نیمه‌راه قطع می‌کرد؛ کاربر از پایین تنظیمات
+    // مستقیم به پایین «همکاری حسابدار» می‌رسید و بخش اصلی را نمی‌دید.
+    if (!section) window.scrollTo({ top: 0, behavior: 'auto' });
   };
 
   const login = async (username, password) => {
