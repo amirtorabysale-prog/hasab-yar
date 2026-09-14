@@ -94,6 +94,8 @@ import { BANKS, bankById, detectBank, pickBankAccount } from '../shared/banks.js
 import { SETUP_CHECK_IDS, deliverySteps } from './lib/deliveryFlow.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../shared/product.js';
 import ExcelImportPanel from './features/accounting/ExcelImportPanel.jsx';
+import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
+import { withCounterpartyConfirmation } from './lib/counterpartyPrompt.js';
 
 const WorkspacePanel = lazy(() => import('./features/settings/WorkspacePanel.jsx'));
 
@@ -750,7 +752,7 @@ export default function App() {
       if (draft.intent === 'invoice') {
         const payload = invoiceDraftPayload(draft, { taxRateId: draft.taxRateId || null });
         if (!payload) return;
-        const { item } = await api.saveInvoice({ ...payload, documentType: draft.documentType, customerName: draft.contactName || '' });
+        const { item } = await withCounterpartyConfirmation((counterpartyResolution) => api.saveInvoice({ ...payload, documentType: draft.documentType, customerName: draft.contactName || '', counterpartyResolution }));
         setIntentDraft(null);
         await load();
         // پیام دقیقاً می‌گوید سند در چه وضعیتی است. «ثبت شد» خالی، کاربر را به
@@ -1002,6 +1004,7 @@ export default function App() {
           {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
+        <CounterpartyMatchSheet />
       </div>
 
       <BottomNav screen={screen} navigate={navigate} access={access} />
@@ -3515,12 +3518,22 @@ function ObligationsPanel({ contacts: initialContacts, notify, refresh }) {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     audioContextRef.current?.close().catch(() => {});
   }, []);
-  const addContact = async () => { if (!contactName.trim()) return; await api.saveContact({ name: contactName }); setContactName(''); notify('شخص اضافه شد.'); load(); refresh(); };
+  // بدون try، هر خطای سرور — از نام کوتاه تا پرسش طرف حساب مشابه — بی‌صدا از
+  // دست می‌رفت و کاربر نمی‌فهمید چرا شخص اضافه نشد.
+  const addContact = async () => {
+    if (!contactName.trim()) return;
+    try {
+      await withCounterpartyConfirmation((counterpartyResolution) => api.saveContact({ name: contactName, counterpartyResolution }));
+      setContactName(''); notify('شخص اضافه شد.'); load(); refresh();
+    } catch (error) { notify(error.message); }
+  };
   const add = async (event) => {
     event.preventDefault();
     // نام گفته‌شده همراه ثبت می‌رود؛ سرور شخص را پیدا یا ایجاد می‌کند تا کاربر
     // مجبور نباشد اول شخص را دستی بسازد.
-    await api.saveObligation({ ...draft, contactName: draft.contactId ? '' : draft.spokenName || '' });
+    try {
+      await withCounterpartyConfirmation((counterpartyResolution) => api.saveObligation({ ...draft, contactName: draft.contactId ? '' : draft.spokenName || '', counterpartyResolution }));
+    } catch (error) { notify(error.message); return; }
     setDraft({ title: '', amount: '', direction: 'receivable', contactId: '', dueAt: '', occurredAt: '' });
     setHeard('');
     notify('سررسید ذخیره شد.');
@@ -3705,7 +3718,7 @@ function InvoicesPanel({ contacts, accounts, categories, notify, refresh }) {
     }, 0);
     return { subtotal, discount, tax, total: subtotal - discount + tax };
   }, [draft.discount, draft.items, taxRates]);
-  const save = async (event) => { event.preventDefault(); await api.saveInvoice(draft); setDraft(freshDraft()); notify(draft.issueNow ? 'سند صادر و مالیات آن در دفتر کل تفکیک شد.' : 'پیش‌نویس ذخیره شد.'); load(); refresh(); };
+  const save = async (event) => { event.preventDefault(); try { await withCounterpartyConfirmation((counterpartyResolution) => api.saveInvoice({ ...draft, counterpartyResolution })); } catch (error) { notify(error.message); return; } setDraft(freshDraft()); notify(draft.issueNow ? 'سند صادر و مالیات آن در دفتر کل تفکیک شد.' : 'پیش‌نویس ذخیره شد.'); load(); refresh(); };
   const issue = async (id) => { await api.issueInvoice(id); notify('سند صادر و حساب طرف مقابل ثبت شد.'); load(); refresh(); };
   const openPayment = (item) => setPayment({ id: item.id, amount: String(item.balanceDue), accountId: accounts.find((account) => account.active)?.id || 'cash', documentType: item.documentType, number: item.number });
   const pay = async (event) => { event.preventDefault(); await api.recordInvoicePayment(payment.id, payment); setPayment(null); notify(payment.documentType === 'purchase' ? 'پرداخت ثبت شد.' : 'وصول ثبت شد.'); load(); refresh(); };

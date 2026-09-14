@@ -1,102 +1,142 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { canonicalCounterpartyName } from '../shared/counterpartyIdentity.js';
-import { ensureCounterpartyIdentitySchema } from '../server/counterparties.js';
+import { canonicalCounterpartyName, exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
+import {
+  ensureCounterpartyIdentitySchema, matchCounterparty, mergeCounterparties, resolveCounterparty,
+} from '../server/counterparties.js';
 
-test('عنوان حقوقی، علائم و نویسه‌های عربی هویت شرکت را عوض نمی‌کنند', () => {
-  const expected = canonicalCounterpartyName('شرکت آرمان (سهامی خاص)');
-  assert.equal(expected, canonicalCounterpartyName('آرمان'));
-  assert.equal(expected, canonicalCounterpartyName('شرکت آرمان، سهامي خاص'));
+// ------------------------------------------------------------------ کلیدها
+
+test('شکل حقوقی نام را «مشابه» می‌کند، نه «یکسان»', () => {
+  assert.equal(canonicalCounterpartyName('شرکت آرمان (سهامی خاص)'), canonicalCounterpartyName('آرمان'));
+  assert.notEqual(exactCounterpartyKey('شرکت آرمان'), exactCounterpartyKey('آرمان'));
 });
 
-test('نام‌های واقعاً متفاوت برای جلوگیری از ادغام مالی جدا می‌مانند', () => {
+test('تفاوت نوشتاری صرف، همان نام است', () => {
+  assert.equal(exactCounterpartyKey('مرتضي‌رضایی'), exactCounterpartyKey('مرتضی رضایی'));
+  assert.equal(exactCounterpartyKey('آرمان، سهامی'), exactCounterpartyKey('آرمان سهامی'));
+});
+
+test('نام‌های واقعاً متفاوت جدا می‌مانند', () => {
   assert.notEqual(canonicalCounterpartyName('آرمان تجارت'), canonicalCounterpartyName('آرمان صنعت'));
 });
-
-test('مهاجرت، اسناد و تفصیلی تکراری را روی یک شرکت نگه می‌دارد', () => {
-  const database = new DatabaseSync(':memory:');
-  database.exec(`
-    PRAGMA foreign_keys=ON;
-    CREATE TABLE contacts (id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE transactions (id TEXT PRIMARY KEY,contact_id TEXT REFERENCES contacts(id));
-    CREATE TABLE obligations (id TEXT PRIMARY KEY,contact_id TEXT REFERENCES contacts(id));
-    CREATE TABLE invoices (id TEXT PRIMARY KEY,contact_id TEXT REFERENCES contacts(id));
-    CREATE TABLE analytic_accounts (id TEXT PRIMARY KEY,name TEXT,source_kind TEXT,source_key TEXT,UNIQUE(source_kind,source_key));
-    CREATE TABLE journal_lines (id TEXT PRIMARY KEY,analytic_id TEXT REFERENCES analytic_accounts(id) ON DELETE RESTRICT);
-    INSERT INTO contacts (id,name) VALUES ('kept','شرکت آرمان'),('duplicate','آرمان');
-    INSERT INTO obligations (id,contact_id) VALUES ('o1','duplicate');
-    INSERT INTO invoices (id,contact_id) VALUES ('i1','kept');
-    INSERT INTO analytic_accounts (id,name,source_kind,source_key) VALUES ('a1','شرکت آرمان','contact','kept'),('a2','آرمان','contact','duplicate');
-    INSERT INTO journal_lines (id,analytic_id) VALUES ('j1','a2');
-  `);
-  ensureCounterpartyIdentitySchema(database);
-  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM contacts').get().count, 1);
-  assert.equal(database.prepare("SELECT contact_id AS contactId FROM obligations WHERE id='o1'").get().contactId, 'kept');
-  assert.equal(database.prepare("SELECT analytic_id AS analyticId FROM journal_lines WHERE id='j1'").get().analyticId, 'a1');
-  database.close();
-});
-
-// ---------------------------------------------------- مرز ادغام خودکار
 
 /**
  * «آقای رضایی» و «خانم رضایی» دو نفرند.
  *
- * وقتی عنوان شخص هم حذف می‌شد، هر دو «رضایی» می‌شدند و مهاجرتی که روی هر بار
- * باز شدن دفتر اجرا می‌شود، طلب و بدهی دو آدم را روی یک طرف حساب ادغام می‌کرد و
- * یکی را پاک — بی‌بازگشت.
+ * وقتی عنوان شخص هم حذف می‌شد، هر دو «رضایی» می‌شدند و طلب و بدهی دو آدم روی یک
+ * طرف حساب می‌نشست.
  */
-test('عنوان شخص هویت را عوض می‌کند و ادغام نمی‌شود', () => {
+test('عنوان شخص هویت را عوض می‌کند', () => {
   assert.notEqual(canonicalCounterpartyName('آقای رضایی'), canonicalCounterpartyName('خانم رضایی'));
   assert.notEqual(canonicalCounterpartyName('دکتر احمدی'), canonicalCounterpartyName('مهندس احمدی'));
 });
 
-function schemaWithCodes() {
+// ------------------------------------------------------------------ پرسش
+
+function contactsDatabase(rows = []) {
   const database = new DatabaseSync(':memory:');
   database.exec(`
-    CREATE TABLE contacts (id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE contacts (id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT,phone TEXT,note TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE transactions (id TEXT PRIMARY KEY,contact_id TEXT);
+    CREATE TABLE obligations (id TEXT PRIMARY KEY,contact_id TEXT);
+    CREATE TABLE invoices (id TEXT PRIMARY KEY,contact_id TEXT);
     CREATE TABLE analytic_accounts (id TEXT PRIMARY KEY,name TEXT,source_kind TEXT,source_key TEXT,external_code TEXT);
     CREATE TABLE journal_lines (id TEXT PRIMARY KEY,analytic_id TEXT);
     CREATE TABLE audit_log (id TEXT PRIMARY KEY,action TEXT,entity_type TEXT,entity_id TEXT,payload TEXT);
   `);
+  const insert = database.prepare('INSERT INTO contacts (id,name) VALUES (?,?)');
+  for (const [id, name] of rows) insert.run(id, name);
+  ensureCounterpartyIdentitySchema(database);
   return database;
 }
 
-// حسابدار آن دو را عمداً دو تفصیلی جدا در پارسیان تعریف کرده؛ ادغام خودکار
-// یعنی نادیده گرفتن تصمیم او.
-test('دو کد مقصدِ متفاوت، جلوی ادغام خودکار را می‌گیرند', () => {
-  const database = schemaWithCodes();
-  database.exec(`
-    INSERT INTO contacts (id,name) VALUES ('c1','شرکت آرمان'),('c2','آرمان');
-    INSERT INTO analytic_accounts VALUES ('a1','شرکت آرمان','contact','c1','5101'),('a2','آرمان','contact','c2','5102');
-  `);
-  ensureCounterpartyIdentitySchema(database);
-  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM contacts').get().n, 2);
-  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM analytic_accounts').get().n, 2);
+test('همان نوشته بی‌پرسش همان طرف حساب است', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان']]);
+  assert.equal(resolveCounterparty(database, 'شرکت  آرمان').contact.id, 'c1');
   database.close();
 });
 
-// بدون این، با حذف ردیف تکراری، نگاشتی که حسابدار دستی ساخته بود بی‌صدا از بین
-// می‌رفت و طرف حساب در فایل انتقال بی‌نام بالا می‌آمد.
-test('کد مقصدِ ردیف تکراری به طرف حساب نگه‌داشته منتقل می‌شود', () => {
-  const database = schemaWithCodes();
+/**
+ * ادغامِ «مشابه» تصمیم ثبت‌کننده است، نه برنامه.
+ *
+ * «آرمان» شاید همان «شرکت آرمان» باشد، شاید نه. سرور خطای پرسش می‌دهد و همان
+ * درخواست با جواب کاربر دوباره می‌آید.
+ */
+test('نام مشابه بدون پاسخ ثبت‌کننده به پرسش تبدیل می‌شود', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان']]);
+  assert.throws(() => resolveCounterparty(database, 'آرمان'), (error) => {
+    assert.equal(error.code, 'COUNTERPARTY_SIMILAR');
+    assert.equal(error.status, 409);
+    assert.deepEqual(error.details.existing, { id: 'c1', name: 'شرکت آرمان' });
+    return true;
+  });
+  database.close();
+});
+
+test('پاسخ «همان است» به طرف حساب موجود و «جداست» به طرف حساب تازه می‌رسد', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان']]);
+  assert.equal(resolveCounterparty(database, 'آرمان', 'merge').contact.id, 'c1');
+  assert.equal(resolveCounterparty(database, 'آرمان', 'separate').contact, null);
+  database.close();
+});
+
+test('نامی که هیچ شباهتی ندارد پرسشی نمی‌سازد', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان']]);
+  assert.deepEqual(matchCounterparty(database, 'پارس'), { exact: null, similar: null });
+  database.close();
+});
+
+// ------------------------------------------------------- بدون ادغام خودکار
+
+// این تابع روی هر بار باز شدن دفتر اجرا می‌شود، بی‌آنکه کسی ببیند؛ ادغام در آن
+// یعنی یکی کردن مشابه‌ها بدون تأیید.
+test('باز شدن دفتر هیچ طرف حسابی را ادغام نمی‌کند', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان'], ['c2', 'آرمان']]);
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM contacts').get().n, 2);
+  database.close();
+});
+
+// ------------------------------------------------------ ادغام تأییدشده
+
+test('ادغام تأییدشده اسناد و سطرهای سند را به طرف حساب ماندگار می‌بندد', () => {
+  const database = contactsDatabase([['kept', 'شرکت آرمان'], ['duplicate', 'آرمان']]);
   database.exec(`
-    INSERT INTO contacts (id,name) VALUES ('c1','شرکت آرمان'),('c2','آرمان');
-    INSERT INTO analytic_accounts VALUES ('a1','شرکت آرمان','contact','c1',NULL),('a2','آرمان','contact','c2','5102');
+    INSERT INTO obligations VALUES ('o1','duplicate');
+    INSERT INTO analytic_accounts VALUES ('a1','شرکت آرمان','contact','kept',NULL),('a2','آرمان','contact','duplicate',NULL);
     INSERT INTO journal_lines VALUES ('j1','a2');
   `);
-  ensureCounterpartyIdentitySchema(database);
-  assert.equal(database.prepare("SELECT external_code AS code FROM analytic_accounts WHERE id='a1'").get().code, '5102');
+  mergeCounterparties(database, 'kept', 'duplicate');
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM contacts').get().n, 1);
+  assert.equal(database.prepare("SELECT contact_id AS c FROM obligations WHERE id='o1'").get().c, 'kept');
   assert.equal(database.prepare("SELECT analytic_id AS a FROM journal_lines WHERE id='j1'").get().a, 'a1');
   database.close();
 });
 
+// حسابدار آن دو را عمداً دو تفصیلی جدا در پارسیان تعریف کرده.
+test('دو کد مقصدِ متفاوت ادغام را رد می‌کنند و چیزی تغییر نمی‌کند', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان'], ['c2', 'آرمان']]);
+  database.exec("INSERT INTO analytic_accounts VALUES ('a1','شرکت آرمان','contact','c1','5101'),('a2','آرمان','contact','c2','5102')");
+  assert.throws(() => mergeCounterparties(database, 'c1', 'c2'), /COUNTERPARTY_MERGE_CONFLICT|دو کد تفصیلی/);
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM contacts').get().n, 2);
+  database.close();
+});
+
+// بدون این، نگاشتی که حسابدار دستی ساخته بود بی‌صدا از بین می‌رفت.
+test('کد مقصدِ ردیف حذف‌شده به طرف حساب ماندگار منتقل می‌شود', () => {
+  const database = contactsDatabase([['c1', 'شرکت آرمان'], ['c2', 'آرمان']]);
+  database.exec("INSERT INTO analytic_accounts VALUES ('a1','شرکت آرمان','contact','c1',NULL),('a2','آرمان','contact','c2','5102')");
+  mergeCounterparties(database, 'c1', 'c2');
+  assert.equal(database.prepare("SELECT external_code AS code FROM analytic_accounts WHERE id='a1'").get().code, '5102');
+  database.close();
+});
+
 test('هر ادغام در Audit Log می‌ماند', () => {
-  const database = schemaWithCodes();
-  database.exec("INSERT INTO contacts (id,name) VALUES ('c1','شرکت آرمان'),('c2','آرمان')");
-  ensureCounterpartyIdentitySchema(database);
+  const database = contactsDatabase([['c1', 'شرکت آرمان'], ['c2', 'آرمان']]);
+  mergeCounterparties(database, 'c1', 'c2', { actor: 'user-1' });
   const row = database.prepare("SELECT payload FROM audit_log WHERE action='merge' AND entity_type='contact'").get();
-  assert.ok(row, 'ادغامی که اسناد را جابه‌جا می‌کند باید ردپا داشته باشد');
-  assert.match(row.payload, /آرمان/);
+  assert.ok(row);
+  assert.match(row.payload, /user-1/);
   database.close();
 });

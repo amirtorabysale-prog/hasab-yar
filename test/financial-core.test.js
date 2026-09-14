@@ -110,14 +110,32 @@ test('نام گفته‌شده به شخص موجود وصل می‌شود و ن
   assert.equal(core.listContacts().length, before + 1);
 });
 
-test('یک شرکت در طلب، بدهی و فاکتور همیشه همان طرف حساب می‌ماند', () => {
+/**
+ * «آرمان» شاید همان «شرکت آرمان» باشد و شاید نه؛ این را ثبت‌کننده می‌داند نه برنامه.
+ * نام مشابه به پرسش تبدیل می‌شود و جواب «همان است» طلب، بدهی و فاکتور را روی یک
+ * طرف حساب نگه می‌دارد.
+ */
+test('نام مشابه پرسیده می‌شود و با تأیید همان طرف حساب می‌ماند', () => {
   const before = core.listContacts().length;
   const receivable = core.saveObligation({ title: 'طلب فروش', amount: 4_000_000, direction: 'receivable', contactName: 'شرکت آرمان (سهامی خاص)' });
-  const payable = core.saveObligation({ title: 'بدهی خرید', amount: 900_000, direction: 'payable', contactName: 'آرمان' });
-  const invoice = core.createInvoice({ customerName: 'شرکت آرمان', items: [{ title: 'خدمت', quantity: 1, unitPrice: 1_200_000 }] });
+  assert.throws(
+    () => core.saveObligation({ title: 'بدهی خرید', amount: 900_000, direction: 'payable', contactName: 'آرمان' }),
+    (error) => error.code === 'COUNTERPARTY_SIMILAR',
+  );
+  const payable = core.saveObligation({ title: 'بدهی خرید', amount: 900_000, direction: 'payable', contactName: 'آرمان', counterpartyResolution: 'merge' });
+  const invoice = core.createInvoice({ customerName: 'شرکت آرمان', counterpartyResolution: 'merge', items: [{ title: 'خدمت', quantity: 1, unitPrice: 1_200_000 }] });
   assert.equal(payable.contactId, receivable.contactId);
   assert.equal(invoice.contactId, receivable.contactId);
   assert.equal(core.listContacts().length, before + 1);
+});
+
+test('پاسخ «جداست» طرف حساب تازه می‌سازد و دوباره پرسیده نمی‌شود', () => {
+  const first = core.saveObligation({ title: 'طلب', amount: 500_000, direction: 'receivable', contactName: 'شرکت نگین' });
+  const separate = core.saveObligation({ title: 'بدهی', amount: 200_000, direction: 'payable', contactName: 'نگین', counterpartyResolution: 'separate' });
+  assert.notEqual(separate.contactId, first.contactId);
+  // حالا «نگین» خودش یک طرف حساب است؛ همان نوشته دیگر پرسش نمی‌سازد.
+  const again = core.saveObligation({ title: 'بدهی دوم', amount: 100_000, direction: 'payable', contactName: 'نگین' });
+  assert.equal(again.contactId, separate.contactId);
 });
 
 test.after(() => {

@@ -13,13 +13,28 @@ import { normalizePersian } from './parser.js';
 const LEADING_TITLES = /^(?:(?:شرکت|موسسه|مؤسسه)\s+)+/u;
 const LEGAL_SUFFIXES = /\s+(?:سهامی\s+(?:خاص|عام)|با\s+مسئولیت\s+محدود)$/u;
 
-/** کلید قطعی طرف حساب؛ بدون fuzzy matching پرریسک برای دادهٔ مالی. */
-export function canonicalCounterpartyName(value) {
+/**
+ * کلید «همان نوشته».
+ *
+ * فقط تفاوت‌های نوشتاری را یکی می‌کند — «ي» و «ی»، نیم‌فاصله، ویرگول، پرانتز.
+ * دو نامی که این کلیدشان یکی است واقعاً یک نام‌اند و بی‌پرسش یکی شمرده می‌شوند.
+ */
+export function exactCounterpartyKey(value) {
   return normalizePersian(String(value || ''))
     .replace(/[\u200c\u200d\u2060]/gu, ' ')
     .replace(/[()\[\]{}«»"'،,؛;:.ـ_-]+/gu, ' ')
     .replace(/\s+/gu, ' ')
-    .trim()
+    .trim();
+}
+
+/**
+ * کلید «احتمالاً همان طرف حساب».
+ *
+ * شکل حقوقی را هم کنار می‌گذارد. دو نامی که فقط در این کلید یکی‌اند «مشابه»اند
+ * نه «یکسان»؛ یکی کردنشان تصمیم ثبت‌کننده است، نه برنامه.
+ */
+export function canonicalCounterpartyName(value) {
+  return exactCounterpartyKey(value)
     .replace(LEADING_TITLES, '')
     .replace(LEGAL_SUFFIXES, '')
     .replace(/\s+/gu, ' ')
@@ -29,3 +44,6 @@ export function canonicalCounterpartyName(value) {
 export function cleanCounterpartyDisplayName(value, limit = 100) {
   return String(value || '').replace(/\s+/gu, ' ').trim().slice(0, limit);
 }
+
+/** پاسخ‌های مجاز ثبت‌کننده به «این همان طرف حساب است؟» */
+export const COUNTERPARTY_RESOLUTIONS = Object.freeze({ MERGE: 'merge', SEPARATE: 'separate' });

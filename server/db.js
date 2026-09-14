@@ -39,7 +39,7 @@ import {
   taxReport as taxReportCore,
 } from './tax.js';
 import { normalizePersian } from '../shared/parser.js';
-import { ensureCounterpartyIdentitySchema, findCounterpartyByName, normalizedCounterpartyInput } from './counterparties.js';
+import { ensureCounterpartyIdentitySchema, normalizedCounterpartyInput, resolveCounterparty } from './counterparties.js';
 import {
   FINANCIAL_DISCLAIMER, FINANCIAL_UNIT, buildRunway, detectExpenseGrowth, exactWindow, financialScope,
   findUnusualTransaction, invoiceSource, isGuardedAdviceQuestion, obligationSource, prioritizeAlerts, transactionSource,
@@ -2651,7 +2651,8 @@ export function listContacts() {
 export function saveContact(values = {}) {
   const { displayName: name, canonicalName } = normalizedCounterpartyInput(values.name);
   if (name.length < 2) throw invalidInput('نام شخص را کامل وارد کن.');
-  const matched = values.id ? null : findCounterpartyByName(db, name);
+  // نام مشابهِ موجود، بدون پاسخ ثبت‌کننده، به پرسش تبدیل می‌شود نه به ادغام.
+  const matched = values.id ? null : resolveCounterparty(db, name, values.counterpartyResolution).contact;
   const id = values.id || matched?.id || randomUUID();
   const storedName = matched?.name || name;
   const kind = ['person', 'customer', 'vendor'].includes(values.kind) ? values.kind : 'person';
@@ -2694,13 +2695,15 @@ export function listObligations({ status = 'open' } = {}) {
  * ردیف پخش می‌شود: نام با همان نرمال‌سازی فارسیِ بقیهٔ محصول مقایسه می‌شود، پس
  * «مرتضي» و «مرتضی» یک نفرند.
  */
-function contactIdForName(name) {
+function contactIdForName(name, resolution = '') {
   const clean = String(name || '').trim().slice(0, 100);
   if (clean.length < 2) return null;
-  const existing = findCounterpartyByName(db, clean);
-  if (existing) return existing.id;
-  return saveContact({ name: clean })?.id || null;
+  const { contact } = resolveCounterparty(db, clean, resolution);
+  if (contact) return contact.id;
+  // «جدا» یعنی ثبت‌کننده گفته این طرف حساب دیگری است؛ ساختنش دوباره پرسیده نمی‌شود.
+  return saveContact({ name: clean, counterpartyResolution: 'separate' })?.id || null;
 }
+
 
 export function saveObligation(values = {}) {
   const amount = cleanAmount(values.amount);
@@ -2708,7 +2711,7 @@ export function saveObligation(values = {}) {
   if (!direction) throw invalidInput('نوع طلب یا بدهی معتبر نیست.');
   const title = String(values.title || '').trim().slice(0, 120);
   if (!title) throw invalidInput('عنوان طلب یا بدهی را وارد کن.');
-  const contactId = values.contactId || (values.contactName ? contactIdForName(values.contactName) : null);
+  const contactId = values.contactId || (values.contactName ? contactIdForName(values.contactName, values.counterpartyResolution) : null);
   const id = values.id || randomUUID();
   db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,occurred_at,status,note) VALUES (?,?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,title=excluded.title,amount=excluded.amount,
@@ -2903,7 +2906,7 @@ export function createInvoice(values = {}) {
   const number = `${documentType === 'purchase' ? 'KH' : 'FR'}-${year}-${String(count).padStart(4, '0')}`;
   const contact = values.contactId
     ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(values.contactId)
-    : (values.customerName ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(contactIdForName(values.customerName)) : null);
+    : (values.customerName ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(contactIdForName(values.customerName, values.counterpartyResolution)) : null);
   const counterpartyName = String(contact?.name || values.customerName || (documentType === 'purchase' ? 'تأمین‌کننده' : 'مشتری')).trim().slice(0, 100);
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -4085,7 +4088,7 @@ export function submitFinancialEvent(event, options = {}) {
   const normalized = normalizeFinancialEvent(event);
   let resolvedEvent = normalized;
   if (normalized.counterparty && !normalized.counterpartyId) {
-    const counterpartyId = contactIdForName(normalized.counterparty);
+    const counterpartyId = contactIdForName(normalized.counterparty, options.counterpartyResolution);
     const contact = counterpartyId ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(counterpartyId) : null;
     resolvedEvent = { ...normalized, counterpartyId, counterparty: contact?.name || normalized.counterparty };
   }
