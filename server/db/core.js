@@ -643,8 +643,35 @@ if (!openingMigrated) {
 
 migrateInventory(controlDb, { timeZone: defaults.timezone });
 
+/**
+ * نوع دفتر («کسب‌وکار» یا «شخصی») در دو جا نگه داشته می‌شود: تنظیمات خودِ دفتر،
+ * که کاربر ویرایشش می‌کند، و ردیف workspaces، که منو از روی آن ساخته می‌شود.
+ *
+ * پیش از این فقط اولی به‌روز می‌شد. وقتی این دو اختلاف داشتند، «همکاری حسابدار»
+ * — جای خروجی پارسیان — یا از منو غایب بود یا صفحهٔ خالی باز می‌کرد، چون خودِ
+ * صفحه نسخهٔ دیگر را می‌خواند. تنظیمات مرجع است، چون همان چیزی است که کاربر دیده.
+ */
+export function setWorkspaceProfileType(workspaceId, value) {
+  if (!['business', 'personal'].includes(value)) return;
+  controlDb.prepare('UPDATE workspaces SET profile_type=? WHERE id=? AND profile_type<>?').run(value, String(workspaceId || 'primary'), value);
+}
+
+// دفترهایی که پیش از این اصلاح ناهمخوان مانده‌اند، هنگام اولین باز شدن درست می‌شوند.
+const profileTypeRepaired = new Set();
+function repairWorkspaceProfileType(workspaceId, database) {
+  if (profileTypeRepaired.has(workspaceId)) return;
+  profileTypeRepaired.add(workspaceId);
+  try {
+    // تنظیمات فقط وقتی مرجع است که کاربر واقعاً انتخاب کرده باشد. دفتر تازه
+    // مقدار پیش‌فرض «کسب‌وکار» را دارد و بدون این شرط، دفتر شخصی تازه‌ساخته
+    // هنگام اولین باز شدن کسب‌وکار می‌شد.
+    const chosen = database.prepare("SELECT value FROM settings WHERE key='onboardingDone'").get()?.value === 'true';
+    if (chosen) setWorkspaceProfileType(workspaceId, database.prepare("SELECT value FROM settings WHERE key='profileType'").get()?.value);
+  } catch { /* دفتر هنوز جدول تنظیمات ندارد */ }
+}
+
 export function workspaceDatabase(workspaceId) {
-  if (workspaceId === 'primary') return controlDb;
+  if (workspaceId === 'primary') { repairWorkspaceProfileType('primary', controlDb); return controlDb; }
   if (workspaceConnections.has(workspaceId)) return workspaceConnections.get(workspaceId);
   const folder = resolve(dirname(databasePath), 'workspaces');
   mkdirSync(folder, { recursive: true });
@@ -686,6 +713,7 @@ export function workspaceDatabase(workspaceId) {
   ensureCounterpartyIdentitySchema(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
+  repairWorkspaceProfileType(workspaceId, database);
   workspaceConnections.set(workspaceId, database);
   return database;
 }

@@ -1,4 +1,4 @@
-import { audit, db, getSettings, invalidInput } from './core.js';
+import { audit, currentWorkspace, db, getSettings, invalidInput, setWorkspaceProfileType } from './core.js';
 import { resolveAutomationPolicy } from '../../shared/automationPolicy.js';
 
 /**
@@ -45,6 +45,7 @@ export function saveSettings(values) {
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const key of allowed) if (values[key] != null) {
+      if (key === 'profileType' && !['business', 'personal'].includes(values[key])) throw invalidInput('نوع دفتر معتبر نیست.');
       const value = key === 'alertSensitivity' && !['low', 'balanced', 'high'].includes(values[key]) ? 'balanced' : values[key];
       statement.run(key, String(value).slice(0, 120));
     }
@@ -55,5 +56,7 @@ export function saveSettings(values) {
     }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+  // منو از ردیف workspaces ساخته می‌شود؛ بدون این، تغییر نوع دفتر در منو دیده نمی‌شد.
+  if (values.profileType != null) setWorkspaceProfileType(currentWorkspace()?.id || 'primary', values.profileType);
   return getSettings();
 }

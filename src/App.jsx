@@ -8,6 +8,7 @@ import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
 import { CollaborationPage } from './features/collaboration/CollaborationPage.jsx';
 import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet } from './features/capture/CaptureSheets.jsx';
 import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
+import ExportAccessCard from './features/settings/ExportAccessCard.jsx';
 import { EMPTY_SUMMARY } from './components/common.jsx';
 import { FirmConsolePage } from './features/firm/FirmConsolePage.jsx';
 import { IntentSheet, SettleSheet } from './features/capture/IntentSheets.jsx';
@@ -935,7 +936,7 @@ export default function App() {
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+          {screen === 'settings' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
         <CounterpartyMatchSheet />
