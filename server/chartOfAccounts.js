@@ -533,7 +533,16 @@ const ROLE_BY_SOURCE_KEY = {
  * اگر نقش دقیق پیدا نشود، اولین معین هم‌نوع پیشنهاد می‌شود و اگر آن هم نبود null.
  */
 export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specific = true, confidentOnly = false } = {}) {
-  const postable = chartAccounts.filter((item) => item.postable !== false && item.level === 'subsidiary' && item.active !== false);
+  // معینِ هم‌نوع، وگرنه اصلاً پیشنهاد نکن.
+  //
+  // کدهای دستهٔ هزینه و درآمد (`chartCodeForCategory`) از کدینگ پیشنهادی خودِ
+  // حساب‌یار می‌آیند. وقتی دفتر کدینگ خودش را وارد می‌کند، همان کد معنای دیگری
+  // دارد: «۱۳۰۱» در کدینگ ما «موجودی کالا» است و در کدینگ یک دفتر واقعی
+  // «اسناد دریافتنی». پیشنهادِ بی‌توجه به نوع، یا نگاشت را با خطا می‌شکست یا
+  // بدتر، هزینه را روی یک دارایی می‌نشاند.
+  const sameType = (item) => !ledgerAccount.type || item.type === ledgerAccount.type;
+  const postable = chartAccounts.filter((item) => item.postable !== false && item.level === 'subsidiary'
+    && item.active !== false && sameType(item));
   const byRole = (role) => postable.find((item) => item.role === role) || null;
 
   const sourceKey = ledgerAccount.sourceKey || ledgerAccount.source_key;
@@ -644,8 +653,10 @@ export function applySuggestedChartMappings(database, { refine = false } = {}) {
   for (const item of overview.items) {
     if (!item.mapped) {
       if (!item.suggestion) continue;
-      mapLedgerAccountToChart(database, item.id, item.suggestion.id);
-      applied += 1;
+      // یک پیشنهاد نامناسب نباید بقیهٔ نگاشت‌ها را هم زمین بزند؛ همان یکی
+      // نگاشت‌نشده می‌ماند و در فهرست «بدون نگاشت» به چشم حسابدار می‌آید.
+      try { mapLedgerAccountToChart(database, item.id, item.suggestion.id); applied += 1; }
+      catch (error) { if (error.code !== 'CHART_TYPE_MISMATCH') throw error; }
       continue;
     }
     if (!refine) continue;

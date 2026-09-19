@@ -80,3 +80,33 @@ test('پس از برداشتن نگاشت‌ها، کدینگ دفتر جایگ�
 }));
 
 test.after(() => removeTempDatabase(databasePath));
+
+/**
+ * کدهای دستهٔ هزینه و درآمد از کدینگ پیشنهادی خودِ حساب‌یار می‌آیند: «مواد و
+ * کالا» کد ۱۳۰۱ دارد. در کدینگ این دفتر همان ۱۳۰۱ «اسناد دریافتنی» است — یک
+ * دارایی. پیشنهادِ بی‌توجه به نوع، نگاشت را با «نوع حساب یکی نیست» می‌شکست و
+ * کل دستهٔ پیشنهادها را هم زمین می‌زد.
+ */
+test('معین هم‌نام ولی از نوع دیگر هرگز پیشنهاد نمی‌شود', () => inPrimary(() => {
+  database.insertTransactions({ transcript: 'خرید مواد', transactions: [
+    { amount: 700_000, type: 'expense', category: 'مواد و کالا', rawText: 'هفتصد هزار مواد' },
+  ] });
+  const item = database.chartOverview().mapping.items.find((row) => row.name.includes('مواد و کالا'));
+  assert.ok(item, 'حساب دستهٔ مواد و کالا باید ساخته شده باشد');
+  assert.equal(item.type, 'expense');
+  if (item.suggestion) {
+    const suggested = database.activeWorkspaceDatabase()
+      .prepare('SELECT type FROM chart_accounts WHERE id=?').get(item.suggestion.id);
+    assert.equal(suggested.type, 'expense', `معین ${item.suggestion.code} از نوع هزینه نیست`);
+  }
+}));
+
+test('اعمال پیشنهادها با وجود یک مورد ناسازگار هم کامل انجام می‌شود', () => inPrimary(() => {
+  const before = database.chartOverview().mapping;
+  const result = database.applyChartSuggestions();
+  assert.ok(result.applied > 0, 'بقیهٔ نگاشت‌ها باید انجام شوند');
+  assert.ok(result.mappedCount > before.mappedCount);
+  // حسابی که معین هم‌نوع ندارد، نگاشت‌نشده می‌ماند تا حسابدار ببیندش — نه اینکه
+  // روی معین اشتباه بنشیند.
+  assert.ok(result.items.every((row) => !row.mapped || row.chartCode));
+}));
