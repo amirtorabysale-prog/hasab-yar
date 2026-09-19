@@ -3,6 +3,7 @@ import { normalizePersian } from './normalize.js';
 import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
 import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
 import { detectBank } from './banks.js';
+import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -298,6 +299,15 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
     const reviewReasons = [];
+    // آوردهٔ مالک درآمد نیست و دارایی ثابت هزینه نیست.
+    //
+    // برای این جمله‌ها برگهٔ مخصوص باز می‌شود، ولی اگر کاربر آن را ببندد و
+    // همین‌جا ثبت کند، ۲۰۰ میلیون آورده بی‌صدا در درآمد می‌نشیند: سود دوره باد
+    // می‌کند و مالیات روی پول خودِ مالک حساب می‌شود. پس این ثبت هرگز بی‌پرسش
+    // رد نمی‌شود.
+    const capitalWording = mentionsCapitalOrAsset(normalizePersian(context || text));
+    if (capitalWording === 'capital') reviewReasons.push('این جمله از آوردهٔ سرمایه می‌گوید؛ آورده درآمد نیست و باید در بخش سرمایه ثبت شود.');
+    if (capitalWording === 'fixed-asset') reviewReasons.push('این جمله از دارایی ثابت می‌گوید؛ دارایی ثابت هزینهٔ این ماه نیست.');
     if (unusual) reviewReasons.push('مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.');
     if (colloquialThousands) reviewReasons.push('واحد هزار از گفتار محاوره‌ای برداشت شده است.');
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
@@ -307,7 +317,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // دستهٔ مبهم یعنی دو دسته به یک اندازه موجه بودند؛ ثبت چنین چیزی بدون
       // نگاه کاربر همان خطای بی‌صداست که در بخش مبلغ بستیم.
       confidence: classified.confidence,
-      needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous,
+      needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording),
       source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),
       // شناسهٔ بانک می‌رود، نه شناسهٔ حساب: پارسر دفتر را نمی‌شناسد و نمی‌داند

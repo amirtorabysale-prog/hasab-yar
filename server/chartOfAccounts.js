@@ -7,6 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { chartCodeForCategory } from '../shared/categoryRules.js';
+import { normalizePersian } from '../shared/normalize.js';
 
 export const CHART_LEVELS = Object.freeze({
   group: Object.freeze({ id: 'group', label: 'گروه', order: 1 }),
@@ -532,6 +533,54 @@ const ROLE_BY_SOURCE_KEY = {
  * برای یک حساب داخلی، مناسب‌ترین معین کدینگ را پیشنهاد می‌دهد.
  * اگر نقش دقیق پیدا نشود، اولین معین هم‌نوع پیشنهاد می‌شود و اگر آن هم نبود null.
  */
+/**
+ * واژه‌هایی که در نام حساب معنا اضافه نمی‌کنند.
+ *
+ * «هزینهٔ اجارهٔ محل» و «اجاره» یک چیزند؛ بدون کنار گذاشتن این واژه‌ها هر دو
+ * نام تقریباً بی‌شباهت شمرده می‌شوند.
+ */
+const NAME_NOISE = new Set(['هزینه', 'هزینه‌های', 'هزینههای', 'حساب', 'حسابهای', 'حساب‌های', 'درآمد', 'درآمدها',
+  'و', 'از', 'بابت', 'محل', 'مصرفی', 'جاری', 'سایر', 'تجاری', 'متفرقه', 'دریافتنی', 'پرداختنی', 'ها', 'های']);
+
+function nameTokens(value) {
+  return normalizePersian(String(value || ''))
+    .replace(/[()\[\]{}«»"'،,؛;:.\-_/]+/gu, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !NAME_NOISE.has(token));
+}
+
+/**
+ * هم‌پوشانی نام حساب داخلی با نام معین دفتر.
+ *
+ * نسبت واژه‌های مشترک به نام کوتاه‌تر: «ملزومات اداری» و «هزینه ملزومات و نوشت
+ * افزار» یک واژهٔ مشترک از دو واژه دارند، و همان کافی است.
+ */
+function nameScore(first, second) {
+  const left = new Set(nameTokens(first));
+  const right = new Set(nameTokens(second));
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return shared / Math.min(left.size, right.size);
+}
+
+/**
+ * بهترین معین هم‌نام، فقط وقتی یکی و آشکار باشد.
+ *
+ * دو معین با امتیاز برابر یعنی نام‌ها روشن نیستند؛ انتخاب یکی از آن دو سکه
+ * انداختن است و جای آن اینجا نیست.
+ */
+function bestNameMatch(ledgerAccount, postable, threshold = 0.5) {
+  const scored = postable
+    .map((item) => ({ item, score: nameScore(ledgerAccount.name || ledgerAccount.sourceKey, item.name) }))
+    .filter((entry) => entry.score >= threshold)
+    .sort((first, second) => second.score - first.score);
+  if (!scored.length) return null;
+  if (scored.length > 1 && scored[1].score === scored[0].score) return null;
+  return scored[0].item;
+}
+
 export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specific = true, confidentOnly = false } = {}) {
   // معینِ هم‌نوع، وگرنه اصلاً پیشنهاد نکن.
   //
@@ -561,6 +610,13 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
     const code = specific ? chartCodeForCategory(sourceKey) : null;
     const exact = code ? postable.find((item) => normalizeChartCode(item.code) === code) : null;
     if (exact) return exact;
+    // کد دسته‌ها از کدینگ پیشنهادی خودمان می‌آید و در کدینگ دفتر معنای دیگری
+    // دارد. وقتی کد نخورد، نام تنها نشانهٔ قابل اتکاست: «حقوق و دستمزد» به
+    // «هزینه حقوق و دستمزد» می‌خورد، نه به اولین معین هزینه‌ای فهرست.
+    if (specific) {
+      const byName = bestNameMatch(ledgerAccount, postable);
+      if (byName) return byName;
+    }
     // نقشِ `operating-expense` یک سطل عمومی است، نه نگاشت. برای پیشنهاد به
     // کاربر قابل قبول است، ولی نگاشت خودکارِ بی‌صدا با آن یعنی هر دستهٔ تازه
     // در «سایر هزینه‌ها» دفن می‌شود و هیچ‌وقت به چشم حسابدار نمی‌آید.
@@ -575,11 +631,17 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
     const match = byRole(role);
     if (match) return match;
   }
-  // آخرین چاره: اولین معین هم‌نوع. این «حدس» است نه نگاشت، پس برای نگاشت
-  // خودکار پذیرفته نمی‌شود — دستهٔ ناشناخته باید به چشم حسابدار بیاید، نه
-  // اینکه بی‌صدا روی یک معین عمومی بنشیند و بعداً کسی نفهمد چرا آنجاست.
-  if (confidentOnly) return null;
-  return postable.find((item) => item.type === ledgerAccount.type) || null;
+  // نام، آخرین نشانهٔ واقعی است.
+  const byName = bestNameMatch(ledgerAccount, postable);
+  if (byName) return byName;
+  // و اگر نامی هم نخورد، هیچ پیشنهادی داده نمی‌شود.
+  //
+  // پیش از این «اولین معین هم‌نوع» برگردانده می‌شد. روی کدینگ یک دفتر واقعی،
+  // همهٔ دسته‌های هزینه — حقوق، اجاره، قبوض، حمل — روی معین شمارهٔ یکِ کل
+  // هزینه‌ها نشستند («بازاریاب») و در پارسیان همه‌چیز در یک حساب بی‌ربط جمع شد.
+  // حساب بدون نگاشت در فهرست «بدون نگاشت» دیده می‌شود و حسابدار خودش
+  // انتخاب می‌کند؛ این بسیار بهتر از نگاشت خاموشِ غلط است.
+  return null;
 }
 
 export function mapLedgerAccountToChart(database, ledgerAccountId, chartAccountId) {
