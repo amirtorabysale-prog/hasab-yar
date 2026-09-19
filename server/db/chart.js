@@ -46,6 +46,24 @@ export function mapLedgerAccount(ledgerAccountId, chartAccountId) {
   return { ...result, mapping: chartMappingOverview(activeWorkspaceDatabase()) };
 }
 
+/**
+ * برداشتن همهٔ نگاشت‌های کدینگ.
+ *
+ * جایگزینی کدینگ فقط وقتی مجاز است که هیچ حساب داخلی به آن وصل نباشد، وگرنه
+ * اسناد قبلی به کدی اشاره می‌کنند که دیگر وجود ندارد. تا پیش از این راهی جز
+ * برداشتن تک‌تکِ نگاشت‌ها نبود و دفتری با ده‌ها حساب عملاً نمی‌توانست کدینگ
+ * پیشنهادی را با کدینگ خودش عوض کند.
+ *
+ * سند و ثبتی پاک نمی‌شود؛ فقط پیوند حساب داخلی به کدینگ برداشته می‌شود و پس از
+ * ورود کدینگ تازه دوباره بسته می‌شود.
+ */
+export function clearChartMappings() {
+  const database = activeWorkspaceDatabase();
+  const cleared = database.prepare('UPDATE ledger_accounts SET chart_account_id=NULL WHERE chart_account_id IS NOT NULL').run().changes;
+  if (cleared) audit('clear', 'chart_mappings', 'chart', { cleared });
+  return { cleared, ...chartMappingOverview(database) };
+}
+
 export function applyChartSuggestions({ refine = false } = {}) {
   const result = applySuggestedChartMappings(activeWorkspaceDatabase(), { refine });
   audit('map-suggested', 'chart_of_accounts', 'chart', { applied: result.applied, refined: result.refined });

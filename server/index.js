@@ -17,7 +17,7 @@ import {
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
   saveJournalTemplate, submitJournalApproval,
-  mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
+  clearChartMappings, mapLedgerAccount, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeOtherUserSessions, revokeUserSession, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
   askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
@@ -440,6 +440,9 @@ app.put('/api/chart/accounts/:id', (request, response, next) => {
 });
 app.put('/api/chart/mappings/:ledgerAccountId', (request, response, next) => {
   try { return response.json(mapLedgerAccount(request.params.ledgerAccountId, request.body?.chartAccountId || null)); } catch (error) { return next(error); }
+});
+app.delete('/api/chart/mappings', (request, response, next) => {
+  try { return response.json(clearChartMappings()); } catch (error) { return next(error); }
 });
 app.post('/api/chart/mappings/suggest', (request, response, next) => {
   try { return response.json(applyChartSuggestions({ refine: request.body?.refine === true })); } catch (error) { return next(error); }

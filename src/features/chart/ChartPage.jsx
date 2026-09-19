@@ -93,6 +93,12 @@ export function ChartPage({ access, notify }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[13px] text-muted">هر حساب داخلی حساب‌یار باید یک معین مقصد در کدینگ داشته باشد.</p>
         <div className="flex flex-wrap gap-2">
+          {/* جایگزینی کدینگ فقط وقتی مجاز است که هیچ نگاشتی نمانده باشد؛
+              بدون این دکمه، دفتری با ده‌ها حساب عملاً نمی‌توانست کدینگ
+              پیشنهادی را با کدینگ خودش عوض کند. */}
+          {canManage && mapping.mappedCount > 0 && <button
+            onClick={() => { if (window.confirm(`همهٔ ${toPersianDigits(mapping.mappedCount)} نگاشت برداشته شود؟ سند و ثبتی پاک نمی‌شود؛ فقط پیوند حساب‌ها به کدینگ برداشته می‌شود تا بتوانی کدینگ دفتر را جایگزین کنی.`)) run(() => api.clearChartMappings(), 'همهٔ نگاشت‌ها برداشته شد؛ حالا می‌توانی کدینگ دفتر را با گزینهٔ جایگزینی وارد کنی.'); }}
+            className="tap rounded-lg border border-expense/50 px-4 text-sm font-bold text-expense">برداشتن همهٔ نگاشت‌ها</button>}
           {canManage && mapping.suggestionsAvailable > 0 && <button onClick={() => run(() => api.applyChartSuggestions(), 'پیشنهادها اعمال شدند.')} className="tap rounded-lg border border-line bg-surface px-4 text-sm font-bold">اعمال {toPersianDigits(mapping.suggestionsAvailable)} پیشنهاد</button>}
           {/* نگاشت‌های قدیمی پیش از شناختن معین اختصاصی دسته‌ها ساخته شده‌اند و
               همه روی «سایر هزینه‌های عملیاتی» نشسته‌اند. اصلاحشان تصمیم کاربر

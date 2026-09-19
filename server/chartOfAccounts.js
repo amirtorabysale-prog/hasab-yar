@@ -416,7 +416,11 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
       // فقط کدینگی که هنوز به هیچ حساب داخلی و هیچ سندی وصل نشده قابل جایگزینی است.
       const linked = database.prepare('SELECT COUNT(*) AS count FROM ledger_accounts WHERE chart_account_id IS NOT NULL').get().count;
       if (linked) throw chartError('کدینگ فعلی به حساب‌های دفتر نگاشت شده است؛ پیش از جایگزینی باید نگاشت‌ها برداشته شوند.', 'CHART_IN_USE', 409);
-      database.prepare('DELETE FROM chart_accounts').run();
+      // فرزند پیش از والد. حذف یک‌جا به کلید خارجیِ خودارجاع می‌خورد و
+      // جایگزینی کدینگ را — حتی با نبودِ هر نگاشتی — غیرممکن می‌کرد.
+      for (const level of ['subsidiary', 'general', 'group']) {
+        database.prepare('DELETE FROM chart_accounts WHERE level=?').run(level);
+      }
     }
     const insert = database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,source,level_code)
       VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -426,7 +430,7 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
     for (const account of accounts) {
       const existing = database.prepare('SELECT id,level,type FROM chart_accounts WHERE code=?').get(account.code);
       if (existing && (existing.level !== account.level || existing.type !== account.type)) {
-        throw chartError(`حساب ${account.code} از قبل با سطح یا نوع دیگری وجود دارد و بی‌سروصدا بازنویسی نمی‌شود.`, 'CHART_CONFLICT', 409);
+        throw chartError(`حساب ${account.code} از قبل با سطح یا نوع دیگری وجود دارد و بی‌سروصدا بازنویسی نمی‌شود. اگر می‌خواهی کدینگ دفتر جای کدینگ فعلی را بگیرد، اول «برداشتن همهٔ نگاشت‌ها» را بزن و بعد با گزینهٔ «کدینگ فعلی جایگزین شود» وارد کن.`, 'CHART_CONFLICT', 409);
       }
       const parentId = account.parentCode ? database.prepare('SELECT id FROM chart_accounts WHERE code=?').get(account.parentCode)?.id || null : null;
       if (account.parentCode && !parentId) throw chartError(`والد ${account.parentCode} پیدا نشد.`, 'CHART_PARENT_MISSING');
