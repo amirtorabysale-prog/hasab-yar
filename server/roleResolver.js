@@ -3,6 +3,7 @@ import { ROLES } from '../shared/accountingRules.js';
 import {
   analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount,
 } from './chartOfAccounts.js';
+import { canonicalCounterpartyName } from '../shared/counterpartyIdentity.js';
 
 /**
  * نگاشت نقش به حساب واقعی دفتر.
@@ -120,19 +121,40 @@ const COUNTERPARTY_ROLES = new Set([
   ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE,
 ]);
 
-export function resolveEventAnalytic(database, role, event = {}) {
+/**
+ * تفصیلیِ متناظر با نامِ روی حسابِ طرف حساب — فقط وقتی آن نام واقعاً یک شخص است.
+ *
+ * حسابِ اختصاصی گاهی به نام کسی باز می‌شود که در دفتر ثبت شده و گاهی با عنوان
+ * خودِ تعهد («بدهی بابت اجاره»). این تابع فقط حالت اول را برمی‌گرداند: شخصی که
+ * در طرف‌حساب‌های دفتر هست، یا از قبل تفصیلی دارد.
+ *
+ * چرا حالت دوم نه: تفصیلیِ ساختگی در فهرست اشخاصِ نرم‌افزار دفتر می‌ماند و با
+ * هیچ‌کس یکی نمی‌شود. آن ردیف به تفصیلی نیاز ندارد، به طرف حساب نیاز دارد — و
+ * حالا کنترل «تفصیلی اجباری» جلوی خروجی را می‌گیرد و همین را می‌گوید، پس
+ * دیگر بی‌صدا هم نمی‌شکند.
+ */
+export function counterpartyAnalyticForKey(database, key) {
+  const name = String(key || '').trim().slice(0, 120);
+  const canonical = canonicalCounterpartyName(name);
+  if (!name || !canonical) return null;
+  try {
+    const contact = database.prepare('SELECT id,name FROM contacts WHERE canonical_name=? ORDER BY created_at,rowid LIMIT 1').get(canonical);
+    if (contact) return analyticForContact(database, contact.id, contact.name)?.id || null;
+  } catch { /* دفتری که هنوز جدول طرف حساب ندارد. */ }
+  // تفصیلیِ هم‌نامِ موجود هم همان شخص است — چه از ثبت قبلی آمده باشد چه از
+  // فایل تفصیلی نرم‌افزار دفتر.
+  const existing = database.prepare('SELECT id,name FROM analytic_accounts WHERE active=1').all()
+    .filter((item) => canonicalCounterpartyName(item.name) === canonical);
+  return existing.length === 1 ? existing[0].id : null;
+}
+
+export function resolveEventAnalytic(database, role, event = {}, key = '') {
   if (!COUNTERPARTY_ROLES.has(role)) return null;
-  // تفصیلی فقط از شخصِ تعریف‌شده ساخته می‌شود، نه از یک متن آزاد.
-  //
-  // وقتی طرف حسابی ثبت نشده، عنوان تعهد («بدهی بابت اجاره») می‌تواند به‌جای نام
-  // برداشته شود و یک تفصیلیِ جعلی بسازد که نه در پارسیان وجود دارد و نه با
-  // هیچ شخص واقعی یکی می‌شود. نبودِ تفصیلی صادقانه‌تر از تفصیلی ساختگی است.
   const contactId = String(event.counterpartyId || '').trim();
-  if (!contactId) return null;
-  const name = String(event.counterparty || '').trim();
   // کلید از شناسهٔ شخص می‌آید نه از نامش، تا تغییر نام تفصیلی تازه‌ای نسازد.
-  const analytic = analyticForContact(database, contactId, name || 'طرف حساب');
-  return analytic?.id || null;
+  if (contactId) return analyticForContact(database, contactId, String(event.counterparty || '').trim() || 'طرف حساب')?.id || null;
+  // شخص ثبت‌نشده: همان کلیدی که حساب اختصاصی با آن ساخته شد.
+  return counterpartyAnalyticForKey(database, key || event.counterparty);
 }
 
 /**

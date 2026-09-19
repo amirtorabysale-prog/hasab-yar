@@ -7,6 +7,28 @@ import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
 const CHART_LEVEL_STYLE = { group: 'font-extrabold', general: 'font-bold pr-4', subsidiary: 'pr-8 text-muted' };
 
+/**
+ * تیک «تفصیلی اجباری» روی معین.
+ *
+ * این تیک می‌گوید نرم‌افزار دفتر برای این معین حتماً کد تفصیلی می‌خواهد. اگر
+ * روشن باشد و ردیفی بدون تفصیلی بماند، خروجی ساخته نمی‌شود — چون پارسیان آن
+ * ردیف را بی‌صدا کنار می‌گذارد و سند را نامتوازن نشان می‌دهد.
+ */
+function RequiresAnalyticToggle({ item, canManage, notify, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  if (!item.postable) return <span className="text-muted">—</span>;
+  const toggle = async (next) => {
+    setSaving(true);
+    try { await api.saveChartAccount({ id: item.id, code: item.code, requiresAnalytic: next }); await onSaved(); }
+    catch (error) { notify(error.message); }
+    setSaving(false);
+  };
+  return <label className="flex items-center gap-1.5 text-[12px]">
+    <input type="checkbox" checked={Boolean(item.requiresAnalytic)} disabled={!canManage || saving} onChange={(event) => toggle(event.target.checked)} />
+    <span className={item.requiresAnalytic ? 'text-accent' : 'text-muted'}>{item.requiresAnalytic ? 'دارد' : 'ندارد'}</span>
+  </label>;
+}
+
 function ChartMappingRow({ item, chartAccounts, notify, onChanged }) {
   const [saving, setSaving] = useState(false);
   const options = chartAccounts.filter((account) => account.postable && account.active && account.type === item.type);
@@ -182,12 +204,13 @@ export function ChartPage({ access, notify }) {
     {tab === 'chart' && <div className="mt-4 overflow-x-auto">
       {!accounts.length && <p className="py-8 text-center text-sm text-muted">کدینگی برای نمایش نیست.</p>}
       <table className="w-full min-w-[560px] text-right text-[13px]">
-        <thead className="border-b border-line text-[12px] text-muted"><tr><th className="pb-2 pl-3 font-bold">کد</th><th className="pb-2 pl-3 font-bold">نام</th><th className="pb-2 pl-3 font-bold">سطح</th><th className="pb-2 pl-3 font-bold">نوع</th><th className="pb-2 font-bold">حساب متصل</th></tr></thead>
+        <thead className="border-b border-line text-[12px] text-muted"><tr><th className="pb-2 pl-3 font-bold">کد</th><th className="pb-2 pl-3 font-bold">نام</th><th className="pb-2 pl-3 font-bold">سطح</th><th className="pb-2 pl-3 font-bold">نوع</th><th className="pb-2 pl-3 font-bold">تفصیلی اجباری</th><th className="pb-2 font-bold">حساب متصل</th></tr></thead>
         <tbody>{accounts.map((item) => <tr key={item.id} className="border-b border-line">
           <td className="numbers py-2 pl-3">{toPersianDigits(item.code)}</td>
           <td className={`py-2 pl-3 ${CHART_LEVEL_STYLE[item.level]}`}>{item.name}</td>
           <td className="py-2 pl-3 text-muted">{item.levelLabel}</td>
           <td className="py-2 pl-3 text-muted">{item.typeLabel}</td>
+          <td className="py-2 pl-3"><RequiresAnalyticToggle item={item} canManage={canManage} notify={notify} onSaved={load} /></td>
           <td className="numbers py-2 text-muted">{item.postable ? toPersianDigits(item.mappedAccounts) : '—'}</td>
         </tr>)}</tbody>
       </table>

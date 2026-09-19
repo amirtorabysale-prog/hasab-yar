@@ -43,6 +43,20 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
     setBusy(false);
   };
 
+  // ردیفی که روی «حساب پرداختنی — شرکت آران گستر» نشسته، مال همان شرکت است.
+  // این را از نام خودِ حساب می‌دانیم، پس چسباندنش چیزی جعل نمی‌کند.
+  const attachAnalytics = async () => {
+    setBusy(true);
+    try {
+      const result = await api.attachCounterpartyAnalytics();
+      await refresh();
+      notify(result.attached
+        ? `تفصیلی ${toPersianDigits(result.attached)} ردیف از روی طرف حسابِ هم‌نامشان چسبانده شد${result.skipped ? ` و ${toPersianDigits(result.skipped)} ردیف ماند، چون نام روی حسابشان طرف حساب ثبت‌شده‌ای نیست` : ''}.`
+        : 'نام روی این حساب‌ها طرف حسابِ ثبت‌شده‌ای نیست، پس تفصیلی ساختگی برایشان درست نمی‌شود؛ باید طرف حسابشان را در ثبت مشخص کنی.');
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
   const applySuggestions = async () => {
     setBusy(true);
     try {
@@ -124,10 +138,16 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
         </li>)}
         {analyticCheck.analyticRequiredGaps.length > 8 && <li className="text-muted">و {toPersianDigits(analyticCheck.analyticRequiredGaps.length - 8)} مورد دیگر…</li>}
       </ul>}
-      <button onClick={() => navigate('chart')} className="tap mt-3 rounded-lg border border-line bg-paper px-3 py-1.5 text-xs font-bold">رفتن به تفصیلی‌ها</button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button disabled={busy} onClick={attachAnalytics} className="tap rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white disabled:opacity-45">
+          {busy ? 'در حال چسباندن…' : 'چسباندن تفصیلی از روی نام حساب'}
+        </button>
+        <button onClick={() => navigate('chart')} className="tap rounded-lg border border-line bg-paper px-3 py-1.5 text-xs font-bold">رفتن به تفصیلی‌ها</button>
+      </div>
       <p className="mt-2 text-[11px] leading-5 text-muted">
-        دو راه دارد: یا فایل تفصیلی نرم‌افزار دفتر را در «ورود کدینگ» بارگذاری کن تا کد مقصد همهٔ طرف‌حساب‌ها یک‌جا پر شود،
-        یا اگر آن معین در پارسیان واقعاً تفصیلی اجباری ندارد، تیک «تفصیلی اجباری» را در درخت کدینگ بردار.
+        ردیف‌هایی که «بدون طرف حساب»اند ولی حسابشان به نام یک شخص است، با دکمهٔ بالا درست می‌شوند.
+        بعدش فایل تفصیلی نرم‌افزار دفتر را در «ورود کدینگ ← تفصیلی و طرف حساب» بارگذاری کن تا کد مقصدشان پر شود.
+        اگر آن معین در پارسیان واقعاً تفصیلی اجباری ندارد، تیک «تفصیلی اجباری» را در درخت کدینگ بردار.
       </p>
     </div>}
 

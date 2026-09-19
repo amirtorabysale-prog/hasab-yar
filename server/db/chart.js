@@ -3,7 +3,7 @@ import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace } fro
 import { analyticRowsFromFile, chartRowsFromFile, openingRowsFromFile } from '../spreadsheetImport.js';
 import { buildWorkbook } from '../spreadsheet.js';
 import { importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows } from '../ledgerImport.js';
-import { nextLedgerCode, postImportedOpeningBalances } from '../accounting.js';
+import { attachMissingCounterpartyAnalytics, nextLedgerCode, postImportedOpeningBalances } from '../accounting.js';
 import { normalizeAmountUnit } from '../transferTemplates.js';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +74,13 @@ export function clearChartMappings() {
 export function applyChartSuggestions({ refine = false } = {}) {
   const result = applySuggestedChartMappings(activeWorkspaceDatabase(), { refine });
   audit('map-suggested', 'chart_of_accounts', 'chart', { applied: result.applied, refined: result.refined });
+  return result;
+}
+
+/** چسباندن تفصیلی به ردیف‌های بی‌تفصیلیِ حساب‌های طرف حساب — به درخواست کاربر. */
+export function attachCounterpartyAnalytics() {
+  const result = attachMissingCounterpartyAnalytics(activeWorkspaceDatabase());
+  if (result.attached) audit('attach-analytics', 'journal_lines', 'analytics', result);
   return result;
 }
 

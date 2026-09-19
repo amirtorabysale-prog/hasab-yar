@@ -7,6 +7,7 @@ import {
   APPROVAL_STATES, assertApprovalTransition, backfillDocumentNumbers, ensureJournalWorkflowSchema,
   nextDocumentNumber, normalizeApprovalState, worklistSummary,
 } from './journalWorkflow.js';
+import { counterpartyAnalyticForKey } from './roleResolver.js';
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
 
@@ -500,6 +501,51 @@ export function migrateAccountingLedger(database, { createdBy = null } = {}) {
   // اسناد پیش از فاز ۳ شماره ندارند؛ به ترتیب تاریخ وقوع شماره می‌گیرند.
   const numbered = backfillDocumentNumbers(database, (occurredAt) => fiscalYearForDate(occurredAt));
   return { accounts: accounts.length, transactions: transactions.length, numbered: numbered.numbered };
+}
+
+// حساب‌هایی که خودشان مالِ یک طرف حساب‌اند: نامشان همان شخص است.
+const COUNTERPARTY_SOURCE_KINDS = ['customer-receivable', 'vendor-payable', 'cheque-receivable', 'cheque-payable'];
+
+/**
+ * چسباندن تفصیلی به ردیف‌هایی که از قبل بی‌تفصیلی ثبت شده‌اند.
+ *
+ * تا پیش از این، رویدادی که طرف حسابش در دفتر ثبت نشده بود حساب اختصاصی
+ * می‌گرفت ولی تفصیلی نمی‌گرفت. در پارسیان معین دریافتنی و پرداختنی تفصیلی
+ * اجباری دارند، پس همان ردیف‌ها کنار گذاشته می‌شدند و سند نامتوازن می‌شد.
+ *
+ * این اصلاح هیچ مبلغی را دست نمی‌زند: فقط می‌گوید ردیفی که روی «حساب پرداختنی
+ * — شرکت آران گستر» نشسته، مال شرکت آران گستر است. چیزی که از نام خودِ حساب
+ * پیداست و جای دیگری جعل نمی‌شود.
+ *
+ * صریح است و خودکار اجرا نمی‌شود: کاربر آن را از صفحهٔ تحویل می‌زند.
+ */
+export function attachMissingCounterpartyAnalytics(database) {
+  ensureChartSchema(database);
+  const placeholders = COUNTERPARTY_SOURCE_KINDS.map(() => '?').join(',');
+  const rows = database.prepare(`SELECT journal_lines.id,ledger_accounts.source_key AS sourceKey,ledger_accounts.name AS accountName
+    FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+    WHERE journal_lines.analytic_id IS NULL AND ledger_accounts.source_kind IN (${placeholders})`)
+    .all(...COUNTERPARTY_SOURCE_KINDS);
+  if (!rows.length) return { attached: 0, skipped: 0, analytics: 0 };
+
+  const update = database.prepare('UPDATE journal_lines SET analytic_id=? WHERE id=?');
+  const cache = new Map();
+  let attached = 0;
+  let skipped = 0;
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    for (const row of rows) {
+      const key = String(row.sourceKey || '').trim();
+      if (!key) { skipped += 1; continue; }
+      if (!cache.has(key)) cache.set(key, counterpartyAnalyticForKey(database, key));
+      const analyticId = cache.get(key);
+      if (!analyticId) { skipped += 1; continue; }
+      update.run(analyticId, row.id);
+      attached += 1;
+    }
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  return { attached, skipped, analytics: cache.size };
 }
 
 export function listLedgerAccounts(database) {

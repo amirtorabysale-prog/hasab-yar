@@ -159,7 +159,7 @@ function postEventJournal(database, eventId, event, plan, { actor = null, timeZo
     accountId: resolveEventRole(database, line.role, line.key, event),
     // تفصیلی همان‌جا به سطر می‌چسبد، چون فقط اینجا می‌دانیم این سطر مال کدام
     // نقش است. بدون آن، طرف حساب در فایل انتقال گم می‌شود.
-    analyticId: resolveEventAnalytic(database, line.role, event),
+    analyticId: resolveEventAnalytic(database, line.role, event, line.key),
     debit: line.debit,
     credit: line.credit,
     description: plan.memoHint || null,
