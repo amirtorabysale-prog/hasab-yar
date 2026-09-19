@@ -134,6 +134,28 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
     ? { id: 'chart', label: 'هر حساب استفاده‌شده به معین کدینگ دفتر نگاشت شده', count: unmappedUsedAccounts.length, passed: unmappedUsedAccounts.length === 0, severity: 'blocker' }
     : { id: 'chart', label: 'کدینگ دفتر حسابداری هنوز وارد نشده است', count: 1, passed: false, severity: 'advisory' });
 
+  // معین تفصیلی‌دار بدون کد تفصیلی: بازدارندهٔ قطعی.
+  //
+  // این تنها جایی است که از پیش می‌دانیم پارسیان ردیف را کنار می‌گذارد. کنار
+  // گذاشتن یک ردیف یعنی طرف دیگرش تنها می‌ماند و در پارسیان یک «سند
+  // غیرموازنه» ظاهر می‌شود که فایل ما به‌ظاهر متوازن بود. پس اینجا می‌ایستیم.
+  const analyticRequiredGaps = [...new Map(journalRows
+    .filter((item) => Number(item.requiresAnalytic) === 1 && !String(item.tafsiliCode ?? '').trim())
+    .map((item) => [`${item.accountId}:${item.analyticId || ''}`, {
+      accountId: item.accountId, accountName: item.accountName, moeenName: item.moeenName || '',
+      analyticName: item.analyticName || item.tafsiliName || '',
+    }])).values()];
+  checks.push({
+    id: 'analytic-required',
+    label: analyticRequiredGaps.length
+      ? 'ردیف‌هایی روی معین تفصیلی‌دار نشسته‌اند و کد تفصیلی ندارند'
+      : 'هر ردیفِ معین تفصیلی‌دار، کد تفصیلی دارد',
+    count: analyticRequiredGaps.length,
+    passed: analyticRequiredGaps.length === 0,
+    severity: 'blocker',
+    analyticRequiredGaps: analyticRequiredGaps.slice(0, 40),
+  });
+
   // طرف حسابی که کد تفصیلی مقصد ندارد، روی معین می‌نشیند و در پارسیان گم
   // می‌شود. این بازدارنده نیست — فایل باید ساخته شود — ولی سکوت هم نباید بکند،
   // چون همان چیزی است که کاربر در پارسیان دنبالش می‌گردد و پیدا نمی‌کند.
@@ -272,6 +294,11 @@ export function parsianDocumentsFromJournal({ journalRows = [], timeZone = 'Asia
     if (rawTafsili) {
       if (!/^\d+$/.test(rawTafsili)) errors.push(`${position}: کد تفصیلی «${rawTafsili}» عدد نیست و پارسیان آن را نمی‌پذیرد.`);
       else tafsiliCode = Number(rawTafsili);
+    }
+    // معین تفصیلی‌دار بدون کد تفصیلی: پارسیان این ردیف را می‌خورد و سند را
+    // نامتوازن نشان می‌دهد، بی‌آنکه بگوید چرا. فایل نیمه‌کاره ساخته نمی‌شود.
+    if (Number(item.requiresAnalytic) === 1 && !tafsiliCode) {
+      errors.push(`${position}: معین «${item.moeenName || item.chartName || item.accountName || '—'}» در کدینگ دفتر تفصیلی اجباری دارد، ولی این ردیف کد تفصیلی ندارد؛ پارسیان آن را کنار می‌گذارد و سند نامتوازن می‌شود.`);
     }
 
     byEntry.get(item.entryId).lines.push({

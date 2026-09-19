@@ -23,7 +23,9 @@ function xlsx(sheets) {
 test('the blank import template is a real workbook with the sheets an office needs', () => {
   const sheets = sheet.readWorkbook(database.importTemplateWorkbook());
   assert.deepEqual(sheets.map((item) => item.name), ['کدینگ', 'تفصیلی', 'مانده افتتاحیه', 'راهنما']);
-  assert.deepEqual(sheets[0].rows[0], ['کد', 'نام', 'سطح', 'کد والد', 'نوع', 'نقش']);
+  // «کد سطح» و «تفصیلی اجباری» ستون‌های مقصدند: بدون اولی کد پارسیان غلط
+  // می‌رود و بدون دومی ردیفِ بی‌تفصیلی بی‌صدا از سند می‌افتد.
+  assert.deepEqual(sheets[0].rows[0], ['کد', 'نام', 'سطح', 'کد والد', 'نوع', 'کد سطح', 'نقش', 'تفصیلی اجباری']);
 });
 
 test('a chart arrives from an Excel file, not just from pasted CSV', () => {

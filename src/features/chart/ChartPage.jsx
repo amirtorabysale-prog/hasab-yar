@@ -34,6 +34,62 @@ function ChartMappingRow({ item, chartAccounts, notify, onChanged }) {
   </tr>;
 }
 
+/**
+ * نگاشت گروهی حساب‌های بدون نگاشت به یک معین.
+ *
+ * حساب‌یار دیگر «اولین معین هم‌نوع» را حدس نمی‌زند، چون آن حدس در کدینگ یک
+ * دفتر واقعی همهٔ هزینه‌ها را روی «بازاریاب» نشاند. ولی جایگزینش نباید
+ * پنجاه‌بار باز کردن فهرست کشویی باشد: حسابدار یک‌بار معین را انتخاب می‌کند و
+ * همهٔ حساب‌های بدون نگاشتِ آن نوع با هم می‌نشینند.
+ */
+function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
+  const [type, setType] = useState('');
+  const [chartAccountId, setChartAccountId] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const unmapped = (mapping.items || []).filter((item) => !item.mapped);
+  const types = [...new Map(unmapped.map((item) => [item.type, item.typeLabel || item.type])).entries()];
+  const activeType = type || types[0]?.[0] || '';
+  const targets = unmapped.filter((item) => item.type === activeType);
+  const options = chartAccounts.filter((account) => account.postable && account.active && account.type === activeType);
+  if (!unmapped.length) return null;
+
+  const apply = async () => {
+    if (!chartAccountId) return;
+    setBusy(true);
+    try {
+      const result = await api.mapLedgerAccountsInBulk(targets.map((item) => item.id), chartAccountId);
+      await onChanged();
+      notify(result.skipped.length
+        ? `${toPersianDigits(result.mapped)} حساب نگاشت شد؛ ${toPersianDigits(result.skipped.length)} حساب به‌خاطر ناسازگاری نوع کنار ماند.`
+        : `${toPersianDigits(result.mapped)} حساب به این معین نگاشت شد.`);
+      setChartAccountId('');
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
+  return <div className="mt-3 rounded-lg border border-accent/40 bg-warn-bg p-3">
+    <p className="text-[13px] font-bold text-accent">نگاشت گروهی — {toPersianDigits(unmapped.length)} حساب بدون نگاشت</p>
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px]">
+      <select value={activeType} onChange={(event) => { setType(event.target.value); setChartAccountId(''); }} className="tap rounded-lg border border-line bg-paper px-2">
+        {types.map(([id, label]) => <option key={id} value={id}>{label} ({toPersianDigits(unmapped.filter((item) => item.type === id).length)})</option>)}
+      </select>
+      <select value={chartAccountId} onChange={(event) => setChartAccountId(event.target.value)} className="tap min-w-[220px] rounded-lg border border-line bg-paper px-2">
+        <option value="">— معین مقصد را انتخاب کن —</option>
+        {options.map((account) => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}
+      </select>
+      <button
+        disabled={!chartAccountId || busy || !targets.length}
+        onClick={apply}
+        className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45"
+      >{busy ? 'در حال نگاشت…' : `اعمال به ${toPersianDigits(targets.length)} حساب`}</button>
+    </div>
+    <p className="mt-2 text-[11px] leading-5 text-muted">
+      همهٔ حساب‌های بدون نگاشتِ این نوع روی یک معین می‌نشینند. اگر بعضی از آن‌ها معین جداگانه دارند، اول همان‌ها را تکی نگاشت کن و بعد بقیه را گروهی.
+    </p>
+  </div>;
+}
+
 export function ChartPage({ access, notify }) {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -114,6 +170,7 @@ export function ChartPage({ access, notify }) {
           >اصلاح نگاشت‌های عمومی</button>}
         </div>
       </div>
+      {canManage && <BulkMappingBar mapping={mapping} chartAccounts={accounts} notify={notify} onChanged={load} />}
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[640px] text-right text-[13px]">
           <thead className="border-b border-line text-[12px] text-muted"><tr><th className="pb-2 pl-3 font-bold">کد داخلی</th><th className="pb-2 pl-3 font-bold">حساب حساب‌یار</th><th className="pb-2 pl-3 font-bold">معین کدینگ دفتر</th></tr></thead>

@@ -9,12 +9,14 @@ const CHART_ALIASES = {
   type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
   role: ['role', 'نقش', 'کاربرد'],
   levelCode: ['levelcode', 'کدسطح', 'کدمقصدسطح', 'کدپارسیان', 'کدنرمافزار'],
+  requiresAnalytic: ['requiresanalytic', 'تفصیلیاجباری', 'تفصیلیدارد', 'دارایتفصیلی', 'شناوراجباری', 'تفصیلی'],
 };
 
 const ANALYTIC_ALIASES = {
   code: ['code', 'کد', 'کدتفصیلی', 'کدطرفحساب', 'کدشناور'],
   name: ['name', 'title', 'نام', 'نامتفصیلی', 'شرح', 'عنوان', 'نامطرفحساب'],
   kind: ['kind', 'type', 'نوع', 'گروه', 'نوعتفصیلی'],
+  externalCode: ['externalcode', 'destinationcode', 'کدمقصد', 'کدپارسیان', 'کدتفصیلیمقصد', 'کدنرمافزار', 'کدشناورمقصد'],
 };
 
 const OPENING_ALIASES = {
@@ -32,12 +34,12 @@ function rowsFromFile(buffer, fileName, schema) {
 
 export const chartRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {
   aliases: CHART_ALIASES, required: ['code', 'name', 'level', 'type'], label: 'فایل کدینگ',
-  labels: { code: 'کد', name: 'نام', level: 'سطح', type: 'نوع', parentCode: 'کد والد', levelCode: 'کد سطح' },
+  labels: { code: 'کد', name: 'نام', level: 'سطح', type: 'نوع', parentCode: 'کد والد', levelCode: 'کد سطح', requiresAnalytic: 'تفصیلی اجباری' },
 });
 
 export const analyticRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {
   aliases: ANALYTIC_ALIASES, required: ['name'], label: 'فایل تفصیلی',
-  labels: { code: 'کد', name: 'نام', kind: 'نوع' },
+  labels: { code: 'کد', name: 'نام', kind: 'نوع', externalCode: 'کد مقصد' },
 });
 
 export const openingRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {

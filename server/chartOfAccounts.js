@@ -112,6 +112,12 @@ export function ensureChartSchema(database) {
   ensureColumn(database, 'analytic_accounts', 'external_code TEXT');
   ensureColumn(database, 'journal_lines', 'cost_center_id TEXT REFERENCES cost_centers(id) ON DELETE RESTRICT');
   ensureColumn(database, 'chart_accounts', "level_code TEXT NOT NULL DEFAULT ''");
+  // معینی که در نرم‌افزار دفتر «تفصیلی اجباری» است: ردیفی که روی آن بنشیند و
+  // کد تفصیلی نداشته باشد، در پارسیان پذیرفته نمی‌شود. پارسیان آن ردیف را کنار
+  // می‌گذارد و طرف دیگرِ همان سند تنها می‌ماند — سند غیرموازنه دقیقاً از همین
+  // جا می‌آید و هیچ پیامی هم نمی‌دهد. پس این را از قبل می‌دانیم و جلوی خروجی
+  // را می‌گیریم.
+  ensureColumn(database, 'chart_accounts', 'requires_analytic INTEGER NOT NULL DEFAULT 0');
   ensureColumn(database, 'ledger_accounts', 'chart_account_id TEXT REFERENCES chart_accounts(id) ON DELETE RESTRICT');
   backfillLevelCodes(database);
   database.exec(`
@@ -223,12 +229,15 @@ export function validateChartRows(rows = [], { codingStyle = 'prefix' } = {}) {
     // در سبک پیشوندی از تفاضل کد فرزند و والد و در سبک سطحی از خود کد می‌آید.
     const levelCode = normalizeChartCode(row.levelCode);
     if (levelCode && !chartCodeIsValid(levelCode)) { errors.push({ rowNumber, code, message: 'کد سطح باید فقط رقم باشد.' }); return; }
+    const role = CHART_ROLES.includes(String(row.role || '').trim()) ? String(row.role).trim() : '';
+    const declaredAnalytic = readFlag(row.requiresAnalytic);
     const account = {
       rowNumber, code, name, level, type,
       normalSide: CHART_TYPES[type].normalSide,
       parentCode: parentCode || null,
       levelCode,
-      role: CHART_ROLES.includes(String(row.role || '').trim()) ? String(row.role).trim() : '',
+      role,
+      requiresAnalytic: declaredAnalytic === undefined ? (level === 'subsidiary' && ANALYTIC_ROLES.has(role)) : declaredAnalytic,
       postable: level === 'subsidiary',
     };
     byCode.set(code, account);
@@ -311,7 +320,31 @@ const COLUMN_ALIASES = {
   type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
   role: ['role', 'نقش', 'کاربرد'],
   levelCode: ['levelcode', 'کدسطح', 'کدمقصدسطح', 'کدپارسیان', 'کدنرمافزار'],
+  requiresAnalytic: ['requiresanalytic', 'تفصیلیاجباری', 'تفصیلیدارد', 'داراىتفصیلی', 'دارایتفصیلی', 'شناوراجباری', 'تفصیلی'],
 };
+
+const TRUE_WORDS = new Set(['1', 'true', 'yes', 'y', 'بله', 'آری', 'اری', 'دارد', 'اجباری', 'الزامی', 'دارد.']);
+const FALSE_WORDS = new Set(['0', 'false', 'no', 'n', 'خیر', 'ندارد', 'اختیاری', '-']);
+
+/**
+ * خواندن یک ستون بله/خیر از فایل.
+ *
+ * سلول خالی «خیر» نیست، «نامشخص» است: یعنی فایل دربارهٔ این حساب چیزی
+ * نگفته. تفاوت این دو مهم است — «نگفته» اجازه می‌دهد از نقش حساب حدس بزنیم،
+ * ولی «خیر» تصمیم صریح کاربر است و روی آن دست نمی‌گذاریم.
+ */
+function readFlag(value) {
+  const token = latin(String(value ?? '')).trim().toLowerCase().replace(/[\s‌]+/g, '');
+  if (!token) return undefined;
+  if (TRUE_WORDS.has(token)) return true;
+  if (FALSE_WORDS.has(token)) return false;
+  return undefined;
+}
+
+// معین‌هایی که در هر کدینگی تفصیلی‌دارند: بدهکاران و بستانکاران بدون طرف حساب
+// معنا ندارند. وقتی فایل چیزی نگفته باشد، همین حدس زده می‌شود — حدسی که فقط
+// یک هشدار می‌سازد و حسابدار می‌تواند خاموشش کند.
+const ANALYTIC_ROLES = new Set(['receivable', 'payable']);
 
 export function parseChartCsv(input) {
   const text = String(input ?? '').replace(/^﻿/, '');
@@ -338,7 +371,7 @@ export function parseChartCsv(input) {
       rowNumber: index + 2,
       code: cell('code'), name: cell('name'), level: cell('level'),
       type: cell('type'), parentCode: cell('parentCode'), role: cell('role'),
-      levelCode: cell('levelCode'),
+      levelCode: cell('levelCode'), requiresAnalytic: cell('requiresAnalytic'),
     };
   }).filter((row) => `${row.code}${row.name}`.trim().length);
 
@@ -423,9 +456,10 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
         database.prepare('DELETE FROM chart_accounts WHERE level=?').run(level);
       }
     }
-    const insert = database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,source,level_code)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(code) DO UPDATE SET name=excluded.name,role=excluded.role,level_code=excluded.level_code`);
+    const insert = database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,source,level_code,requires_analytic)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(code) DO UPDATE SET name=excluded.name,role=excluded.role,level_code=excluded.level_code,
+        requires_analytic=excluded.requires_analytic`);
     let created = 0;
     let updated = 0;
     for (const account of accounts) {
@@ -435,7 +469,7 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
       }
       const parentId = account.parentCode ? database.prepare('SELECT id FROM chart_accounts WHERE code=?').get(account.parentCode)?.id || null : null;
       if (account.parentCode && !parentId) throw chartError(`والد ${account.parentCode} پیدا نشد.`, 'CHART_PARENT_MISSING');
-      insert.run(existing?.id || randomUUID(), account.code, account.name, account.level, parentId, account.type, account.normalSide, account.role, source, account.levelCode || account.code);
+      insert.run(existing?.id || randomUUID(), account.code, account.name, account.level, parentId, account.type, account.normalSide, account.role, source, account.levelCode || account.code, account.requiresAnalytic ? 1 : 0);
       if (existing) updated += 1; else created += 1;
     }
     database.exec('COMMIT');
@@ -475,11 +509,15 @@ export function saveChartAccount(database, values = {}) {
 
   const role = CHART_ROLES.includes(String(values.role || '').trim()) ? String(values.role).trim() : (existing?.role || '');
   const id = existing?.id || randomUUID();
-  database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,active,source)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,parent_id=excluded.parent_id,role=excluded.role,active=excluded.active`)
+  const requiresAnalytic = values.requiresAnalytic === undefined
+    ? (existing?.requires_analytic ?? (level === 'subsidiary' && ANALYTIC_ROLES.has(role) ? 1 : 0))
+    : (values.requiresAnalytic ? 1 : 0);
+  database.prepare(`INSERT INTO chart_accounts (id,code,name,level,parent_id,type,normal_side,role,active,source,requires_analytic)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET code=excluded.code,name=excluded.name,parent_id=excluded.parent_id,role=excluded.role,
+      active=excluded.active,requires_analytic=excluded.requires_analytic`)
     .run(id, code, name, level, parent?.id || null, type, CHART_TYPES[type].normalSide, role,
-      values.active === false ? 0 : (existing?.active ?? 1), existing?.source || 'manual');
+      values.active === false ? 0 : (existing?.active ?? 1), existing?.source || 'manual', requiresAnalytic);
   return database.prepare('SELECT * FROM chart_accounts WHERE id=?').get(id);
 }
 
@@ -487,7 +525,7 @@ export function listChartAccounts(database, { includeInactive = false } = {}) {
   ensureChartSchema(database);
   const rows = database.prepare(`SELECT chart_accounts.id,chart_accounts.code,chart_accounts.name,chart_accounts.level,
     chart_accounts.type,chart_accounts.normal_side AS normalSide,chart_accounts.role,chart_accounts.active,chart_accounts.source,
-    chart_accounts.level_code AS levelCode,
+    chart_accounts.level_code AS levelCode,chart_accounts.requires_analytic AS requiresAnalytic,
     parent.code AS parentCode,parent.name AS parentName,
     (SELECT COUNT(*) FROM ledger_accounts WHERE ledger_accounts.chart_account_id=chart_accounts.id) AS mappedAccounts
     FROM chart_accounts LEFT JOIN chart_accounts AS parent ON parent.id=chart_accounts.parent_id
@@ -496,6 +534,7 @@ export function listChartAccounts(database, { includeInactive = false } = {}) {
   return rows.map((row) => ({
     ...row,
     active: Boolean(row.active),
+    requiresAnalytic: Boolean(row.requiresAnalytic),
     levelLabel: CHART_LEVELS[row.level].label,
     typeLabel: CHART_TYPES[row.type].label,
     postable: row.level === 'subsidiary',
@@ -665,6 +704,37 @@ export function mapLedgerAccountToChart(database, ledgerAccountId, chartAccountI
  * وضعیت نگاشت: چه چیزی نگاشت شده، چه چیزی نشده و برای نشده‌ها چه پیشنهادی هست.
  * این خروجی هم صفحهٔ کدینگ را می‌سازد و هم دروازهٔ آمادگی خروجی را تغذیه می‌کند.
  */
+/**
+ * نگاشت چند حساب به یک معین، در یک تصمیم.
+ *
+ * دفتری با ده‌ها دستهٔ هزینه، ده‌ها بار کشیدن فهرست کشویی را تحمل نمی‌کند؛ و
+ * حساب‌یار هم دیگر «اولین معین هم‌نوع» را حدس نمی‌زند. پس انتخاب یک‌بارهٔ
+ * معین برای یک گروه حساب، همان چیزی است که کار دستی را کوتاه می‌کند بی‌آنکه
+ * تصمیم از دست حسابدار در برود.
+ *
+ * حساب‌هایی که با نوع معین نمی‌خوانند رد می‌شوند، ولی بقیه انجام می‌شوند: یک
+ * ردیف ناسازگار نباید کل اقدام را برگرداند.
+ */
+export function bulkMapLedgerAccounts(database, ledgerAccountIds = [], chartAccountId = null) {
+  ensureChartSchema(database);
+  const ids = [...new Set((Array.isArray(ledgerAccountIds) ? ledgerAccountIds : []).map((item) => String(item || '')).filter(Boolean))];
+  if (!ids.length) throw chartError('هیچ حسابی برای نگاشت انتخاب نشده است.', 'LEDGER_ACCOUNTS_EMPTY');
+  const skipped = [];
+  let mapped = 0;
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    for (const id of ids) {
+      try { mapLedgerAccountToChart(database, id, chartAccountId); mapped += 1; }
+      catch (error) {
+        if (!['CHART_TYPE_MISMATCH', 'LEDGER_ACCOUNT_MISSING'].includes(error.code)) throw error;
+        skipped.push({ ledgerAccountId: id, message: error.message });
+      }
+    }
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  return { mapped, skipped };
+}
+
 export function chartMappingOverview(database) {
   ensureChartSchema(database);
   const chartAccounts = listChartAccounts(database);

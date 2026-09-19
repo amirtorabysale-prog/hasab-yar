@@ -90,6 +90,7 @@ function accountingTransferJournalRows(range) {
     -- پارسیان حساب را سه ستون عددی جدا می‌خواهد: کل، معین، تفصیلی.
     chart_parent.level_code AS kolCode,chart_parent.name AS kolName,
     chart_accounts.level_code AS moeenCode,chart_accounts.name AS moeenName,
+    chart_accounts.requires_analytic AS requiresAnalytic,
     -- کد مقصد، نه کد داخلی. کد داخلی خودکار ساخته می‌شود و در پارسیان یعنی
     -- شخص دیگری؛ تا وقتی نگاشت نشده، خالی می‌رود و هشدار داده می‌شود.
     analytic_accounts.external_code AS tafsiliCode,analytic_accounts.name AS tafsiliName,

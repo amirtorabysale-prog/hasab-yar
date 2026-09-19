@@ -305,6 +305,7 @@ export const api = {
   clearChartMappings: () => request('/api/chart/mappings', { method: 'DELETE' }),
   mapLedgerAccount: (ledgerAccountId, chartAccountId) => request(`/api/chart/mappings/${encodeURIComponent(ledgerAccountId)}`, { method: 'PUT', body: JSON.stringify({ chartAccountId }) }),
   applyChartSuggestions: ({ refine = false } = {}) => request('/api/chart/mappings/suggest', { method: 'POST', body: JSON.stringify({ refine }) }),
+  mapLedgerAccountsInBulk: (ledgerAccountIds, chartAccountId) => request('/api/chart/mappings/bulk', { method: 'POST', body: JSON.stringify({ ledgerAccountIds, chartAccountId }) }),
   dimensionBalance: (params = {}) => request(`/api/chart/dimensions/balance?${new URLSearchParams(params)}`),
   saveAnalytic: (payload) => request(payload.id ? `/api/chart/analytics/${encodeURIComponent(payload.id)}` : '/api/chart/analytics', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   saveCostCenter: (payload) => request(payload.id ? `/api/chart/cost-centers/${encodeURIComponent(payload.id)}` : '/api/chart/cost-centers', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),

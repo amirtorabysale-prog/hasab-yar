@@ -18,6 +18,7 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
   const mappingCheck = failed.find((item) => item.id === 'mappings');
   const templateCheck = failed.find((item) => item.id === 'template');
   const fiscalCheck = failed.find((item) => item.id === 'parsian-fiscal-year');
+  const analyticCheck = failed.find((item) => item.id === 'analytic-required');
   const missing = readiness?.missingMappings || [];
 
   // بقیهٔ تنظیمات عمداً فرستاده نمی‌شوند؛ سرور فیلدهای نیامده را نگه می‌دارد،
@@ -108,6 +109,25 @@ function ReadinessFixHints({ readiness, navigate, notify, refresh }) {
       <p className="mt-2 text-[11px] leading-5 text-muted">
         کدینگی که در حساب‌یار وارد کرده‌ای همان کدینگ نرم‌افزار مقصد توست، پس کد مقصد از روی آن پر می‌شود.
         نگاشت‌هایی که خودت دستی نوشته‌ای بازنویسی نمی‌شوند. اگر حسابی به کدینگ وصل نباشد، اول در صفحهٔ کدینگ نگاشتش کن.
+      </p>
+    </div>}
+
+    {/* این تنها ایرادی است که در فایلِ ما دیده نمی‌شود و فقط در پارسیان
+        بیرون می‌زند — آن هم به شکل «سند غیرموازنه»، بدون هیچ توضیحی. پس
+        اینجا باید صریح گفته شود چه اتفاقی می‌افتد و از کجا درست می‌شود. */}
+    {analyticCheck && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3 text-xs leading-6">
+      <p className="font-bold text-expense">{toPersianDigits(analyticCheck.count)} ردیف روی معین تفصیلی‌دار است و کد تفصیلی ندارد</p>
+      <p className="mt-1 text-muted">پارسیان چنین ردیفی را کنار می‌گذارد و طرف دیگرِ همان سند تنها می‌ماند؛ نتیجه‌اش «سند غیرموازنه» است، درحالی‌که فایل ما متوازن بوده.</p>
+      {(analyticCheck.analyticRequiredGaps || []).length > 0 && <ul className="mt-2 space-y-0.5">
+        {analyticCheck.analyticRequiredGaps.slice(0, 8).map((item, index) => <li key={`${item.accountId}-${index}`}>
+          {item.accountName}{item.moeenName ? ` · معین ${item.moeenName}` : ''}{item.analyticName ? ` · ${item.analyticName}` : ' · بدون طرف حساب'}
+        </li>)}
+        {analyticCheck.analyticRequiredGaps.length > 8 && <li className="text-muted">و {toPersianDigits(analyticCheck.analyticRequiredGaps.length - 8)} مورد دیگر…</li>}
+      </ul>}
+      <button onClick={() => navigate('chart')} className="tap mt-3 rounded-lg border border-line bg-paper px-3 py-1.5 text-xs font-bold">رفتن به تفصیلی‌ها</button>
+      <p className="mt-2 text-[11px] leading-5 text-muted">
+        دو راه دارد: یا فایل تفصیلی نرم‌افزار دفتر را در «ورود کدینگ» بارگذاری کن تا کد مقصد همهٔ طرف‌حساب‌ها یک‌جا پر شود،
+        یا اگر آن معین در پارسیان واقعاً تفصیلی اجباری ندارد، تیک «تفصیلی اجباری» را در درخت کدینگ بردار.
       </p>
     </div>}
 

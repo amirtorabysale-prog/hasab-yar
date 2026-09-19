@@ -1,4 +1,4 @@
-import { DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, chartMappingOverview, dimensionBalance, importChartOfAccounts, installDefaultChartTemplate, listAnalyticAccounts, listChartAccounts, listCostCenters, mapLedgerAccountToChart, parseChartCsv, saveAnalyticAccount, saveChartAccount, saveCostCenter } from '../chartOfAccounts.js';
+import { DEFAULT_CHART_TEMPLATE, applySuggestedChartMappings, bulkMapLedgerAccounts, chartMappingOverview, dimensionBalance, importChartOfAccounts, installDefaultChartTemplate, listAnalyticAccounts, listChartAccounts, listCostCenters, mapLedgerAccountToChart, parseChartCsv, saveAnalyticAccount, saveChartAccount, saveCostCenter } from '../chartOfAccounts.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace } from './core.js';
 import { analyticRowsFromFile, chartRowsFromFile, openingRowsFromFile } from '../spreadsheetImport.js';
 import { buildWorkbook } from '../spreadsheet.js';
@@ -44,6 +44,13 @@ export function mapLedgerAccount(ledgerAccountId, chartAccountId) {
   const result = mapLedgerAccountToChart(activeWorkspaceDatabase(), ledgerAccountId, chartAccountId);
   audit('map', 'ledger_account', ledgerAccountId, { chartCode: result.chartAccount?.code || null });
   return { ...result, mapping: chartMappingOverview(activeWorkspaceDatabase()) };
+}
+
+export function mapLedgerAccountsInBulk(ledgerAccountIds = [], chartAccountId = null) {
+  const database = activeWorkspaceDatabase();
+  const result = bulkMapLedgerAccounts(database, ledgerAccountIds, chartAccountId);
+  audit('map-bulk', 'chart_of_accounts', 'chart', { mapped: result.mapped, skipped: result.skipped.length, chartAccountId });
+  return { ...result, mapping: chartMappingOverview(database) };
 }
 
 /**
@@ -138,10 +145,16 @@ export function importOpeningBalanceFile(buffer, fileName = '', { amountUnit = '
 /** الگوهای خالی اکسل تا حسابدار بداند دقیقاً چه ستون‌هایی لازم است. */
 export function importTemplateWorkbook() {
   return buildWorkbook([
-    { name: 'کدینگ', rows: [['کد', 'نام', 'سطح', 'کد والد', 'نوع', 'نقش'], ['1', 'دارایی‌های جاری', 'گروه', '', 'دارایی', ''], ['11', 'موجودی نقد و بانک', 'کل', '1', 'دارایی', ''], ['1101', 'صندوق', 'معین', '11', 'دارایی', 'cash']] },
-    { name: 'تفصیلی', rows: [['کد', 'نام', 'نوع'], ['1001', 'شرکت آبان', 'مشتری'], ['1002', 'پروژهٔ برج', 'پروژه']] },
+    { name: 'کدینگ', rows: [['کد', 'نام', 'سطح', 'کد والد', 'نوع', 'کد سطح', 'نقش', 'تفصیلی اجباری'], ['1', 'دارایی‌های جاری', 'گروه', '', 'دارایی', '1', '', ''], ['11', 'موجودی نقد و بانک', 'کل', '1', 'دارایی', '1', '', ''], ['1101', 'صندوق', 'معین', '11', 'دارایی', '01', 'cash', 'خیر'], ['12', 'حساب‌های دریافتنی', 'کل', '1', 'دارایی', '2', '', ''], ['1201', 'بدهکاران تجاری', 'معین', '12', 'دارایی', '01', 'receivable', 'بله']] },
+    { name: 'تفصیلی', rows: [['کد', 'نام', 'نوع', 'کد مقصد'], ['1001', 'شرکت آبان', 'مشتری', '1001'], ['1002', 'پروژهٔ برج', 'پروژه', '1002']] },
     { name: 'مانده افتتاحیه', rows: [['کد حساب', 'نام حساب', 'بدهکار', 'بستانکار', 'کد تفصیلی'], ['1101', 'صندوق', 5_000_000, '', ''], ['5101', 'سرمایه', '', 5_000_000, '']] },
-    { name: 'راهنما', rows: [['هر شیت را جداگانه بارگذاری کن.'], ['سطح: گروه / کل / معین'], ['نوع: دارایی / بدهی / سرمایه / درآمد / هزینه'], ['کد فرزند باید با کد والد شروع شود.'], ['واحد مبلغ ماندهٔ افتتاحیه را هنگام بارگذاری صریح انتخاب کن.']] },
+    { name: 'راهنما', rows: [['هر شیت را جداگانه بارگذاری کن.'], ['سطح: گروه / کل / معین'],
+      ['نوع: دارایی / بدهی / سرمایه / درآمد / هزینه'],
+      ['کد فرزند باید با کد والد شروع شود — مگر آنکه ستون «کد سطح» را خودت پر کنی.'],
+      ['کد سطح: همان کدی که نرم‌افزار دفتر برای آن سطح می‌شناسد (در پارسیان کد معین سراسری نیست).'],
+      ['شیت تفصیلی: «کد مقصد» همان کد تفصیلی در نرم‌افزار دفتر است. اگر خالی بماند، کد ستون اول به‌جایش می‌نشیند.'],
+      ['ردیفی که کد تفصیلی نداشته باشد، در پارسیان کنار گذاشته می‌شود و سند را نامتوازن نشان می‌دهد.'],
+      ['واحد مبلغ ماندهٔ افتتاحیه را هنگام بارگذاری صریح انتخاب کن.']] },
   ]);
 }
 
