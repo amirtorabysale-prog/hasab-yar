@@ -8,6 +8,7 @@ const CHART_ALIASES = {
   parentCode: ['parent', 'parentcode', 'کدوالد', 'والد', 'کدبالاسری', 'حسابوالد'],
   type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
   role: ['role', 'نقش', 'کاربرد'],
+  levelCode: ['levelcode', 'کدسطح', 'کدمقصدسطح', 'کدپارسیان', 'کدنرمافزار'],
 };
 
 const ANALYTIC_ALIASES = {
@@ -31,7 +32,7 @@ function rowsFromFile(buffer, fileName, schema) {
 
 export const chartRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {
   aliases: CHART_ALIASES, required: ['code', 'name', 'level', 'type'], label: 'فایل کدینگ',
-  labels: { code: 'کد', name: 'نام', level: 'سطح', type: 'نوع', parentCode: 'کد والد' },
+  labels: { code: 'کد', name: 'نام', level: 'سطح', type: 'نوع', parentCode: 'کد والد', levelCode: 'کد سطح' },
 });
 
 export const analyticRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {

@@ -243,8 +243,11 @@ export function validateChartRows(rows = [], { codingStyle = 'prefix' } = {}) {
     if (!account.parentCode) {
       // در سبک سطحی، حسابی که والد ندارد پذیرفته می‌شود؛ پارسیان چنین کل‌هایی
       // واقعاً دارد (مثلاً «تراز افتتاحیه»).
-      if (style === 'segmented') { account.levelCode ||= account.code; continue; }
-      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `${CHART_LEVELS[account.level].label} باید کد والد داشته باشد.` });
+      // کدینگ پارسیان کلِ بدون والد دارد: «۱۲ بدهکاران» زیر هیچ گروهی نیست و
+      // کد خودش همان کدی است که پارسیان می‌شناسد. تا وقتی کد سطح صریح آمده،
+      // نبودِ والد ابهامی نمی‌سازد.
+      if (style === 'segmented' || account.levelCode) { account.levelCode ||= account.code; continue; }
+      errors.push({ rowNumber: account.rowNumber, code: account.code, message: `${CHART_LEVELS[account.level].label} باید کد والد داشته باشد یا ستون «کد سطح» داشته باشد.` });
       continue;
     }
     const parent = byCode.get(account.parentCode);
@@ -306,6 +309,7 @@ const COLUMN_ALIASES = {
   parentCode: ['parent', 'parentcode', 'کدوالد', 'والد', 'کدبالاسری', 'حسابوالد'],
   type: ['type', 'accounttype', 'نوع', 'نوعحساب', 'ماهیت'],
   role: ['role', 'نقش', 'کاربرد'],
+  levelCode: ['levelcode', 'کدسطح', 'کدمقصدسطح', 'کدپارسیان', 'کدنرمافزار'],
 };
 
 export function parseChartCsv(input) {
@@ -333,6 +337,7 @@ export function parseChartCsv(input) {
       rowNumber: index + 2,
       code: cell('code'), name: cell('name'), level: cell('level'),
       type: cell('type'), parentCode: cell('parentCode'), role: cell('role'),
+      levelCode: cell('levelCode'),
     };
   }).filter((row) => `${row.code}${row.name}`.trim().length);
 
