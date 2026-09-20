@@ -145,6 +145,9 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_obligations_due ON obligations(status,due_at);
+  -- تسویهٔ جزئی قاعده است نه استثنا: مشتری سی درصد می‌دهد و بقیه را ماه بعد.
+  -- تا پیش از این، تعهد یا کامل بسته می‌شد یا اصلاً — پس دفتر مجبور بود یا
+  -- طلب را زودتر از موعد ببندد یا پرداخت واقعی را جایی ثبت نکند.
   CREATE TABLE IF NOT EXISTS recurring_rules (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,

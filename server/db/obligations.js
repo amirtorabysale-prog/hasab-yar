@@ -8,12 +8,20 @@ import { insertTransactionRows, transactionRow } from './transactions.js';
 import { resolveAccountId } from './accounts.js';
 import { routeEvent } from '../../shared/confidenceEngine.js';
 
+// دفترهایی که پیش از تسویهٔ جزئی ساخته شده‌اند این ستون را ندارند.
+function ensurePartialSettlementColumn() {
+  try { db.exec('ALTER TABLE obligations ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0'); }
+  catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
+}
+
 export function listObligations({ status = 'open' } = {}) {
+  ensurePartialSettlementColumn();
   const where = ['open', 'paid', 'cancelled'].includes(status) ? 'WHERE obligations.status=?' : '';
   const args = where ? [status] : [];
   return db.prepare(`SELECT obligations.id,obligations.contact_id AS contactId,contacts.name AS contactName,
     obligations.title,obligations.amount,obligations.direction,obligations.due_at AS dueAt,
-    obligations.occurred_at AS occurredAt,
+    obligations.occurred_at AS occurredAt,COALESCE(obligations.paid_amount,0) AS paidAmount,
+    obligations.amount-COALESCE(obligations.paid_amount,0) AS remaining,
     obligations.status,obligations.note,obligations.created_at AS createdAt
     FROM obligations LEFT JOIN contacts ON contacts.id=obligations.contact_id ${where}
     ORDER BY CASE WHEN obligations.due_at IS NULL THEN 1 ELSE 0 END,obligations.due_at,obligations.created_at DESC`).all(...args);
@@ -44,9 +52,26 @@ export function saveObligation(values = {}) {
   return listObligations({ status: 'all' }).find((item) => item.id === id);
 }
 
-export function settleObligation(id, { occurredAt, account = 'cash', accountId } = {}) {
+/**
+ * تسویهٔ یک تعهد — کامل یا جزئی.
+ *
+ * مشتری سی درصد می‌دهد و بقیه را ماه بعد؛ این قاعده است نه استثنا. تا پیش از
+ * این تعهد یا کامل بسته می‌شد یا اصلاً، پس دفتر مجبور بود یا طلب را زودتر از
+ * موعد ببندد — و مانده‌اش را از دست بدهد — یا پرداخت واقعی را جایی ثبت نکند.
+ *
+ * هر پرداخت سند خودش را دارد و مبلغ خودش را می‌برد؛ تعهد وقتی «پرداخت‌شده»
+ * می‌شود که ماندهٔ صفر داشته باشد، نه وقتی یک بار دستش زده‌اند.
+ */
+export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested } = {}) {
+  ensurePartialSettlementColumn();
   const item = db.prepare("SELECT * FROM obligations WHERE id=? AND status='open'").get(id);
   if (!item) return null;
+  const remaining = item.amount - (item.paid_amount || 0);
+  const amount = requested == null || requested === '' ? remaining : cleanAmount(requested);
+  if (amount <= 0) throw invalidInput('مبلغ تسویه باید بیشتر از صفر باشد.');
+  if (amount > remaining) {
+    throw invalidInput(`مبلغ تسویه از ماندهٔ این تعهد بیشتر است؛ مانده ${remaining.toLocaleString('en-US')} تومان است.`);
+  }
   let transactionId;
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -60,19 +85,24 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId }
     const opened = findEventBySource(db, `obligation:${id}`);
     const accrued = opened?.status === 'posted';
     [transactionId] = insertTransactionRows({ transcript: `تسویه ${item.title}`, transactions: [{
-      clientId: `obligation:${id}`, amount: item.amount,
+      clientId: `obligation:${id}:${(item.paid_amount || 0) + amount}`, amount,
       type: item.direction === 'receivable' ? 'income' : 'expense',
       category: item.direction === 'receivable' ? 'سایر درآمدها' : 'سایر هزینه‌ها',
       rawText: `تسویه ${item.title}`, source: 'text', contactId: item.contact_id, occurredAt, account, accountId,
       journalManaged: accrued,
     }] });
-    if (accrued) postObligationSettled(id, item, { occurredAt, accountId: resolveAccountId({ account, accountId }), transactionId });
-    const updated = db.prepare("UPDATE obligations SET status='paid',paid_transaction_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='open'").run(transactionId, id);
+    if (accrued) postObligationSettled(id, item, { occurredAt, accountId: resolveAccountId({ account, accountId }), transactionId, amount });
+    // شرط روی مبلغ پرداخت‌شده است، نه فقط روی وضعیت: دو تسویهٔ هم‌زمان نباید
+    // بتوانند بیشتر از ماندهٔ تعهد را ببرند.
+    const updated = db.prepare(`UPDATE obligations SET paid_amount=COALESCE(paid_amount,0)+?,
+      status=CASE WHEN COALESCE(paid_amount,0)+? >= amount THEN 'paid' ELSE 'open' END,
+      paid_transaction_id=?,updated_at=CURRENT_TIMESTAMP
+      WHERE id=? AND status='open' AND COALESCE(paid_amount,0)+? <= amount`).run(amount, amount, transactionId, id, amount);
     if (!updated.changes) throw invalidInput('این طلب یا بدهی قبلاً تسویه شده است.');
-    audit('settle', 'obligation', id, { transactionId });
+    audit('settle', 'obligation', id, { transactionId, amount, partial: amount < remaining });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
-  return { item: listObligations({ status: 'paid' }).find((row) => row.id === id), transaction: transactionRow(transactionId) };
+  return { item: listObligations({ status: 'all' }).find((row) => row.id === id), transaction: transactionRow(transactionId) };
 }
 
 export function deleteObligation(id) {
@@ -132,11 +162,11 @@ function postObligationOpened(obligationId, { amount, direction, title, contactI
 }
 
 /** سند تسویهٔ تعهدی که خودش سند خورده: فقط جابه‌جایی پول، بدون درآمد دوباره. */
-function postObligationSettled(obligationId, item, { occurredAt, accountId, transactionId }) {
+function postObligationSettled(obligationId, item, { occurredAt, accountId, transactionId, amount }) {
   const contact = item.contact_id ? db.prepare('SELECT name FROM contacts WHERE id=?').get(item.contact_id) : null;
   const event = normalizeFinancialEvent({
     kind: EVENT_KINDS.OBLIGATION_SETTLED,
-    amount: item.amount,
+    amount,
     occurredAt: occurredAt || new Date().toISOString(),
     counterparty: contact?.name || item.title,
     counterpartyId: item.contact_id || null,
@@ -155,7 +185,7 @@ function postObligationSettled(obligationId, item, { occurredAt, accountId, tran
     // سند به خودِ تراکنش لنگر می‌خورد، وگرنه مهاجرت دفتر آن را بی‌سند می‌بیند و
     // دوباره سند درآمد/هزینه می‌زند.
     journalSource: { type: 'transaction', id: transactionId },
-    sourceEventId: `obligation-settled:${obligationId}`,
+    sourceEventId: `obligation-settled:${obligationId}:${(item.paid_amount || 0) + amount}`,
     decision,
     actor: currentWorkspace()?.userId || null,
     rawInput: `تسویه ${item.title}`,
