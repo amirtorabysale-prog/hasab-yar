@@ -36,3 +36,24 @@ test('matches a named account without changing unrelated fields', () => {
   const result = previewCorrection('حسابش کن بانک ملت', current, { accounts: [{ id: 'bank', name: 'بانک ملت' }] });
   assert.deepEqual(result.changes, { accountId: 'bank', accountName: 'بانک ملت' });
 });
+
+test('«اشتباه شد» همان‌قدر فرمان اصلاح است که «نه»', () => {
+  // این‌ها طبیعی‌ترین شکل اصلاح در گفتار فارسی‌اند و شناخته نمی‌شدند: جمله
+  // به‌جای اصلاحِ ثبت قبلی، یک ثبت تازه می‌ساخت — یعنی همان مبلغ دو بار در
+  // دفتر می‌نشست.
+  for (const command of ['اشتباه شد دسته‌اش خرید بود', 'اشتباه گفتم سه میلیون بود']) {
+    assert.equal(isCorrectionCommand(command), true, command);
+  }
+  const preview = previewCorrection('اشتباه شد پانصد هزار تومان بود', current, {});
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.changes.amount, 500_000);
+});
+
+test('یک جملهٔ عادی با «ببخشید» یا «اشتباهی» فرمان اصلاح نیست', () => {
+  // مرز مقابل. «ببخشید» تنهایی می‌تواند شروع مؤدبانهٔ یک ثبت عادی باشد، و
+  // «اشتباهی» صفت است نه فرمان؛ اگر این‌ها اصلاح خوانده شوند، ثبت تازهٔ کاربر
+  // بی‌صدا روی ثبت قبلی‌اش می‌نشیند.
+  for (const sentence of ['ببخشید دو میلیون فروش داشتم', 'اشتباهی که کردم را جبران کردم دو میلیون', 'دو میلیون فروش داشتم']) {
+    assert.equal(isCorrectionCommand(sentence), false, sentence);
+  }
+});

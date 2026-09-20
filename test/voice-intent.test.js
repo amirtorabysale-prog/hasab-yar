@@ -294,3 +294,34 @@ test('صیغهٔ طلبکار و بدهکار جهت را وارونه می‌ک
     assert.equal(found.direction, direction, sentence);
   }
 });
+
+test('«آورده گذاشتم» با هر فاصله‌ای، آوردهٔ سرمایه است', async () => {
+  const { mentionsCapitalOrAsset } = await import('../shared/capitalSpeech.js');
+  const { normalizePersian } = await import('../shared/normalize.js');
+  const { parseFinancialText } = await import('../shared/parser.js');
+
+  // آوردهٔ مالک درآمد نیست. الگو فقط «آوردهٔ نقدی/مالک/شریک» را می‌شناخت، پس
+  // «صد میلیون آورده به حساب کسب و کار گذاشتم» — که طبیعی‌ترین شکل گفتنش است —
+  // بی‌هشدار به یک تراکنش عادی تبدیل می‌شد.
+  for (const sentence of [
+    'صد میلیون تومان آورده به حساب کسب و کار گذاشتم',
+    'پنجاه میلیون آورده گذاشتم',
+    'آورده شریک را به حساب شرکت واریز کردم',
+  ]) {
+    assert.equal(mentionsCapitalOrAsset(normalizePersian(sentence)), 'capital', sentence);
+  }
+
+  const [transaction] = parseFinancialText('صد میلیون تومان آورده به حساب کسب و کار گذاشتم', { source: 'voice' }).transactions;
+  assert.equal(transaction.needsReview, true);
+  assert.ok(transaction.reviewReasons.some((reason) => reason.includes('آورده')), 'باید دربارهٔ آورده هشدار بدهد');
+});
+
+test('«آورده» بدون فعلِ گذاشتنِ پول، آورده نیست', async () => {
+  const { mentionsCapitalOrAsset } = await import('../shared/capitalSpeech.js');
+  const { normalizePersian } = await import('../shared/normalize.js');
+  // مرز مقابل: «مشتری پول آورده» درآمد است. فعل لازم است وگرنه هر جمله‌ای که
+  // فعل «آوردن» دارد به برگهٔ سرمایه می‌رفت.
+  for (const sentence of ['مشتری دو میلیون تومان پول آورده', 'سه میلیون جنس آورده و فروختم', 'آقای رضایی چک آورده بود']) {
+    assert.equal(mentionsCapitalOrAsset(normalizePersian(sentence)), null, sentence);
+  }
+});
