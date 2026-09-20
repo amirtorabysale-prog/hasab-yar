@@ -89,6 +89,10 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
       type: item.direction === 'receivable' ? 'income' : 'expense',
       category: item.direction === 'receivable' ? 'سایر درآمدها' : 'سایر هزینه‌ها',
       rawText: `تسویه ${item.title}`, source: 'text', contactId: item.contact_id, occurredAt, account, accountId,
+      // مثل تسویهٔ فاکتور «تخصیص‌یافته» است: سندش را همین‌جا زده‌ایم و اگر
+      // جداگانه ویرایش شود، سند تسویه معکوس می‌شود و به‌جایش سند درآمد
+      // می‌نشیند — همان فروش، دو بار در سود دوره.
+      status: accrued ? 'allocated' : 'confirmed',
       journalManaged: accrued,
     }] });
     if (accrued) postObligationSettled(id, item, { occurredAt, accountId: resolveAccountId({ account, accountId }), transactionId, amount });

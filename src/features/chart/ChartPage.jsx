@@ -151,7 +151,16 @@ export function ChartPage({ access, notify }) {
     {mapping && <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <FirmSummaryTile label="حساب کدینگ" value={toPersianDigits(mapping.chartAccountCount)} hint={`${toPersianDigits(mapping.postableCount)} معین قابل ثبت`} />
       <FirmSummaryTile label="نگاشت‌شده" value={toPersianDigits(mapping.mappedCount)} tone="text-income" />
-      <FirmSummaryTile label="بدون نگاشت" value={toPersianDigits(mapping.unmappedCount)} tone={mapping.unmappedCount ? 'text-expense' : ''} hint={mapping.unmappedCount ? 'تا رفع نشود، خروجی حسابدار ساخته نمی‌شود' : ''} />
+      {/* فقط حسابی که سند خورده جلوی خروجی را می‌گیرد؛ بقیه فهرستِ کار
+          باقی‌مانده‌اند، نه مانع. */}
+      <FirmSummaryTile
+        label="بدون نگاشت"
+        value={toPersianDigits(mapping.unmappedCount)}
+        tone={mapping.usedUnmappedCount ? 'text-expense' : ''}
+        hint={mapping.usedUnmappedCount
+          ? `${toPersianDigits(mapping.usedUnmappedCount)} حساب سند خورده و تا نگاشت نشود خروجی ساخته نمی‌شود`
+          : (mapping.unmappedCount ? 'هیچ‌کدام هنوز سندی نخورده‌اند، پس جلوی خروجی را نمی‌گیرند' : '')}
+      />
       <FirmSummaryTile label="پیشنهاد آماده" value={toPersianDigits(mapping.suggestionsAvailable)} hint="با یک کلیک قابل اعمال است" />
     </div>}
 

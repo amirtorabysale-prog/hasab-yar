@@ -778,6 +778,12 @@ export function chartMappingOverview(database) {
     };
   });
   const unmapped = items.filter((item) => !item.mapped);
+  // حسابی که هیچ سندی نخورده، جلوی خروجی را نمی‌گیرد. تفاوت این دو عدد مهم
+  // است: کنترل آمادگی فقط حساب‌های استفاده‌شده را می‌بیند، ولی فهرست نگاشت
+  // همه را نشان می‌دهد — و گفتن «تا رفع نشود خروجی ساخته نمی‌شود» دربارهٔ
+  // حسابی که اصلاً استفاده نشده، دروغ است.
+  const usedAccounts = new Set(database.prepare('SELECT DISTINCT account_id AS id FROM journal_lines').all().map((row) => row.id));
+  const usedUnmapped = unmapped.filter((item) => usedAccounts.has(item.id));
   return {
     chartInstalled: chartAccounts.length > 0,
     chartAccountCount: chartAccounts.length,
@@ -785,8 +791,10 @@ export function chartMappingOverview(database) {
     items,
     mappedCount: items.length - unmapped.length,
     unmappedCount: unmapped.length,
-    // کدینگ وقتی «کامل» است که هیچ حساب فعالی بدون معین مقصد نمانده باشد.
-    complete: chartAccounts.length > 0 && unmapped.length === 0,
+    usedUnmappedCount: usedUnmapped.length,
+    // کدینگ وقتی «کامل» است که هیچ حساب استفاده‌شده‌ای بدون معین نمانده
+    // باشد. حسابی که سندی نخورده، چیزی را خراب نمی‌کند.
+    complete: chartAccounts.length > 0 && usedUnmapped.length === 0,
     suggestionsAvailable: unmapped.filter((item) => item.suggestion).length,
   };
 }

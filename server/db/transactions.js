@@ -41,6 +41,16 @@ export function summarize(items) {
 
 export const CAPITAL_FLOWS = Object.freeze(['capital-in', 'fixed-asset']);
 
+// دستهٔ این دو نوع ثبت، قرارداد بین ساخت و ویرایش است: از روی همین دسته
+// می‌فهمیم سندش را چه کسی زده و عنوان دارایی چه بوده. اگر هر طرف رشتهٔ خودش
+// را بنویسد، ویرایشِ یک دارایی ثابت حساب دوم می‌سازد.
+export const CAPITAL_IN_CATEGORY = 'آورده و افزایش سرمایه';
+export const FIXED_ASSET_CATEGORY_PREFIX = 'دارایی ثابت — ';
+
+const capitalEntryTitle = (row) => (row.capitalFlow === 'fixed-asset'
+  ? String(row.category || '').slice(FIXED_ASSET_CATEGORY_PREFIX.length) || 'دارایی ثابت'
+  : 'آوردهٔ مالک');
+
 function normalizeReviewState(value, fallback = 'ready') {
   return ['ready', 'review', 'unintelligible', 'reviewed', 'duplicate-confirmed'].includes(value) ? value : fallback;
 }
@@ -172,7 +182,7 @@ export function recordCapitalEntry(values = {}) {
   try {
     const [id] = insertTransactionRows({ transcript: note || title, transactions: [{
       amount, type: kind === 'capital-in' ? 'income' : 'expense',
-      category: kind === 'capital-in' ? 'آورده و افزایش سرمایه' : `دارایی ثابت — ${title}`,
+      category: kind === 'capital-in' ? CAPITAL_IN_CATEGORY : `${FIXED_ASSET_CATEGORY_PREFIX}${title}`,
       rawText: note || title, source: values.source === 'voice' ? 'voice' : 'text',
       occurredAt, accountId, note, status: 'confirmed', journalManaged: true, capitalFlow: kind,
     }] });
@@ -289,6 +299,7 @@ function transactionQuery(includeDeleted = false) {
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
     transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,transactions.status,
+    transactions.capital_flow AS capitalFlow,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName,transactions.due_at AS dueAt
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -353,6 +364,11 @@ export function updateTransaction(id, values = {}) {
   assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
   const category = String(values.category || current.category).slice(0, 80);
   const rawText = String(values.rawText ?? current.rawText).slice(0, 1000);
+  // ثبت سرمایه‌ای نوعش را از جریانش می‌گیرد، نه از فرم: «آورده» همیشه
+  // بستانکار سرمایه است و «دارایی ثابت» همیشه بدهکار دارایی.
+  if (current.capitalFlow && values.type && values.type !== current.type) {
+    throw Object.assign(new Error('نوع ثبت آورده یا دارایی ثابت عوض نمی‌شود؛ اگر اشتباه ثبت شده، حذفش کن و درست ثبت کن.'), { code: 'CAPITAL_TYPE_LOCKED', status: 409 });
+  }
   const changedByUser = ['amount', 'type', 'category', 'accountId', 'account'].some((field) => values[field] !== undefined);
   const needsReview = values.needsReview === undefined ? (changedByUser ? false : current.needsReview) : Boolean(values.needsReview);
   const confidence = Number(values.confidence ?? current.confidence ?? 1);
@@ -368,7 +384,19 @@ export function updateTransaction(id, values = {}) {
         values.contactId === undefined ? current.contactId : (values.contactId || null), occurredAt,
         values.dueAt === undefined ? current.dueAt : (values.dueAt || null), confidence, needsReview ? 1 : 0,
         jsonText(confidenceDetails, {}), jsonText(reviewReasons, []), reviewState, new Date().toISOString(), id);
-    syncTransactionJournal(db, { id, amount, type, category, rawText, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
+    // سند این ثبت از کدام مسیر آمده بود؟ آورده و دارایی ثابت از
+    // `postCapitalJournal` می‌آیند و اگر ویرایش، سند تازه را از مسیر دستهٔ
+    // درآمد/هزینه بسازد، آورده تبدیل به درآمد می‌شود و دارایی ثابت به هزینه —
+    // دقیقاً همان چیزی که کل طراحی «جریان سرمایه» برای جلوگیری از آن ساخته
+    // شده بود. جمع سند هم درست می‌ماند، پس هیچ کنترلی نمی‌گیردش.
+    if (current.capitalFlow) {
+      postCapitalJournal(db, {
+        transactionId: id, kind: current.capitalFlow, amount, accountId, occurredAt,
+        title: capitalEntryTitle({ ...current, category }),
+      }, { createdBy: currentWorkspace()?.userId });
+    } else {
+      syncTransactionJournal(db, { id, amount, type, category, rawText, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
+    }
     audit('update', 'transaction', id, { before: current, after: values });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }

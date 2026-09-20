@@ -58,7 +58,7 @@ test('کل بدون والد و بدون کد سطح همچنان رد می‌ش
 test('کد سطح تا پایگاه‌داده می‌رسد؛ همان چیزی که خروجی می‌فرستد', () => {
   const database = new DatabaseSync(':memory:');
   database.exec(`
-    CREATE TABLE journal_lines (id TEXT PRIMARY KEY);
+    CREATE TABLE journal_lines (id TEXT PRIMARY KEY, account_id TEXT, debit INTEGER DEFAULT 0, credit INTEGER DEFAULT 0);
     CREATE TABLE ledger_accounts (id TEXT PRIMARY KEY, code TEXT, name TEXT, type TEXT);
   `);
   ensureChartSchema(database);

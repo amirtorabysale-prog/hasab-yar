@@ -604,11 +604,13 @@ export function attachMissingCounterpartyAnalytics(database) {
  */
 export function vatBalances(database) {
   ensureAccountingSchema(database);
-  const balance = (accountId) => Number(database.prepare(
+  const balance = (accountId) => (accountId ? Number(database.prepare(
     'SELECT COALESCE(SUM(debit)-SUM(credit),0) AS net FROM journal_lines WHERE account_id=?',
-  ).get(accountId).net || 0);
-  const output = outputTaxLedgerAccount(database);
-  const input = inputTaxLedgerAccount(database);
+  ).get(accountId).net || 0) : 0);
+  // فقط خواندن: ساختن حساب کار ثبت سند است، نه کار گزارش.
+  const find = (key) => database.prepare("SELECT id FROM ledger_accounts WHERE source_kind='system' AND source_key=?").get(key)?.id || null;
+  const output = find('output-tax');
+  const input = find('input-tax');
   return {
     outputAccountId: output, inputAccountId: input,
     // ماندهٔ فروش بستانکار است، پس با علامت مثبت گزارش می‌شود. جمع با صفر،
@@ -631,8 +633,12 @@ export function vatBalances(database) {
  * همان کاری که در عمل انجام می‌شود.
  */
 export function postVatSettlementJournal(database, { settlementId, occurredAt, cashAccountId, memo }, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
-  const { outputAccountId, inputAccountId, outputTax, inputTax } = vatBalances(database);
+  const { outputTax, inputTax } = vatBalances(database);
   if (outputTax <= 0) throw accountingError('بدهی ارزش افزودهٔ تسویه‌نشده‌ای در دفتر نیست.', 'VAT_NOTHING_TO_SETTLE');
+  // اینجا حساب حتماً وجود دارد (ماندهٔ مثبت دارد)، ولی گرفتنش از همان تابعی
+  // که سند هم از آن می‌گیرد، یک منبع می‌ماند.
+  const outputAccountId = outputTaxLedgerAccount(database);
+  const inputAccountId = inputTaxLedgerAccount(database);
   const offset = Math.min(outputTax, inputTax);
   const payable = outputTax - offset;
   const at = occurredAt || new Date().toISOString();
