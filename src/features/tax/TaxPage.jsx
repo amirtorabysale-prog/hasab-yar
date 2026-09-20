@@ -31,11 +31,50 @@ export function TaxPage({ access, notify }) {
     catch (error) { notify(error.message); }
     finally { setBusy(false); }
   };
+  /**
+   * تسویهٔ دوره — از ماندهٔ دفتر، نه از گزارش بالا.
+   *
+   * گزارش می‌گوید این بازه چه شد؛ مانده می‌گوید چقدر از آن هنوز تسویه نشده.
+   * این دو یکی نیستند و قاطی‌شدنشان یعنی یک دوره دو بار پرداخت می‌شود.
+   */
+  const settleVat = async () => {
+    const payable = Math.max(0, (ledger.outputTax || 0) - (ledger.inputTax || 0));
+    const message = payable > 0
+      ? `مالیات فروشِ تسویه‌نشده ${formatAmount(ledger.outputTax || 0)} تومان است و اعتبار خرید ${formatAmount(ledger.inputTax || 0)} تومان. سند تسویه ثبت شود و ${formatAmount(payable)} تومان پرداخت شود؟`
+      : `مالیات فروشِ تسویه‌نشده ${formatAmount(ledger.outputTax || 0)} تومان با اعتبار خرید خنثی می‌شود و پرداختی ندارد. سند تسویه ثبت شود؟`;
+    if (!window.confirm(message)) return;
+    setBusy(true);
+    try {
+      const result = await api.settleVatPeriod({});
+      await load();
+      notify(result.paid > 0
+        ? `تسویه ثبت شد؛ ${formatAmount(result.paid)} تومان پرداخت شد.`
+        : `تسویه ثبت شد؛ ${formatAmount(result.carriedForward)} تومان اعتبار به دورهٔ بعد منتقل شد.`);
+    } catch (error) { notify(error.message); }
+    finally { setBusy(false); }
+  };
   const summary = report.summary || {};
+  const ledger = report.ledger || {};
   const treatmentLabels = { taxable: 'مشمول', zero: 'نرخ صفر', exempt: 'معاف' };
   return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
     <div><p className="text-[13px] font-bold text-accent">کنترل مدیریتی مالیات</p><h1 className="mt-1 text-xl font-extrabold">مالیات و ارزش افزوده</h1><p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">نرخ‌ها را مطابق وضعیت کسب‌وکارت تعریف کن. حساب‌یار مبلغ را شفاف محاسبه و در دفتر کل تفکیک می‌کند، اما به سامانه مودیان ارسال نمی‌کند.</p></div>
     <TaxAssistantPanel access={access} notify={notify} />
+    {/* ارزش افزوده هزینهٔ شرکت نیست؛ پول سازمان است که شرکت جمعش کرده. تا
+        تسویه نشود، دو حساب ارزش افزوده تا ابد بزرگ می‌شوند. */}
+    <section className="mt-4 rounded-[10px] border border-accent/40 bg-warn-bg p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-extrabold text-accent">ماندهٔ تسویه‌نشدهٔ ارزش افزوده</h2>
+          <p className="mt-1 text-[12px] leading-6 text-muted">
+            این عدد از دفتر می‌آید، نه از بازهٔ گزارش پایین: مالیات فروش <b className="numbers text-ink">{formatAmount(ledger.outputTax || 0)}</b> تومان
+            و اعتبار خرید <b className="numbers text-ink">{formatAmount(ledger.inputTax || 0)}</b> تومان.
+            تسویه اعتبار را خنثی می‌کند و فقط خالص را می‌پردازد؛ اعتبار اضافی به دورهٔ بعد منتقل می‌شود.
+          </p>
+        </div>
+        {canManage && (ledger.outputTax || 0) > 0 && <button disabled={busy} onClick={settleVat}
+          className="tap shrink-0 rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">ثبت سند تسویه</button>}
+      </div>
+    </section>
     <div className="mt-4 grid grid-cols-3 rounded-lg border border-line bg-surface p-1">{[[30, '۳۰ روز'], [90, '۹۰ روز'], [365, 'یک سال']].map(([value, label]) => <button key={value} onClick={() => setDays(value)} className={`tap rounded-md text-sm font-bold ${days === value ? 'bg-ink text-white' : 'text-muted'}`}>{label}</button>)}</div>
     <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات فروش</p><b className="numbers mt-2 block text-lg text-expense">{formatAmount(summary.outputTax || 0)}</b><span className="text-[10px] text-muted">تومان</span></div><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">اعتبار خرید</p><b className="numbers mt-2 block text-lg text-income">{formatAmount(summary.inputTax || 0)}</b><span className="text-[10px] text-muted">تومان</span></div><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">خالص برآوردی</p><b className={`numbers mt-2 block text-lg ${(summary.netTax || 0) > 0 ? 'text-expense' : 'text-income'}`}>{formatAmount(summary.netTax || 0)}</b><span className="text-[10px] text-muted">تومان</span></div><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات دستی قدیمی</p><b className="numbers mt-2 block text-lg">{formatAmount(summary.manualTax || 0)}</b><span className="text-[10px] text-muted">نیازمند بازبینی</span></div></div>
     <section className="mt-5 rounded-[10px] border border-line bg-surface p-4"><h2 className="font-extrabold">تفکیک فروش</h2><div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">مشمول</span><b className="numbers mt-2 block text-sm">{formatAmount(summary.taxableSales || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">نرخ صفر</span><b className="numbers mt-2 block text-sm">{formatAmount(summary.zeroSales || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">معاف</span><b className="numbers mt-2 block text-sm">{formatAmount(summary.exemptSales || 0)}</b></div></div><p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[11px] leading-6 text-muted">«نرخ صفر» و «معاف» از نظر گزارش یکسان نیستند؛ انتخاب نوع صحیح بر عهده کسب‌وکار و حسابدار است.</p></section>

@@ -1,5 +1,8 @@
 import { askTaxAssistant as askTaxAssistantCore, listTaxAssistantQuestions as listTaxAssistantQuestionsCore, listTaxKnowledgeSources as listTaxKnowledgeSourcesCore, resolveTaxAssistantQuestion as resolveTaxAssistantQuestionCore, saveTaxKnowledgeSource as saveTaxKnowledgeSourceCore } from '../taxAssistant.js';
-import { audit, currentWorkspace, db } from './core.js';
+import { randomUUID } from 'node:crypto';
+import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
+import { postVatSettlementJournal, vatBalances } from '../accounting.js';
+import { resolveAccountId } from './accounts.js';
 import { citableVersionsAt, getTaxDocument as getTaxDocumentCore, getTaxDocumentVersion as getTaxDocumentVersionCore, listTaxDocuments as listTaxDocumentsCore, listTaxReviewQueue as listTaxReviewQueueCore, publishTaxDocumentVersion as publishTaxDocumentVersionCore, rejectTaxDocumentVersion as rejectTaxDocumentVersionCore, saveTaxDocumentDraft as saveTaxDocumentDraftCore, saveTaxDocumentRelation as saveTaxDocumentRelationCore } from '../taxKnowledge.js';
 import { listTaxRates as listTaxRatesCore, saveTaxRate as saveTaxRateCore, taxReport as taxReportCore } from '../tax.js';
 
@@ -14,7 +17,34 @@ export function saveTaxRate(values = {}) {
 }
 
 export function taxReport(filters = {}) {
-  return taxReportCore(db, filters);
+  // ماندهٔ دفتری کنار گزارش فاکتوری می‌آید: گزارش می‌گوید این دوره چه شد و
+  // مانده می‌گوید چقدر از آن هنوز تسویه نشده. این دو یکی نیستند و
+  // قاطی‌شدنشان یعنی مالیات دو بار پرداخت می‌شود.
+  return { ...taxReportCore(db, filters), ledger: vatBalances(activeWorkspaceDatabase()) };
+}
+
+/**
+ * تسویهٔ دورهٔ ارزش افزوده — از روی ماندهٔ دفتر، نه دوبارهٔ فاکتورها.
+ *
+ * ارزش افزوده هزینهٔ شرکت نیست؛ پول سازمان است که شرکت جمعش کرده. بدون این
+ * تسویه، دو حساب ارزش افزوده تا ابد بزرگ می‌شوند و پرداخت واقعی هم جایی جز
+ * «هزینه» نمی‌نشیند.
+ */
+export function settleVatPeriod({ accountId, account = 'cash', occurredAt = '', memo = '' } = {}) {
+  const database = activeWorkspaceDatabase();
+  database.exec('BEGIN IMMEDIATE');
+  let result;
+  try {
+    result = postVatSettlementJournal(database, {
+      settlementId: randomUUID(), occurredAt, memo,
+      cashAccountId: resolveAccountId({ account, accountId }),
+    }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  audit('settle', 'vat_period', result.id, {
+    outputTax: result.outputTax, inputTax: result.inputTax, paid: result.paid, carriedForward: result.carriedForward,
+  });
+  return result;
 }
 
 export function listTaxKnowledgeSources(filters = {}) {

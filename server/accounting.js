@@ -592,6 +592,65 @@ export function attachMissingCounterpartyAnalytics(database) {
 }
 
 // ---------------------------------------------------------------------------
+// تسویهٔ دورهٔ مالیات بر ارزش افزوده
+// ---------------------------------------------------------------------------
+
+/**
+ * ماندهٔ دو حساب ارزش افزوده.
+ *
+ * فروش بستانکار است (بدهی به سازمان) و خرید بدهکار (اعتبار). گزارش مالیاتی
+ * از فاکتورها ساخته می‌شود ولی تسویه باید از **دفتر** بیاید: همان مانده‌ای
+ * که واقعاً در حساب نشسته، نه چیزی که دوباره از فاکتورها حساب شود.
+ */
+export function vatBalances(database) {
+  ensureAccountingSchema(database);
+  const balance = (accountId) => Number(database.prepare(
+    'SELECT COALESCE(SUM(debit)-SUM(credit),0) AS net FROM journal_lines WHERE account_id=?',
+  ).get(accountId).net || 0);
+  const output = outputTaxLedgerAccount(database);
+  const input = inputTaxLedgerAccount(database);
+  return {
+    outputAccountId: output, inputAccountId: input,
+    // ماندهٔ فروش بستانکار است، پس با علامت مثبت گزارش می‌شود. جمع با صفر،
+    // «منفی صفر» را برمی‌دارد — وگرنه در رابط «−۰» نوشته می‌شود.
+    outputTax: -balance(output) + 0,
+    inputTax: balance(input) + 0,
+  };
+}
+
+/**
+ * تسویهٔ دورهٔ ارزش افزوده.
+ *
+ * بدون این، دو حساب ارزش افزوده تا ابد بزرگ می‌شوند: بدهی به سازمان و
+ * اعتبار خرید هیچ‌وقت خنثی نمی‌شوند و ترازنامه هر دو را باد می‌کند. بدتر،
+ * وقتی شرکت واقعاً مالیات را می‌پردازد، آن پرداخت جایی جز «هزینه» نمی‌نشیند
+ * — و ارزش افزوده هزینهٔ شرکت نیست، پول سازمان است که شرکت فقط جمعش کرده.
+ *
+ * اعتبار اضافی منتقل می‌شود، نه مطالبه: اگر اعتبار خرید از بدهی فروش بیشتر
+ * باشد فقط به اندازهٔ بدهی خنثی می‌شود و باقی‌اش برای دورهٔ بعد می‌ماند —
+ * همان کاری که در عمل انجام می‌شود.
+ */
+export function postVatSettlementJournal(database, { settlementId, occurredAt, cashAccountId, memo }, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  const { outputAccountId, inputAccountId, outputTax, inputTax } = vatBalances(database);
+  if (outputTax <= 0) throw accountingError('بدهی ارزش افزودهٔ تسویه‌نشده‌ای در دفتر نیست.', 'VAT_NOTHING_TO_SETTLE');
+  const offset = Math.min(outputTax, inputTax);
+  const payable = outputTax - offset;
+  const at = occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(at, timeZone));
+
+  const lines = [{ accountId: outputAccountId, debit: outputTax, description: 'بستن مالیات فروش دوره' }];
+  if (offset > 0) lines.push({ accountId: inputAccountId, credit: offset, description: 'استفاده از اعتبار مالیات خرید' });
+  if (payable > 0) {
+    lines.push({ accountId: operationalLedgerAccount(database, cashAccountId || 'cash'), credit: payable, description: 'پرداخت مالیات ارزش افزوده' });
+  }
+  const posted = insertJournal(database, {
+    sourceType: 'vat_settlement', sourceId: settlementId, revision: 1,
+    occurredAt: at, memo: String(memo || 'تسویهٔ دورهٔ ارزش افزوده').slice(0, 200), createdBy, timeZone, lines,
+  });
+  return { ...posted, outputTax, inputTax, offset, paid: payable, carriedForward: inputTax - offset };
+}
+
+// ---------------------------------------------------------------------------
 // چک
 // ---------------------------------------------------------------------------
 

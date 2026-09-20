@@ -307,6 +307,7 @@ export const api = {
   applyChartSuggestions: ({ refine = false } = {}) => request('/api/chart/mappings/suggest', { method: 'POST', body: JSON.stringify({ refine }) }),
   mapLedgerAccountsInBulk: (ledgerAccountIds, chartAccountId) => request('/api/chart/mappings/bulk', { method: 'POST', body: JSON.stringify({ ledgerAccountIds, chartAccountId }) }),
   attachCounterpartyAnalytics: () => request('/api/chart/analytics/attach', { method: 'POST' }),
+  settleVatPeriod: (payload = {}) => request('/api/tax/settle-vat', { method: 'POST', body: JSON.stringify(payload) }),
   cheques: (query = {}) => request(`/api/cheques?${new URLSearchParams(query)}`),
   recordCheque: (payload) => request('/api/cheques', { method: 'POST', body: JSON.stringify(payload) }),
   clearCheque: (id, payload = {}) => request(`/api/cheques/${encodeURIComponent(id)}/clear`, { method: 'POST', body: JSON.stringify(payload) }),

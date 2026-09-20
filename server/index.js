@@ -14,7 +14,7 @@ import {
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
-  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque,
+  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
@@ -411,6 +411,11 @@ app.post('/api/import/chart', chartUpload.single('file'), (request, response, ne
     }));
   } catch (error) { return next(error); }
 });
+// تسویهٔ دورهٔ ارزش افزوده — از ماندهٔ دفتر، نه دوبارهٔ فاکتورها.
+app.post('/api/tax/settle-vat', (request, response, next) => {
+  try { return response.json(settleVatPeriod(request.body || {})); } catch (error) { return next(error); }
+});
+
 // دفتر چک: ثبت، وصول، برگشت.
 app.get('/api/cheques', (request, response, next) => {
   try {
