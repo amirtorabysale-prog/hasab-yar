@@ -7,7 +7,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
+  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit,
@@ -661,6 +661,16 @@ app.post('/api/transactions/:id/correct', (request, response, next) => {
 app.post('/api/transactions/:id/redo', (request, response, next) => { try { return response.status(201).json({ item: redoTransaction(request.params.id) }); } catch (error) { return next(error); } });
 app.delete('/api/transactions/:id', (request, response, next) => { try { return response.status(deleteTransaction(request.params.id) ? 204 : 404).end(); } catch (error) { return next(error); } });
 app.get('/api/contacts', (_request, response) => response.json({ items: listContacts() }));
+// کارت حساب یک طرف حساب: گردشش از دفتر کل، با مانده‌گیری تجمعی. بازه اختیاری
+// است و وقتی داده شود، مانده پیش از آن به‌عنوان افتتاحیه برمی‌گردد.
+app.get('/api/contacts/:id/card', (request, response, next) => {
+  try {
+    return response.json(counterpartyCard(request.params.id, {
+      from: String(request.query.from || '').slice(0, 40),
+      to: String(request.query.to || '').slice(0, 40),
+    }));
+  } catch (error) { return next(error); }
+});
 app.post('/api/contacts', (request, response, next) => { try { response.status(201).json({ item: saveContact(request.body) }); } catch (error) { next(error); } });
 app.put('/api/contacts/:id', (request, response, next) => { try { response.json({ item: saveContact({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.delete('/api/contacts/:id', (request, response) => response.status(deleteContact(request.params.id) ? 204 : 404).end());

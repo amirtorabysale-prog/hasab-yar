@@ -262,6 +262,8 @@ export const api = {
   accounts: () => request('/api/accounts'),
   saveAccount: (payload) => request(payload.id ? `/api/accounts/${payload.id}` : '/api/accounts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   contacts: () => request('/api/contacts'),
+  // کارت حساب یک طرف حساب: گردشش از دفتر کل با مانده‌گیری تجمعی.
+  contactCard: (id, { from = '', to = '' } = {}) => request(`/api/contacts/${encodeURIComponent(id)}/card?${new URLSearchParams({ from, to })}`),
   saveContact: (payload) => request(payload.id ? `/api/contacts/${payload.id}` : '/api/contacts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   deleteContact: (id) => request(`/api/contacts/${id}`, { method: 'DELETE' }),
   obligations: (status = 'open') => request(`/api/obligations?status=${encodeURIComponent(status)}`),
