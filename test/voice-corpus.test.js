@@ -45,6 +45,80 @@ const curated = [
   ['برای خرید ابزار پنج میلیون خرج کردم', 5_000_000, 'expense'],
 ];
 
+/**
+ * پسوند «ی» صفتی، و شمارنده‌ای که مبلغ نیست.
+ *
+ * دو شکست واقعی که هیچ‌کدام در corpus بالا نبودند و هر دو مبلغ را غلط
+ * می‌خواندند — نه اینکه چیزی پیدا نکنند، که خیلی بدتر است: کاربر یک عدد
+ * می‌بیند و ممکن است تأییدش کند.
+ *
+ * ۱. «چک سه میلیونی گرفتم» سه تومان می‌خواند، چون «میلیونی» در فهرست
+ *    مقیاس‌ها نبود و فقط «میلیون» بود. همین برای «هزاری» و «میلیاردی» هم
+ *    بود — یعنی مبلغ هزار تا یک‌میلیون برابر کوچک می‌شد.
+ *
+ * ۲. عددِ شمارنده پیش از اسمِ سند، یک ثبت جعلی می‌ساخت: «یک چک سه میلیونی
+ *    دادم» دو تراکنش می‌داد، یکی سه میلیون و یکی یک تومان. قاعدهٔ حذفِ
+ *    شمارنده وجود داشت ولی فقط اسم‌های مالی («فروش»، «خرید»…) را می‌شناخت،
+ *    نه اسم خودِ سند را.
+ */
+const scaleSuffix = [
+  ['چک سه میلیونی گرفتم', 3_000_000, 'income'],
+  ['خرید پانصد هزاری کردم', 500_000, 'expense'],
+  ['جنس ده میلیونی خریدم', 10_000_000, 'expense'],
+  ['یک قرارداد دو میلیاردی فروختم', 2_000_000_000, 'income'],
+  ['دومیلیونی فروختم', 2_000_000, 'income'],
+];
+
+const counterBeforeDocument = [
+  ['یک چک سه میلیونی دادم', 3_000_000, 'expense'],
+  ['یه اسکناس پنجاه هزاری دادم', 50_000, 'expense'],
+  ['یک فاکتور دو میلیونی زدم', 2_000_000, 'expense'],
+  ['یه کارت صد هزاری فروختم', 100_000, 'income'],
+  ['دو چک پانصد هزاری گرفتم', 500_000, 'income'],
+];
+
+test('the adjectival scale suffix is read as a scale, not dropped', () => {
+  for (const [text, amount, type] of scaleSuffix) {
+    const actual = parseFinancialText(text, { source: 'voice' }).transactions.map(({ amount: value, type: kind }) => ({ amount: value, type: kind }));
+    assert.deepEqual(actual, [{ amount, type }], text);
+  }
+});
+
+test('a counter before a document noun never becomes a second transaction', () => {
+  for (const [text, amount, type] of counterBeforeDocument) {
+    const actual = parseFinancialText(text, { source: 'voice' }).transactions.map(({ amount: value, type: kind }) => ({ amount: value, type: kind }));
+    assert.deepEqual(actual, [{ amount, type }], text);
+  }
+});
+
+test('collecting a receivable is money coming in, not going out', () => {
+  // «وصول» جهت روشنی دارد و نداشتنش در فهرست درآمد یعنی «چک وصول شد» هزینه
+  // ثبت می‌شد — درست وارونهٔ چیزی که اتفاق افتاده.
+  for (const text of ['دو میلیون تومان چک وصول شد', 'طلبم را وصول کردم سه میلیون']) {
+    assert.equal(parseFinancialText(text, { source: 'voice' }).transactions[0]?.type, 'income', text);
+  }
+  // ولی «وصول» در جمله‌ای که فعل و اسمش هزینه است، جهت را وارونه نمی‌کند.
+  const spent = parseFinancialText('یک میلیون بابت وصول مطالبات هزینه دادم', { source: 'voice' });
+  assert.equal(spent.transactions[0]?.type, 'expense');
+});
+
+test('a genuinely two-sided phrase is flagged instead of guessed silently', () => {
+  // «چک نقد کردم» واقعاً دوپهلوست: «نقدی خریدم» هزینه است. حدسِ خاموش
+  // بدترین کار است؛ گفتنِ اینکه مطمئن نیست، درست است.
+  const [transaction] = parseFinancialText('دو میلیون تومان چک نقد کردم', { source: 'voice' }).transactions;
+  assert.equal(transaction.needsReview, true);
+  assert.ok(transaction.reviewReasons.some((reason) => reason.includes('نوع')), 'باید دربارهٔ نوع هشدار بدهد');
+});
+
+test('a real small amount beside a bigger one is never mistaken for a counter', () => {
+  // مرز مقابل همان قاعده. اگر بیش از حد سخت‌گیر شود، مبلغ کوچکِ واقعی را هم
+  // دور می‌ریزد و کاربر بی‌صدا یک ثبت را از دست می‌دهد. واحد پول در میانه
+  // یعنی این یک مبلغ است، نه شمارنده.
+  const actual = parseFinancialText('پنجاه تومان قبض دادم و دو میلیون فروختم', { source: 'voice' })
+    .transactions.map(({ amount, type }) => ({ amount, type }));
+  assert.deepEqual(actual, [{ amount: 50_000, type: 'expense' }, { amount: 2_000_000, type: 'income' }]);
+});
+
 test('regresses more than 300 Persian financial utterance shapes', () => {
   const corpus = [];
   for (const [spoken, value] of amounts) {
