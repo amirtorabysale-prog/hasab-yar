@@ -14,6 +14,7 @@ import {
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
+  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
@@ -410,6 +411,25 @@ app.post('/api/import/chart', chartUpload.single('file'), (request, response, ne
     }));
   } catch (error) { return next(error); }
 });
+// دفتر چک: ثبت، وصول، برگشت.
+app.get('/api/cheques', (request, response, next) => {
+  try {
+    return response.json({
+      items: listCheques({ status: request.query?.status ?? 'open', direction: request.query?.direction }),
+      summary: chequeSummary(),
+    });
+  } catch (error) { return next(error); }
+});
+app.post('/api/cheques', (request, response, next) => {
+  try { return response.status(201).json({ item: recordCheque(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/cheques/:id/clear', (request, response, next) => {
+  try { return response.json({ item: clearCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/cheques/:id/bounce', (request, response, next) => {
+  try { return response.json({ item: bounceCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+
 // لیست حقوق: فایل دفتر، سند، و تسویهٔ سه بدهیِ جدا.
 app.get('/api/payroll', (request, response, next) => {
   try { return response.json({ items: listPayrollRuns({ limit: request.query?.limit }) }); } catch (error) { return next(error); }

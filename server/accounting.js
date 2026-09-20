@@ -592,6 +592,85 @@ export function attachMissingCounterpartyAnalytics(database) {
 }
 
 // ---------------------------------------------------------------------------
+// چک
+// ---------------------------------------------------------------------------
+
+/**
+ * حساب اسناد دریافتنی و پرداختنی.
+ *
+ * چک از مطالبات عادی جدا می‌ماند: سررسید دارد، ممکن است برگشت بخورد، و تا
+ * وصول نشود پول نیست. ریختنش در همان حساب دریافتنی یعنی نه سررسیدی پیداست و
+ * نه می‌شود گفت چقدر از مطالبات، چکِ در جریان است.
+ */
+export function chequeLedgerAccounts(database) {
+  ensureAccountingSchema(database);
+  return {
+    noteReceivable: linkedLedgerAccount(database, 'cheque-receivable', 'notes', 'اسناد دریافتنی (چک)', 'asset'),
+    notePayable: linkedLedgerAccount(database, 'cheque-payable', 'notes', 'اسناد پرداختنی (چک)', 'liability'),
+  };
+}
+
+/**
+ * سند هر سه مرحلهٔ زندگی یک چک.
+ *
+ * ثبت: چک دریافتی، اسناد دریافتنی را بدهکار می‌کند. طرف دیگرش بستگی دارد به
+ * اینکه چک بابت فروش تازه باشد (درآمد) یا بابت طلب قبلی (حساب دریافتنی).
+ * دومی حیاتی است: آن فروش قبلاً درآمد شده و شناسایی دوباره‌اش یعنی همان مبلغ
+ * دو بار در سود دوره و دو بار در مالیات.
+ *
+ * وصول: پول واقعاً می‌آید — نقد بدهکار، اسناد دریافتنی بستانکار. نه درآمدی
+ * ساخته می‌شود و نه هزینه‌ای.
+ *
+ * برگشت: طلب از بین نرفته، فقط ابزارش باطل شده — مبلغ از اسناد دریافتنی به
+ * حساب دریافتنیِ همان شخص برمی‌گردد و او دوباره بدهکار می‌شود.
+ */
+export function postChequeJournal(database, values, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const amount = Math.round(Number(values.amount) || 0);
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ چک معتبر نیست.', 'CHEQUE_AMOUNT_INVALID');
+  const stage = values.stage || 'record';
+  const receivable = values.direction === 'receivable';
+  const occurredAt = values.occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
+
+  const notes = chequeLedgerAccounts(database);
+  const noteAccount = receivable ? notes.noteReceivable : notes.notePayable;
+  const party = values.counterparty || {};
+  const analyticId = party.analyticId || null;
+  const partyAccount = () => counterpartyLedgerAccount(database, party.contactId, party.name, receivable ? 'sales' : 'purchase');
+
+  let lines;
+  if (stage === 'record') {
+    const other = values.against === 'receivable'
+      ? partyAccount()
+      : categoryLedgerAccount(database, receivable ? 'income' : 'expense', values.category);
+    // تفصیلی فقط روی سطری می‌نشیند که واقعاً مال یک شخص است؛ روی حساب درآمد
+    // و هزینه معنایی ندارد.
+    const otherAnalytic = values.against === 'receivable' ? analyticId : null;
+    lines = receivable
+      ? [{ accountId: noteAccount, debit: amount, analyticId }, { accountId: other, credit: amount, analyticId: otherAnalytic }]
+      : [{ accountId: other, debit: amount, analyticId: otherAnalytic }, { accountId: noteAccount, credit: amount, analyticId }];
+  } else if (stage === 'clear') {
+    const cash = operationalLedgerAccount(database, values.cashAccountId || 'cash');
+    lines = receivable
+      ? [{ accountId: cash, debit: amount }, { accountId: noteAccount, credit: amount, analyticId }]
+      : [{ accountId: noteAccount, debit: amount, analyticId }, { accountId: cash, credit: amount }];
+  } else {
+    const party_ = partyAccount();
+    lines = receivable
+      ? [{ accountId: party_, debit: amount, analyticId }, { accountId: noteAccount, credit: amount, analyticId }]
+      : [{ accountId: noteAccount, debit: amount, analyticId }, { accountId: party_, credit: amount, analyticId }];
+  }
+
+  return insertJournal(database, {
+    sourceType: `cheque_${stage}`, sourceId: values.chequeId,
+    revision: nextRevision(database, `cheque_${stage}`, values.chequeId),
+    occurredAt, memo: String(values.memo || 'چک').slice(0, 200), createdBy, timeZone,
+    lines: lines.map((line) => ({ ...line, description: values.memo || '' })),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // حقوق و دستمزد
 // ---------------------------------------------------------------------------
 

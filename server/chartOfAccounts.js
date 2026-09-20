@@ -36,6 +36,9 @@ export const CHART_ROLES = Object.freeze([
   // نیست و تسویهٔ هرکدام، ماندهٔ دو تای دیگر را هم دست‌کاری می‌کند.
   'salary-expense', 'employer-insurance-expense',
   'salary-payable', 'insurance-payable', 'payroll-tax-payable',
+  // چک از مطالبات عادی جداست: سررسید دارد، ممکن است برگشت بخورد، و تا وصول
+  // نشود پول نیست. در تراز هم باید جدا دیده شود.
+  'note-receivable', 'note-payable',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({
@@ -398,6 +401,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['1103', 'تنخواه‌گردان', 'subsidiary', '11', 'asset', ''],
   ['12', 'حساب‌ها و اسناد دریافتنی', 'general', '1', 'asset', ''],
   ['1201', 'حساب‌های دریافتنی تجاری', 'subsidiary', '12', 'asset', 'receivable'],
+  ['1203', 'اسناد دریافتنی (چک)', 'subsidiary', '12', 'asset', 'note-receivable'],
   ['1202', 'اسناد دریافتنی', 'subsidiary', '12', 'asset', ''],
   ['13', 'موجودی کالا', 'general', '1', 'asset', ''],
   ['1301', 'موجودی کالا و مواد', 'subsidiary', '13', 'asset', 'inventory'],
@@ -410,7 +414,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['3', 'بدهی‌های جاری', 'group', '', 'liability', ''],
   ['31', 'حساب‌ها و اسناد پرداختنی', 'general', '3', 'liability', ''],
   ['3101', 'حساب‌های پرداختنی تجاری', 'subsidiary', '31', 'liability', 'payable'],
-  ['3102', 'اسناد پرداختنی', 'subsidiary', '31', 'liability', ''],
+  ['3102', 'اسناد پرداختنی (چک)', 'subsidiary', '31', 'liability', 'note-payable'],
   ['32', 'مالیات و عوارض پرداختنی', 'general', '3', 'liability', ''],
   ['3201', 'مالیات و عوارض ارزش افزودهٔ فروش', 'subsidiary', '32', 'liability', 'output-tax'],
   ['33', 'حقوق و بیمهٔ پرداختنی', 'general', '3', 'liability', ''],
@@ -571,6 +575,8 @@ const ROLE_BY_SOURCE_KIND = {
   'payroll-salary-payable': ['salary-payable', 'payable'],
   'payroll-insurance-payable': ['insurance-payable', 'payable'],
   'payroll-tax-payable': ['payroll-tax-payable', 'payable'],
+  'cheque-receivable': ['note-receivable', 'receivable'],
+  'cheque-payable': ['note-payable', 'payable'],
   'operational-account': ['cash', 'bank'],
   // هر دارایی ثابت حساب دفترکل خودش را می‌گیرد؛ همه به همان معین اموال نگاشته می‌شوند.
   'fixed-asset': ['fixed-asset'],

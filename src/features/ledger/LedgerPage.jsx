@@ -1,13 +1,14 @@
+import ChequesPanel from './ChequesPanel.jsx';
 import { Check, HandCoins, Landmark, ListFilter, Mic, PackageSearch, Pencil, Plus, Printer, ReceiptText, RotateCcw, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PRODUCT_POSITIONING, profileDefinition } from '../../../shared/product.js';
 import { api } from '../../lib/api.js';
+import { PersianDateInput } from '../../components/common.jsx';
 import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../../lib/liveSpeech.js';
 import { createWavRecorder } from '../../lib/wavRecorder.js';
 import { detectVoiceIntent } from '../../../shared/voiceIntent.js';
 import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { normalizePersian } from '../../../shared/normalize.js';
-import { persianToISO } from '../../../shared/persianDate.js';
 import { withCounterpartyConfirmation } from '../../lib/counterpartyPrompt.js';
 
 /**
@@ -22,56 +23,6 @@ function isoToDateInput(iso, timeZone = 'Asia/Tehran') {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
-/** ISO به متن شمسی، برای نمایش داخل ورودی. */
-function isoToPersianInput(iso, timeZone = 'Asia/Tehran') {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const parts = new Intl.DateTimeFormat('en-US-u-ca-persian', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(date).filter((part) => part.type !== 'literal')
-    .reduce((value, part) => ({ ...value, [part.type]: part.value }), {});
-  return `${parts.year}/${parts.month}/${parts.day}`;
-}
-
-function toLatinDigits(value) {
-  return String(value || '').replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)));
-}
-
-/**
- * ورودی تاریخ شمسی.
- *
- * <input type="date"> همیشه میلادی نشان می‌دهد و برای کاربر ایرانی بی‌معناست:
- * «۲۰۲۶/۰۸/۰۶» هیچ نمی‌گوید، «۱۴۰۵/۰۵/۱۵» همه‌چیز. تاریخ به‌صورت متن شمسی
- * گرفته و نشان داده می‌شود و تبدیل همین‌جا انجام می‌گیرد.
- *
- * تا وقتی کاربر در حال تایپ است مقدار بیرونی روی متن او نوشته نمی‌شود، وگرنه
- * نیمهٔ تایپ‌شده مدام پاک می‌شد.
- */
-function PersianDateInput({ value, onChange, placeholder = '۱۴۰۵/۰۵/۱۵', className = '' }) {
-  const [text, setText] = useState(() => isoToPersianInput(value));
-  const [typing, setTyping] = useState(false);
-  useEffect(() => { if (!typing) setText(isoToPersianInput(value)); }, [value, typing]);
-  const commit = (raw) => {
-    setText(raw);
-    setTyping(true);
-    const digits = toLatinDigits(raw).trim();
-    if (!digits) { onChange(''); return; }
-    const match = digits.match(/^(\d{4})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{1,2})$/);
-    if (!match) return;
-    const iso = persianToISO(Number(match[1]), Number(match[2]), Number(match[3]));
-    if (iso) onChange(iso);
-  };
-  const typed = toLatinDigits(text).trim();
-  const invalid = Boolean(typed) && !value;
-  return <span className="block">
-    <input
-      dir="ltr" inputMode="numeric" value={text} placeholder={placeholder}
-      onChange={(event) => commit(event.target.value)} onBlur={() => setTyping(false)}
-      className={`tap w-full rounded-lg border px-3 text-left numbers ${invalid ? 'border-expense' : 'border-line'} ${className}`}
-    />
-    {invalid && <span className="mt-1 block text-[10px] text-expense">تاریخ شمسی را به شکل ۱۴۰۵/۰۵/۱۵ بنویس.</span>}
-  </span>;
-}
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]);
 
@@ -297,7 +248,7 @@ function ObligationsPanel({ contacts: initialContacts, notify, refresh }) {
       load(); refresh();
     } catch (error) { notify(error.message); }
   };
-  return <section className="mt-5 space-y-6"><div><h2 className="font-extrabold">اشخاص</h2><div className="mt-2 flex gap-2"><input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="نام شخص یا مشتری" className="tap min-w-0 flex-1 rounded-lg border border-line bg-surface px-3" /><button onClick={addContact} className="tap rounded-lg bg-ink px-4 font-bold text-white">افزودن</button></div><div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto">{contacts.map((contact) => <span key={contact.id} className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-xs"><b>{contact.name}</b>{Number(contact.balance) !== 0 && <span className={`numbers mr-2 ${contact.balance > 0 ? 'text-income' : 'text-expense'}`}>{formatAmount(Math.abs(contact.balance))}</span>}</span>)}</div></div><form onSubmit={add} className="rounded-[10px] border border-line bg-surface p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">طلب یا بدهی تازه</h2><p className="mt-1 text-[11px] leading-5 text-muted">می‌توانی بگویی «حسن سه میلیون بدهکار شد». شخص تازه خودش ساخته می‌شود و ثبت با دکمهٔ خودت انجام می‌شود.</p></div><button type="button" disabled={busyVoice} onClick={dictating ? finishDictation : toggleDictation} className={`tap grid shrink-0 place-items-center rounded-lg border px-3 disabled:opacity-40 ${dictating ? 'border-expense bg-expense/10 text-expense' : 'border-line text-accent'}`} aria-label={dictating ? 'پایان گفتن' : 'گفتن طلب یا بدهی'}>{busyVoice ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent/30 border-t-accent" /> : <Mic size={19} />}</button></div>{dictating && <p className="mt-2 text-[11px] font-bold text-expense">در حال شنیدن… وقتی حرفت تمام شد دوباره روی میکروفن بزن.</p>}{busyVoice && <p className="mt-2 text-[11px] font-bold text-accent">صدا روی سرور بررسی می‌شود…</p>}{heard && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{heard}»</blockquote>}{draft.spokenName && <p className="mt-2 text-[11px] leading-5 text-accent">شخص «{draft.spokenName}» در دفتر نیست و با ذخیره‌شدن این ثبت ساخته می‌شود.</p>}{(draft.occurredAt || draft.dueAt) && <p className="mt-1 text-[11px] leading-5 text-muted">{draft.occurredAt && <>تاریخ بدهکار/طلبکار شدن: <b className="text-ink">{persianDate(draft.occurredAt)}</b></>}{draft.occurredAt && draft.dueAt ? ' · ' : ''}{draft.dueAt && <>سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></>}</p>}<div className="mt-3 grid gap-2 sm:grid-cols-2"><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً طلب از حسن" className="tap rounded-lg border border-line px-3" /><input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3" /><select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="receivable">طلب دارم</option><option value="payable">بدهکارم</option></select><select value={draft.contactId} onChange={(event) => setDraft({ ...draft, contactId: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="">بدون شخص</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select><label className="text-[11px] text-muted">تاریخ بدهکار/طلبکار شدن<PersianDateInput value={draft.occurredAt} onChange={(iso) => setDraft({ ...draft, occurredAt: iso })} /></label><label className="text-[11px] text-muted">سررسید<PersianDateInput value={draft.dueAt} onChange={(iso) => setDraft({ ...draft, dueAt: iso })} /></label><button className="tap rounded-lg bg-accent font-bold text-white">ذخیره سررسید</button></div></form><div className="divide-y divide-line border-y border-line">{items.length ? items.map((item) => <article key={item.id} className="flex min-h-[76px] items-center gap-3 py-3"><HandCoins className={item.direction === 'receivable' ? 'text-income' : 'text-expense'} /><div className="min-w-0 flex-1"><p className="font-bold">{item.title}</p><p className="mt-1 text-xs text-muted">{item.contactName || 'بدون شخص'}{item.dueAt ? ` · سررسید ${new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(item.dueAt))}` : ''}</p></div><div className="shrink-0 text-left"><b className="numbers block text-sm">{formatAmount(item.remaining ?? item.amount)}</b>{item.paidAmount > 0 && <span className="numbers block text-[11px] text-muted">از {formatAmount(item.amount)}</span>}</div><div className="flex shrink-0 gap-1"><button onClick={() => settle(item, true)} className="tap rounded-lg border border-line px-2 text-xs font-bold text-muted">بخشی</button><button onClick={() => settle(item)} className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">تسویه</button></div></article>) : <p className="py-10 text-center text-sm text-muted">طلب یا بدهی بازی نداری.</p>}</div></section>;
+  return <section className="mt-5 space-y-6"><div><h2 className="font-extrabold">اشخاص</h2><div className="mt-2 flex gap-2"><input value={contactName} onChange={(event) => setContactName(event.target.value)} placeholder="نام شخص یا مشتری" className="tap min-w-0 flex-1 rounded-lg border border-line bg-surface px-3" /><button onClick={addContact} className="tap rounded-lg bg-ink px-4 font-bold text-white">افزودن</button></div><div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto">{contacts.map((contact) => <span key={contact.id} className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-xs"><b>{contact.name}</b>{Number(contact.balance) !== 0 && <span className={`numbers mr-2 ${contact.balance > 0 ? 'text-income' : 'text-expense'}`}>{formatAmount(Math.abs(contact.balance))}</span>}</span>)}</div></div><form onSubmit={add} className="rounded-[10px] border border-line bg-surface p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="font-extrabold">طلب یا بدهی تازه</h2><p className="mt-1 text-[11px] leading-5 text-muted">می‌توانی بگویی «حسن سه میلیون بدهکار شد». شخص تازه خودش ساخته می‌شود و ثبت با دکمهٔ خودت انجام می‌شود.</p></div><button type="button" disabled={busyVoice} onClick={dictating ? finishDictation : toggleDictation} className={`tap grid shrink-0 place-items-center rounded-lg border px-3 disabled:opacity-40 ${dictating ? 'border-expense bg-expense/10 text-expense' : 'border-line text-accent'}`} aria-label={dictating ? 'پایان گفتن' : 'گفتن طلب یا بدهی'}>{busyVoice ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent/30 border-t-accent" /> : <Mic size={19} />}</button></div>{dictating && <p className="mt-2 text-[11px] font-bold text-expense">در حال شنیدن… وقتی حرفت تمام شد دوباره روی میکروفن بزن.</p>}{busyVoice && <p className="mt-2 text-[11px] font-bold text-accent">صدا روی سرور بررسی می‌شود…</p>}{heard && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{heard}»</blockquote>}{draft.spokenName && <p className="mt-2 text-[11px] leading-5 text-accent">شخص «{draft.spokenName}» در دفتر نیست و با ذخیره‌شدن این ثبت ساخته می‌شود.</p>}{(draft.occurredAt || draft.dueAt) && <p className="mt-1 text-[11px] leading-5 text-muted">{draft.occurredAt && <>تاریخ بدهکار/طلبکار شدن: <b className="text-ink">{persianDate(draft.occurredAt)}</b></>}{draft.occurredAt && draft.dueAt ? ' · ' : ''}{draft.dueAt && <>سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></>}</p>}<div className="mt-3 grid gap-2 sm:grid-cols-2"><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="مثلاً طلب از حسن" className="tap rounded-lg border border-line px-3" /><input required inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })} placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3" /><select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="receivable">طلب دارم</option><option value="payable">بدهکارم</option></select><select value={draft.contactId} onChange={(event) => setDraft({ ...draft, contactId: event.target.value })} className="tap rounded-lg border border-line px-3"><option value="">بدون شخص</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</select><label className="text-[11px] text-muted">تاریخ بدهکار/طلبکار شدن<PersianDateInput value={draft.occurredAt} onChange={(iso) => setDraft({ ...draft, occurredAt: iso })} /></label><label className="text-[11px] text-muted">سررسید<PersianDateInput value={draft.dueAt} onChange={(iso) => setDraft({ ...draft, dueAt: iso })} /></label><button className="tap rounded-lg bg-accent font-bold text-white">ذخیره سررسید</button></div></form><div className="divide-y divide-line border-y border-line">{items.length ? items.map((item) => <article key={item.id} className="flex min-h-[76px] items-center gap-3 py-3"><HandCoins className={item.direction === 'receivable' ? 'text-income' : 'text-expense'} /><div className="min-w-0 flex-1"><p className="font-bold">{item.title}</p><p className="mt-1 text-xs text-muted">{item.contactName || 'بدون شخص'}{item.dueAt ? ` · سررسید ${new Intl.DateTimeFormat('fa-IR-u-ca-persian').format(new Date(item.dueAt))}` : ''}</p></div><div className="shrink-0 text-left"><b className="numbers block text-sm">{formatAmount(item.remaining ?? item.amount)}</b>{item.paidAmount > 0 && <span className="numbers block text-[11px] text-muted">از {formatAmount(item.amount)}</span>}</div><div className="flex shrink-0 gap-1"><button onClick={() => settle(item, true)} className="tap rounded-lg border border-line px-2 text-xs font-bold text-muted">بخشی</button><button onClick={() => settle(item)} className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">تسویه</button></div></article>) : <p className="py-10 text-center text-sm text-muted">طلب یا بدهی بازی نداری.</p>}</div><ChequesPanel contacts={contacts} notify={notify} refresh={refresh} /></section>;
 }
 
 function InvoicesPanel({ contacts, accounts, categories, notify, refresh }) {
