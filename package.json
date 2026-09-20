@@ -13,6 +13,7 @@
     "test": "node --test",
     "smoke:production": "node scripts/production-smoke.mjs",
     "verify:parsian": "node scripts/verify-parsian-roundtrip.mjs",
+    "link:counterparties": "node scripts/link-counterparties.mjs",
     "seed": "node server/seed.js"
   },
   "dependencies": {
