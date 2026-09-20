@@ -15,7 +15,7 @@ const databasePath = tempDatabase('counterparty-card');
 process.env.DATABASE_PATH = databasePath;
 
 const db = await import(`../server/db.js?counterparty-card=${process.pid}`);
-const { counterpartyCard, createInvoice, issueInvoice, recordInvoicePayment, saveContact } = db;
+const { counterpartyCard, createInvoice, issueInvoice, recordInvoicePayment, saveContact, saveObligation } = db;
 
 test.after(() => removeTempDatabase(databasePath));
 
@@ -87,4 +87,43 @@ test('طرف حسابِ بدون گردش، کارت خالی می‌گیرد ن
 
 test('شناسهٔ ناشناخته خطای روشن می‌دهد', () => {
   assert.throws(() => counterpartyCard('این-شناسه-وجود-ندارد'), /پیدا نشد/);
+});
+
+test('کارت هرگز بی‌صدا «تسویه» نمی‌گوید وقتی سند باز هست', () => {
+  // باگی که کاربر پیدا کرد: فهرست طرف حساب‌ها ۲۵٬۶۸۰٬۰۰۰ بستانکار نشان
+  // می‌داد و کارت همان شخص «تسویه». دو عدد متناقض یعنی کاربر به هیچ‌کدام
+  // اعتماد نمی‌کند — و عددِ غلطِ مطمئن از عددِ نبودن هم بدتر است.
+  //
+  // علتش این است که فهرست از جدول تعهد و فاکتور می‌خواند و کارت از دفتر کل.
+  // سندی که طرف حسابش موقع ثبت وصل نبوده، در دفتر کل حسابی به نام خودش
+  // می‌سازد که به این شخص نمی‌چسبد.
+  const contact = saveContact({ name: 'محسن اعتصامی', kind: 'person' });
+  saveObligation({
+    contactId: contact.id, title: 'بدهی', amount: 25_680_000,
+    direction: 'payable', occurredAt: '2026-05-01T09:00:00.000Z',
+  });
+  // همان چیزی که در دادهٔ واقعی افتاده: حساب دفتر کل به این شخص نمی‌چسبد.
+  db.db.prepare("UPDATE ledger_accounts SET source_key='کلید جامانده' WHERE source_kind='vendor-payable'").run();
+
+  const card = counterpartyCard(contact.id);
+
+  assert.equal(card.lines.length, 0, 'دفتر کل چیزی برای این شخص ندارد');
+  assert.equal(card.reconciliation.documents, -25_680_000, 'ولی سند باز هست');
+  assert.equal(card.reconciliation.unexplained, -25_680_000, 'و کارت باید اختلاف را بداند');
+  assert.equal(card.reconciliation.openCount, 1);
+});
+
+test('کارتِ کامل اختلافی گزارش نمی‌کند', () => {
+  // مرز مقابل: اگر هر سندی اختلاف نشان بدهد، هشدار بی‌معنا می‌شود و کاربر
+  // یاد می‌گیرد نادیده‌اش بگیرد.
+  const contact = saveContact({ name: 'طرف حساب سالم', kind: 'customer' });
+  saveObligation({
+    contactId: contact.id, title: 'طلب', amount: 4_000_000,
+    direction: 'receivable', occurredAt: '2026-05-01T09:00:00.000Z',
+  });
+
+  const card = counterpartyCard(contact.id);
+
+  assert.ok(card.lines.length > 0);
+  assert.equal(card.reconciliation.unexplained, 0, 'وقتی همه‌چیز سر جایش است، اختلافی نیست');
 });

@@ -1,4 +1,4 @@
-import { ArrowRight, Search, Wallet } from 'lucide-react';
+import { ArrowRight, Search, TriangleAlert, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
@@ -96,6 +96,38 @@ function StatementRow({ line, showAccount }) {
   );
 }
 
+/**
+ * وقتی فهرست یک عدد می‌گوید و کارت عدد دیگری، کاربر به هیچ‌کدام اعتماد
+ * نمی‌کند.
+ *
+ * کارت از دفتر کل می‌خواند و فهرست از جدول تعهد و فاکتور. سندی که طرف
+ * حسابش موقع ثبت وصل نبوده، در دفتر کل حسابی به نام خودش می‌سازد که به این
+ * شخص نمی‌چسبد — آن‌وقت فهرست مبلغ را می‌دید و کارت «تسویه» می‌گفت.
+ *
+ * حالا کارت همان اختلاف را می‌گوید و دلیلش را هم. پنهان‌کردنش بدترین کار
+ * ممکن بود: عددِ غلطِ مطمئن، از عددِ نبودن هم بدتر است.
+ */
+function UnexplainedNotice({ reconciliation }) {
+  const gap = Math.abs(reconciliation.unexplained);
+  const tone = balanceTone(reconciliation.unexplained);
+  return (
+    <section className="mt-4 rounded-[12px] border border-accent/40 bg-warn-bg p-4">
+      <p className="flex items-center gap-2 text-[12px] font-extrabold text-accent">
+        <TriangleAlert size={16} /> این کارت کامل نیست
+      </p>
+      <p className="mt-2 text-[13px] leading-7">
+        {toPersianDigits(reconciliation.openCount)} سند باز به مبلغ{' '}
+        <b className={`numbers ${tone.className}`}>{formatAmount(gap)}</b> تومان {tone.label} برای این طرف حساب ثبت
+        شده که در دفتر کل به حساب او نچسبیده، پس در گردش پایین دیده نمی‌شود.
+      </p>
+      <p className="mt-2 text-[11px] leading-6 text-muted">
+        معمولاً یعنی آن سند وقتی ثبت شده که طرف حسابش انتخاب نشده بود. با باز کردن همان سند در «طلب و بدهی» یا
+        «فاکتور» و انتخاب این شخص، گردشش به همین کارت می‌آید.
+      </p>
+    </section>
+  );
+}
+
 function ContactList({ contacts, onOpen }) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
@@ -164,6 +196,8 @@ function Card({ contact, onBack, notify }) {
   const tone = balanceTone(card?.totals?.balance || 0);
   // چند حساب یعنی کارت هم دریافتنی دارد و هم چک؛ آن‌وقت نام حساب معنا دارد.
   const manyAccounts = new Set((card?.lines || []).map((line) => line.accountName)).size > 1;
+  // اختلاف بین سندهای باز و آنچه دفتر کل نشان می‌دهد.
+  const gap = card?.reconciliation?.unexplained || 0;
 
   return (
     <section className="mt-5">
@@ -194,13 +228,16 @@ function Card({ contact, onBack, notify }) {
           <span className="h-7 w-7 animate-spin rounded-full border-2 border-line border-t-accent" />
         </div>
       ) : !card?.lines?.length ? (
-        <p className="mt-6 rounded-[10px] border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
-          هنوز گردشی برای این طرف حساب در دفتر ثبت نشده است.
-          <br />
-          با اولین فاکتور، تسویه یا چک، همین‌جا دیده می‌شود.
-        </p>
+        gap ? <UnexplainedNotice reconciliation={card.reconciliation} /> : (
+          <p className="mt-6 rounded-[10px] border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
+            هنوز گردشی برای این طرف حساب در دفتر ثبت نشده است.
+            <br />
+            با اولین فاکتور، تسویه یا چک، همین‌جا دیده می‌شود.
+          </p>
+        )
       ) : (
         <>
+          {gap ? <UnexplainedNotice reconciliation={card.reconciliation} /> : null}
           <div className="mt-4 grid grid-cols-3 gap-2">
             <Stat label="افتتاحیه" value={Math.abs(card.opening)} />
             <Stat label="گردش بدهکار" value={card.totals.debit} tone="text-income" />
