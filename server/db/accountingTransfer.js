@@ -79,6 +79,30 @@ function accountingTransferMappings(targetSystem = 'generic-csv') {
     WHERE accounting_transfer_mappings.target_system=? ORDER BY ledger_accounts.code`).all(target);
 }
 
+/**
+ * سندهای افتتاحیه به مقصد فرستاده نمی‌شوند.
+ *
+ * ماندهٔ افتتاحیه یا از تراز خودِ نرم‌افزار دفتر وارد شده («opening_import») یا
+ * ماندهٔ اول دورهٔ حساب‌های حساب‌یار است. در هر دو حالت، همان مانده در پارسیان
+ * از قبل هست — سند افتتاحیهٔ خودش. فرستادنش یعنی دارایی و سرمایه دو برابر
+ * می‌شوند و کسی هم نمی‌فهمد چرا.
+ *
+ * معکوسِ یک افتتاحیه هم باید بماند، وگرنه یک سندِ تنهای منفی به پارسیان می‌رود
+ * که طرف مقابلش هرگز نرفته بود.
+ *
+ * این «حذف» نیست و پنهان هم نمی‌ماند: تعدادشان در کنترل‌های آمادگی نوشته
+ * می‌شود تا حسابدار بداند چه چیزی در بسته نیست و چرا.
+ */
+const OPENING_ENTRY_FILTER = `journal_entries.entry_kind<>'opening'
+    AND NOT EXISTS (SELECT 1 FROM journal_entries AS reversed
+      WHERE reversed.id=journal_entries.reverses_entry_id AND reversed.entry_kind='opening')`;
+
+function openingEntriesInScope(range) {
+  return Number(db.prepare(`SELECT COUNT(*) AS count FROM journal_entries
+    WHERE occurred_at>=? AND occurred_at<? AND NOT (${OPENING_ENTRY_FILTER})`)
+    .get(range.from, range.toExclusive).count || 0);
+}
+
 function accountingTransferJournalRows(range) {
   return db.prepare(`SELECT journal_entries.id AS entryId,journal_entries.occurred_at AS occurredAt,
     journal_entries.memo,journal_entries.entry_kind AS entryKind,journal_entries.source_type AS sourceType,
@@ -103,7 +127,7 @@ function accountingTransferJournalRows(range) {
     LEFT JOIN chart_accounts AS chart_parent ON chart_parent.id=chart_accounts.parent_id
     LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
     LEFT JOIN cost_centers ON cost_centers.id=journal_lines.cost_center_id
-    WHERE journal_entries.occurred_at>=? AND journal_entries.occurred_at<?
+    WHERE journal_entries.occurred_at>=? AND journal_entries.occurred_at<? AND ${OPENING_ENTRY_FILTER}
     ORDER BY journal_entries.occurred_at,journal_entries.created_at,journal_entries.id,journal_lines.rowid`).all(range.from, range.toExclusive);
 }
 
@@ -120,7 +144,7 @@ function accountingTransferState(month = '', targetSystem = 'generic-csv', now =
   const readiness = accountingTransferReadiness({
     packageData, journalRows, settings, mappings,
     chart: { installed: chart.chartInstalled, complete: chart.complete },
-    workflow: { pendingInPeriod },
+    workflow: { pendingInPeriod, openingEntriesExcluded: openingEntriesInScope(packageData.scope) },
   });
   return { packageData, settings, mappings, journalRows, readiness, chart, workflow: { pendingInPeriod } };
 }

@@ -3,7 +3,11 @@ import { ROLES } from '../shared/accountingRules.js';
 import {
   analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount,
 } from './chartOfAccounts.js';
-import { canonicalCounterpartyName } from '../shared/counterpartyIdentity.js';
+import { counterpartyAnalyticForKey } from './chartOfAccounts.js';
+import { counterpartyAccountKey } from './accounting.js';
+
+// همان‌جایی که تفصیلی ساخته می‌شود تعریف شده؛ اینجا فقط مصرف و بازصادر می‌شود.
+export { counterpartyAnalyticForKey };
 
 /**
  * نگاشت نقش به حساب واقعی دفتر.
@@ -59,6 +63,19 @@ function operationalAccount(database, accountId) {
  * برای نقش‌هایی که زیرحساب دارند خطاست، نه «حساب پیش‌فرض» — حسابِ بی‌نام،
  * ردیفی است که شش ماه بعد هیچ‌کس نمی‌داند چیست.
  */
+/**
+ * حساب اختصاصی یک طرف حساب.
+ *
+ * نام برای دیدن است و شناسه برای شناختن. کلید از همان تابعی می‌آید که مسیر
+ * فاکتور هم از آن استفاده می‌کند، وگرنه یک مشتری بسته به مسیرِ ثبت دو حساب
+ * پیدا می‌کند.
+ */
+function counterpartyRoleAccount(database, sourceKind, event, key, label, type) {
+  const name = String(key || '').trim() || label;
+  const accountKey = counterpartyAccountKey(database, sourceKind, event.counterpartyId, name);
+  return linkedAccount(database, sourceKind, accountKey, `${label} — ${name}`, type);
+}
+
 export function resolveEventRole(database, role, key, event = {}) {
   switch (role) {
     case ROLES.CASH:
@@ -71,17 +88,17 @@ export function resolveEventRole(database, role, key, event = {}) {
       return linkedAccount(database, 'expense-category', key || 'سایر هزینه‌ها', key || 'سایر هزینه‌ها', 'expense');
 
     case ROLES.RECEIVABLE:
-      return linkedAccount(database, 'customer-receivable', key || 'مشتری متفرقه', `حساب دریافتنی — ${key || 'مشتری متفرقه'}`, 'asset');
+      return counterpartyRoleAccount(database, 'customer-receivable', event, key || 'مشتری متفرقه', 'حساب دریافتنی', 'asset');
 
     case ROLES.PAYABLE:
-      return linkedAccount(database, 'vendor-payable', key || 'تأمین‌کننده متفرقه', `حساب پرداختنی — ${key || 'تأمین‌کننده متفرقه'}`, 'liability');
+      return counterpartyRoleAccount(database, 'vendor-payable', event, key || 'تأمین‌کننده متفرقه', 'حساب پرداختنی', 'liability');
 
     // چک حساب جدا دارد تا در تراز از مطالبات عادی قابل تفکیک باشد.
     case ROLES.CHEQUE_RECEIVABLE:
-      return linkedAccount(database, 'cheque-receivable', key || 'چک دریافتی', `اسناد دریافتنی — ${key || 'متفرقه'}`, 'asset');
+      return counterpartyRoleAccount(database, 'cheque-receivable', event, key || 'متفرقه', 'اسناد دریافتنی', 'asset');
 
     case ROLES.CHEQUE_PAYABLE:
-      return linkedAccount(database, 'cheque-payable', key || 'چک پرداختی', `اسناد پرداختنی — ${key || 'متفرقه'}`, 'liability');
+      return counterpartyRoleAccount(database, 'cheque-payable', event, key || 'متفرقه', 'اسناد پرداختنی', 'liability');
 
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');
@@ -120,33 +137,6 @@ export function resolveEventRole(database, role, key, event = {}) {
 const COUNTERPARTY_ROLES = new Set([
   ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE,
 ]);
-
-/**
- * تفصیلیِ متناظر با نامِ روی حسابِ طرف حساب — فقط وقتی آن نام واقعاً یک شخص است.
- *
- * حسابِ اختصاصی گاهی به نام کسی باز می‌شود که در دفتر ثبت شده و گاهی با عنوان
- * خودِ تعهد («بدهی بابت اجاره»). این تابع فقط حالت اول را برمی‌گرداند: شخصی که
- * در طرف‌حساب‌های دفتر هست، یا از قبل تفصیلی دارد.
- *
- * چرا حالت دوم نه: تفصیلیِ ساختگی در فهرست اشخاصِ نرم‌افزار دفتر می‌ماند و با
- * هیچ‌کس یکی نمی‌شود. آن ردیف به تفصیلی نیاز ندارد، به طرف حساب نیاز دارد — و
- * حالا کنترل «تفصیلی اجباری» جلوی خروجی را می‌گیرد و همین را می‌گوید، پس
- * دیگر بی‌صدا هم نمی‌شکند.
- */
-export function counterpartyAnalyticForKey(database, key) {
-  const name = String(key || '').trim().slice(0, 120);
-  const canonical = canonicalCounterpartyName(name);
-  if (!name || !canonical) return null;
-  try {
-    const contact = database.prepare('SELECT id,name FROM contacts WHERE canonical_name=? ORDER BY created_at,rowid LIMIT 1').get(canonical);
-    if (contact) return analyticForContact(database, contact.id, contact.name)?.id || null;
-  } catch { /* دفتری که هنوز جدول طرف حساب ندارد. */ }
-  // تفصیلیِ هم‌نامِ موجود هم همان شخص است — چه از ثبت قبلی آمده باشد چه از
-  // فایل تفصیلی نرم‌افزار دفتر.
-  const existing = database.prepare('SELECT id,name FROM analytic_accounts WHERE active=1').all()
-    .filter((item) => canonicalCounterpartyName(item.name) === canonical);
-  return existing.length === 1 ? existing[0].id : null;
-}
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {
   if (!COUNTERPARTY_ROLES.has(role)) return null;

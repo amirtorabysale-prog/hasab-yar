@@ -176,8 +176,34 @@ test('the office defines its own column layout and unit for the export', () => {
   });
 });
 
+/**
+ * ماندهٔ افتتاحیه به مقصد برنمی‌گردد.
+ *
+ * تراز افتتاحیه از خودِ نرم‌افزار دفتر آمده و همان مانده در پارسیان از قبل
+ * هست. اگر در بسته بیاید، دارایی و سرمایه دو برابر می‌شوند. پس بسته فقط
+ * فعالیت همین دوره را می‌برد — و تعداد سندهای کنارگذاشته‌شده نوشته می‌شود تا
+ * چیزی بی‌صدا غیب نشود.
+ */
+test('the opening balance stays out of the batch and is reported, not hidden', () => {
+  inWorkspace(() => {
+    const overview = database.accountingTransferOverview('', 'generic-csv');
+    const excluded = overview.readiness.checks.find((item) => item.id === 'opening-excluded');
+    assert.ok(excluded, JSON.stringify(overview.readiness.checks.map((item) => item.id)));
+    assert.equal(excluded.severity, 'advisory');
+    assert.ok(excluded.count > 0);
+    // و بدون فعالیت دوره، اصلاً بسته‌ای ساخته نمی‌شود.
+    assert.equal(overview.readiness.checks.find((item) => item.id === 'rows').passed, false);
+  });
+});
+
 test('the generated batch is a real workbook with the office layout and a manifest sheet', () => {
   inWorkspace(() => {
+    // یک فعالیت واقعیِ دوره، وگرنه بسته چیزی جز افتتاحیه ندارد و افتتاحیه
+    // به مقصد برنمی‌گردد.
+    database.insertTransactions({
+      transcript: 'فروش نقدی آزمون',
+      transactions: [{ amount: 2_000_000, type: 'income', category: 'فروش', rawText: 'فروش نقدی آزمون' }],
+    });
     database.applyChartSuggestions();
     const overview = database.accountingTransferOverview('', 'generic-csv');
     assert.equal(overview.readiness.ready, true, JSON.stringify(overview.readiness.checks.filter((item) => !item.passed)));

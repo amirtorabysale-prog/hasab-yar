@@ -106,6 +106,14 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
   }
   const unbalancedEntries = [...entryTotals.values()].filter((item) => item.debit !== item.credit).length;
   const unreviewed = (packageData.sections?.transactions || []).filter((item) => !['ready', 'reviewed'].includes(item.reviewState)).length;
+  // افتتاحیه به مقصد نمی‌رود، ولی بی‌صدا هم غیب نمی‌شود: حسابدار باید بداند
+  // چه چیزی در بسته نیست و چرا.
+  const openingExcluded = Number(workflow.openingEntriesExcluded || 0);
+  if (openingExcluded > 0) checks.push({
+    id: 'opening-excluded',
+    label: 'سند افتتاحیه در بسته نیست (افتتاحیه در نرم‌افزار دفتر از قبل هست)',
+    count: openingExcluded, passed: true, severity: 'advisory',
+  });
   checks.push({ id: 'rows', label: 'حداقل یک سند دفتر کل در دوره وجود دارد', count: entryIds.size, passed: entryIds.size > 0, severity: 'blocker' });
   checks.push({ id: 'balanced', label: 'هر سند و جمع خروجی متوازن است', count: unbalancedEntries || Math.abs(debitTotal - creditTotal), passed: debitTotal === creditTotal && unbalancedEntries === 0, severity: 'blocker' });
   checks.push({ id: 'review', label: 'ثبت بررسی‌نشده باقی نمانده', count: unreviewed, passed: unreviewed === 0, severity: 'blocker' });

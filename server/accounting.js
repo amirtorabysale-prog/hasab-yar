@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import {
-  analyticForContact, ensureChartSchema, listChartAccounts, mapLedgerAccountToChart,
+  analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, listChartAccounts, mapLedgerAccountToChart,
   resolveLineDimensions, suggestChartAccount,
 } from './chartOfAccounts.js';
 import {
   APPROVAL_STATES, assertApprovalTransition, backfillDocumentNumbers, ensureJournalWorkflowSchema,
   nextDocumentNumber, normalizeApprovalState, worklistSummary,
 } from './journalWorkflow.js';
-import { counterpartyAnalyticForKey } from './roleResolver.js';
+
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
 
@@ -140,15 +140,32 @@ function categoryLedgerAccount(database, type, category) {
   return linkedLedgerAccount(database, type === 'income' ? 'income-category' : 'expense-category', clean, clean, type === 'income' ? 'income' : 'expense');
 }
 
-function counterpartyLedgerAccount(database, contactId, name, documentType) {
-  const cleanName = String(name || (documentType === 'purchase' ? 'تأمین‌کننده متفرقه' : 'مشتری متفرقه')).trim().slice(0, 100);
-  const key = String(contactId || cleanName).trim().slice(0, 120);
+/**
+ * کلید حسابِ یک طرف حساب — یکی، برای همهٔ مسیرها.
+ *
+ * شناسهٔ شخص پایدارتر از نام است (تغییر نام حساب تازه نمی‌سازد)، پس کلید
+ * پیش‌فرض همان است. ولی اگر حسابی از قبل با نام ساخته شده — چون آن موقع شناسه
+ * در دست نبود — همان برداشته می‌شود، وگرنه یک شخص دو حساب پیدا می‌کند.
+ */
+export function counterpartyAccountKey(database, sourceKind, contactId, cleanName) {
+  const byId = String(contactId || '').trim().slice(0, 120);
+  const byName = String(cleanName || '').trim().slice(0, 120);
+  const has = (key) => Boolean(key && database.prepare('SELECT 1 FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(sourceKind, key));
+  if (byId && has(byId)) return byId;
+  if (byName && has(byName)) return byName;
+  return byId || byName;
+}
+
+export function counterpartyLedgerAccount(database, contactId, name, documentType) {
+  const purchase = documentType === 'purchase';
+  const cleanName = String(name || (purchase ? 'تأمین‌کننده متفرقه' : 'مشتری متفرقه')).trim().slice(0, 100);
+  const sourceKind = purchase ? 'vendor-payable' : 'customer-receivable';
   return linkedLedgerAccount(
     database,
-    documentType === 'purchase' ? 'vendor-payable' : 'customer-receivable',
-    key,
-    documentType === 'purchase' ? `حساب پرداختنی — ${cleanName}` : `حساب دریافتنی — ${cleanName}`,
-    documentType === 'purchase' ? 'liability' : 'asset',
+    sourceKind,
+    counterpartyAccountKey(database, sourceKind, contactId, cleanName),
+    purchase ? `حساب پرداختنی — ${cleanName}` : `حساب دریافتنی — ${cleanName}`,
+    purchase ? 'liability' : 'asset',
   );
 }
 
@@ -193,6 +210,26 @@ function validateLines(database, lines) {
 
 function nextRevision(database, sourceType, sourceId) {
   return Number(database.prepare('SELECT COALESCE(MAX(revision),0) AS revision FROM journal_entries WHERE source_type=? AND source_id=?').get(sourceType, sourceId).revision) + 1;
+}
+
+/**
+ * آرتیکل معکوسِ یک آرتیکل.
+ *
+ * بدهکار و بستانکار جا عوض می‌کنند و **همهٔ ابعاد سطر با آن می‌آیند**. تفصیلی و
+ * مرکز هزینه جزو هویت سطرند، نه زینت: سطر اصلی روی «شرکت الف» نشسته و اگر
+ * معکوسش روی خودِ معین بنشیند، بدهی آن شرکت در دفتر تفصیلی هرگز بسته نمی‌شود —
+ * و در پارسیان همان سطرِ بی‌تفصیلی روی معینِ تفصیلی‌دار کنار گذاشته می‌شود و
+ * سند را نامتوازن نشان می‌دهد.
+ */
+function reversedLine(line) {
+  return {
+    accountId: line.accountId,
+    debit: line.credit,
+    credit: line.debit,
+    description: line.description,
+    analyticId: line.analyticId || null,
+    costCenterId: line.costCenterId || null,
+  };
 }
 
 function insertJournal(database, values) {
@@ -285,7 +322,7 @@ export function reverseTransactionJournal(database, transactionId, occurredAt, {
   const alreadyReversed = database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(original.id);
   if (alreadyReversed) return null;
   const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
-    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+    .map((line) => reversedLine(line));
   return insertJournal(database, {
     sourceType: 'transaction', sourceId: transactionId,
     revision: nextRevision(database, 'transaction', transactionId), entryKind: 'reversal',
@@ -366,7 +403,7 @@ export function reverseInventoryMovementJournal(database, movementId, occurredAt
   const reversalAt = occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(reversalAt, timeZone));
   const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
-    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+    .map((line) => reversedLine(line));
   return insertJournal(database, {
     sourceType: 'inventory_movement', sourceId: movementId, revision: nextRevision(database, 'inventory_movement', movementId), entryKind: 'reversal',
     occurredAt: reversalAt, memo: 'معکوس گردش انبار', reversesEntryId: original.id, createdBy, lines,
@@ -404,7 +441,7 @@ export function reverseInvoiceJournal(database, invoice, occurredAt, { createdBy
   const reversalAt = occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(reversalAt, timeZone));
   const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(original.id)
-    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+    .map((line) => reversedLine(line));
   return insertJournal(database, {
     sourceType: 'invoice', sourceId: invoice.id, revision: nextRevision(database, 'invoice', invoice.id), entryKind: 'reversal',
     occurredAt: reversalAt, memo: `ابطال ${invoice.number}`, reversesEntryId: original.id, createdBy, lines,
@@ -418,7 +455,9 @@ export function syncOpeningBalanceJournal(database, operationalAccountId, { crea
   const sourceId = account.id;
   const prior = database.prepare(`SELECT * FROM journal_entries WHERE source_type='opening_balance' AND source_id=? AND entry_kind='opening' ORDER BY revision DESC LIMIT 1`).get(sourceId);
   if (prior && !database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(prior.id)) {
-    const lines = database.prepare('SELECT account_id AS accountId,debit,credit FROM journal_lines WHERE entry_id=?').all(prior.id).map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit }));
+    const lines = database.prepare(`SELECT account_id AS accountId,debit,credit,description,
+      analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid`)
+      .all(prior.id).map((line) => reversedLine(line));
     insertJournal(database, { sourceType: 'opening_balance', sourceId, revision: nextRevision(database, 'opening_balance', sourceId), entryKind: 'reversal', occurredAt: prior.occurred_at, memo: `معکوس مانده افتتاحیه ${account.name}`, reversesEntryId: prior.id, createdBy, lines });
   }
   const amount = Math.abs(Math.round(Number(account.openingBalance) || 0));
@@ -450,8 +489,9 @@ export function postImportedOpeningBalances(database, prepared = [], { occurredA
     throw accountingError('برای این دفتر از قبل سند افتتاحیهٔ واردشده وجود دارد؛ برای جایگزینی گزینهٔ جایگزینی را روشن کن.', 'OPENING_IMPORT_EXISTS', 409);
   }
   if (priorLive) {
-    const reverseLines = database.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid').all(prior.id)
-      .map((line) => ({ ...line, debit: line.credit, credit: line.debit }));
+    const reverseLines = database.prepare(`SELECT account_id AS accountId,debit,credit,description,
+      analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid`)
+      .all(prior.id).map((line) => reversedLine(line));
     insertJournal(database, {
       sourceType: 'opening_import', sourceId: prior.source_id,
       revision: nextRevision(database, 'opening_import', prior.source_id), entryKind: 'reversal',
@@ -852,8 +892,9 @@ export function reverseJournalEntry(database, { sourceType, sourceId, occurredAt
   const already = database.prepare("SELECT 1 FROM journal_entries WHERE reverses_entry_id=?").get(prior.id);
   if (already) throw accountingError('این سند قبلاً معکوس شده است.', 'JOURNAL_ALREADY_REVERSED', 409);
 
-  const lines = database.prepare('SELECT account_id AS accountId,debit,credit,description FROM journal_lines WHERE entry_id=?').all(prior.id)
-    .map((line) => ({ accountId: line.accountId, debit: line.credit, credit: line.debit, description: line.description }));
+  const lines = database.prepare(`SELECT account_id AS accountId,debit,credit,description,
+    analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=? ORDER BY rowid`)
+    .all(prior.id).map((line) => reversedLine(line));
   const at = occurredAt || prior.occurredAt;
   assertAccountingPeriodOpen(database, periodForDate(at, timeZone));
   return insertJournal(database, {
