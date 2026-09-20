@@ -21,8 +21,29 @@ const html = await (await get('/')).text();
 const assetPath = html.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
 if (!assetPath) throw new Error('فایل JavaScript فعال از index.html پیدا نشد.');
 const assetUrl = assetPath.startsWith('/') ? assetPath : `/${assetPath}`;
-const javascript = await (await get(assetUrl)).text();
-if (javascript.length < 10_000) throw new Error('فایل JavaScript فعال به‌طور غیرعادی کوچک است.');
-for (const marker of markers) if (!javascript.includes(marker)) throw new Error(`نشانهٔ قابلیت «${marker}» در JavaScript فعال نیست.`);
+const entry = await (await get(assetUrl)).text();
+if (entry.length < 10_000) throw new Error('فایل JavaScript فعال به‌طور غیرعادی کوچک است.');
 
-console.log(JSON.stringify({ ok: true, sha: health.release?.sha || 'unknown', asset: assetUrl, markers }, null, 2));
+/**
+ * نشانهٔ قابلیت می‌تواند در هر قطعه‌ای باشد، نه فقط در بستهٔ اصلی.
+ *
+ * تا وقتی همهٔ صفحه‌ها در یک بسته بودند، گشتن در همان یکی کافی بود. با
+ * تقسیم بسته، «بسته بیشتر از ۴۰۱ ردیف» به قطعهٔ همکاری حسابدار رفت و «سقف
+ * امن» به قطعهٔ کدینگ — و این کنترل قرمز شد درحالی‌که هر دو قابلیت سالم روی
+ * production بودند. یک کنترل انتشار که دیپلوی درست را رد کند، به‌زودی
+ * نادیده گرفته می‌شود و آن‌وقت دیگر چیزی را نمی‌گیرد.
+ *
+ * نشانی قطعه‌ها به‌صورت رشته داخل خود بستهٔ اصلی است، چون `import()` پویا
+ * بعد از build به همان نشانی‌ها تبدیل می‌شود.
+ */
+const chunkUrls = [...new Set(
+  [...entry.matchAll(/["'`]((?:\.?\/)?assets\/[A-Za-z0-9_$.-]+\.js)["'`]/g)]
+    .map((match) => `/${match[1].replace(/^\.?\//, '')}`)
+    .filter((url) => url !== assetUrl),
+)];
+const chunks = await Promise.all(chunkUrls.map(async (url) => (await get(url)).text()));
+const javascript = [entry, ...chunks].join('\n');
+
+for (const marker of markers) if (!javascript.includes(marker)) throw new Error(`نشانهٔ قابلیت «${marker}» در هیچ‌یک از ${1 + chunks.length} قطعهٔ JavaScript نیست.`);
+
+console.log(JSON.stringify({ ok: true, sha: health.release?.sha || 'unknown', asset: assetUrl, chunks: chunks.length, markers }, null, 2));
