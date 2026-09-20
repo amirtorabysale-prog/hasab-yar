@@ -201,6 +201,8 @@ export const api = {
   setExperience: (experience) => request('/api/workspace/experience', { method: 'PUT', body: JSON.stringify({ experience }) }),
   removeMember: (userId) => request(`/api/workspace/members/${userId}`, { method: 'DELETE' }),
   bootstrap: () => request('/api/bootstrap'),
+  // تحلیل‌های سنگین دفتر، جدا از `bootstrap` تا نمایش اولیه پشتشان نماند.
+  insights: () => request('/api/insights'),
   parseText: (text, { signal } = {}) => request('/api/parse/text', { method: 'POST', body: JSON.stringify({ text }), signal }),
   // `attemptId` شناسهٔ همان ضبط است. نشست realtime و بررسی فایل با یک شناسه
   // می‌روند تا سهمیه یک واحد کم کند، نه دو تا.

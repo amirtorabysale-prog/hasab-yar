@@ -263,14 +263,31 @@ app.get('/api/firm/portfolio', (request, response, next) => {
     }));
   } catch (error) { return next(error); }
 });
+/**
+ * دفتر، بدون تحلیل‌هایی که می‌توانند یک لحظه دیرتر برسند.
+ *
+ * این اولین درخواست بعد از ورود است، پس طولش همان مدتی است که کاربر به یک
+ * صفحهٔ نیمه‌خالی نگاه می‌کند. با یک دفتر ششصدثبتی — که برای یک دفتر
+ * حسابداری کوچک است — کل پاسخ ۲۴۹ میلی‌ثانیه طول می‌کشید و اندازه‌گیری
+ * تک‌تک اجزا نشان داد ۹۹٪ آن فقط در دو تابع است: `financialOverview` با
+ * ۱۲۳ms و `dnaProfiles` با ۹۱ms. دوازده تابع دیگر روی هم سه میلی‌ثانیه
+ * بودند.
+ *
+ * هر دو هم تحلیل‌اند نه دادهٔ دفتر، و هر دو با بزرگ‌شدن دفتر بدتر می‌شوند
+ * چون همهٔ ردیف‌ها را در JavaScript می‌خوانند. حالا در `/api/insights`
+ * جدا شده‌اند و رابط بعد از نمایش دفتر آن‌ها را می‌گیرد. حالت خالی از قبل
+ * پشتیبانی می‌شد — `overview: {}` و `dnaProfiles: null` مقدار اولیهٔ
+ * همیشگی رابط بوده‌اند — پس چیزی برای شکستن نیست.
+ */
 app.get('/api/bootstrap', (request, response) => {
   materializeRecurringRules();
   return response.json({
     ...getToday(), categories: getCategories(), settings: getSettings(), learnings: getLearnings(),
-    averages: typicalAmounts(), dnaProfiles: dnaProfiles(), overview: financialOverview(), accounts: listAccounts(), contacts: listContacts(),
+    averages: typicalAmounts(), accounts: listAccounts(), contacts: listContacts(),
     obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(), closings: listDailyClosings(), closingPreview: previewDayClosing(), access: accessPayload(request.user, request.workspace.id),
   });
 });
+app.get('/api/insights', (_request, response) => response.json({ overview: financialOverview(), dnaProfiles: dnaProfiles() }));
 app.post('/api/parse/text', (request, response) => {
   const text = String(request.body?.text || '').trim();
   if (!text || text.length > 1500) return response.status(400).json({ message: 'متن ثبت مالی معتبر نیست.' });

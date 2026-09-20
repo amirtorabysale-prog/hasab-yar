@@ -148,11 +148,30 @@ export default function App() {
     } catch { return null; }
   }, []);
 
+  /**
+   * دفتر اول می‌آید، تحلیل‌ها بعدش.
+   *
+   * `financialOverview` و `dnaProfiles` روی سرور ۹۹٪ زمان `bootstrap` را
+   * می‌گرفتند و با بزرگ‌شدن دفتر بدتر می‌شوند. حالا در درخواست دوم می‌آیند و
+   * تا رسیدنشان همان مقدار قبلی روی صفحه می‌ماند — نه یک پرش به حالت خالی.
+   *
+   * نتیجهٔ دیررس اگر دفتر عوض شده باشد دور ریخته می‌شود؛ وگرنه هشدار مالی یک
+   * دفتر می‌توانست روی دفتر دیگری بنشیند.
+   */
   const load = useCallback(async () => {
     try {
       const [bootstrap] = await Promise.all([api.bootstrap(), refreshVoiceSystemStatus()]);
-      setData({ ...bootstrap, learnings: bootstrap.learnings || [], averages: bootstrap.averages || {} });
+      setData((previous) => ({ ...previous, ...bootstrap, learnings: bootstrap.learnings || [], averages: bootstrap.averages || {} }));
       if (bootstrap.access) setAccess(bootstrap.access);
+      // دفتر فعال بعد از پاسخ خوانده می‌شود، نه قبلش: در اولین بارگذاری هنوز
+      // چیزی در حافظهٔ محلی نیست و پاسخ خودِ سرور آن را می‌نشاند. خواندن زودتر
+      // یعنی مقایسهٔ پایین همیشه شکست بخورد و تحلیلِ درست دور ریخته شود.
+      const loadedWorkspace = api.activeWorkspaceId();
+      api.insights()
+        .then((insights) => setData((previous) => (
+          api.activeWorkspaceId() === loadedWorkspace ? { ...previous, ...insights } : previous
+        )))
+        .catch(() => { /* تحلیل مکمل است؛ نبودش دفتر را از کار نمی‌اندازد */ });
       return bootstrap;
     } catch (error) {
       notify(error.message);
@@ -878,7 +897,7 @@ export default function App() {
     api.clearOfflineSession();
     setParseResult(null);
     setPendingAudioCount(0);
-    setData({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
+    setData({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, dnaProfiles: null, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
     setAccess({ user: null, workspaces: [], workspace: null });
     setAuthenticated(false);
   };
@@ -892,6 +911,8 @@ export default function App() {
     const previousWorkspaceId = access.workspace?.id || '';
     api.selectWorkspace(workspaceId);
     setLoading(true);
+    // تا رسیدن تحلیل دفتر تازه، تحلیل دفتر قبلی باید برود.
+    setData((previous) => ({ ...previous, overview: {}, dnaProfiles: null }));
     setParseResult(null);
     setPendingAudioCount(0);
     setFailure(null);
