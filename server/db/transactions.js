@@ -3,7 +3,9 @@ import { accountForBank, resolveAccountId } from './accounts.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal } from '../accounting.js';
 import { automationPolicy } from './settings.js';
+import { extractContactName } from '../../shared/voiceIntent.js';
 import { normalizePersian } from '../../shared/parser.js';
+import { saveContact } from './contacts.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 
@@ -106,7 +108,29 @@ function routeTransactionThroughEvents(row, item, transcript) {
   } catch { return false; }
 }
 
-export function insertTransactionRows({ transcript, transactions }) {
+/**
+ * طرف حسابی که در خود جمله گفته شده، به ثبت وصل می‌شود.
+ *
+ * «۹۳ میلیون تومان به شرکت آراد گستر آسیا پرداخت شد» یک هزینهٔ ساده ثبت
+ * می‌شد و هیچ‌وقت به کارت آن شرکت نمی‌رسید — با اینکه نامش صریح در جمله بود.
+ * و چون سند به حساب طرف حساب نمی‌خورد، فهرست طرف حساب‌ها یک عدد نشان می‌داد
+ * و کارتش عدد دیگری.
+ *
+ * `extractContactName` فقط با عنوان صریح کار می‌کند — «شرکت»، «آقای»،
+ * «خانم» و مانندشان — پس «به پیک پول دادم» طرف حساب نمی‌سازد و فهرست از
+ * نام‌های بی‌ربط پر نمی‌شود.
+ *
+ * `saveContact` خودش هر سه حالت را می‌داند: تطابق دقیق وصل می‌شود، نام مشابه
+ * پرسیده می‌شود (`COUNTERPARTY_SIMILAR` که رابط به برگهٔ تأیید تبدیلش
+ * می‌کند) و نام تازه ساخته می‌شود. هیچ‌کدام اینجا دوباره پیاده نشده.
+ */
+function counterpartyFromSentence(sentence, counterpartyResolution) {
+  const name = extractContactName(String(sentence || ''));
+  if (!name) return null;
+  return saveContact({ name, counterpartyResolution }).id;
+}
+
+export function insertTransactionRows({ transcript, transactions, counterpartyResolution = '' }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
     (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -119,6 +143,7 @@ export function insertTransactionRows({ transcript, transactions }) {
     const occurredAt = item.occurredAt || new Date().toISOString();
     assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
+    const contactId = item.contactId || counterpartyFromSentence(item.rawText || transcript, counterpartyResolution);
     // بانکی که گفته شده ولی حسابی در دفتر ندارد، بی‌صدا روی صندوق می‌نشیند.
     // این همان خطایی است که کاربر هیچ‌وقت نمی‌بیند و آخر ماه ماندهٔ صندوق و
     // بانک هر دو غلط است — پس به‌جای سکوت، سؤال می‌شود.
@@ -133,7 +158,7 @@ export function insertTransactionRows({ transcript, transactions }) {
       String(item.rawText || transcript || '').slice(0, 1000), item.source || 'text', Number(item.confidence ?? 1),
       entry.needsReview ? 1 : 0, jsonText(entry.confidenceDetails, {}), jsonText(entry.reviewReasons, []), reviewState,
       item.restoredFrom || null, CAPITAL_FLOWS.includes(item.capitalFlow) ? item.capitalFlow : '',
-      occurredAt, item.contactId || null, accountId, accountId,
+      occurredAt, contactId || null, accountId, accountId,
       String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt,
     );
     if (result.changes) {

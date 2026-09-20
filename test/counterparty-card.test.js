@@ -127,3 +127,48 @@ test('کارتِ کامل اختلافی گزارش نمی‌کند', () => {
   assert.ok(card.lines.length > 0);
   assert.equal(card.reconciliation.unexplained, 0, 'وقتی همه‌چیز سر جایش است، اختلافی نیست');
 });
+
+test('طرف حسابی که در جمله گفته شده، به ثبت وصل می‌شود', () => {
+  // «۹۳ میلیون تومان به شرکت آراد گستر آسیا پرداخت شد» یک هزینهٔ ساده ثبت
+  // می‌شد و هیچ‌وقت به کارت آن شرکت نمی‌رسید — با اینکه نامش صریح در جمله
+  // بود. کاربر باید دستی وصلش می‌کرد، یا اصلاً نمی‌فهمید که نشده.
+  const before = db.listContacts().length;
+  db.insertTransactions({
+    transcript: 'پرداخت',
+    transactions: [{ amount: 93_000_000, type: 'expense', category: 'سایر هزینه‌ها',
+      rawText: '۹۳ میلیون تومان به شرکت آراد گستر آسیا پرداخت شد' }],
+  });
+  const created = db.listContacts().find((item) => item.name === 'شرکت آراد گستر آسیا');
+  assert.ok(created, 'نام باید کامل و بدون فعل جمله باشد');
+
+  const card = counterpartyCard(created.id);
+  assert.equal(card.lines.length, 1, 'پرداخت باید در کارتش دیده شود');
+  assert.equal(card.totals.balance, 93_000_000);
+  assert.equal(db.listContacts().length, before + 1);
+});
+
+test('جمله‌ای بدون عنوان صریح، طرف حساب نمی‌سازد', () => {
+  // مرز مقابل و مهم‌تر: اگر هر اسمی طرف حساب شود، فهرست از نام‌های بی‌ربط پر
+  // می‌شود و خودِ قابلیت بی‌ارزش می‌شود.
+  const before = db.listContacts().length;
+  db.insertTransactions({
+    transcript: 'پیک',
+    transactions: [{ amount: 500_000, type: 'expense', category: 'حمل‌ونقل', rawText: 'پانصد هزار تومان به پیک دادم' }],
+  });
+  assert.equal(db.listContacts().length, before, 'هیچ طرف حسابی نباید ساخته شود');
+});
+
+test('پرداخت نقدی هم در کارت می‌آید، با اینکه حساب طرف را لمس نمی‌کند', () => {
+  // در حسابداری دوطرفه پرداخت نقدی «بدهکار هزینه، بستانکار صندوق» است و به
+  // حساب خودِ طرف نمی‌خورد. کارتی که فقط دفتر کل را بخواند این را نشان
+  // نمی‌دهد — ولی چیزی که از کارت حساب انتظار می‌رود همهٔ داد و ستد با آن
+  // شخص است، نه فقط گردش حسابداری‌اش.
+  const contact = saveContact({ name: 'شرکت پخش نمونه', kind: 'vendor' });
+  db.insertTransactions({
+    transcript: 'x',
+    transactions: [{ amount: 4_000_000, type: 'expense', category: 'مواد و کالا', contactId: contact.id, rawText: 'خرید مواد' }],
+  });
+  const card = counterpartyCard(contact.id);
+  assert.equal(card.lines.length, 1);
+  assert.equal(card.totals.debit, 4_000_000, 'پولی که به او دادیم بدهکارش می‌کند');
+});

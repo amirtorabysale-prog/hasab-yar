@@ -70,17 +70,9 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
     unexplained: openDocuments.balance - ledgerBalance,
     openCount: openDocuments.openCount,
   });
-  if (!accounts.length) {
-    return {
-      contact, accounts, opening: 0, lines: [], period: { from, to },
-      totals: { debit: 0, credit: 0, balance: 0, documents: 0 },
-      reconciliation: reconcile(0),
-    };
-  }
-
   const holes = accounts.map(() => '?').join(',');
   const ids = accounts.map((account) => account.id);
-  const rows = db.prepare(`SELECT journal_lines.id,journal_entries.occurred_at AS occurredAt,journal_entries.memo,
+  const rows = !accounts.length ? [] : db.prepare(`SELECT journal_lines.id,journal_entries.occurred_at AS occurredAt,journal_entries.memo,
       journal_entries.source_type AS sourceType,journal_entries.source_id AS sourceId,
       journal_entries.entry_kind AS entryKind,journal_lines.debit,journal_lines.credit,
       journal_lines.description,ledger_accounts.code AS accountCode,ledger_accounts.name AS accountName,
@@ -91,10 +83,42 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
     WHERE journal_lines.account_id IN (${holes})
     ORDER BY journal_entries.occurred_at,journal_entries.id,journal_lines.rowid`).all(...ids);
 
+  /**
+   * ثبت‌های مستقیمی که به این طرف حساب وصل‌اند ولی حساب او را لمس نمی‌کنند.
+   *
+   * پرداخت نقدی به یک تأمین‌کننده در حسابداری دوطرفه «بدهکار هزینه، بستانکار
+   * صندوق» است — به حساب خودِ او نمی‌خورد. پس کارتی که فقط ردیف‌های دفتر کل
+   * را بخواند، «۹۳ میلیون به شرکت آراد گستر پرداخت شد» را هرگز نشان نمی‌دهد.
+   *
+   * ولی چیزی که از کارت حساب انتظار می‌رود، گردش حسابداری نیست: همهٔ داد و
+   * ستد با آن شخص است. پس ثبت‌های وصل‌شده هم می‌آیند. ثبت‌هایی که تسویهٔ سند
+   * هستند (`allocated`) کنار گذاشته می‌شوند، چون ردشان از قبل در دفتر کل هست
+   * و دو بار شمرده می‌شدند.
+   */
+  const direct = db.prepare(`SELECT transactions.id,transactions.occurred_at AS occurredAt,
+      transactions.raw_text AS memo,transactions.category,transactions.type,transactions.amount
+    FROM transactions WHERE contact_id=? AND status!='allocated' AND capital_flow=''`).all(contact.id)
+    .map((row) => ({
+      id: row.id,
+      occurredAt: row.occurredAt,
+      memo: row.category,
+      description: row.memo,
+      sourceType: 'transaction',
+      sourceId: row.id,
+      entryKind: 'normal',
+      accountCode: '',
+      accountName: row.category,
+      accountKind: 'transaction',
+      // پولی که به او دادیم بدهکارش می‌کند، پولی که از او گرفتیم بستانکار.
+      debit: row.type === 'expense' ? Number(row.amount || 0) : 0,
+      credit: row.type === 'income' ? Number(row.amount || 0) : 0,
+    }));
+
   // مانده افتتاحیه یعنی هرچه پیش از بازهٔ خواسته‌شده رخ داده. بدون این، کارتِ
   // یک ماه، مانده را از صفر شروع می‌کند و عدد پایانی‌اش با دفتر نمی‌خواند.
-  const before = from ? rows.filter((row) => row.occurredAt < from) : [];
-  const within = rows.filter((row) => (!from || row.occurredAt >= from) && (!to || row.occurredAt <= to));
+  const all = [...rows, ...direct].sort((left, right) => String(left.occurredAt).localeCompare(String(right.occurredAt)));
+  const before = from ? all.filter((row) => row.occurredAt < from) : [];
+  const within = all.filter((row) => (!from || row.occurredAt >= from) && (!to || row.occurredAt <= to));
   const opening = before.reduce((sum, row) => sum + movement(row), 0);
 
   let balance = opening;
