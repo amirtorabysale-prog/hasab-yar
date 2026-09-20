@@ -33,6 +33,25 @@ export function isPermanentQueueError(error) {
   return status >= 400 && status < 500 && ![408, 425, 429].includes(status);
 }
 
+export const NETWORK_QUEUE_ERROR_CODES = Object.freeze(['NETWORK_OFFLINE', 'NETWORK_UNREACHABLE']);
+
+/**
+ * «سرور جواب نداد» با «این قلم خراب است» یکی نیست.
+ *
+ * صف صدا بعد از سه تلاش ناموفق یک ضبط را `failed` می‌کند و از صف بیرون
+ * می‌اندازد. تا امروز شکست شبکه هم یک تلاش حساب می‌شد؛ یعنی سه بار باز کردن
+ * برنامه در حالی که میزبان هنوز از خواب بیدار نشده بود کافی بود تا یک ضبط
+ * کاملاً سالم برای همیشه دور ریخته شود و به کاربر گفته شود «همان‌ها را دستی
+ * ثبت کن» — درحالی‌که هیچ ایرادی در ضبط نبود.
+ *
+ * این خطاها نه موقت‌اند به معنای «دوباره بفرست» و نه دائمی؛ یعنی «هنوز اصلاً
+ * تلاشی انجام نشده». نه باید شمارش تلاش را بالا ببرند و نه باید بقیهٔ صف پشت
+ * سرشان بی‌فایده فرستاده شود.
+ */
+export function isNetworkQueueError(error) {
+  return NETWORK_QUEUE_ERROR_CODES.includes(String(error?.code || ''));
+}
+
 export const MAX_OFFLINE_AUDIO_ATTEMPTS = 3;
 
 /**

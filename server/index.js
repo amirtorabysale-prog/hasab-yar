@@ -1015,5 +1015,5 @@ const backupTimer = setInterval(runBackupJob, 6 * 60 * 60 * 1000);
 backupTimer.unref();
 
 // سرور export می‌شود تا تست بتواند بعد از پایان کار ببنددش و فرایند معلق نماند.
-export const server = app.listen(port, '0.0.0.0', () => console.log(`HesabYar API listening on http://localhost:${port}`));
+export const server = app.listen(port, '0.0.0.0', () => console.log(`HesabYar API listening on port ${server.address().port}`));
 export { app };

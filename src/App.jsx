@@ -29,7 +29,7 @@ import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
 import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
-import { isPermanentQueueError } from './lib/offlineScope.js';
+import { isNetworkQueueError, isPermanentQueueError } from './lib/offlineScope.js';
 import { realtimeWorthTrying } from './lib/voiceStatus.js';
 import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
 import { toPersianDigits } from './lib/format.js';
@@ -200,6 +200,12 @@ export default function App() {
           }
           break;
         } catch (error) {
+          // سرور در دسترس نیست: نه تلاشی انجام شده که شمرده شود، نه فرستادن
+          // بقیهٔ صف فایده‌ای دارد. `navigator.onLine` این حالت را نمی‌گیرد —
+          // دستگاه اینترنت دارد و این سرور است که جواب نمی‌دهد — و چون شکست
+          // شبکه هم یک تلاش حساب می‌شد، سه بار بازکردن برنامه روی میزبانی که
+          // هنوز بیدار نشده بود کافی بود تا یک ضبط کاملاً سالم `failed` شود.
+          if (isNetworkQueueError(error)) break;
           const outcome = await failOfflineAudio(item.id, scope, error?.message || 'خطای پردازش صوت', {
             permanent: isPermanentQueueError(error),
           }).catch(() => null);

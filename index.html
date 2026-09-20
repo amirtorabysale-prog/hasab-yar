@@ -4,13 +4,94 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#F5F3ED" />
-    <meta name="description" content="ثبت ساده و مطمئن دخل‌وخرج با صدا" />
+    <meta name="description" content="دفتر مالی صوتی با دفتر کل دوطرفه، کارتابل سند، تطبیق بانکی و خروجی استاندارد برای دفتر حسابداری" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <!-- فقط گرم‌کردن اتصال و پیش‌بارگذاری: هیچ‌کدام رنگ‌آمیزی را نگه نمی‌دارند.
+         برگهٔ سبک واقعی را `main.jsx` اضافه می‌کند و همین نسخهٔ آماده را برمی‌دارد. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" />
     <title>حساب‌یار</title>
+    <!--
+      صفحهٔ آغاز، درون خود HTML.
+
+      تا امروز `body` فقط یک `#root` خالی بود. یعنی از لحظهٔ باز شدن نشانی تا
+      لحظه‌ای که بستهٔ JavaScript برسد و React سوار شود، کاربر یک صفحهٔ کاملاً
+      سفید می‌دید — بدون نام، بدون چرخنده، بدون هیچ نشانه‌ای از اینکه چیزی در
+      حال آمدن است. روی میزبانی که سرویس را می‌خواباند، اولین بازدید هر روز
+      ده‌ها ثانیه طول می‌کشد و آن صفحهٔ سفید دقیقاً شبیه «سایت بالا نمی‌آید»
+      است؛ کاربر قبل از رسیدن برنامه، تب را می‌بندد.
+
+      این نشانه باید داخل خود HTML و بدون هیچ درخواست دیگری کار کند: نه فونت
+      بیرونی (Vazirmatn را `main.jsx` بعداً می‌آورد، پس اینجا Tahoma)، نه
+      تصویر، نه اسکریپت. اسکریپت درون‌خطی اصلاً ممکن نیست — CSP سرور
+      `script-src 'self'` است و مرورگر آن را اجرا نمی‌کند — بنابراین پیام
+      «طول کشید» هم با تأخیر انیمیشن CSS می‌آید، نه با تایمر JavaScript.
+
+      `main.jsx` بعد از سوارشدن React این بخش را برمی‌دارد.
+    -->
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 18px;
+        padding: 24px;
+        background: #F5F3ED;
+        color: #1C1B19;
+        font-family: Vazirmatn, Tahoma, sans-serif;
+        text-align: center;
+      }
+      #boot-name { font-size: 20px; font-weight: 800; letter-spacing: .2px; }
+      #boot-role { font-size: 13px; line-height: 1.9; color: #6E6C64; max-width: 22rem; }
+      #boot-spinner {
+        width: 32px;
+        height: 32px;
+        border: 2px solid #DDDAD1;
+        border-top-color: #C8622D;
+        border-radius: 999px;
+        animation: boot-spin .9s linear infinite;
+      }
+      /* بدون تایمر JavaScript: اگر بعد از دوازده ثانیه هنوز اینجاییم، یعنی
+         سرور خواب بوده و دارد بیدار می‌شود. گفتنش کاربر را از حدس‌زدن و
+         بستن صفحه نجات می‌دهد. */
+      #boot-slow {
+        font-size: 12px;
+        line-height: 1.9;
+        color: #6E6C64;
+        max-width: 22rem;
+        opacity: 0;
+        animation: boot-reveal .4s ease-out 12s forwards;
+      }
+      /* لحظهٔ دقیق کنارکشیدن، بدون تایمر و بدون حدس: تا وقتی React چیزی در
+         `#root` نگذاشته این صفحه هست، و همان لحظه که گذاشت می‌رود. اگر این کار
+         به JavaScript سپرده می‌شد، بین برداشتن صفحهٔ آغاز و اولین رنگ‌آمیزی
+         React یک پرش سفید می‌افتاد. */
+      #root:not(:empty) ~ #boot { display: none; }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @keyframes boot-reveal { to { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-spinner { animation: none; border-top-color: #C8622D; }
+        #boot-slow { animation-duration: .01ms; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot">
+      <div id="boot-spinner" role="status" aria-label="در حال بارگذاری حساب‌یار"></div>
+      <p id="boot-name">حساب‌یار</p>
+      <p id="boot-role">دفتر مالی صوتی با دفتر کل دوطرفه</p>
+      <p id="boot-slow">اولین باز شدن در روز کمی طول می‌کشد چون سرور تازه بیدار می‌شود. صفحه را نبند؛ خودش بالا می‌آید.</p>
+    </div>
+    <noscript>
+      <p style="font-family: Tahoma, sans-serif; text-align: center; padding: 24px; line-height: 2;">
+        برای کار با حساب‌یار باید JavaScript مرورگر روشن باشد.
+      </p>
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

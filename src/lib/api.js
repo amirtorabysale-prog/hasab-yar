@@ -1,5 +1,5 @@
 import {
-  isPermanentQueueError, normalizeOfflineScope, offlineScopeKey, requireOfflineScope,
+  isNetworkQueueError, isPermanentQueueError, normalizeOfflineScope, offlineScopeKey, requireOfflineScope,
 } from './offlineScope.js';
 
 const QUEUE_KEY = 'hesab-yar-transaction-queue';
@@ -58,11 +58,50 @@ function protectedHeaders(mutating = false, extra = {}) {
   };
 }
 
+/**
+ * شکست شبکه با پیام فارسی، نه متن داخلی مرورگر.
+ *
+ * وقتی سرور جواب نمی‌دهد، `fetch` یک `TypeError` با متن انگلیسی مرورگر پرتاب
+ * می‌کند: «Failed to fetch» در Chrome و «NetworkError when attempting to fetch
+ * resource» در Firefox. این متن از دهها نقطهٔ برنامه مستقیم با
+ * `notify(error.message)` به کاربر می‌رسید و صفحهٔ ورود هم همان را به‌عنوان
+ * دلیل ناموفق‌بودن ورود نشان می‌داد — یک جملهٔ انگلیسی وسط برنامهٔ فارسی که
+ * نمی‌گوید کاربر باید چه کند.
+ *
+ * دو حالت از هم جدا می‌شوند، چون کار کاربر فرق می‌کند: یا اینترنت دستگاه قطع
+ * است، یا دستگاه آنلاین است و سرور جواب نمی‌دهد — حالتی که با میزبانِ
+ * خواب‌رونده سرِ اولین بازدید هر روز رخ می‌دهد و «قطعی اینترنت» خواندنش کاربر
+ * را دنبال ایرادی در دستگاه خودش می‌فرستد.
+ *
+ * فقط `TypeError` ترجمه می‌شود. لغو کاربر و مهلت پردازش صدا با
+ * `controller.abort(reason)` انجام می‌شوند و هر مقداری — حتی یک رشته — را
+ * به‌عنوان دلیل رد می‌کنند؛ این‌ها باید دست‌نخورده عبور کنند وگرنه «لغو شد» به
+ * «سرور پاسخ نداد» تبدیل می‌شود.
+ */
+async function reachServer(path, init) {
+  try {
+    return await fetch(path, init);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    const offline = typeof navigator !== 'undefined' && navigator?.onLine === false;
+    throw Object.assign(
+      new Error(offline
+        ? 'اینترنت دستگاه قطع است؛ پس از وصل‌شدن دوباره تلاش کن.'
+        : 'سرور پاسخ نداد. چند لحظه صبر کن و دوباره تلاش کن.'),
+      {
+        code: offline ? 'NETWORK_OFFLINE' : 'NETWORK_UNREACHABLE',
+        status: 0,
+        cause: error,
+      },
+    );
+  }
+}
+
 async function request(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
   const csrfToken = currentCsrfToken();
-  const response = await fetch(path, {
+  const response = await reachServer(path, {
     credentials: 'same-origin',
     ...options,
     headers: {
@@ -106,7 +145,7 @@ async function request(path, options = {}) {
 async function requestText(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
-  const response = await fetch(path, {
+  const response = await reachServer(path, {
     credentials: 'same-origin',
     ...options,
     headers: protectedHeaders(mutating, options.headers),
@@ -295,7 +334,7 @@ export const api = {
   },
   transferFields: () => request('/api/accountant-transfer/fields'),
   downloadImportTemplate: async () => {
-    const response = await fetch('/api/import/template', { credentials: 'same-origin', headers: protectedHeaders(false) });
+    const response = await reachServer('/api/import/template', { credentials: 'same-origin', headers: protectedHeaders(false) });
     if (!response.ok) throw new Error('دریافت الگوی اکسل ممکن نشد.');
     return { blob: await response.blob(), fileName: 'hesab-yar-import-templates.xlsx' };
   },
@@ -349,7 +388,7 @@ export const api = {
   financialDna: (months = 6) => request(`/api/financial-dna?months=${months}`),
   downloadMonthlyAccountantPackage: async (month = '') => {
     const path = `/api/collaboration/monthly-package/download${month ? `?month=${encodeURIComponent(month)}` : ''}`;
-    const response = await fetch(path, { credentials: 'same-origin', headers: protectedHeaders(false) });
+    const response = await reachServer(path, { credentials: 'same-origin', headers: protectedHeaders(false) });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw Object.assign(new Error(body.message || 'ساخت بستهٔ پایان ماه انجام نشد.'), { status: response.status, code: body.code });
@@ -366,7 +405,7 @@ export const api = {
     return { fileName, bytes: blob.size };
   },
   downloadAccountingTransferBatch: async (id, fallbackFileName = '', options = {}) => {
-    const response = await fetch(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/download`, {
+    const response = await reachServer(`/api/accountant-transfer/batches/${encodeURIComponent(id)}/download`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: protectedHeaders(true, { 'Content-Type': 'application/json' }),
@@ -406,7 +445,7 @@ export const api = {
   backupStatus: () => request('/api/backups/status'),
   createServerSnapshot: () => request('/api/backups/snapshot', { method: 'POST', body: '{}' }),
   downloadBackup: async (passphrase) => {
-    const response = await fetch('/api/backups/export', {
+    const response = await reachServer('/api/backups/export', {
       method: 'POST', credentials: 'same-origin',
       headers: protectedHeaders(true, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ passphrase }),
@@ -476,12 +515,21 @@ export async function flushTransactionQueue(scopeValue = currentOfflineScope()) 
   const remaining = [];
   let synced = 0;
   let failed = 0;
-  for (const item of queue) {
+  for (let index = 0; index < queue.length; index += 1) {
+    const item = queue[index];
     if (item.state === 'failed') { remaining.push(item); failed += 1; continue; }
     try {
       await api.saveTransactions(item.payload, { workspaceId: scope.workspaceId });
       synced += 1;
     } catch (error) {
+      if (isNetworkQueueError(error)) {
+        // سرور در دسترس نیست، پس بقیهٔ صف هم همین حالا همین را می‌گیرد. قلم
+        // جاری و همهٔ قلم‌های نرسیده دست‌نخورده و بدون افزایش شمارش تلاش سر
+        // جایشان می‌مانند: یک میزبانِ خواب نباید ثبت آفلاین کاربر را به مرز
+        // «بررسی دستی» برساند.
+        remaining.push(...queue.slice(index));
+        break;
+      }
       const permanent = isPermanentQueueError(error);
       remaining.push({
         ...item,
