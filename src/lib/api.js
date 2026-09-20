@@ -307,6 +307,18 @@ export const api = {
   applyChartSuggestions: ({ refine = false } = {}) => request('/api/chart/mappings/suggest', { method: 'POST', body: JSON.stringify({ refine }) }),
   mapLedgerAccountsInBulk: (ledgerAccountIds, chartAccountId) => request('/api/chart/mappings/bulk', { method: 'POST', body: JSON.stringify({ ledgerAccountIds, chartAccountId }) }),
   attachCounterpartyAnalytics: () => request('/api/chart/analytics/attach', { method: 'POST' }),
+  payrollRuns: () => request('/api/payroll'),
+  importPayrollFile: (file, { period, occurredAt, note } = {}) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('period', period || '');
+    if (occurredAt) form.append('occurredAt', occurredAt);
+    if (note) form.append('note', note);
+    return request('/api/payroll/import', { method: 'POST', body: form });
+  },
+  payPayrollSalaries: (id, payload = {}) => request(`/api/payroll/${encodeURIComponent(id)}/pay-salaries`, { method: 'POST', body: JSON.stringify(payload) }),
+  payPayrollLiability: (id, kind, payload = {}) => request(`/api/payroll/${encodeURIComponent(id)}/pay/${kind}`, { method: 'POST', body: JSON.stringify(payload) }),
+  reversePayrollRun: (id) => request(`/api/payroll/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   dimensionBalance: (params = {}) => request(`/api/chart/dimensions/balance?${new URLSearchParams(params)}`),
   saveAnalytic: (payload) => request(payload.id ? `/api/chart/analytics/${encodeURIComponent(payload.id)}` : '/api/chart/analytics', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   saveCostCenter: (payload) => request(payload.id ? `/api/chart/cost-centers/${encodeURIComponent(payload.id)}` : '/api/chart/cost-centers', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),

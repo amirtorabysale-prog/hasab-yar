@@ -29,6 +29,7 @@ export * from './db/closing.js';
 export * from './db/receipts.js';
 export * from './db/inventory.js';
 export * from './db/tax.js';
+export * from './db/payroll.js';
 export * from './db/insights.js';
 export * from './db/voice.js';
 export * from './db/backup.js';

@@ -30,6 +30,12 @@ export const CHART_ROLES = Object.freeze([
   'sales', 'service-income', 'other-income', 'operating-expense',
   'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
   'fixed-asset', 'owner-capital',
+  // حقوق و دستمزد سه بدهی جدا می‌سازد و هر سه به گیرندهٔ متفاوتی پرداخت
+  // می‌شوند: خالص به خودِ پرسنل، بیمه به تأمین اجتماعی و مالیات به سازمان
+  // امور مالیاتی. ریختنشان در یک «سایر پرداختنی» یعنی هیچ‌کدام قابل پیگیری
+  // نیست و تسویهٔ هرکدام، ماندهٔ دو تای دیگر را هم دست‌کاری می‌کند.
+  'salary-expense', 'employer-insurance-expense',
+  'salary-payable', 'insurance-payable', 'payroll-tax-payable',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({
@@ -407,6 +413,10 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['3102', 'اسناد پرداختنی', 'subsidiary', '31', 'liability', ''],
   ['32', 'مالیات و عوارض پرداختنی', 'general', '3', 'liability', ''],
   ['3201', 'مالیات و عوارض ارزش افزودهٔ فروش', 'subsidiary', '32', 'liability', 'output-tax'],
+  ['33', 'حقوق و بیمهٔ پرداختنی', 'general', '3', 'liability', ''],
+  ['3301', 'حقوق و دستمزد پرداختنی', 'subsidiary', '33', 'liability', 'salary-payable'],
+  ['3302', 'بیمهٔ پرداختنی (تأمین اجتماعی)', 'subsidiary', '33', 'liability', 'insurance-payable'],
+  ['3303', 'مالیات حقوق پرداختنی', 'subsidiary', '33', 'liability', 'payroll-tax-payable'],
   ['5', 'حقوق صاحبان سرمایه', 'group', '', 'equity', ''],
   ['51', 'سرمایه', 'general', '5', 'equity', ''],
   ['5101', 'سرمایه و ماندهٔ افتتاحیه', 'subsidiary', '51', 'equity', 'equity'],
@@ -423,7 +433,8 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['7101', 'بهای تمام‌شدهٔ کالای فروش‌رفته', 'subsidiary', '71', 'expense', 'cogs'],
   ['8', 'هزینه‌ها', 'group', '', 'expense', ''],
   ['81', 'هزینه‌های عملیاتی', 'general', '8', 'expense', ''],
-  ['8101', 'حقوق و دستمزد', 'subsidiary', '81', 'expense', ''],
+  ['8101', 'حقوق و دستمزد', 'subsidiary', '81', 'expense', 'salary-expense'],
+  ['8106', 'بیمهٔ سهم کارفرما', 'subsidiary', '81', 'expense', 'employer-insurance-expense'],
   ['8102', 'اجاره', 'subsidiary', '81', 'expense', ''],
   ['8103', 'حمل‌ونقل', 'subsidiary', '81', 'expense', ''],
   ['8104', 'قبوض و انرژی', 'subsidiary', '81', 'expense', ''],
@@ -555,6 +566,11 @@ const ROLE_BY_SOURCE_KIND = {
   'cogs-product': ['cogs'],
   'income-category': ['sales', 'service-income', 'other-income'],
   'expense-category': ['operating-expense'],
+  'payroll-salary-expense': ['salary-expense', 'operating-expense'],
+  'payroll-insurance-expense': ['employer-insurance-expense', 'operating-expense'],
+  'payroll-salary-payable': ['salary-payable', 'payable'],
+  'payroll-insurance-payable': ['insurance-payable', 'payable'],
+  'payroll-tax-payable': ['payroll-tax-payable', 'payable'],
   'operational-account': ['cash', 'bank'],
   // هر دارایی ثابت حساب دفترکل خودش را می‌گیرد؛ همه به همان معین اموال نگاشته می‌شوند.
   'fixed-asset': ['fixed-asset'],

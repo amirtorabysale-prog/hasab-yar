@@ -13,6 +13,7 @@ import {
   submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
+  importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
@@ -408,6 +409,27 @@ app.post('/api/import/chart', chartUpload.single('file'), (request, response, ne
       replace: request.body?.replace === 'true' || request.body?.replace === true,
     }));
   } catch (error) { return next(error); }
+});
+// لیست حقوق: فایل دفتر، سند، و تسویهٔ سه بدهیِ جدا.
+app.get('/api/payroll', (request, response, next) => {
+  try { return response.json({ items: listPayrollRuns({ limit: request.query?.limit }) }); } catch (error) { return next(error); }
+});
+app.post('/api/payroll/import', chartUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.status(201).json(importPayrollFile(request.file.buffer, request.file.originalname, {
+      period: request.body?.period, occurredAt: request.body?.occurredAt, note: request.body?.note,
+    }));
+  } catch (error) { return next(error); }
+});
+app.post('/api/payroll/:id/pay-salaries', (request, response, next) => {
+  try { return response.json(payPayrollSalaries(request.params.id, request.body || {})); } catch (error) { return next(error); }
+});
+app.post('/api/payroll/:id/pay/:kind', (request, response, next) => {
+  try { return response.json(payPayrollLiability(request.params.id, request.params.kind, request.body || {})); } catch (error) { return next(error); }
+});
+app.delete('/api/payroll/:id', (request, response, next) => {
+  try { return response.json(reversePayrollRun(request.params.id)); } catch (error) { return next(error); }
 });
 app.post('/api/import/analytics', chartUpload.single('file'), (request, response, next) => {
   try {

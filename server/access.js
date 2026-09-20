@@ -39,6 +39,8 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath.startsWith('/reconciliation/imports/') && normalizedPath.endsWith('/close')) return 'manager';
   // کدینگ، تفصیلی و مرکز هزینه دادهٔ پایهٔ دفترند، نه ثبت روزانه؛ تغییرشان در سطح تنظیمات است.
   if (normalizedPath.startsWith('/chart/')) return 'manager';
+  // لیست حقوق هم دادهٔ شخصی پرسنل است و هم سندِ چندمیلیونی می‌سازد.
+  if (normalizedPath.startsWith('/payroll')) return 'manager';
   // آستانهٔ ثبت خودکار، سیاست دفتر است نه تنظیم شخصی؛ تغییرش در سطح مدیر دفتر.
   if (normalizedPath === '/automation-policy') return 'manager';
   // ورود کدینگ و ماندهٔ افتتاحیه ساختار دفتر را عوض می‌کند؛ الگوی خالی برای همه.

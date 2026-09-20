@@ -27,6 +27,19 @@ const OPENING_ALIASES = {
   analyticCode: ['analytic', 'analyticcode', 'کدتفصیلی', 'تفصیلی', 'شناور'],
 };
 
+// سرستون‌های لیست حقوق. نام‌ها همان چیزی‌اند که در لیست حقوق دفترها نوشته
+// می‌شود؛ «حقوق ناخالص»، «ناخالص» و «جمع حقوق و مزایا» یک چیزند.
+const PAYROLL_ALIASES = {
+  employeeName: ['name', 'employee', 'نام', 'نامپرسنل', 'نامونامخانوادگی', 'پرسنل', 'کارمند', 'نامکارمند'],
+  nationalId: ['nationalid', 'کدملی', 'شمارهملی', 'شناسهملی'],
+  gross: ['gross', 'حقوقناخالص', 'ناخالص', 'جمعحقوقومزایا', 'حقوقومزایا', 'ناخالصحقوق', 'جمعناخالص'],
+  insuranceEmployee: ['بیمهسهمکارمند', 'بیمهکارمند', 'سهمبیمهکارمند', 'بیمهسهمکارگر', 'کسربیمه'],
+  insuranceEmployer: ['بیمهسهمکارفرما', 'بیمهکارفرما', 'سهمبیمهکارفرما'],
+  incomeTax: ['tax', 'مالیات', 'مالیاتحقوق', 'کسرمالیات'],
+  otherDeductions: ['سایرکسورات', 'کسورات', 'سایرکسور', 'وام', 'مساعده'],
+  net: ['net', 'خالص', 'خالصپرداختی', 'قابلپرداخت', 'خالصحقوق'],
+};
+
 function rowsFromFile(buffer, fileName, schema) {
   const sheet = readTabularFile(buffer, fileName)[0];
   return tableFromSheet(sheet, schema);
@@ -40,6 +53,15 @@ export const chartRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer,
 export const analyticRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {
   aliases: ANALYTIC_ALIASES, required: ['name'], label: 'فایل تفصیلی',
   labels: { code: 'کد', name: 'نام', kind: 'نوع', externalCode: 'کد مقصد' },
+});
+
+export const payrollRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {
+  aliases: PAYROLL_ALIASES, required: ['employeeName', 'gross'], label: 'لیست حقوق',
+  labels: {
+    employeeName: 'نام پرسنل', gross: 'حقوق ناخالص', nationalId: 'کد ملی',
+    insuranceEmployee: 'بیمهٔ سهم کارمند', insuranceEmployer: 'بیمهٔ سهم کارفرما',
+    incomeTax: 'مالیات', otherDeductions: 'سایر کسورات', net: 'خالص پرداختی',
+  },
 });
 
 export const openingRowsFromFile = (buffer, fileName = '') => rowsFromFile(buffer, fileName, {
