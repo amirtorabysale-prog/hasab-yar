@@ -260,18 +260,56 @@ function classify(context, learnings = []) {
   let categoryRunnerUp = null;
   if (learned) confidence = Math.max(confidence, 0.96);
   if (!category) {
-    const suggestion = classifyCategory(normalizedContext, type);
+    let suggestion = classifyCategory(normalizedContext, type);
+    /**
+     * وقتی سمتِ تشخیص‌داده‌شده هیچ واژه‌ای ندارد ولی سمت مقابل دارد، جهت پول
+     * غلط خوانده شده است.
+     *
+     * «بنزین گرفتم» و «ناهار پرسنل گرفتم» درآمد ثبت می‌شدند، چون «گرفتم»
+     * فعل درآمدی است — درحالی‌که اینجا یعنی «خریدم». و چون `classifyCategory`
+     * با همان نوعِ غلط صدا زده می‌شود و بر اساس نوع فیلتر می‌کند، «سوخت» و
+     * «خوراک» اصلاً نامزد نمی‌شدند؛ دسته روی «سایر درآمدها» می‌افتاد و کاربر
+     * باید هم نوع و هم دسته را دستی درست می‌کرد.
+     *
+     * اصلاحِ وارونه‌اش از قبل بود («دستهٔ درآمدی روی تراکنش هزینه») ولی فقط
+     * برای نگاشت تأییدشدهٔ کاربر کار می‌کرد، چون دستهٔ خودکار هرگز نمی‌تواند
+     * نوع را نقض کند.
+     *
+     * شرط عمداً سخت است: سمت فعلی باید هیچ واژه‌ای نداشته باشد و سمت مقابل
+     * تطابق روشن. «از مشتری گرفتم» هیچ‌کدام را ندارد و دست‌نخورده می‌ماند.
+     */
+    if (!suggestion.matched) {
+      const oppositeType = type === 'income' ? 'expense' : 'income';
+      const opposite = classifyCategory(normalizedContext, oppositeType);
+      if (opposite.matched && opposite.confidence >= 0.86) {
+        type = oppositeType;
+        typeReason = `نوع با واژهٔ دستهٔ «${opposite.category}» هماهنگ شد؛ فعل جمله جهت دیگری را نشان می‌داد.`;
+        // زیر آستانهٔ بازبینی عمداً: فعل و اسمِ جمله با هم نخواندند و کاربر
+        // باید یک نگاه بیندازد. یک‌بار. بعد از تأیید او، نگاشت یادگرفته‌شده
+        // این مسیر را دور می‌زند و دیگر پرسیده نمی‌شود.
+        confidence = Math.min(confidence, 0.68);
+        suggestion = opposite;
+      }
+    }
     category = suggestion.category;
     categoryConfidence = suggestion.confidence;
     categoryReason = suggestion.reason;
     categoryAmbiguous = suggestion.ambiguous;
     categoryRunnerUp = suggestion.runnerUp;
   }
-  // یک دستهٔ درآمدی روی تراکنشی که هزینه تشخیص داده شده یعنی جهت پول اشتباه
-  // خوانده شده؛ دسته مرجع است چون از واژهٔ صریح‌تری آمده.
+  /**
+   * دسته و نوع هرگز نباید با هم نخوانند؛ دسته مرجع است چون از واژهٔ صریح‌تری
+   * آمده.
+   *
+   * این اصلاح فقط یک‌طرفه بود — دستهٔ درآمدی می‌توانست «هزینه» را برگرداند
+   * ولی عکسش نه — و روی نگاشت تأییدشدهٔ کاربر رکورد خودمتناقض می‌ساخت: کاربر
+   * یک‌بار «بنزین» را به «سوخت و ایاب‌وذهاب» نگاشت می‌کرد و از آن به بعد
+   * «بنزین گرفتم» نوعِ درآمد با دستهٔ هزینه‌ای می‌گرفت. یعنی همان تأییدِ کاربر
+   * که قرار بود مسئله را حل کند، آن را بدتر می‌کرد.
+   */
   const categoryType = CATEGORY_DEFINITIONS.find((item) => item.name === category)?.type;
-  if (categoryType === 'income' && type !== 'income') {
-    type = 'income';
+  if (categoryType && categoryType !== type) {
+    type = categoryType;
     typeReason = `نوع با دستهٔ «${category}» هماهنگ شد.`;
     confidence = Math.max(confidence, categoryConfidence);
   }

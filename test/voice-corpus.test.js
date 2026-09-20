@@ -102,6 +102,48 @@ test('collecting a receivable is money coming in, not going out', () => {
   assert.equal(spent.transactions[0]?.type, 'expense');
 });
 
+test('the noun decides when the verb points the wrong way', () => {
+  // «گرفتم» در فارسی هم «دریافت کردم» است و هم «خریدم». چون فعلِ درآمدی
+  // بود، «بنزین گرفتم» و «ناهار پرسنل گرفتم» درآمد ثبت می‌شدند — و چون
+  // دسته‌بند بر اساس همان نوعِ غلط فیلتر می‌کند، «سوخت» و «خوراک» اصلاً
+  // نامزد نمی‌شدند و دسته روی «سایر درآمدها» می‌افتاد. کاربر باید هم نوع و
+  // هم دسته را دستی درست می‌کرد.
+  for (const [text, category] of [
+    ['دویست هزار تومان بنزین گرفتم', 'سوخت و ایاب‌وذهاب'],
+    ['دویست هزار تومان ناهار پرسنل گرفتم', 'خوراک'],
+    ['پانصد هزار تومان تاکسی گرفتم', 'حمل‌ونقل'],
+  ]) {
+    const [transaction] = parseFinancialText(text, { source: 'voice' }).transactions;
+    assert.equal(transaction.type, 'expense', text);
+    assert.equal(transaction.category, category, text);
+    // وارونه‌کردن جهتِ فعل یک استنباط قوی است و باید یک‌بار دیده شود.
+    assert.equal(transaction.needsReview, true, text);
+  }
+});
+
+test('a sentence with no category word keeps the direction its verb gave', () => {
+  // مرز مقابل: شرط باید سخت بماند. اینجا هیچ‌کدام از دو سمت واژهٔ دسته
+  // ندارند، پس فعل همچنان تصمیم می‌گیرد.
+  const [received] = parseFinancialText('یک میلیون تومان از مشتری گرفتم', { source: 'voice' }).transactions;
+  assert.equal(received.type, 'income');
+});
+
+test('a confirmed mapping never produces a type that contradicts its category', () => {
+  // رکورد خودمتناقض بدتر از تشخیص غلط است. تأیید کاربر روی «بنزین» باعث
+  // می‌شد نوع درآمد با دستهٔ هزینه‌ای ثبت شود — یعنی همان تأییدی که قرار بود
+  // مسئله را حل کند، آن را بدتر می‌کرد.
+  const [spent] = parseFinancialText('دویست هزار تومان بنزین گرفتم', {
+    source: 'voice', learnings: [{ keyword: 'بنزین', category: 'سوخت و ایاب‌وذهاب' }],
+  }).transactions;
+  assert.equal(spent.type, 'expense');
+  assert.equal(spent.category, 'سوخت و ایاب‌وذهاب');
+
+  const [earned] = parseFinancialText('دو میلیون تومان بابت فروش دادم', {
+    source: 'voice', learnings: [{ keyword: 'فروش', category: 'فروش' }],
+  }).transactions;
+  assert.equal(earned.type, 'income', 'جهت مقابل هم باید هماهنگ شود');
+});
+
 test('a genuinely two-sided phrase is flagged instead of guessed silently', () => {
   // «چک نقد کردم» واقعاً دوپهلوست: «نقدی خریدم» هزینه است. حدسِ خاموش
   // بدترین کار است؛ گفتنِ اینکه مطمئن نیست، درست است.

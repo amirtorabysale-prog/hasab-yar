@@ -183,6 +183,9 @@ export function classifyCategory(text, type) {
       reason: 'واژهٔ شناخته‌شده‌ای برای دسته‌بندی در متن نبود؛ دستهٔ عمومی پیشنهاد شد.',
       ambiguous: false,
       runnerUp: null,
+      // تفاوتِ «دستهٔ عمومی چون چیزی پیدا نشد» با «دسته‌ای که واقعاً از متن
+      // آمده»؛ صداکنندهٔ این تابع باید بتواند این دو را از هم جدا کند.
+      matched: false,
     };
   }
   const [best, second] = ranked;
@@ -199,5 +202,6 @@ export function classifyCategory(text, type) {
       : `واژهٔ «${longest}» در متن پیدا شد.`,
     ambiguous: gap === 0 && Boolean(second),
     runnerUp: second?.definition.name || null,
+    matched: true,
   };
 }
