@@ -1,23 +1,12 @@
 import { Check, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { AccountingPage } from './features/accounting/AccountingPage.jsx';
-import { AccountsPanel, BackupPanel, DataPrivacyPanel, LogoutPanel, PasswordPanel, SessionsPanel, SettingsPage } from './features/settings/SettingsPage.jsx';
 import { BottomNav, DesktopNav, Drawer, InsightRail, allowedScreens } from './app/navigation.jsx';
-import { ChartPage } from './features/chart/ChartPage.jsx';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
-import { CollaborationPage } from './features/collaboration/CollaborationPage.jsx';
 import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet } from './features/capture/CaptureSheets.jsx';
 import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
-import ExportAccessCard from './features/settings/ExportAccessCard.jsx';
 import { EMPTY_SUMMARY } from './components/common.jsx';
-import { FirmConsolePage } from './features/firm/FirmConsolePage.jsx';
 import { IntentSheet, SettleSheet } from './features/capture/IntentSheets.jsx';
-import { LearningPage } from './features/learning/LearningPage.jsx';
-import { LedgerPage } from './features/ledger/LedgerPage.jsx';
 import { LoginPage, Onboarding } from './features/auth/AuthScreens.jsx';
-import { ReportPage } from './features/reports/ReportPage.jsx';
-import { ReviewQueuePage } from './features/review/ReviewQueuePage.jsx';
-import { TaxPage } from './features/tax/TaxPage.jsx';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
@@ -35,7 +24,51 @@ import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
 import { toPersianDigits } from './lib/format.js';
 import { withCounterpartyConfirmation } from './lib/counterpartyPrompt.js';
 
+/**
+ * صفحه‌ای که پشت ناوبری است با اولین باز شدن خودش می‌آید، نه با اولین باز
+ * شدن برنامه.
+ *
+ * تا امروز هر چهارده صفحه در بستهٔ اول بودند. یعنی کسی که فقط «امروز» را باز
+ * می‌کرد، کدینگ و انتقال پارسیان و حقوق و مالیات را هم دانلود می‌کرد — روی
+ * پیوندی که هر درخواستش ثانیه‌ها طول می‌کشد.
+ *
+ * اندازه‌گیری روی source map نشان داد از ۶۲۶ کیلوبایت کد خودمان، همین
+ * صفحه‌های گیت‌شده حدود ۲۸۰ کیلوبایت‌اند: دفتر ۸۸، همکاری حسابدار ۶۳،
+ * حسابداری ۳۹، تنظیمات ۲۷، کدینگ ۲۳ و مالیات ۱۹.
+ *
+ * «امروز» عمداً بیرون از این فهرست است: صفحهٔ فرود است و تنبل‌کردنش فقط یک
+ * رفت‌وبرگشت به مسیر اصلی اضافه می‌کند. برگه‌های ثبت صوتی هم همین‌طور، چون
+ * کار اصلی کاربر روی همان صفحه انجام می‌شود.
+ */
+const namedLazy = (load, name) => lazy(() => load().then((module) => ({ default: module[name] })));
+
+const AccountingPage = namedLazy(() => import('./features/accounting/AccountingPage.jsx'), 'AccountingPage');
+const AccountsPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'AccountsPanel');
+const BackupPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'BackupPanel');
+const ChartPage = namedLazy(() => import('./features/chart/ChartPage.jsx'), 'ChartPage');
+const CollaborationPage = namedLazy(() => import('./features/collaboration/CollaborationPage.jsx'), 'CollaborationPage');
+const DataPrivacyPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'DataPrivacyPanel');
+const ExportAccessCard = lazy(() => import('./features/settings/ExportAccessCard.jsx'));
+const FirmConsolePage = namedLazy(() => import('./features/firm/FirmConsolePage.jsx'), 'FirmConsolePage');
+const LearningPage = namedLazy(() => import('./features/learning/LearningPage.jsx'), 'LearningPage');
+const LedgerPage = namedLazy(() => import('./features/ledger/LedgerPage.jsx'), 'LedgerPage');
+const LogoutPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'LogoutPanel');
+const PasswordPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'PasswordPanel');
+const ReportPage = namedLazy(() => import('./features/reports/ReportPage.jsx'), 'ReportPage');
+const ReviewQueuePage = namedLazy(() => import('./features/review/ReviewQueuePage.jsx'), 'ReviewQueuePage');
+const SessionsPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SessionsPanel');
+const SettingsPage = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SettingsPage');
+const TaxPage = namedLazy(() => import('./features/tax/TaxPage.jsx'), 'TaxPage');
 const WorkspacePanel = lazy(() => import('./features/settings/WorkspacePanel.jsx'));
+
+/** تا رسیدن قطعهٔ صفحه، همان چرخندهٔ آشنای برنامه — نه یک پرش به سفیدی. */
+function ScreenLoading() {
+  return (
+    <div className="grid min-h-[60vh] place-items-center" role="status" aria-label="در حال باز شدن صفحه">
+      <span className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-accent" />
+    </div>
+  );
+}
 
 function useOnlineStatus() {
   const [online, setOnline] = useState(navigator.onLine);
@@ -932,7 +965,7 @@ export default function App() {
 
   if (authenticated === null) return <div dir="rtl" className="grid min-h-screen place-items-center bg-paper text-ink"><span className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-accent" aria-label="در حال بارگذاری" /></div>;
   if (!authenticated) return <LoginPage onLogin={login} error={authError} />;
-  if (access.user?.mustChangePassword) return <main dir="rtl" className="min-h-screen bg-paper py-10 text-ink"><div className="mx-auto max-w-[760px] px-4"><p className="text-sm font-bold text-accent">اولین ورود</p><h1 className="mt-2 text-2xl font-extrabold">رمز موقتت را عوض کن</h1><p className="mt-2 text-sm leading-7 text-muted">برای حفاظت از اطلاعات مالی، تا تعیین رمز شخصی امکان ورود به دفتر وجود ندارد.</p></div><PasswordPanel notify={notify} onChanged={logout} /></main>;
+  if (access.user?.mustChangePassword) return <main dir="rtl" className="min-h-screen bg-paper py-10 text-ink"><div className="mx-auto max-w-[760px] px-4"><p className="text-sm font-bold text-accent">اولین ورود</p><h1 className="mt-2 text-2xl font-extrabold">رمز موقتت را عوض کن</h1><p className="mt-2 text-sm leading-7 text-muted">برای حفاظت از اطلاعات مالی، تا تعیین رمز شخصی امکان ورود به دفتر وجود ندارد.</p></div><Suspense fallback={<ScreenLoading />}><PasswordPanel notify={notify} onChanged={logout} /></Suspense></main>;
 
   const canWrite = ['owner', 'manager', 'accountant'].includes(access.workspace?.role);
 
@@ -942,6 +975,7 @@ export default function App() {
       <div className={`app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper ${insightsOpen ? 'insights-open' : ''}`}>
         <DesktopNav screen={screen} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div className="safe-bottom min-w-0 lg:col-start-2">
+          <Suspense fallback={<ScreenLoading />}>
           {screen === 'today' && (
             <TodayPage
               data={data} loading={loading} manualText={manualText} setManualText={setManualText}
@@ -964,6 +998,7 @@ export default function App() {
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
           {screen === 'settings' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+          </Suspense>
         </div>
         <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
         <CounterpartyMatchSheet />
