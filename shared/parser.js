@@ -319,6 +319,52 @@ function classify(context, learnings = []) {
   };
 }
 
+/**
+ * یک جملهٔ گفته‌شده، چند بار شنیده شده.
+ *
+ * تشخیص زندهٔ اندروید هر نسخهٔ نیمه‌تمام جمله را جدا برمی‌گرداند و متن به
+ * پلکان تبدیل می‌شود: «پرداخت ۹۳ / پرداخت ۹۳ میلیون / پرداخت ۹۳ میلیون
+ * تومان …». ریشه‌اش در لایهٔ گفتار بسته شد، ولی این لایه هم نباید به آن
+ * تکیه کند: هر منبع دیگری — Whisper، متن چسبانده‌شدهٔ کاربر — می‌تواند همین
+ * تکرار را بسازد.
+ *
+ * و پیامدش از زشتیِ متن خیلی بدتر است: هر «۹۳» یک مبلغ جدا شمرده می‌شود و یک
+ * جمله به چهارده ثبتِ ۹۳ میلیونی تبدیل می‌شود — یک‌میلیارد و سیصد میلیون
+ * هزینهٔ ساختگی، با یک بار تأیید.
+ *
+ * قاعده: مبلغ‌های پشت‌سرهمِ یکسان با همان نوع و همان دسته، یک ثبت‌اند. حذف
+ * بی‌صدا نیست؛ شمارشش در دلیل بررسی نوشته می‌شود تا اگر واقعاً دو پرداختِ
+ * هم‌مبلغ بوده، کاربر خودش دومی را اضافه کند.
+ */
+function collapseRepeatedTransactions(transactions) {
+  const collapsed = [];
+  for (const transaction of transactions) {
+    const previous = collapsed[collapsed.length - 1];
+    const sameEntry = previous
+      && previous.amount === transaction.amount
+      && previous.type === transaction.type
+      && previous.category === transaction.category;
+    if (!sameEntry) { collapsed.push({ ...transaction, repeatCount: 1 }); continue; }
+    previous.repeatCount += 1;
+  }
+  return collapsed.map((transaction) => {
+    if (transaction.repeatCount < 2) { const { repeatCount, ...rest } = transaction; return rest; }
+    const { repeatCount, ...rest } = transaction;
+    const reason = `این مبلغ ${repeatCount} بار پشت سر هم شنیده شد و یک ثبت در نظر گرفته شد؛ اگر واقعاً چند پرداخت بوده، بقیه را خودت اضافه کن.`;
+    return withReviewAssessment({
+      ...rest,
+      needsReview: true,
+      reviewReasons: [...(rest.reviewReasons || []), reason],
+      warning: rest.warning || reason,
+      confidenceDetails: {
+        ...rest.confidenceDetails,
+        // تکرارِ غیرعادی یعنی خودِ شنیدن مشکوک است، نه فقط دسته‌بندی.
+        amount: { score: 0.4, reason: `مبلغ ${repeatCount} بار تکرار شد؛ تشخیص گفتار احتمالاً یک جمله را چند بار نوشته است.` },
+      },
+    });
+  });
+}
+
 export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
   // تاریخ پیش از مبلغ خوانده می‌شود، چون رقم‌های تاریخ نباید مبلغ شمرده شوند.
   //
@@ -410,7 +456,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     };
     return withReviewAssessment(transaction);
   });
-  return { transcript: text, transactions };
+  return { transcript: text, transactions: collapseRepeatedTransactions(transactions) };
 }
 
 export function parseRecognitionCandidates(candidates, options = {}) {

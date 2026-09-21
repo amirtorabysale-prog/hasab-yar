@@ -4,7 +4,9 @@ import { normalizedCounterpartyInput, resolveCounterparty } from '../counterpart
 
 export function listContacts() {
   return db.prepare(`SELECT contacts.id,contacts.name,contacts.kind,contacts.phone,contacts.note,
-    COALESCE((SELECT SUM(CASE WHEN obligations.direction='receivable' THEN obligations.amount ELSE -obligations.amount END)
+    COALESCE((SELECT SUM(CASE WHEN obligations.direction='receivable'
+      THEN obligations.amount-COALESCE(obligations.paid_amount,0)
+      ELSE -(obligations.amount-COALESCE(obligations.paid_amount,0)) END)
       FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open'),0)
     + COALESCE((SELECT SUM(CASE WHEN invoices.document_type='sales' THEN invoices.total-COALESCE((SELECT SUM(invoice_payments.amount) FROM invoice_payments WHERE invoice_payments.invoice_id=invoices.id),0)
       ELSE -(invoices.total-COALESCE((SELECT SUM(invoice_payments.amount) FROM invoice_payments WHERE invoice_payments.invoice_id=invoices.id),0)) END)

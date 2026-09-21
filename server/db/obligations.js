@@ -8,14 +8,7 @@ import { insertTransactionRows, transactionRow } from './transactions.js';
 import { resolveAccountId } from './accounts.js';
 import { routeEvent } from '../../shared/confidenceEngine.js';
 
-// دفترهایی که پیش از تسویهٔ جزئی ساخته شده‌اند این ستون را ندارند.
-function ensurePartialSettlementColumn() {
-  try { db.exec('ALTER TABLE obligations ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0'); }
-  catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
-}
-
 export function listObligations({ status = 'open' } = {}) {
-  ensurePartialSettlementColumn();
   const where = ['open', 'paid', 'cancelled'].includes(status) ? 'WHERE obligations.status=?' : '';
   const args = where ? [status] : [];
   return db.prepare(`SELECT obligations.id,obligations.contact_id AS contactId,contacts.name AS contactName,
@@ -63,7 +56,6 @@ export function saveObligation(values = {}) {
  * می‌شود که ماندهٔ صفر داشته باشد، نه وقتی یک بار دستش زده‌اند.
  */
 export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested } = {}) {
-  ensurePartialSettlementColumn();
   const item = db.prepare("SELECT * FROM obligations WHERE id=? AND status='open'").get(id);
   if (!item) return null;
   const remaining = item.amount - (item.paid_amount || 0);

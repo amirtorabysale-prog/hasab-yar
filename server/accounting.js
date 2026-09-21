@@ -661,17 +661,26 @@ export function postVatSettlementJournal(database, { settlementId, occurredAt, c
 // ---------------------------------------------------------------------------
 
 /**
- * حساب اسناد دریافتنی و پرداختنی.
+ * حساب اسناد دریافتنی و پرداختنی — به تفکیک صاحب چک.
  *
  * چک از مطالبات عادی جدا می‌ماند: سررسید دارد، ممکن است برگشت بخورد، و تا
  * وصول نشود پول نیست. ریختنش در همان حساب دریافتنی یعنی نه سررسیدی پیداست و
  * نه می‌شود گفت چقدر از مطالبات، چکِ در جریان است.
+ *
+ * ولی «جدا از مطالبات» یعنی حساب جدا، نه شخصِ گم‌شده. یک حساب مشترک برای
+ * همهٔ چک‌ها، کارت حساب را خراب می‌کرد: مشتری‌ای که طلبش را با چک داده بود
+ * در کارتش صفر می‌شد — انگار پول رسیده — درحالی‌که چک هنوز وصول نشده و او
+ * همچنان بدهکار است. پس کلید همان کلیدی است که حساب دریافتنی‌اش دارد.
  */
-export function chequeLedgerAccounts(database) {
+export function chequeLedgerAccounts(database, counterparty = null) {
   ensureAccountingSchema(database);
+  const name = String(counterparty?.name || '').trim().slice(0, 100);
+  const receivableKey = name ? counterpartyAccountKey(database, 'cheque-receivable', counterparty?.contactId, name) : 'notes';
+  const payableKey = name ? counterpartyAccountKey(database, 'cheque-payable', counterparty?.contactId, name) : 'notes';
+  const label = (prefix) => (name ? `${prefix} — ${name}` : prefix);
   return {
-    noteReceivable: linkedLedgerAccount(database, 'cheque-receivable', 'notes', 'اسناد دریافتنی (چک)', 'asset'),
-    notePayable: linkedLedgerAccount(database, 'cheque-payable', 'notes', 'اسناد پرداختنی (چک)', 'liability'),
+    noteReceivable: linkedLedgerAccount(database, 'cheque-receivable', receivableKey, label('اسناد دریافتنی (چک)'), 'asset'),
+    notePayable: linkedLedgerAccount(database, 'cheque-payable', payableKey, label('اسناد پرداختنی (چک)'), 'liability'),
   };
 }
 
@@ -698,9 +707,9 @@ export function postChequeJournal(database, values, { createdBy = null, timeZone
   const occurredAt = values.occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
 
-  const notes = chequeLedgerAccounts(database);
-  const noteAccount = receivable ? notes.noteReceivable : notes.notePayable;
   const party = values.counterparty || {};
+  const notes = chequeLedgerAccounts(database, party);
+  const noteAccount = receivable ? notes.noteReceivable : notes.notePayable;
   const analyticId = party.analyticId || null;
   const partyAccount = () => counterpartyLedgerAccount(database, party.contactId, party.name, receivable ? 'sales' : 'purchase');
 

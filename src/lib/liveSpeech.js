@@ -29,6 +29,38 @@ export function liveSpeechErrorMessage(code) {
   return SPEECH_ERROR_MESSAGES[code] || 'تشخیص زنده نتیجه نداد؛ فایل صوتی روی سرور بررسی می‌شود.';
 }
 
+/**
+ * چسباندن یک تکهٔ تازهٔ گفتار به آنچه تا حالا شنیده شده.
+ *
+ * روی اندروید — هم Chrome و هم مرورگر سامسونگ — تشخیص زنده هر نسخهٔ
+ * نیمه‌تمامِ جمله را به‌عنوان یک نتیجهٔ جدا برمی‌گرداند، نه به‌عنوان
+ * به‌روزرسانیِ نتیجهٔ قبلی. چسباندن ساده، این پلکان را می‌سازد:
+ *
+ *   «پرداخت / پرداخت ۹۳ / پرداخت ۹۳ میلیون / پرداخت ۹۳ میلیون تومان …»
+ *
+ * و بدتر از زشتیِ متن: هر «۹۳» یک مبلغ جدا شمرده می‌شود و یک جملهٔ گفته‌شده
+ * به چهارده ثبتِ ۹۳ میلیونی تبدیل می‌شود. پس تکهٔ تازه‌ای که ادامهٔ همان
+ * چیزی است که تا حالا گفته شده، جایگزین می‌شود نه اضافه.
+ */
+export function appendSpeechSegment(accumulated, segment) {
+  const previous = String(accumulated || '').trim();
+  const next = String(segment || '').trim();
+  if (!next) return previous;
+  if (!previous) return next;
+  // همان جمله، کامل‌تر شده.
+  if (next.startsWith(previous)) return next;
+  // همان چیزی که از قبل داریم، دوباره آمده.
+  if (previous.endsWith(next)) return previous;
+  // دنبالهٔ آنچه داریم با سرآغاز تکهٔ تازه یکی است؛ فقط تفاوتش اضافه می‌شود.
+  // آستانهٔ چهار نویسه، تا هم‌پوشانی تصادفیِ یک حرف چیزی را نخورد.
+  for (let size = Math.min(previous.length, next.length); size >= 4; size -= 1) {
+    if (previous.endsWith(next.slice(0, size))) return `${previous}${next.slice(size)}`;
+  }
+  return `${previous} ${next}`;
+}
+
+const joinSegments = (segments) => segments.reduce((accumulated, segment) => appendSpeechSegment(accumulated, segment), '');
+
 function snapshotResults(results) {
   const primary = [];
   const alternativesByResult = [];
@@ -40,13 +72,13 @@ function snapshotResults(results) {
     if (result.isFinal) primary.push(alternatives[0]?.transcript || '');
     else interim = alternatives[0]?.transcript || '';
   }
-  const finalTranscript = normalizePersian(primary.join(' '));
-  const transcript = normalizePersian([finalTranscript, interim].filter(Boolean).join(' '));
+  const finalTranscript = normalizePersian(joinSegments(primary));
+  const transcript = normalizePersian(appendSpeechSegment(finalTranscript, interim));
   const candidates = [{ transcript, confidence: alternativesByResult.reduce((sum, group) => sum + (group[0]?.confidence || 0), 0) / Math.max(1, alternativesByResult.length) }];
   for (let resultIndex = 0; resultIndex < alternativesByResult.length; resultIndex += 1) {
     for (let alternativeIndex = 1; alternativeIndex < alternativesByResult[resultIndex].length; alternativeIndex += 1) {
       const parts = alternativesByResult.map((group, index) => group[index === resultIndex ? alternativeIndex : 0]?.transcript || '');
-      candidates.push({ transcript: normalizePersian(parts.join(' ')), confidence: alternativesByResult[resultIndex][alternativeIndex].confidence || 0 });
+      candidates.push({ transcript: normalizePersian(joinSegments(parts)), confidence: alternativesByResult[resultIndex][alternativeIndex].confidence || 0 });
     }
   }
   return { transcript, finalTranscript, interim: normalizePersian(interim), candidates };
@@ -61,7 +93,9 @@ function snapshotResults(results) {
 export function mergeSpeechSegments(carried, snapshot) {
   const carriedText = normalizePersian(carried);
   if (!carriedText) return snapshot;
-  const join = (...parts) => normalizePersian(parts.filter(Boolean).join(' '));
+  // نشست تازه گاهی آخرین جملهٔ نشست قبلی را دوباره می‌گوید؛ همان قاعدهٔ
+  // هم‌پوشانی اینجا هم لازم است.
+  const join = (...parts) => normalizePersian(parts.filter(Boolean).reduce((accumulated, part) => appendSpeechSegment(accumulated, part), ''));
   const finalTranscript = join(carriedText, snapshot.finalTranscript);
   return {
     ...snapshot,

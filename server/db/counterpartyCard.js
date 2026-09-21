@@ -35,7 +35,8 @@ const movement = (row) => Number(row.debit || 0) - Number(row.credit || 0);
  */
 function documentBalance(contactId) {
   const row = db.prepare(`SELECT
-    COALESCE((SELECT SUM(CASE WHEN direction='receivable' THEN amount ELSE -amount END)
+    COALESCE((SELECT SUM(CASE WHEN direction='receivable'
+      THEN amount-COALESCE(paid_amount,0) ELSE -(amount-COALESCE(paid_amount,0)) END)
       FROM obligations WHERE contact_id=? AND status='open'),0)
     + COALESCE((SELECT SUM(CASE WHEN document_type='sales' THEN total-COALESCE((SELECT SUM(amount) FROM invoice_payments WHERE invoice_id=invoices.id),0)
       ELSE -(total-COALESCE((SELECT SUM(amount) FROM invoice_payments WHERE invoice_id=invoices.id),0)) END)

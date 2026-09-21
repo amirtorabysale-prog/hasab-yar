@@ -536,6 +536,8 @@ function ensureAccountingTransferSchema(database) {
   ensureColumnOn(database, 'accounting_transfer_batches', "last_download_reason TEXT NOT NULL DEFAULT ''");
 }
 
+// تسویهٔ جزئی: چقدر از این تعهد تا امروز پرداخت شده.
+ensureColumn('obligations', 'paid_amount INTEGER NOT NULL DEFAULT 0');
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");

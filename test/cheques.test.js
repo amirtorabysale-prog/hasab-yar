@@ -23,12 +23,11 @@ const workspace = database.createWorkspace(owner.id, { name: 'کارخانهٔ �
 const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
-const balanceOfKind = (sourceKind, like = '') => {
-  const account = like
-    ? db().prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND name LIKE ?').get(sourceKind, `%${like}%`)
-    : db().prepare('SELECT id FROM ledger_accounts WHERE source_kind=?').get(sourceKind);
-  return account ? db().prepare('SELECT COALESCE(SUM(debit)-SUM(credit),0) AS net FROM journal_lines WHERE account_id=?').get(account.id).net : 0;
-};
+// حساب چک و حساب طرف حساب هر دو به تفکیک شخص‌اند، پس جمعِ همهٔ حساب‌های آن
+// نوع گرفته می‌شود — نه اولین حسابی که پیدا شود.
+const balanceOfKind = (sourceKind, like = '') => db().prepare(`SELECT COALESCE(SUM(journal_lines.debit)-SUM(journal_lines.credit),0) AS net
+  FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+  WHERE ledger_accounts.source_kind=? AND ledger_accounts.name LIKE ?`).get(sourceKind, like ? `%${like}%` : '%').net;
 const incomeTotal = () => db().prepare(`SELECT COALESCE(SUM(credit)-SUM(debit),0) AS net FROM journal_lines
   JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id WHERE ledger_accounts.type='income'`).get().net;
 
