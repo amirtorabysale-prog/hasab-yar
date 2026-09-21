@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { accountForBank, resolveAccountId } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
+import { settlementDirection } from '../../shared/counterpartySettlement.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal } from '../accounting.js';
 import { automationPolicy } from './settings.js';
@@ -86,8 +87,7 @@ export function settlementFor(row) {
   const contact = db.prepare('SELECT id,name FROM contacts WHERE id=?').get(row.contactId);
   if (!contact) return null;
   const balance = counterpartyLedgerBalance(contact);
-  const direction = row.type === 'expense' && balance < 0 ? 'payable'
-    : row.type === 'income' && balance > 0 ? 'receivable' : null;
+  const direction = settlementDirection(row.type, balance);
   if (!direction) return null;
   return { direction, contactId: contact.id, contactName: contact.name, balance };
 }

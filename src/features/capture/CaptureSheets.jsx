@@ -4,8 +4,10 @@ import { CONFIDENCE_COMPONENT_LABELS } from '../../../shared/confidenceEngine.js
 import { REVIEW_FIELD_LABELS, assessTransactionReview, reviewBatchSummary } from '../../../shared/review.js';
 import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { pickBankAccount } from '../../../shared/banks.js';
+import { settlementPreview } from '../../../shared/counterpartySettlement.js';
 
-export function ConfirmationSheet({ result, categories, accounts = [], onCancel, onConfirm }) {
+
+export function ConfirmationSheet({ result, categories, accounts = [], contacts = [], onCancel, onConfirm }) {
   const defaultAccountId = accounts.find((account) => account.id === 'cash' && account.active)?.id || accounts.find((account) => account.active)?.id || 'cash';
   /**
    * حسابی که این برداشت باید روی آن بنشیند.
@@ -26,6 +28,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], onCancel,
   const assessment = assessTransactionReview(item);
   const summary = reviewBatchSummary({ transactions: items });
   const allowedCategories = categories.filter((category) => category.type === item.type);
+  const settlement = settlementPreview(item, contacts);
   const patch = (changes) => setItems((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...changes } : entry));
   const patchFields = (fields, changes) => patch({
     ...changes, _changed: true,
@@ -72,7 +75,24 @@ export function ConfirmationSheet({ result, categories, accounts = [], onCancel,
 
         <div className="space-y-2">
           <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-white' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-white' : 'border-line bg-surface'}`}>هزینه</button></div></div>
-          <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>
+          {settlement && <div className={`mt-2 rounded-lg border px-3 py-2 text-[12px] leading-6 ${settlement.direction ? 'border-income/50 bg-income/5' : 'border-line bg-surface'}`}>
+            <p className="font-bold text-ink">طرف حساب: {settlement.name}</p>
+            {settlement.direction === 'payable' && <p className="mt-0.5 text-muted">
+              این پرداخت <b className="text-income">بدهی او را کم می‌کند</b>، هزینهٔ تازه نیست.
+              بدهی فعلی شما به او <b className="numbers text-ink">{formatAmount(Math.abs(settlement.balance))}</b> تومان است.
+            </p>}
+            {settlement.direction === 'receivable' && <p className="mt-0.5 text-muted">
+              این دریافت <b className="text-income">از طلب او کم می‌شود</b>، درآمد تازه نیست.
+              طلب فعلی شما از او <b className="numbers text-ink">{formatAmount(settlement.balance)}</b> تومان است.
+            </p>}
+            {!settlement.direction && <p className="mt-0.5 text-muted">
+              {settlement.contact
+                ? 'حساب او صاف است، پس این ثبت هزینه یا درآمد عادی می‌ماند و به کارت حسابش هم می‌نشیند.'
+                : 'این نام در دفتر نیست؛ با ثبت، طرف حساب تازه‌ای ساخته می‌شود.'}
+            </p>}
+          </div>}
+          {/* وقتی پول به حساب خودِ طرف حساب می‌نشیند، دسته معنایی ندارد. */}
+          {!settlement?.direction && <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>}
           <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || defaultAccountId} onChange={(event) => patchField('account', { accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
           {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-warn-bg px-2 py-1 text-[11px] font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
         </div>

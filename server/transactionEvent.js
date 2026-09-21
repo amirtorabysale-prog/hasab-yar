@@ -1,5 +1,6 @@
 import { CONFIDENCE_COMPONENTS, routeEvent } from '../shared/confidenceEngine.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
+import { settlementDirection } from '../shared/counterpartySettlement.js';
 
 /**
  * پل میان ردیف تراکنش و لایهٔ رویداد مالی.
@@ -82,10 +83,7 @@ export function transactionConfidenceComponents(item = {}) {
  */
 function settlementDirectionFor(item, counterpartyBalance) {
   if (!item.contactId || !Number.isFinite(Number(counterpartyBalance))) return null;
-  const balance = Number(counterpartyBalance);
-  if (item.type === 'expense' && balance < 0) return 'payable';
-  if (item.type === 'income' && balance > 0) return 'receivable';
-  return null;
+  return settlementDirection(item.type, counterpartyBalance);
 }
 
 export function transactionEventDecision(item = {}, { transcript = '', aiOnly = false, policy = {}, counterpartyBalance = null } = {}) {
@@ -107,14 +105,9 @@ export function transactionEventDecision(item = {}, { transcript = '', aiOnly = 
     evidence: String(item.rawText || transcript || '').slice(0, 1000),
   });
   const blockers = Array.isArray(item.reviewReasons) ? item.reviewReasons.filter(Boolean) : [];
-  // تسویه‌ای که خودمان تشخیص داده‌ایم، باید دیده شود. کاربر گفت «پرداخت
-  // کردم» و ما به‌جای هزینه، بدهی را بستیم؛ این تصمیم درست است ولی بی‌صدا
-  // نباید بماند.
-  if (settlementDirection) {
-    blockers.push(settlementDirection === 'payable'
-      ? `این پرداخت به بدهی «${item.contactName || 'طرف حساب'}» خورد، نه به هزینه.`
-      : `این دریافت از طلب «${item.contactName || 'طرف حساب'}» کم شد، نه درآمد تازه.`);
-  }
+  // تسویه بازدارنده نیست: برگهٔ تأیید پیش از ارسال صریح می‌گوید این پول به
+  // حساب چه کسی می‌نشیند و بدهی فعلی‌اش چقدر است. فرستادنش به صف بررسی یعنی
+  // کاربر دو بار یک چیز را تأیید کند.
   // پرچم بررسی بدون دلیلِ نوشته‌شده هم باید جلوی ثبت بی‌پرسش را بگیرد، وگرنه
   // تنها نشانهٔ تردید بی‌اثر می‌ماند.
   if (item.needsReview && !blockers.length) blockers.push('این ثبت هنگام برداشت نیازمند بررسی علامت خورده است.');

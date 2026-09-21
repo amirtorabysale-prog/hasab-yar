@@ -1008,7 +1008,8 @@ export default function App() {
       {drawer && <Drawer profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
       {parseResult && (
         <ConfirmationSheet
-          result={parseResult} categories={data.categories} accounts={data.accounts} onCancel={discardParseResult} onConfirm={saveConfirmed}
+          result={parseResult} categories={data.categories} accounts={data.accounts} contacts={data.contacts || []}
+          onCancel={discardParseResult} onConfirm={saveConfirmed}
         />
       )}
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}
