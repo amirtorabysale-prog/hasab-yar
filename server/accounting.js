@@ -265,15 +265,32 @@ export function assertAccountingPeriodOpen(database, period) {
   if (row?.status === 'locked') throw accountingError(`دورهٔ ${period} بسته شده و قابل تغییر نیست.`, 'ACCOUNTING_PERIOD_LOCKED', 409);
 }
 
-export function syncTransactionJournal(database, transaction, { createdBy = null } = {}) {
+/**
+ * سند یک ثبت روزانه.
+ *
+ * `settlement` وقتی می‌آید که این جابه‌جایی پول، تسویهٔ حساب یک طرف حساب
+ * باشد نه هزینه یا درآمد تازه: «۹۳ میلیون به شرکت آراد گستر آسیا پرداخت شد»
+ * وقتی به آن شرکت بدهکاریم، بدهی‌اش را کم می‌کند. ثبتش به‌عنوان هزینه دو
+ * خطا با هم دارد — سود دوره بی‌دلیل کم می‌شود و بدهی آن شرکت در دفتر باز
+ * می‌ماند، انگار پولی نداده‌ایم.
+ *
+ * تصمیمش اینجا گرفته نمی‌شود؛ لایهٔ دفتر که ماندهٔ واقعی را می‌بیند آن را
+ * می‌فرستد. اینجا فقط حساب درست انتخاب می‌شود — و تفصیلی همان شخص هم روی
+ * سطر می‌نشیند، وگرنه در پارسیان روی معین می‌نشیند و طرف حساب گم می‌شود.
+ */
+export function syncTransactionJournal(database, transaction, { createdBy = null, settlement = null } = {}) {
   ensureAccountingSchema(database);
   const amount = Math.round(Number(transaction.amount));
   if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ سند تراکنش معتبر نیست.');
   const cash = operationalLedgerAccount(database, transaction.accountId || transaction.account || 'cash');
-  const category = categoryLedgerAccount(database, transaction.type, transaction.category);
+  const counterparty = settlement
+    ? counterpartyLedgerAccount(database, settlement.contactId, settlement.contactName, settlement.direction === 'payable' ? 'purchase' : 'sales')
+    : null;
+  const category = counterparty || categoryLedgerAccount(database, transaction.type, transaction.category);
+  const analyticId = settlement ? analyticForContact(database, settlement.contactId, settlement.contactName)?.id || null : null;
   const lines = transaction.type === 'income'
-    ? [{ accountId: cash, debit: amount }, { accountId: category, credit: amount }]
-    : [{ accountId: category, debit: amount }, { accountId: cash, credit: amount }];
+    ? [{ accountId: cash, debit: amount }, { accountId: category, credit: amount, analyticId }]
+    : [{ accountId: category, debit: amount, analyticId }, { accountId: cash, credit: amount }];
   return insertJournal(database, {
     sourceType: 'transaction', sourceId: transaction.id,
     revision: nextRevision(database, 'transaction', transaction.id), entryKind: 'normal',

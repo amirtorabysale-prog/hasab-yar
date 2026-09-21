@@ -1,4 +1,11 @@
 import { normalizePersian } from './normalize.js';
+import {
+  CONTACT_STOP_WORDS, DIRECTION_WORDS, NUMBER_WORDS, TITLE_PREFIXES, extractContactName,
+} from './counterpartySpeech.js';
+
+// همان‌جایی که تعریف شده مصرف می‌شود؛ بازصادر می‌شود تا مصرف‌کننده‌های قدیمی
+// نشکنند و دو نسخه از یک منطق ساخته نشود.
+export { extractContactName };
 import { CAPITAL_PATTERNS, FIXED_ASSET_PATTERNS } from './capitalSpeech.js';
 import { extractDateMention } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
@@ -48,23 +55,6 @@ const INVOICE_SALES_PATTERNS = [/فاکتور\s*فروش/, /فاکتور\s*زد�
 const INVOICE_PURCHASE_PATTERNS = [/فاکتور\s*خرید/, /فاکتور\s*خریدم/];
 
 
-const CONTACT_STOP_WORDS = new Set([
-  'آقای', 'اقای', 'خانم', 'جناب', 'شرکت', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار',
-  'از', 'به', 'برای', 'بابت', 'با', 'رو', 'را', 'که', 'و', 'در', 'تا', 'یک', 'یه',
-  'بدهکاره', 'بدهکارم', 'طلبکاره', 'طلبکارم', 'چک', 'فاکتور', 'فروش', 'خرید', 'تومان', 'تومن', 'ریال',
-  'سررسید', 'سر', 'رسید', 'دادم', 'گرفتم', 'دارم', 'داره', 'هست', 'است', 'شد', 'میشه', 'بشه',
-  // «به شرکت آراد گستر آسیا پرداخت شد» نام را «… آسیا پرداخت» می‌ساخت و همان
-  // نامِ ناقص یک طرف حساب جعلی در دفتر می‌ساخت که با واقعی‌اش یکی نمی‌شد.
-  'پرداخت', 'پرداختم', 'واریز', 'واریزی', 'دریافت', 'تسویه', 'حساب', 'کردم', 'کرد', 'شده', 'گرفت',
-]);
-
-// واژه‌های عددی نباید بخشی از نام شوند: «آقای احمدی سه میلیون» نام را
-// «احمدی سه» می‌ساخت.
-const NUMBER_WORDS = new Set(['صفر', 'یک', 'یه', 'دو', 'سه', 'چهار', 'چار', 'پنج', 'شش', 'شیش', 'هفت', 'هشت', 'نه',
-  'ده', 'یازده', 'دوازده', 'سیزده', 'چهارده', 'پانزده', 'پونزده', 'شانزده', 'هفده', 'هجده', 'نوزده',
-  'بیست', 'سی', 'چهل', 'پنجاه', 'شصت', 'هفتاد', 'هشتاد', 'نود', 'صد', 'دویست', 'سیصد', 'چهارصد',
-  'پانصد', 'پونصد', 'ششصد', 'هفتصد', 'هفصد', 'هشتصد', 'هشصد', 'نهصد', 'هزار', 'میلیون', 'میلیارد', 'نیم']);
-
 // واژه‌هایی که کنار نشانهٔ دارایی می‌آیند و نام دارایی نیستند.
 const ASSET_STOP_WORDS = new Set(['خریدم', 'خریدیم', 'گرفتم', 'گرفتیم', 'ثبت', 'کن', 'بزن', 'به', 'عنوان',
   'یک', 'بابت', 'برای', 'با', 'از', 'در', 'و', 'را', 'رو', 'شد', 'است', 'هست', 'دارایی', 'ثابت', 'اموال', 'تجهیزات']);
@@ -75,12 +65,6 @@ const CURRENCY_WORDS = new Set(['تومان', 'تومن', 'ریال', 'هزار�
 const FILLER_WORDS = new Set(['شد', 'شده', 'شدم', 'شدیم', 'شدند', 'شدن', 'هست', 'هستم', 'هستیم', 'هستند',
   'است', 'میشه', 'بشه', 'دارم', 'داریم', 'داره', 'دارند', 'دادم', 'دادیم', 'گرفتم', 'گرفتیم', 'بده', 'بدم',
   'به', 'از', 'برای', 'با', 'رو', 'را']);
-
-// واژه‌هایی که خودشان جهت را می‌سازند؛ نام طرف حساب کنارشان می‌نشیند، نه رویشان.
-const DIRECTION_WORDS = new Set(['بدهکار', 'بدهکاره', 'بدهکارم', 'بدهکاریم', 'بدهکارند',
-  'طلبکار', 'طلبکاره', 'طلبکارم', 'طلبکارند', 'طلب', 'طلبم', 'بدهی', 'بدهیم', 'قرض', 'قرضی']);
-
-const TITLE_PREFIXES = ['آقای', 'اقای', 'خانم', 'جناب', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار خانم', 'شرکت'];
 
 /**
  * نام دارایی را از کنار نشانهٔ صریح برمی‌دارد.
@@ -119,81 +103,6 @@ function matchesAny(text, patterns) {
  * حدس‌زدن نام از میان واژه‌های عادی خطای بیشتری می‌سازد تا فایده — پس نامی
  * برنمی‌گردد و کاربر خودش می‌نویسد.
  */
-/**
- * نام بدون عنوان، فقط وقتی صفحه خودش می‌گوید موضوع چیست.
- *
- * در ثبت آزاد، حدس‌زدن نام از میان واژه‌های عادی خطای بیشتری می‌سازد تا فایده —
- * «قبض» و «پیک» و «تعمیر» همه می‌توانند به‌جای نام برداشته شوند. ولی وقتی کاربر
- * روی صفحهٔ طلب و بدهی ایستاده و می‌گوید «حسن بدهکار شد»، موضوع از قبل روشن است
- * و واژهٔ چسبیده به فعلِ جهت، تقریباً همیشه نام طرف حساب است. پس این حالت فقط
- * با `allowBare` روشن می‌شود، نه در مسیر عمومی.
- */
-function bareContactName(text) {
-  const words = text.split(' ').filter(Boolean);
-  const usable = (word) => word
-    && !CONTACT_STOP_WORDS.has(word) && !NUMBER_WORDS.has(word)
-    && !DIRECTION_WORDS.has(word) && !/\d/.test(word) && word.length > 1;
-  // «از رضا دو میلیون طلب دارم»: نام به حرف اضافه چسبیده، نه به فعل جهت.
-  for (let index = 0; index < words.length - 1; index += 1) {
-    if (!['از', 'به'].includes(words[index])) continue;
-    const picked = [];
-    for (let ahead = index + 1; ahead < words.length && picked.length < 2; ahead += 1) {
-      if (!usable(words[ahead])) break;
-      picked.push(words[ahead]);
-    }
-    if (picked.length) return picked.join(' ');
-  }
-  for (let index = 0; index < words.length; index += 1) {
-    if (!DIRECTION_WORDS.has(words[index])) continue;
-    // «حسن بدهکار شد» → واژهٔ پیش از فعل؛ تا دو واژه برای نام‌های دوقسمتی.
-    // مبلغ از وسط رد می‌شود: در «حسن سه میلیون بدهکار شد» نام پشت عدد است و
-    // ایستادن روی اولین واژهٔ عددی، نام را از دست می‌داد.
-    let back = index - 1;
-    while (back >= 0 && (NUMBER_WORDS.has(words[back]) || CURRENCY_WORDS.has(words[back]) || /\d/.test(words[back]) || words[back] === 'و')) back -= 1;
-    const before = [];
-    for (; back >= 0 && before.length < 2; back -= 1) {
-      if (!usable(words[back])) break;
-      before.unshift(words[back]);
-    }
-    if (before.length) return before.join(' ');
-    // «بدهکار شد حسن» یا «طلب دارم از حسن» → واژهٔ پس از فعل. واژه‌های پرکنندهٔ
-    // میانی رد می‌شوند، وگرنه «شد» جلوی رسیدن به نام را می‌گرفت.
-    const after = [];
-    let ahead = index + 1;
-    while (ahead < words.length && FILLER_WORDS.has(words[ahead])) ahead += 1;
-    for (; ahead < words.length && after.length < 2; ahead += 1) {
-      if (!usable(words[ahead])) break;
-      after.push(words[ahead]);
-    }
-    if (after.length) return after.join(' ');
-  }
-  return '';
-}
-
-export function extractContactName(input, { allowBare = false } = {}) {
-  const words = normalizePersian(input).split(' ').filter(Boolean);
-  for (let index = 0; index < words.length; index += 1) {
-    const prefix = TITLE_PREFIXES.find((title) => {
-      const parts = title.split(' ');
-      return parts.every((part, offset) => words[index + offset] === part);
-    });
-    if (!prefix) continue;
-    const skip = prefix.split(' ').length;
-    const picked = [];
-    // نام شرکت اغلب سه یا چهار بخشی است («شرکت آراد گستره آسیا»). سقف دو
-    // واژه، نام را نصفه می‌کرد و یک طرف حسابِ ناقص در دفتر می‌ساخت.
-    for (let offset = index + skip; offset < words.length && picked.length < 4; offset += 1) {
-      const word = words[offset];
-      // واژهٔ جهت هرگز بخشی از نام نیست: «به شرکت آزاد بدهکار شدیم» نام را
-      // «شرکت آزاد بدهکار» می‌ساخت و همان نام، یک طرف حساب جعلی در دفتر
-      // می‌ساخت که با طرف حساب واقعی یکی نمی‌شد.
-      if (CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || DIRECTION_WORDS.has(word) || /\d/.test(word)) break;
-      picked.push(word);
-    }
-    if (picked.length) return `${prefix === 'شرکت' ? 'شرکت ' : ''}${picked.join(' ')}`.trim();
-  }
-  return allowBare ? bareContactName(normalizePersian(input)) : '';
-}
 
 /**
  * مبلغ گفته‌شده در یک جملهٔ نیت‌دار.

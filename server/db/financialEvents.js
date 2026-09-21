@@ -2,7 +2,7 @@ import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db }
 import { approveFinancialEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent } from '../financialEventStore.js';
 import { contactIdForName } from './contacts.js';
 import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEvent.js';
-import { transactionJournalPoster } from './transactions.js';
+import { settlementFor, transactionJournalPoster } from './transactions.js';
 
 // ---------------------------------------------------------------------------
 // رویدادهای مالی و صف بررسی
@@ -105,9 +105,13 @@ export function approveEvent(eventId) {
   const source = row?.journalSource ? JSON.parse(row.journalSource) : null;
   let postJournal = null;
   if (source?.type === 'transaction') {
+    // شناسهٔ طرف حساب هم خوانده می‌شود: بدون آن، سندی که با تأیید ثبت
+    // می‌شود روی دستهٔ هزینه می‌نشیند درحالی‌که همان ثبت اگر خودکار رفته بود
+    // بدهی همان شخص را می‌بست. دو سند متفاوت برای یک ثبت، بسته به اینکه
+    // حسابدار تأییدش کرده یا نه.
     const transaction = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,
-      account_id AS accountId,occurred_at AS occurredAt FROM transactions WHERE id=?`).get(source.id);
-    if (transaction) postJournal = transactionJournalPoster(transaction);
+      account_id AS accountId,occurred_at AS occurredAt,contact_id AS contactId FROM transactions WHERE id=?`).get(source.id);
+    if (transaction) postJournal = transactionJournalPoster(transaction, settlementFor(transaction));
   }
   const item = approveFinancialEvent(database, eventId, {
     actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal,

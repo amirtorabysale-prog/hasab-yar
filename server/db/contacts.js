@@ -1,19 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { audit, db, invalidInput } from './core.js';
 import { normalizedCounterpartyInput, resolveCounterparty } from '../counterparties.js';
+import { counterpartyBalance } from './counterpartyCard.js';
 
+/**
+ * فهرست اشخاص با ماندهٔ واقعی.
+ *
+ * مانده از همان‌جایی می‌آید که کارت حساب می‌خواند، نه از جمع‌زدن دوبارهٔ
+ * تعهدها و فاکتورها. دو محاسبهٔ جدا برای یک عدد، همیشه سرِ اولین حالتی که
+ * یکی‌شان ندیده از هم جدا می‌شوند — و آن‌وقت صفحه دو رقم متفاوت نشان می‌دهد
+ * و هیچ‌کدام معلوم نیست کدام درست است.
+ */
 export function listContacts() {
-  return db.prepare(`SELECT contacts.id,contacts.name,contacts.kind,contacts.phone,contacts.note,
-    COALESCE((SELECT SUM(CASE WHEN obligations.direction='receivable'
-      THEN obligations.amount-COALESCE(obligations.paid_amount,0)
-      ELSE -(obligations.amount-COALESCE(obligations.paid_amount,0)) END)
-      FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open'),0)
-    + COALESCE((SELECT SUM(CASE WHEN invoices.document_type='sales' THEN invoices.total-COALESCE((SELECT SUM(invoice_payments.amount) FROM invoice_payments WHERE invoice_payments.invoice_id=invoices.id),0)
-      ELSE -(invoices.total-COALESCE((SELECT SUM(invoice_payments.amount) FROM invoice_payments WHERE invoice_payments.invoice_id=invoices.id),0)) END)
-      FROM invoices WHERE invoices.contact_id=contacts.id AND invoices.status IN ('sent','paid')),0) AS balance,
+  const rows = db.prepare(`SELECT contacts.id,contacts.name,contacts.kind,contacts.phone,contacts.note,
     (SELECT COUNT(*) FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open')
     + (SELECT COUNT(*) FROM invoices WHERE invoices.contact_id=contacts.id AND invoices.status='sent') AS openCount
     FROM contacts ORDER BY contacts.updated_at DESC,contacts.name`).all();
+  return rows.map((row) => ({ ...row, balance: counterpartyBalance(row.id) }));
 }
 
 export function saveContact(values = {}) {

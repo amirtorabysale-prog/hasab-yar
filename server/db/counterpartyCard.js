@@ -57,6 +57,36 @@ function counterpartyAccounts(contact) {
     .all(...COUNTERPARTY_KINDS, ...keys);
 }
 
+/**
+ * ماندهٔ دفتریِ یک طرف حساب — مثبت یعنی او به ما بدهکار است.
+ *
+ * لازم است تا هنگام ثبت یک پرداخت بدانیم این پول «تسویهٔ بدهی اوست» یا
+ * «هزینه». همان حساب‌هایی خوانده می‌شوند که کارت حساب می‌خواند، وگرنه دو
+ * جای برنامه دو عدد متفاوت می‌گویند.
+ */
+export function counterpartyLedgerBalance(contact) {
+  const accounts = counterpartyAccounts(contact);
+  if (!accounts.length) return 0;
+  const holes = accounts.map(() => '?').join(',');
+  return Number(db.prepare(`SELECT COALESCE(SUM(debit)-SUM(credit),0) AS net
+    FROM journal_lines WHERE account_id IN (${holes})`).get(...accounts.map((account) => account.id)).net || 0);
+}
+
+/**
+ * ماندهٔ یک طرف حساب — همان عددی که کارتش نشان می‌دهد.
+ *
+ * فهرست اشخاص تا امروز خودش جمع می‌زد: تعهدهای باز به‌اضافهٔ فاکتورهای
+ * تسویه‌نشده. کارت اما از دفتر می‌خواند. تا وقتی هر سند ردش در دفتر بود هر
+ * دو یک عدد می‌دادند، ولی به‌محض اینکه پرداختی بدهی را کم کرد بی‌آنکه تعهد
+ * را ببندد، دو عدد از هم جدا شدند — و حسابدار نمی‌دانست کدام درست است.
+ *
+ * حالا یک تابع، یک عدد. کند بودنش مهم نیست: چند پرس‌وجوی کوچک به‌ازای هر
+ * شخص، در برابر دو عددِ متناقض روی صفحه چیزی نیست.
+ */
+export function counterpartyBalance(contactId) {
+  try { return counterpartyCard(contactId).totals.balance; } catch { return 0; }
+}
+
 export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
   const contact = db.prepare('SELECT id,name,kind,phone,note FROM contacts WHERE id=?').get(String(contactId || ''));
   if (!contact) throw invalidInput('این طرف حساب پیدا نشد.', 'CONTACT_NOT_FOUND');
@@ -96,9 +126,19 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
    * هستند (`allocated`) کنار گذاشته می‌شوند، چون ردشان از قبل در دفتر کل هست
    * و دو بار شمرده می‌شدند.
    */
+  // ثبتی که سندش به حساب خودِ همین شخص خورده، از ردیف‌های دفتر بالا آمده و
+  // شمردن دوباره‌اش مانده را دو برابر می‌کند. این از وقتی ممکن شد که پرداخت
+  // به یک بدهکار، به‌جای هزینه روی حساب خودش بنشیند.
+  const postedToOwnAccount = accounts.length
+    ? new Set(db.prepare(`SELECT journal_entries.source_id AS id FROM journal_entries
+        JOIN journal_lines ON journal_lines.entry_id=journal_entries.id
+        WHERE journal_entries.source_type='transaction' AND journal_lines.account_id IN (${accounts.map(() => '?').join(',')})`)
+      .all(...accounts.map((account) => account.id)).map((row) => row.id))
+    : new Set();
   const direct = db.prepare(`SELECT transactions.id,transactions.occurred_at AS occurredAt,
       transactions.raw_text AS memo,transactions.category,transactions.type,transactions.amount
     FROM transactions WHERE contact_id=? AND status!='allocated' AND capital_flow=''`).all(contact.id)
+    .filter((row) => !postedToOwnAccount.has(row.id))
     .map((row) => ({
       id: row.id,
       occurredAt: row.occurredAt,

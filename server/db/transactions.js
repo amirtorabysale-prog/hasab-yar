@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { accountForBank, resolveAccountId } from './accounts.js';
+import { counterpartyLedgerBalance } from './counterpartyCard.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal } from '../accounting.js';
 import { automationPolicy } from './settings.js';
@@ -68,8 +69,27 @@ export function jsonText(value, fallback) {
  * این تابع به لایهٔ رویداد تزریق می‌شود تا «چه وقت ثبت شود» را موتور اطمینان
  * تصمیم بگیرد ولی «سند چه شکلی باشد» همان‌جا بماند که هست و آزمون دارد.
  */
-export function transactionJournalPoster(row) {
-  return (database) => syncTransactionJournal(database, row, { createdBy: currentWorkspace()?.userId });
+export function transactionJournalPoster(row, settlement = null) {
+  return (database) => syncTransactionJournal(database, row, { createdBy: currentWorkspace()?.userId, settlement });
+}
+
+/**
+ * آیا این جابه‌جایی پول، تسویهٔ حساب همان شخص است؟
+ *
+ * از ماندهٔ واقعی دفتر تصمیم گرفته می‌شود، نه از واژه‌های جمله: پول رفت و به
+ * او بدهکار بودیم → بدهی‌اش کم می‌شود؛ پول آمد و او به ما بدهکار بود →
+ * طلبمان کم می‌شود. هر حالت دیگری — از جمله پرداخت به کسی که حسابش صاف است —
+ * همان ثبت عادیِ هزینه یا درآمد می‌ماند.
+ */
+export function settlementFor(row) {
+  if (!row.contactId) return null;
+  const contact = db.prepare('SELECT id,name FROM contacts WHERE id=?').get(row.contactId);
+  if (!contact) return null;
+  const balance = counterpartyLedgerBalance(contact);
+  const direction = row.type === 'expense' && balance < 0 ? 'payable'
+    : row.type === 'income' && balance > 0 ? 'receivable' : null;
+  if (!direction) return null;
+  return { direction, contactId: contact.id, contactName: contact.name, balance };
 }
 
 /**
@@ -84,9 +104,11 @@ export function transactionJournalPoster(row) {
  */
 function routeTransactionThroughEvents(row, item, transcript) {
   try {
+    const settlement = settlementFor(row);
     const draft = transactionEventDecision({
       ...item, amount: row.amount, occurredAt: row.occurredAt, accountId: row.accountId, rawText: row.rawText,
-    }, { transcript, policy: automationPolicy() });
+      contactId: row.contactId, contactName: settlement?.contactName || item.contactName || '',
+    }, { transcript, policy: automationPolicy(), counterpartyBalance: settlement?.balance ?? null });
     if (!draft) return false;
     const result = recordFinancialEvent(db, draft.event, {
       sourceEventId: `transaction:${row.id}`,
@@ -97,7 +119,7 @@ function routeTransactionThroughEvents(row, item, transcript) {
       timeZone: currentTimeZone(),
       withinTransaction: true,
       journalSource: { type: 'transaction', id: row.id },
-      postJournal: transactionJournalPoster(row),
+      postJournal: transactionJournalPoster(row, settlement),
     });
     // مسیر غیرخودکار یعنی سند منتظر می‌ماند. ردیف تراکنش سر جایش است — کاربر
     // ثبتش را می‌بیند و ماندهٔ صندوقش درست است — ولی دفتر تا تأیید تکان نمی‌خورد.
@@ -124,8 +146,14 @@ function routeTransactionThroughEvents(row, item, transcript) {
  * پرسیده می‌شود (`COUNTERPARTY_SIMILAR` که رابط به برگهٔ تأیید تبدیلش
  * می‌کند) و نام تازه ساخته می‌شود. هیچ‌کدام اینجا دوباره پیاده نشده.
  */
-function counterpartyFromSentence(sentence, counterpartyResolution) {
-  const name = extractContactName(String(sentence || ''));
+function counterpartyFromSentence(item, transcript, counterpartyResolution) {
+  // نامی که پارسر از **کل جمله** برداشته، بر متن ردیف مقدم است.
+  //
+  // `rawText` فقط تکهٔ کنار مبلغ است: در «از شرکت پخش البرز پانزده میلیون
+  // تومان دریافت شد» به «تومان دریافت شد» کوتاه می‌شود و نام شرکت — که در
+  // نیمهٔ اول جمله بود — کاملاً گم می‌شد.
+  const name = String(item.contactName || '').trim()
+    || extractContactName(String(item.rawText || transcript || ''));
   if (!name) return null;
   return saveContact({ name, counterpartyResolution }).id;
 }
@@ -143,7 +171,7 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
     const occurredAt = item.occurredAt || new Date().toISOString();
     assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
-    const contactId = item.contactId || counterpartyFromSentence(item.rawText || transcript, counterpartyResolution);
+    const contactId = item.contactId || counterpartyFromSentence(item, transcript, counterpartyResolution);
     // بانکی که گفته شده ولی حسابی در دفتر ندارد، بی‌صدا روی صندوق می‌نشیند.
     // این همان خطایی است که کاربر هیچ‌وقت نمی‌بیند و آخر ماه ماندهٔ صندوق و
     // بانک هر دو غلط است — پس به‌جای سکوت، سؤال می‌شود.
@@ -165,11 +193,13 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
       ids.push(id);
       audit('create', 'transaction', id, { amount, type: item.type, category: item.category });
       if (!item.journalManaged) {
-        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt };
+        // شناسهٔ طرف حساب هم می‌رود: بدون آن، سند هرگز نمی‌فهمد این پرداخت
+        // تسویهٔ بدهی همان شخص است و همیشه روی دستهٔ هزینه می‌نشیند.
+        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt, contactId: contactId || null };
         // اگر لایهٔ رویداد کار را به عهده گرفت، سند اینجا زده نمی‌شود؛ یا خودش
         // زده یا عمداً نگه داشته است.
         if (!routeTransactionThroughEvents(row, entry, transcript)) {
-          syncTransactionJournal(db, row, { createdBy: currentWorkspace()?.userId });
+          syncTransactionJournal(db, row, { createdBy: currentWorkspace()?.userId, settlement: settlementFor(row) });
         }
       }
     } else if (item.clientId) {

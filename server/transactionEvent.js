@@ -68,11 +68,34 @@ export function transactionConfidenceComponents(item = {}) {
  * ارسال در برگهٔ تأیید به کاربر نشان داده شده. برداشت خام مدل زبانی نیست و
  * رفتار با آن مثل برداشت خام، کل صف را از ثبت‌های عادی پر می‌کرد.
  */
-export function transactionEventDecision(item = {}, { transcript = '', aiOnly = false, policy = {} } = {}) {
-  const kind = KIND_BY_TYPE[item.type];
-  if (!kind) return null;
+/**
+ * آیا این جابه‌جایی پول، تسویهٔ حساب همان شخص است؟
+ *
+ * «۹۳ میلیون تومان به شرکت آراد گستر آسیا پرداخت شد» تا امروز یک هزینهٔ ساده
+ * ثبت می‌شد. ولی وقتی به آن شرکت بدهکاریم، این پرداخت هزینهٔ تازه نمی‌سازد —
+ * بدهی موجود را کم می‌کند. ثبتش به‌عنوان هزینه دو خطا با هم دارد: سود دوره
+ * بی‌دلیل کم می‌شود، و بدهی آن شرکت در دفتر باز می‌ماند انگار پولی نداده‌ایم.
+ *
+ * تصمیم از ماندهٔ واقعی دفتر می‌آید، نه از واژه‌های جمله: پول رفت و به او
+ * بدهکار بودیم → بدهی‌اش کم می‌شود؛ پول آمد و او به ما بدهکار بود → طلبمان
+ * کم می‌شود. هر حالت دیگری همان ثبت عادی است.
+ */
+function settlementDirectionFor(item, counterpartyBalance) {
+  if (!item.contactId || !Number.isFinite(Number(counterpartyBalance))) return null;
+  const balance = Number(counterpartyBalance);
+  if (item.type === 'expense' && balance < 0) return 'payable';
+  if (item.type === 'income' && balance > 0) return 'receivable';
+  return null;
+}
+
+export function transactionEventDecision(item = {}, { transcript = '', aiOnly = false, policy = {}, counterpartyBalance = null } = {}) {
+  const baseKind = KIND_BY_TYPE[item.type];
+  if (!baseKind) return null;
+  const settlementDirection = settlementDirectionFor(item, counterpartyBalance);
+  const kind = settlementDirection ? EVENT_KINDS.OBLIGATION_SETTLED : baseKind;
   const event = normalizeFinancialEvent({
     kind,
+    ...(settlementDirection ? { settlementDirection, reference: item.contactName || '' } : {}),
     amount: item.amount,
     occurredAt: item.occurredAt,
     category: item.category,
@@ -84,6 +107,14 @@ export function transactionEventDecision(item = {}, { transcript = '', aiOnly = 
     evidence: String(item.rawText || transcript || '').slice(0, 1000),
   });
   const blockers = Array.isArray(item.reviewReasons) ? item.reviewReasons.filter(Boolean) : [];
+  // تسویه‌ای که خودمان تشخیص داده‌ایم، باید دیده شود. کاربر گفت «پرداخت
+  // کردم» و ما به‌جای هزینه، بدهی را بستیم؛ این تصمیم درست است ولی بی‌صدا
+  // نباید بماند.
+  if (settlementDirection) {
+    blockers.push(settlementDirection === 'payable'
+      ? `این پرداخت به بدهی «${item.contactName || 'طرف حساب'}» خورد، نه به هزینه.`
+      : `این دریافت از طلب «${item.contactName || 'طرف حساب'}» کم شد، نه درآمد تازه.`);
+  }
   // پرچم بررسی بدون دلیلِ نوشته‌شده هم باید جلوی ثبت بی‌پرسش را بگیرد، وگرنه
   // تنها نشانهٔ تردید بی‌اثر می‌ماند.
   if (item.needsReview && !blockers.length) blockers.push('این ثبت هنگام برداشت نیازمند بررسی علامت خورده است.');
