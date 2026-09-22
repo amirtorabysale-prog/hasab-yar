@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { assertAccountingPeriodOpen, periodForDate, syncOpeningBalanceJournal } from '../accounting.js';
-import { audit, currentTimeZone, currentWorkspace, db, insertSetting, invalidInput } from './core.js';
+import { assertAccountingPeriodOpen, periodForDate, postAccountTransferJournal, syncOpeningBalanceJournal } from '../accounting.js';
+import { audit, cleanAmount, currentTimeZone, currentWorkspace, db, insertSetting, invalidInput } from './core.js';
 import { bankById, detectBank } from '../../shared/banks.js';
 
 export function listAccounts() {
@@ -73,4 +73,38 @@ export function resolveAccountId(item = {}) {
     || db.prepare('SELECT id FROM accounts WHERE name=? AND active=1').get(requested);
   if (!account) throw invalidInput('حساب مالی انتخاب‌شده معتبر یا فعال نیست.');
   return account.id;
+}
+
+/**
+ * انتقال پول میان دو حساب خودمان.
+ *
+ * تا امروز راهی برایش نبود: کاربر که پول صندوق را به بانک می‌ریخت، مجبور
+ * بود یک «هزینه» از صندوق و یک «درآمد» در بانک ثبت کند — و سود همان ماه دو
+ * بار جعل می‌شد. حالا یک سند دوطرفه است که هیچ حساب درآمد یا هزینه‌ای را
+ * لمس نمی‌کند.
+ *
+ * مبدأ و مقصد هر دو اجباری‌اند و حدس زده نمی‌شوند: پول از حسابی که کسی
+ * نگفته نباید کم شود.
+ */
+export function transferBetweenAccounts({ fromAccountId, toAccountId, amount, occurredAt = '', note = '' } = {}) {
+  const value = cleanAmount(amount);
+  if (value <= 0) throw invalidInput('مبلغ انتقال را وارد کن.');
+  const from = db.prepare('SELECT id,name FROM accounts WHERE id=? AND active=1').get(String(fromAccountId || ''));
+  const to = db.prepare('SELECT id,name FROM accounts WHERE id=? AND active=1').get(String(toAccountId || ''));
+  if (!from) throw invalidInput('حساب مبدأ انتخاب نشده یا فعال نیست.');
+  if (!to) throw invalidInput('حساب مقصد انتخاب نشده یا فعال نیست.');
+  if (from.id === to.id) throw invalidInput('مبدأ و مقصد نمی‌توانند یک حساب باشند.');
+
+  const id = randomUUID();
+  const memo = String(note || '').trim().slice(0, 200) || `انتقال از ${from.name} به ${to.name}`;
+  const at = occurredAt || new Date().toISOString();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    postAccountTransferJournal(db, {
+      transferId: id, fromAccountId: from.id, toAccountId: to.id, amount: value, occurredAt: at, memo,
+    }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  audit('transfer', 'account', id, { from: from.id, to: to.id, amount: value });
+  return { id, from, to, amount: value, occurredAt: at, memo };
 }

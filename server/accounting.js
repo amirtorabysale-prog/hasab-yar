@@ -608,6 +608,36 @@ export function attachMissingCounterpartyAnalytics(database) {
   return { attached, skipped, analytics: cache.size };
 }
 
+/**
+ * انتقال پول میان دو حساب خودمان.
+ *
+ * «دو میلیون از صندوق به بانک ملت واریز شد» نه درآمد است نه هزینه — پول از
+ * جیبی به جیب دیگرِ همین کسب‌وکار رفته. اگر از مسیر عادی رد شود، یک بار
+ * درآمدِ بانک ثبت می‌شود و یک بار هزینهٔ صندوق، و سود دوره دو بار جعل
+ * می‌شود.
+ *
+ * سند دوطرفه است و هیچ حساب درآمد یا هزینه‌ای را لمس نمی‌کند؛ فقط مانده‌ی
+ * دو حساب جابه‌جا می‌شود.
+ */
+export function postAccountTransferJournal(database, { transferId, fromAccountId, toAccountId, amount, occurredAt, memo }, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const value = Math.round(Number(amount) || 0);
+  if (!Number.isSafeInteger(value) || value <= 0) throw accountingError('مبلغ انتقال معتبر نیست.', 'TRANSFER_AMOUNT_INVALID');
+  if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) {
+    throw accountingError('مبدأ و مقصد انتقال باید دو حساب متفاوت باشند.', 'TRANSFER_SAME_ACCOUNT');
+  }
+  const at = occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(database, periodForDate(at, timeZone));
+  return insertJournal(database, {
+    sourceType: 'account_transfer', sourceId: transferId, revision: 1,
+    occurredAt: at, memo: String(memo || 'انتقال بین حساب‌ها').slice(0, 200), createdBy, timeZone,
+    lines: [
+      { accountId: operationalLedgerAccount(database, toAccountId), debit: value, description: memo },
+      { accountId: operationalLedgerAccount(database, fromAccountId), credit: value, description: memo },
+    ],
+  });
+}
+
 // ---------------------------------------------------------------------------
 // تسویهٔ دورهٔ مالیات بر ارزش افزوده
 // ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import BankVoicePanel from './BankVoicePanel.jsx';
 import ChequesPanel from './ChequesPanel.jsx';
 import { CounterpartyCardPanel } from '../counterparty/CounterpartyCardPanel.jsx';
 import { Check, HandCoins, Landmark, ListFilter, Mic, PackageSearch, Pencil, Plus, Printer, ReceiptText, RotateCcw, Search, Sparkles, Trash2, X } from 'lucide-react';
@@ -353,6 +354,7 @@ function ReconciliationPanel({ accounts = [], categories = [], notify, refresh }
   const close = () => applyResult(api.closeReconciliation(detail.id), 'تطبیق این دوره بسته شد.');
   const statusLabels = { unmatched: 'نیازمند بررسی', matched: 'تطبیق‌شده', ignored: 'کنارگذاشته‌شده' };
   return <section className="mt-5 space-y-6">
+    <BankVoicePanel accounts={accounts} notify={notify} refresh={refresh} />
     <div className="rounded-[10px] border border-line bg-surface p-4">
       <div className="flex items-start gap-3"><Landmark className="mt-1 shrink-0 text-accent" /><div><h2 className="font-extrabold">ورود صورت‌حساب بانک یا صندوق</h2><p className="mt-1 text-xs leading-6 text-muted">عنوان ستون‌های CSV به‌صورت خودکار نگاشت می‌شود؛ تاریخ شمسی/میلادی و اعداد فارسی پشتیبانی می‌شوند. <a href="/bank-statement-template.csv" download className="font-bold text-accent underline">فایل نمونه</a></p></div></div>
       <form onSubmit={upload} className="mt-4 grid gap-2 sm:grid-cols-[180px_minmax(0,1fr)_150px]"><select value={accountId} onChange={(event) => setAccountId(event.target.value)} className="tap rounded-lg border border-line bg-paper px-3">{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><label className="flex min-h-12 cursor-pointer items-center rounded-lg border border-dashed border-muted/60 bg-paper px-3 text-sm"><input type="file" accept=".csv,text/csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="sr-only" /><span className="truncate">{file?.name || 'انتخاب فایل CSV'}</span></label><button disabled={busy || !eligibleAccounts.length} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">ورود و بررسی</button></form>

@@ -14,7 +14,7 @@ import {
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
-  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod,
+  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, transferBetweenAccounts,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
@@ -429,6 +429,10 @@ app.post('/api/import/chart', chartUpload.single('file'), (request, response, ne
   } catch (error) { return next(error); }
 });
 // تسویهٔ دورهٔ ارزش افزوده — از ماندهٔ دفتر، نه دوبارهٔ فاکتورها.
+// انتقال پول میان حساب‌های خودمان — نه درآمد، نه هزینه.
+app.post('/api/accounts/transfer', (request, response, next) => {
+  try { return response.status(201).json({ item: transferBetweenAccounts(request.body || {}) }); } catch (error) { return next(error); }
+});
 app.post('/api/tax/settle-vat', (request, response, next) => {
   try { return response.json(settleVatPeriod(request.body || {})); } catch (error) { return next(error); }
 });
