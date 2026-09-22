@@ -96,9 +96,14 @@ export const SCREENS = Object.freeze([
     id: 'chart', label: 'کدینگ حساب‌ها', icon: 'landmark',
     experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'manager',
   }),
+  // مالیات فعلاً پنهان است، نه حذف.
+  //
+  // صفحه، مسیرهای سرور و آزمون‌هایش همه سر جایشان‌اند؛ فقط از ناوبری بیرون
+  // است. برگرداندنش یعنی برداشتن همین یک پرچم — نه بازنویسی دوبارهٔ چیزی که
+  // ساخته و آزموده شده.
   Object.freeze({
     id: 'tax', label: 'مالیات', icon: 'coins',
-    experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant',
+    experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant', hidden: true,
   }),
   Object.freeze({
     id: 'collaboration', label: 'همکاری حسابدار', icon: 'users',
@@ -125,6 +130,8 @@ function rankAllows(role, minimum) {
 export function screensFor({ role = 'viewer', experience = EXPERIENCES.SIMPLE, profileType = 'business' } = {}) {
   const businessOnly = new Set(['accounting', 'chart', 'tax', 'collaboration']);
   return SCREENS.filter((screen) => {
+    // صفحهٔ پنهان از ناوبری و از دروازهٔ سرور بیرون است، ولی تعریفش می‌ماند.
+    if (screen.hidden) return false;
     if (!screen.experiences.includes(experience)) return false;
     if (!rankAllows(role, screen.minimumRole)) return false;
     if (profileType !== 'business' && businessOnly.has(screen.id)) return false;

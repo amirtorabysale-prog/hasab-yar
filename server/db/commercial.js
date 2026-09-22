@@ -30,7 +30,7 @@ export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primar
   const usageRows = db.prepare(`SELECT capability,provider,status,SUM(request_count) AS requests,SUM(duration_ms) AS durationMs,
     SUM(COALESCE(estimated_cost_microusd,0)) AS estimatedCostMicrousd,
     SUM(CASE WHEN status='succeeded' AND capability!='realtime_session' AND estimated_cost_microusd IS NULL THEN 1 ELSE 0 END) AS unpriced
-    FROM provider_usage WHERE created_at>=datetime(?) AND created_at<datetime(?) GROUP BY capability,provider,status
+    FROM provider_usage WHERE datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?) GROUP BY capability,provider,status
     ORDER BY capability,provider,status`).all(range.from, range.toExclusive);
   // سهمیهٔ صدا بر «تلاش» شمرده می‌شود، نه بر تماس provider. یک ضبط می‌تواند هم
   // نشست realtime باز کند و هم فایل بفرستد؛ هزینهٔ ما دو تاست ولی کاربر یک بار
@@ -38,11 +38,11 @@ export function commercialStatus(workspaceId = currentWorkspace()?.id || 'primar
   // یعنی مصرف گذشته بازنویسی نمی‌شود.
   const smartVoiceRequests = Number(db.prepare(`SELECT COUNT(DISTINCT COALESCE(attempt_id,id)) AS attempts
     FROM provider_usage WHERE status!='failed' AND capability IN ('server_voice','realtime_session')
-      AND created_at>=datetime(?) AND created_at<datetime(?)`).get(range.from, range.toExclusive)?.attempts || 0);
+      AND datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?)`).get(range.from, range.toExclusive)?.attempts || 0);
   const receiptOcrPages = usageRows.filter((item) => item.status !== 'failed' && item.capability === 'receipt_ocr')
     .reduce((sum, item) => sum + Number(item.requests || 0), 0);
   const members = Number(controlDb.prepare('SELECT COUNT(*) AS count FROM workspace_members WHERE workspace_id=?').get(workspaceId)?.count || 0);
-  const transactionEntries = Number(db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted' AND created_at>=datetime(?) AND created_at<datetime(?)").get(range.from, range.toExclusive)?.count || 0);
+  const transactionEntries = Number(db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted' AND datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?)").get(range.from, range.toExclusive)?.count || 0);
   const estimatedCostMicrousd = usageRows.reduce((sum, item) => sum + Number(item.estimatedCostMicrousd || 0), 0);
   const unpricedEvents = usageRows.reduce((sum, item) => sum + Number(item.unpriced || 0), 0);
   const budgetMicrousd = Number(planRecord.providerBudgetMicrousd || 0);

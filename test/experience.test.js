@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  EXPERIENCES, canChooseExperience, canSeeScreen, experienceForRole, pathNeedsProfessional, screensFor,
+  EXPERIENCES, SCREENS, canChooseExperience, canSeeScreen, experienceForRole, pathNeedsProfessional, screensFor,
 } from '../shared/experience.js';
 
 // نردبان نقش برای «اجازه» درست است ولی برای «چه ببیند» وارونه: صاحب کسب‌وکار
@@ -50,9 +50,21 @@ test('کدینگ، کارتابل سند و صف بررسی در محیط ساد
 
 test('حسابدار محیط حرفه‌ای کامل می‌بیند', () => {
   const ids = screensFor(proAccountant).map((screen) => screen.id);
-  for (const screen of ['today', 'ledger', 'report', 'firm', 'review', 'accounting', 'tax', 'collaboration']) {
+  for (const screen of ['today', 'ledger', 'report', 'firm', 'review', 'accounting', 'collaboration']) {
     assert.ok(ids.includes(screen), `${screen} باید برای حسابدار باشد`);
   }
+});
+
+/**
+ * مالیات فعلاً پنهان است، نه حذف.
+ *
+ * صفحه و مسیرهای سرورش سر جایشان‌اند و آزمون‌هایشان هم اجرا می‌شوند؛ فقط از
+ * ناوبری بیرون است. این آزمون هر دو نیمه را نگه می‌دارد: نه دیده می‌شود، و
+ * نه تعریفش گم شده — تا برگرداندنش یک پرچم باشد، نه بازنویسی.
+ */
+test('مالیات پنهان است ولی تعریفش سر جایش مانده', () => {
+  assert.equal(canSeeScreen('tax', proAccountant), false, 'نباید در ناوبری باشد');
+  assert.ok(SCREENS.some((screen) => screen.id === 'tax' && screen.hidden), 'ولی تعریفش باید بماند');
 });
 
 // رتبه و تجربه دو شرط مستقل‌اند و هر دو باید برقرار باشند.

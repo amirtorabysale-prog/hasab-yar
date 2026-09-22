@@ -143,7 +143,7 @@ export function monthlyAccountantPackage(month = '', now = new Date()) {
     ORDER BY bank_statement_imports.created_at`).all();
   const obligations = listObligations({ status: 'open' });
   const auditLog = db.prepare(`SELECT id,action,entity_type AS entityType,entity_id AS entityId,payload,created_at AS createdAt
-    FROM audit_log WHERE created_at>=datetime(?) AND created_at<datetime(?) ORDER BY created_at`).all(range.from, range.toExclusive)
+    FROM audit_log WHERE datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?) ORDER BY created_at`).all(range.from, range.toExclusive)
     .map((item) => ({ ...item, payload: parseStoredJson(item.payload, {}) }));
   const openRequests = [...listCollaborationRequests({ status: 'open' }), ...listCollaborationRequests({ status: 'answered' })];
   const sections = { transactions, incompleteReceipts, closings, closingDiscrepancies, reconciliationIssues, obligations, auditLog, openRequests };

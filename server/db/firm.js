@@ -40,9 +40,9 @@ export function listPilotCheckins() {
 export function pilotWorkspaceDashboard(now = new Date(), workspaceMeta = null) {
   const workspace = workspaceMeta || controlDb.prepare('SELECT id,name,created_at AS createdAt FROM workspaces WHERE id=?').get(currentWorkspace()?.id || 'primary');
   const weeks = fourWeekWindows(now).map((window) => {
-    const transactions = Number(db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted' AND created_at>=datetime(?) AND created_at<datetime(?)").get(window.from, window.toExclusive).count || 0);
-    const receipts = Number(db.prepare('SELECT COUNT(*) AS count FROM receipts WHERE created_at>=datetime(?) AND created_at<datetime(?)').get(window.from, window.toExclusive).count || 0);
-    const voice = Number(db.prepare('SELECT COUNT(*) AS count FROM voice_metrics WHERE created_at>=datetime(?) AND created_at<datetime(?)').get(window.from, window.toExclusive).count || 0);
+    const transactions = Number(db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted' AND datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?)").get(window.from, window.toExclusive).count || 0);
+    const receipts = Number(db.prepare('SELECT COUNT(*) AS count FROM receipts WHERE datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?)').get(window.from, window.toExclusive).count || 0);
+    const voice = Number(db.prepare('SELECT COUNT(*) AS count FROM voice_metrics WHERE datetime(created_at)>=datetime(?) AND datetime(created_at)<datetime(?)').get(window.from, window.toExclusive).count || 0);
     return { ...window, transactions, receipts, voice, activity: transactions + receipts + voice, active: transactions + receipts + voice > 0 };
   });
   const checkins = listPilotCheckins();
@@ -80,7 +80,7 @@ function firmClientSnapshot(month = '', now = new Date()) {
 
   const ledger = db.prepare(`SELECT COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit
     FROM journal_lines JOIN journal_entries ON journal_entries.id=journal_lines.entry_id
-    WHERE journal_entries.occurred_at>=datetime(?) AND journal_entries.occurred_at<datetime(?)`).get(range.from, range.toExclusive);
+    WHERE datetime(journal_entries.occurred_at)>=datetime(?) AND datetime(journal_entries.occurred_at)<datetime(?)`).get(range.from, range.toExclusive);
 
   const rangeStartDay = localDay(new Date(range.from), range.timeZone);
   const rangeEndDay = localDay(new Date(range.toExclusive), range.timeZone);
@@ -88,7 +88,7 @@ function firmClientSnapshot(month = '', now = new Date()) {
       COUNT(*) AS count,
       COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income,
       COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS expense
-    FROM transactions WHERE status!='deleted' AND occurred_at>=datetime(?) AND occurred_at<datetime(?)`).get(range.from, range.toExclusive);
+    FROM transactions WHERE status!='deleted' AND datetime(occurred_at)>=datetime(?) AND datetime(occurred_at)<datetime(?)`).get(range.from, range.toExclusive);
 
   const lastBatch = db.prepare(`SELECT id,period,target_system AS targetSystem,status,row_count AS rowCount,
     created_at AS createdAt FROM accounting_transfer_batches ORDER BY created_at DESC LIMIT 1`).get() || null;
@@ -109,11 +109,11 @@ function firmClientSnapshot(month = '', now = new Date()) {
       unreviewedTransactions: count("SELECT COUNT(*) AS count FROM transactions WHERE needs_review=1 AND status!='deleted'"),
       // سند پیش‌نویس، در انتظار کنترل یا برگشتی در همان دوره.
       pendingApproval: count(
-        "SELECT COUNT(*) AS count FROM journal_entries WHERE approval_state<>'approved' AND occurred_at>=datetime(?) AND occurred_at<datetime(?)",
+        "SELECT COUNT(*) AS count FROM journal_entries WHERE approval_state<>'approved' AND datetime(occurred_at)>=datetime(?) AND datetime(occurred_at)<datetime(?)",
         range.from, range.toExclusive,
       ),
       overdueObligations: count(
-        "SELECT COUNT(*) AS count FROM obligations WHERE status='open' AND due_at IS NOT NULL AND due_at<datetime(?)",
+        "SELECT COUNT(*) AS count FROM obligations WHERE status='open' AND due_at IS NOT NULL AND datetime(due_at)<datetime(?)",
         now.toISOString(),
       ),
     },
@@ -124,7 +124,7 @@ function firmClientSnapshot(month = '', now = new Date()) {
       transactionCount: Number(totals?.count || 0),
       income: Number(totals?.income || 0),
       expense: Number(totals?.expense || 0),
-      entryCount: count('SELECT COUNT(*) AS count FROM journal_entries WHERE occurred_at>=datetime(?) AND occurred_at<datetime(?)', range.from, range.toExclusive),
+      entryCount: count('SELECT COUNT(*) AS count FROM journal_entries WHERE datetime(occurred_at)>=datetime(?) AND datetime(occurred_at)<datetime(?)', range.from, range.toExclusive),
     },
     delivery: { lastBatch },
   };
