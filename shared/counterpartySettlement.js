@@ -31,6 +31,27 @@ export function settlementDirection(type, balance) {
  * `null` یعنی جمله اصلاً طرف حسابی نداشت. شیءِ با `direction: null` یعنی
  * شخص شناخته شد ولی این ثبت تسویه نیست — نامش دیده می‌شود، ادعایی نمی‌شود.
  */
+/**
+ * انتخاب پیش‌فرض برای طرف حسابی که در جمله شنیده شده.
+ *
+ * سه حالت دارد و هر سه باید از کاربر پرسیده شوند، نه حدس زده:
+ *
+ * - **شخص شناخته‌شده با ماندهٔ مخالف** → پیش‌فرض «بابت بدهی/طلب او». این تنها
+ *   حالتی است که سند به حساب خودش می‌خورد.
+ * - **شخص شناخته‌شده با حساب صاف** → به کارتش وصل می‌شود ولی ثبت، هزینه یا
+ *   درآمد عادی می‌ماند. سند را به حسابش زدن یعنی پیش‌پرداختی ادعا کنیم که
+ *   کاربر نگفته.
+ * - **نام تازه** → پرسیده می‌شود کارت حساب ساخته شود یا نه. پیش‌فرض «بله»،
+ *   چون کاربر نام را عمداً گفته است.
+ */
+export function counterpartyChoice(preview) {
+  if (!preview) return null;
+  if (!preview.contact) return { mode: 'create', link: true, settlement: 'none' };
+  return preview.direction
+    ? { mode: 'settle', link: true, settlement: preview.direction }
+    : { mode: 'link', link: true, settlement: 'none' };
+}
+
 export function settlementPreview(item, contacts = []) {
   const name = String(item?.contactName || '').trim();
   if (!name) return null;

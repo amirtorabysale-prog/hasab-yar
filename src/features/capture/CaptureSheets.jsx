@@ -4,7 +4,7 @@ import { CONFIDENCE_COMPONENT_LABELS } from '../../../shared/confidenceEngine.js
 import { REVIEW_FIELD_LABELS, assessTransactionReview, reviewBatchSummary } from '../../../shared/review.js';
 import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { pickBankAccount } from '../../../shared/banks.js';
-import { settlementPreview } from '../../../shared/counterpartySettlement.js';
+import { counterpartyChoice, settlementPreview } from '../../../shared/counterpartySettlement.js';
 
 
 export function ConfirmationSheet({ result, categories, accounts = [], contacts = [], onCancel, onConfirm }) {
@@ -29,6 +29,14 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
   const summary = reviewBatchSummary({ transactions: items });
   const allowedCategories = categories.filter((category) => category.type === item.type);
   const settlement = settlementPreview(item, contacts);
+  // انتخاب کاربر بر پیش‌فرض مقدم است؛ تا وقتی دست نزده، پیش‌فرض همان قاعده است.
+  const choice = { ...(counterpartyChoice(settlement) || {}), ...(item.counterpartyChoice || {}) };
+  const setChoice = (changes) => patch({
+    counterpartyChoice: { ...choice, ...changes },
+    contactId: (changes.link ?? choice.link) ? settlement?.contact?.id || null : null,
+    linkContact: changes.link ?? choice.link,
+    settlement: changes.settlement ?? choice.settlement,
+  });
   const patch = (changes) => setItems((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...changes } : entry));
   const patchFields = (fields, changes) => patch({
     ...changes, _changed: true,
@@ -75,24 +83,49 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
 
         <div className="space-y-2">
           <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-white' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-white' : 'border-line bg-surface'}`}>هزینه</button></div></div>
-          {settlement && <div className={`mt-2 rounded-lg border px-3 py-2 text-[12px] leading-6 ${settlement.direction ? 'border-income/50 bg-income/5' : 'border-line bg-surface'}`}>
-            <p className="font-bold text-ink">طرف حساب: {settlement.name}</p>
-            {settlement.direction === 'payable' && <p className="mt-0.5 text-muted">
-              این پرداخت <b className="text-income">بدهی او را کم می‌کند</b>، هزینهٔ تازه نیست.
-              بدهی فعلی شما به او <b className="numbers text-ink">{formatAmount(Math.abs(settlement.balance))}</b> تومان است.
+          {/* طرف حساب، مهم‌ترین تصمیم این برگه است: تعیین می‌کند این پول به
+              کارت حساب چه کسی می‌نشیند. پس پرسیده می‌شود، نه حدس زده. */}
+          {settlement && <div className={`mt-2 rounded-lg border px-3 py-3 ${choice.link ? 'border-accent/50 bg-warn-bg' : 'border-line bg-surface'}`}>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-[13px] font-extrabold text-ink">طرف حساب: {settlement.name}</p>
+              <button
+                onClick={() => setChoice({ link: !choice.link, settlement: 'none' })}
+                className={`tap shrink-0 rounded-lg border px-2 text-[11px] font-bold ${choice.link ? 'border-line bg-paper text-muted' : 'border-accent bg-accent text-white'}`}
+              >{choice.link ? 'بدون طرف حساب' : 'وصل کن'}</button>
+            </div>
+
+            {choice.link && !settlement.contact && <p className="mt-1 text-[12px] leading-6 text-muted">
+              «{settlement.name}» در دفتر نیست. با ثبت، <b className="text-ink">کارت حساب برایش ساخته می‌شود</b> و این مبلغ اولین گردشش خواهد بود.
             </p>}
-            {settlement.direction === 'receivable' && <p className="mt-0.5 text-muted">
-              این دریافت <b className="text-income">از طلب او کم می‌شود</b>، درآمد تازه نیست.
-              طلب فعلی شما از او <b className="numbers text-ink">{formatAmount(settlement.balance)}</b> تومان است.
-            </p>}
-            {!settlement.direction && <p className="mt-0.5 text-muted">
-              {settlement.contact
-                ? 'حساب او صاف است، پس این ثبت هزینه یا درآمد عادی می‌ماند و به کارت حسابش هم می‌نشیند.'
-                : 'این نام در دفتر نیست؛ با ثبت، طرف حساب تازه‌ای ساخته می‌شود.'}
-            </p>}
+
+            {choice.link && settlement.contact && <>
+              <p className="mt-1 text-[12px] leading-6 text-muted">
+                به کارت حساب او وصل می‌شود.{' '}
+                {settlement.balance === 0
+                  ? 'حسابش الان صاف است.'
+                  : settlement.balance > 0
+                    ? <>طلب شما از او <b className="numbers text-ink">{formatAmount(settlement.balance)}</b> تومان است.</>
+                    : <>بدهی شما به او <b className="numbers text-ink">{formatAmount(Math.abs(settlement.balance))}</b> تومان است.</>}
+              </p>
+              {settlement.direction && <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] font-bold">
+                <button onClick={() => setChoice({ settlement: settlement.direction })}
+                  className={`tap rounded-lg border py-1.5 ${choice.settlement !== 'none' ? 'border-income bg-income text-white' : 'border-line bg-paper text-muted'}`}>
+                  {settlement.direction === 'payable' ? 'بابت بدهی او' : 'بابت طلب او'}
+                </button>
+                <button onClick={() => setChoice({ settlement: 'none' })}
+                  className={`tap rounded-lg border py-1.5 ${choice.settlement === 'none' ? 'border-accent bg-accent text-white' : 'border-line bg-paper text-muted'}`}>
+                  {item.type === 'expense' ? 'هزینهٔ عادی' : 'درآمد عادی'}
+                </button>
+              </div>}
+              {settlement.direction && choice.settlement !== 'none' && <p className="mt-1.5 text-[11px] leading-5 text-muted">
+                {settlement.direction === 'payable'
+                  ? 'سند به حساب خودش می‌خورد و بدهی‌اش کم می‌شود؛ هزینهٔ تازه‌ای ساخته نمی‌شود.'
+                  : 'سند به حساب خودش می‌خورد و طلبتان کم می‌شود؛ درآمد تازه‌ای شناسایی نمی‌شود.'}
+              </p>}
+            </>}
           </div>}
           {/* وقتی پول به حساب خودِ طرف حساب می‌نشیند، دسته معنایی ندارد. */}
-          {!settlement?.direction && <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>}
+          {!(choice.link && choice.settlement && choice.settlement !== 'none') && <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>}
           <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || defaultAccountId} onChange={(event) => patchField('account', { accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
           {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-warn-bg px-2 py-1 text-[11px] font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
         </div>

@@ -538,6 +538,10 @@ function ensureAccountingTransferSchema(database) {
 
 // تسویهٔ جزئی: چقدر از این تعهد تا امروز پرداخت شده.
 ensureColumn('obligations', 'paid_amount INTEGER NOT NULL DEFAULT 0');
+// انتخاب کاربر دربارهٔ طرف حساب: '' یعنی چیزی نگفته، 'none' یعنی صریح گفته
+// این ثبت هزینه یا درآمد عادی است. بدون نگه‌داشتنش، ثبتی که به صف بررسی
+// می‌رود انتخاب کاربر را گم می‌کند و موقع تأیید دوباره حدس زده می‌شود.
+ensureColumn('transactions', "settlement_choice TEXT NOT NULL DEFAULT ''");
 ensureColumn('transactions', "contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL");
 
 ensureColumn('transactions', "account TEXT NOT NULL DEFAULT 'cash'");

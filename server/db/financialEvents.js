@@ -110,7 +110,8 @@ export function approveEvent(eventId) {
     // بدهی همان شخص را می‌بست. دو سند متفاوت برای یک ثبت، بسته به اینکه
     // حسابدار تأییدش کرده یا نه.
     const transaction = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,
-      account_id AS accountId,occurred_at AS occurredAt,contact_id AS contactId FROM transactions WHERE id=?`).get(source.id);
+      account_id AS accountId,occurred_at AS occurredAt,contact_id AS contactId,
+      settlement_choice AS settlement FROM transactions WHERE id=?`).get(source.id);
     if (transaction) postJournal = transactionJournalPoster(transaction, settlementFor(transaction));
   }
   const item = approveFinancialEvent(database, eventId, {

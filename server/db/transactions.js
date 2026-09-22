@@ -83,11 +83,19 @@ export function transactionJournalPoster(row, settlement = null) {
  * همان ثبت عادیِ هزینه یا درآمد می‌ماند.
  */
 export function settlementFor(row) {
+  // «هیچ‌کدام» یعنی کاربر روی برگه دیده و گفته این ثبت هزینه یا درآمد عادی
+  // است؛ حدس ما حق ندارد رویش بنویسد.
+  if (row.settlement === 'none') return null;
   if (!row.contactId) return null;
   const contact = db.prepare('SELECT id,name FROM contacts WHERE id=?').get(row.contactId);
   if (!contact) return null;
   const balance = counterpartyLedgerBalance(contact);
-  const direction = settlementDirection(row.type, balance);
+  // جهت اعلام‌شدهٔ کاربر بر ماندهٔ دفتر مقدم است، ولی فقط وقتی با نوع ثبت
+  // بخواند: «بابت بدهی او» فقط روی پرداخت معنا دارد و «بابت طلب او» فقط
+  // روی دریافت.
+  const askedFits = (row.settlement === 'payable' && row.type === 'expense')
+    || (row.settlement === 'receivable' && row.type === 'income');
+  const direction = askedFits ? row.settlement : settlementDirection(row.type, balance);
   if (!direction) return null;
   return { direction, contactId: contact.id, contactName: contact.name, balance };
 }
@@ -160,8 +168,8 @@ function counterpartyFromSentence(item, transcript, counterpartyResolution) {
 
 export function insertTransactionRows({ transcript, transactions, counterpartyResolution = '' }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
-    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at,settlement_choice)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const ids = [];
   for (const item of transactions) {
     const id = randomUUID();
@@ -171,7 +179,11 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
     const occurredAt = item.occurredAt || new Date().toISOString();
     assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
     const accountId = resolveAccountId(item);
-    const contactId = item.contactId || counterpartyFromSentence(item, transcript, counterpartyResolution);
+    // کاربر روی برگه گفته این ثبت طرف حساب ندارد؛ نامی که شنیده شده هم
+    // نباید پشت سرش کارت حساب بسازد.
+    const contactId = item.linkContact === false
+      ? null
+      : item.contactId || counterpartyFromSentence(item, transcript, counterpartyResolution);
     // بانکی که گفته شده ولی حسابی در دفتر ندارد، بی‌صدا روی صندوق می‌نشیند.
     // این همان خطایی است که کاربر هیچ‌وقت نمی‌بیند و آخر ماه ماندهٔ صندوق و
     // بانک هر دو غلط است — پس به‌جای سکوت، سؤال می‌شود.
@@ -188,6 +200,7 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
       item.restoredFrom || null, CAPITAL_FLOWS.includes(item.capitalFlow) ? item.capitalFlow : '',
       occurredAt, contactId || null, accountId, accountId,
       String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt,
+      ['none', 'payable', 'receivable'].includes(item.settlement) ? item.settlement : '',
     );
     if (result.changes) {
       ids.push(id);
@@ -195,7 +208,7 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
       if (!item.journalManaged) {
         // شناسهٔ طرف حساب هم می‌رود: بدون آن، سند هرگز نمی‌فهمد این پرداخت
         // تسویهٔ بدهی همان شخص است و همیشه روی دستهٔ هزینه می‌نشیند.
-        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt, contactId: contactId || null };
+        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt, contactId: contactId || null, settlement: item.settlement || null };
         // اگر لایهٔ رویداد کار را به عهده گرفت، سند اینجا زده نمی‌شود؛ یا خودش
         // زده یا عمداً نگه داشته است.
         if (!routeTransactionThroughEvents(row, entry, transcript)) {
