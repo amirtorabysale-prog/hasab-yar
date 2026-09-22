@@ -1,0 +1,49 @@
+[
+  {"id":"PRE-001","family":"prepayment","input":"حق بیمه مسئولیت یک‌ساله را از بانک ملت پرداخت کردم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["servicePeriodStart","servicePeriodEnd"],"expectedTreatment":"prepaid-expense"},
+  {"id":"PRE-002","family":"prepayment","input":"بیمه مسئولیت از اول مهر تا پایان شهریور سال بعد، ۱۲۰ میلیون از بانک ملت پرداخت شد","risk":"red","expectedStatus":"accountant-review","missingFacts":[],"expectedTreatment":"prepaid-expense"},
+  {"id":"PRE-003","family":"prepayment","input":"سه میلیون بابت بیمه همین ماه پرداخت کردم","risk":"yellow","expectedStatus":"decided","missingFacts":[],"expectedTreatment":"period-expense","posting":{"debitRole":"expense-category","creditRole":"cash"}},
+
+  {"id":"ACC-001","family":"accrual","input":"هزینه برق شهریور برآورد شده ولی قبض هنوز نیامده","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount"],"expectedTreatment":"accrued-expense"},
+  {"id":"ACC-002","family":"accrual","input":"هزینه برق شهریور ۸ میلیون برآورد شد و هنوز پرداخت نشده","risk":"red","expectedStatus":"accountant-review","missingFacts":[],"expectedTreatment":"accrued-expense"},
+  {"id":"ACC-003","family":"accrual","input":"قبض برق شهریور که قبلاً ذخیره شده بود پرداخت شد","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["accrualReference"],"expectedTreatment":"settle-accrual"},
+
+  {"id":"DEF-001","family":"deferred-revenue","input":"۱۲۰ میلیون برای پشتیبانی یک‌ساله از مشتری دریافت کردیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["servicePeriodStart","servicePeriodEnd"],"expectedTreatment":"deferred-revenue"},
+  {"id":"DEF-002","family":"deferred-revenue","input":"وجه قرارداد پشتیبانی مهر تا شهریور سال بعد پیشاپیش دریافت شد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","cashAccountId"],"expectedTreatment":"deferred-revenue"},
+  {"id":"DEF-003","family":"deferred-revenue","input":"خدمت امروز کامل شد و ۵ میلیون نقد دریافت کردیم","risk":"yellow","expectedStatus":"decided","missingFacts":[],"expectedTreatment":"recognized-revenue","posting":{"debitRole":"cash","creditRole":"income-category"}},
+
+  {"id":"INV-001","family":"inventory","input":"صد عدد کالا برای فروش مجدد خریدیم","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["amount","inventoryItem"],"expectedTreatment":"inventory-purchase"},
+  {"id":"INV-002","family":"inventory","input":"کاغذ برای مصرف اداری خریدیم و نقد پرداخت شد","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["amount","cashAccountId"],"expectedTreatment":"period-expense"},
+  {"id":"INV-003","family":"inventory","input":"مواد اولیه تولید خریدیم ولی هنوز فاکتور قطعی نشده","risk":"red","expectedStatus":"accountant-review","missingFacts":[],"expectedTreatment":"inventory-purchase"},
+
+  {"id":"AST-001","family":"fixed-asset","input":"یک لپ‌تاپ برای شرکت خریدیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","cashOrCredit","assetPolicy"],"expectedTreatment":"fixed-asset"},
+  {"id":"AST-002","family":"fixed-asset","input":"هارد لپ‌تاپ شرکت را تعویض کردیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","improvesUsefulLife"],"expectedTreatment":"repair-or-capitalize"},
+  {"id":"AST-003","family":"fixed-asset","input":"هزینه سرویس عادی کولر شرکت ۲ میلیون نقد پرداخت شد","risk":"yellow","expectedStatus":"decided","missingFacts":[],"expectedTreatment":"repair-expense","posting":{"debitRole":"expense-category","creditRole":"cash"}},
+
+  {"id":"SET-001","family":"settlement","input":"بدهی فاکتور ۱۲۳ شرکت بهار را از بانک ملت پرداخت کردم","risk":"green","expectedStatus":"decided","missingFacts":[],"expectedTreatment":"payable-settlement","posting":{"debitRole":"payable","creditRole":"cash"}},
+  {"id":"SET-002","family":"settlement","input":"ده میلیون به شرکت بهار پرداخت کردم","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["settlementReferenceOrPurpose"],"expectedTreatment":"unresolved-payment"},
+  {"id":"SET-003","family":"settlement","input":"نصف طلب فاکتور فروش ۸۸ وصول شد","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["amount","cashAccountId"],"expectedTreatment":"partial-receivable-settlement"},
+
+  {"id":"ADV-001","family":"advance-deposit","input":"بیست میلیون پیش‌پرداخت به فروشنده دادیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["counterparty","contractOrOrderReference"],"expectedTreatment":"supplier-advance"},
+  {"id":"ADV-002","family":"advance-deposit","input":"از مشتری برای سفارش جدید بیعانه گرفتیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","counterparty","orderReference"],"expectedTreatment":"customer-advance"},
+  {"id":"ADV-003","family":"advance-deposit","input":"ودیعه قابل استرداد دفتر را پرداخت کردیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","counterparty","contractReference"],"expectedTreatment":"refundable-deposit"},
+
+  {"id":"LOAN-001","family":"loan","input":"۵۰۰ میلیون وام وارد بانک شد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["lender","loanContract"],"expectedTreatment":"loan-principal"},
+  {"id":"LOAN-002","family":"loan","input":"قسط وام پرداخت شد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["principalAmount","interestAmount","cashAccountId"],"expectedTreatment":"loan-installment"},
+  {"id":"LOAN-003","family":"loan","input":"کارمزد بانکی وام ۳ میلیون از حساب کم شد","risk":"yellow","expectedStatus":"decided","missingFacts":[],"expectedTreatment":"finance-cost","posting":{"debitRole":"expense-category","creditRole":"cash"}},
+
+  {"id":"EQT-001","family":"equity","input":"مالک ۲۰۰ میلیون به حساب شرکت واریز کرد","risk":"red","expectedStatus":"accountant-review","missingFacts":[],"expectedTreatment":"capital-contribution"},
+  {"id":"EQT-002","family":"equity","input":"شریک از حساب شرکت برداشت کرد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","partnerId","purpose"],"expectedTreatment":"owner-drawing-or-current-account"},
+  {"id":"EQT-003","family":"equity","input":"طلب شریک از شرکت پرداخت شد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["amount","partnerCurrentAccountReference"],"expectedTreatment":"partner-current-account-settlement"},
+
+  {"id":"TRF-001","family":"internal-transfer","input":"۵۰ میلیون از بانک ملت شرکت به بانک ملی شرکت انتقال دادم","risk":"green","expectedStatus":"decided","missingFacts":[],"expectedTreatment":"internal-transfer","posting":{"debitRole":"cash-destination","creditRole":"cash-source"}},
+  {"id":"TRF-002","family":"internal-transfer","input":"پول را بین حساب‌ها جابه‌جا کردم","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["amount","sourceAccountId","destinationAccountId"],"expectedTreatment":"internal-transfer"},
+  {"id":"TRF-003","family":"internal-transfer","input":"انتقال بین دو حساب خودمان با ۲۰ هزار تومان کارمزد انجام شد","risk":"yellow","expectedStatus":"needs-user-input","missingFacts":["transferAmount","sourceAccountId","destinationAccountId"],"expectedTreatment":"internal-transfer-with-fee"},
+
+  {"id":"TAX-001","family":"tax-vat","input":"مالیات ارزش افزوده خرید را پرداخت کردیم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["invoiceReference","taxAmount","eligibility"],"expectedTreatment":"input-vat"},
+  {"id":"TAX-002","family":"tax-vat","input":"بدهی ارزش افزوده فصل قبل پرداخت شد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["assessmentOrReturnReference","amount"],"expectedTreatment":"vat-settlement"},
+  {"id":"TAX-003","family":"tax-vat","input":"جریمه مالیاتی پرداخت شد","risk":"red","expectedStatus":"accountant-review","missingFacts":[],"expectedTreatment":"tax-penalty"},
+
+  {"id":"PAY-001","family":"payroll","input":"حقوق شهریور پرداخت شد","risk":"red","expectedStatus":"needs-user-input","missingFacts":["payrollRunReference","netAmount","cashAccountId"],"expectedTreatment":"payroll-settlement"},
+  {"id":"PAY-002","family":"payroll","input":"ده میلیون مساعده به کارمند پرداخت کردم","risk":"red","expectedStatus":"needs-user-input","missingFacts":["employeeId","cashAccountId"],"expectedTreatment":"employee-advance"},
+  {"id":"PAY-003","family":"payroll","input":"بیمه سهم کارفرما برای شهریور شناسایی شد","risk":"red","expectedStatus":"accountant-review","missingFacts":[],"expectedTreatment":"employer-insurance-expense"}
+]
