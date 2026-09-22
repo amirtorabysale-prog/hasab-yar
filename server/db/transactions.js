@@ -8,6 +8,7 @@ import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
 import { normalizePersian } from '../../shared/parser.js';
 import { saveContact } from './contacts.js';
+import { matchCounterparty } from '../counterparties.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 
@@ -163,6 +164,12 @@ function counterpartyFromSentence(item, transcript, counterpartyResolution) {
   const name = String(item.contactName || '').trim()
     || extractContactName(String(item.rawText || transcript || ''));
   if (!name) return null;
+  // نامِ حدسی (بدون عنوان) فقط وقتی وصل می‌شود که با طرف حسابی که از قبل در
+  // دفتر هست بخواند. «به پیک پول دادم» نباید کارت حساب «پیک پول» بسازد —
+  // ساختنش تصمیم کاربر است و برگهٔ تأیید آن را می‌پرسد.
+  if (item.contactNameConfident === false && item.linkContact !== true) {
+    return matchCounterparty(db, name).exact?.id || null;
+  }
   return saveContact({ name, counterpartyResolution }).id;
 }
 

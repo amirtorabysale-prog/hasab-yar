@@ -46,6 +46,9 @@ export function settlementDirection(type, balance) {
  */
 export function counterpartyChoice(preview) {
   if (!preview) return null;
+  // نامِ حدسیِ ناشناخته: «به پیک پول دادم» نباید کارت حساب «پیک پول» بسازد.
+  // پس پیش‌فرض «نه» است و پرسیده می‌شود؛ کاربر با یک دکمه تأییدش می‌کند.
+  if (!preview.contact && !preview.confident) return { mode: 'ask', link: false, settlement: 'none' };
   if (!preview.contact) return { mode: 'create', link: true, settlement: 'none' };
   return preview.direction
     ? { mode: 'settle', link: true, settlement: preview.direction }
@@ -62,6 +65,8 @@ export function settlementPreview(item, contacts = []) {
     name: contact?.name || name,
     contact,
     balance,
+    // نامی که با طرف حسابِ موجود خوانده، دیگر حدس نیست — هر طور که شنیده شده باشد.
+    confident: Boolean(contact) || item.contactNameConfident !== false,
     direction: contact ? settlementDirection(item.type, balance) : null,
   };
 }

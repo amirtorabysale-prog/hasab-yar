@@ -35,6 +35,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
     counterpartyChoice: { ...choice, ...changes },
     contactId: (changes.link ?? choice.link) ? settlement?.contact?.id || null : null,
     linkContact: changes.link ?? choice.link,
+    contactNameConfident: (changes.link ?? choice.link) ? true : item.contactNameConfident,
     settlement: changes.settlement ?? choice.settlement,
   });
   const patch = (changes) => setItems((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...changes } : entry));
@@ -94,6 +95,12 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
               >{choice.link ? 'بدون طرف حساب' : 'وصل کن'}</button>
             </div>
 
+            {/* نامِ حدسی (بدون «آقای» یا «شرکت») ممکن است اصلاً نام نباشد:
+                «به پیک پول دادم» همان قاعده را «پیک پول» می‌خواند. پس ساخته
+                نمی‌شود، پرسیده می‌شود. */}
+            {!choice.link && !settlement.contact && <p className="mt-1 text-[12px] leading-6 text-muted">
+              آیا «<b className="text-ink">{settlement.name}</b>» یک طرف حساب است؟ اگر بله، با دکمهٔ «وصل کن» کارت حساب برایش ساخته می‌شود.
+            </p>}
             {choice.link && !settlement.contact && <p className="mt-1 text-[12px] leading-6 text-muted">
               «{settlement.name}» در دفتر نیست. با ثبت، <b className="text-ink">کارت حساب برایش ساخته می‌شود</b> و این مبلغ اولین گردشش خواهد بود.
             </p>}

@@ -4,7 +4,7 @@ import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './
 import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
 import { detectBank } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
-import { counterpartyMoneyDirection, extractContactName } from './counterpartySpeech.js';
+import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -392,7 +392,8 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   //
   // اینجا فقط نام برداشته می‌شود. اینکه این پرداخت تسویهٔ بدهی اوست یا هزینه،
   // به ماندهٔ همان شخص در دفتر بستگی دارد و تصمیمش با سرور است.
-  const counterpartyName = extractContactName(input);
+  const counterparty = extractContactCandidate(input);
+  const counterpartyName = counterparty.name;
   const moneyDirection = counterpartyName ? counterpartyMoneyDirection(input) : '';
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word))];
   const transactions = spans.map((span, index) => {
@@ -430,7 +431,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
       amount, type: classified.type, category: classified.category, chartCode: classified.chartCode, rawText: context || text,
-      ...(counterpartyName ? { contactName: counterpartyName, moneyDirection } : {}),
+      ...(counterpartyName ? {
+        contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
+      } : {}),
       // دستهٔ مبهم یعنی دو دسته به یک اندازه موجه بودند؛ ثبت چنین چیزی بدون
       // نگاه کاربر همان خطای بی‌صداست که در بخش مبلغ بستیم.
       confidence: classified.confidence,

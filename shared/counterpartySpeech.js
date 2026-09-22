@@ -127,6 +127,25 @@ export function extractContactName(input, { allowBare = false } = {}) {
 }
 
 /**
+ * نامزدِ طرف حساب، همراه با اینکه چقدر به آن مطمئنیم.
+ *
+ * عنوان («آقای»، «خانم»، «شرکت») نشانهٔ قطعی است: کسی «شرکت» را تصادفی
+ * نمی‌گوید. ولی مردم اغلب عنوان نمی‌گویند — «۲۵ میلیون به محسن احتسامی
+ * پرداخت شد» هیچ عنوانی ندارد و تا امروز کل نام دور ریخته می‌شد.
+ *
+ * نامِ بدون عنوان هم قابل برداشتن است (واژه‌های پس از «به» یا «از»)، ولی
+ * قطعی نیست: «به پیک پول دادم» همان قاعده را «پیک پول» می‌خواند. پس برداشته
+ * می‌شود و **حدسی** علامت می‌خورد — تا اگر با طرف حسابی که از قبل در دفتر
+ * هست بخواند بی‌پرسش وصل شود، و اگر تازه باشد پرسیده شود نه ساخته.
+ */
+export function extractContactCandidate(input) {
+  const confident = extractContactName(input);
+  if (confident) return { name: confident, confident: true };
+  const guess = extractContactName(input, { allowBare: true });
+  return guess ? { name: guess, confident: false } : { name: '', confident: false };
+}
+
+/**
  * جهت پول نسبت به طرف حساب.
  *
  * «به شرکت الف پرداخت شد» یعنی پول از ما رفت؛ «از شرکت الف گرفتیم» یعنی آمد.
