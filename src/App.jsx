@@ -802,6 +802,21 @@ export default function App() {
     await load();
   };
 
+  /**
+   * ساخت حساب بانک، همان‌جا که کمبودش دیده شد.
+   *
+   * فرستادن کاربر به تنظیمات وسط یک ثبت، یعنی ثبت را رها کند و برگردد. و
+   * تجربه نشان داد که برنمی‌گردد: همهٔ هزینه‌ها روی صندوق ماندند.
+   */
+  const createBankAccount = async ({ name, bankId }) => {
+    try {
+      const account = await api.saveAccount({ name, kind: 'bank', bankId, openingBalance: 0 });
+      await load();
+      notify(`حساب «${account.name}» ساخته شد؛ موجودی اولیه‌اش را از تنظیمات وارد کن.`);
+      return account;
+    } catch (error) { notify(error.message); return null; }
+  };
+
   const saveConfirmed = async (transactions) => {
     const offlineAudioId = parseResult.offlineAudioId || '';
     const payload = { transcript: parseResult.transcript, transactions };
@@ -1009,7 +1024,7 @@ export default function App() {
       {parseResult && (
         <ConfirmationSheet
           result={parseResult} categories={data.categories} accounts={data.accounts} contacts={data.contacts || []}
-          onCancel={discardParseResult} onConfirm={saveConfirmed}
+          onCreateBankAccount={createBankAccount} onCancel={discardParseResult} onConfirm={saveConfirmed}
         />
       )}
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}

@@ -195,8 +195,11 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
     // این همان خطایی است که کاربر هیچ‌وقت نمی‌بیند و آخر ماه ماندهٔ صندوق و
     // بانک هر دو غلط است — پس به‌جای سکوت، سؤال می‌شود.
     const bankSaidButUnknown = item.bankId && !item.accountId && !item.account && !accountForBank(item.bankId);
+    // دلیلِ تنها کافی نیست: ثبتی که «آماده» علامت بخورد هیچ‌جا دیده
+    // نمی‌شود و همان سکوتی می‌ماند که قرار بود بشکند. کاربر نام بانک را
+    // گفته و ثبت روی صندوق نشسته؛ این باید به چشمش بیاید.
     const entry = bankSaidButUnknown
-      ? { ...item, reviewReasons: [...(Array.isArray(item.reviewReasons) ? item.reviewReasons : []),
+      ? { ...item, needsReview: true, reviewReasons: [...(Array.isArray(item.reviewReasons) ? item.reviewReasons : []),
         `حسابی برای «${item.bankName || 'این بانک'}» تعریف نشده؛ فعلاً روی حساب پیش‌فرض نشسته است.`] }
       : item;
     const reviewState = normalizeReviewState(entry.reviewState, entry.needsReview ? 'review' : 'ready');

@@ -7,7 +7,7 @@ import { pickBankAccount } from '../../../shared/banks.js';
 import { counterpartyChoice, settlementPreview } from '../../../shared/counterpartySettlement.js';
 
 
-export function ConfirmationSheet({ result, categories, accounts = [], contacts = [], onCancel, onConfirm }) {
+export function ConfirmationSheet({ result, categories, accounts = [], contacts = [], onCreateBankAccount, onCancel, onConfirm }) {
   const defaultAccountId = accounts.find((account) => account.id === 'cash' && account.active)?.id || accounts.find((account) => account.active)?.id || 'cash';
   /**
    * حسابی که این برداشت باید روی آن بنشیند.
@@ -29,6 +29,30 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
   const summary = reviewBatchSummary({ transactions: items });
   const allowedCategories = categories.filter((category) => category.type === item.type);
   const settlement = settlementPreview(item, contacts);
+  /**
+   * بانکی که در جمله گفته شده، ولی حسابی در دفتر ندارد.
+   *
+   * تا امروز بی‌صدا روی صندوق می‌نشست: کاربر «از بانک ملت» می‌گفت و برگه
+   * «صندوق نقدی» نشان می‌داد، بدون هیچ اشاره‌ای به اینکه بانک شنیده شده و
+   * جایی برای نشستن نداشته. آخر ماه ماندهٔ صندوق و بانک هر دو غلط بود و
+   * تطبیق بانکی هیچ‌وقت نمی‌خواند.
+   */
+  // همان شرطی که pickBankAccount دارد، وگرنه برگه و سرور دو جور می‌شمارند.
+  const bankMatches = item.bankId
+    ? accounts.filter((account) => account.active !== false && account.kind === 'bank' && account.bankId === item.bankId)
+    : [];
+  const bankGap = item.bankId && bankMatches.length !== 1
+    ? { bankId: item.bankId, bankName: item.bankName || 'این بانک', many: bankMatches.length > 1 }
+    : null;
+  const [creatingBank, setCreatingBank] = useState(false);
+  const createBank = async () => {
+    if (!onCreateBankAccount) return;
+    setCreatingBank(true);
+    try {
+      const account = await onCreateBankAccount({ name: bankGap.bankName, bankId: bankGap.bankId });
+      if (account?.id) patchField('account', { accountId: account.id });
+    } finally { setCreatingBank(false); }
+  };
   // انتخاب کاربر بر پیش‌فرض مقدم است؛ تا وقتی دست نزده، پیش‌فرض همان قاعده است.
   const choice = { ...(counterpartyChoice(settlement) || {}), ...(item.counterpartyChoice || {}) };
   const setChoice = (changes) => patch({
@@ -134,6 +158,19 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
           {/* وقتی پول به حساب خودِ طرف حساب می‌نشیند، دسته معنایی ندارد. */}
           {!(choice.link && choice.settlement && choice.settlement !== 'none') && <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>}
           <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || defaultAccountId} onChange={(event) => patchField('account', { accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+          {bankGap && <div className="mt-2 rounded-lg border border-accent/50 bg-warn-bg px-3 py-3">
+            <p className="text-[13px] font-extrabold text-accent">«{bankGap.bankName}» را گفتی، ولی حسابش در دفتر نیست</p>
+            <p className="mt-1 text-[12px] leading-6 text-muted">
+              {bankGap.many
+                ? 'بیش از یک حساب برای این بانک هست، پس معلوم نیست کدام. خودت از فهرست بالا انتخاب کن.'
+                : 'این ثبت فعلاً روی حساب پیش‌فرض می‌نشیند. اگر همین حالا حسابش را بسازی، این مبلغ و ثبت‌های بعدی از موجودی همان بانک کم می‌شوند.'}
+            </p>
+            {!bankGap.many && onCreateBankAccount && <button
+              disabled={creatingBank}
+              onClick={createBank}
+              className="tap mt-2 rounded-lg bg-accent px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-45"
+            >{creatingBank ? 'در حال ساخت…' : `ساخت حساب «${bankGap.bankName}»`}</button>}
+          </div>}
           {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-warn-bg px-2 py-1 text-[11px] font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
         </div>
 
