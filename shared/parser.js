@@ -2,7 +2,7 @@ import { withReviewAssessment } from './review.js';
 import { normalizePersian } from './normalize.js';
 import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
 import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
-import { detectBank } from './banks.js';
+import { detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 
@@ -393,6 +393,10 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   const occurredAt = mentionedDate?.iso || null;
   // بانک روی متن اصلی خوانده می‌شود، پیش از هر ماسکی، تا جای تطبیق جابه‌جا نشود.
   const bank = detectBank(input);
+  // جابه‌جایی بین دو حساب خودِ دفتر. تا امروز این جمله هزینه ثبت می‌شد و یک
+  // زیان جعلی می‌ساخت که — برخلاف خطای پیش‌پرداخت — هیچ‌وقت خودش را اصلاح
+  // نمی‌کند. تشخیصش از قبل نوشته شده بود و هیچ‌کس صدایش نمی‌زد.
+  const transferPair = detectTransferBanks(input);
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
   let amountSource = mentionedDate?.match || bank
     ? normalizePersian(input)
@@ -470,6 +474,8 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // شناسهٔ بانک می‌رود، نه شناسهٔ حساب: پارسر دفتر را نمی‌شناسد و نمی‌داند
       // این کاربر کدام حساب را به کدام بانک بسته است. نگاشت کار سرور است.
       ...(bank ? { bankId: bank.bankId, bankName: bank.bankName } : {}),
+      // شناسهٔ بانک می‌رود نه شناسهٔ حساب، به همان دلیل بالا: نگاشت کار سرور است.
+      ...(transferPair ? { transfer: { fromId: transferPair.from.id, fromName: transferPair.from.name, toId: transferPair.to.id, toName: transferPair.to.name } } : {}),
       confidenceDetails: {
         amount: {
           score: span.bareScale ? 0.3 : colloquialThousands ? 0.66 : source === 'voice' ? 0.93 : 0.98,

@@ -129,6 +129,13 @@ export function normalizeFinancialEvent(raw = {}) {
     refundable: typeof raw.refundable === 'boolean' ? raw.refundable : null,
     intendedUse: ['resale', 'production', 'long-term-use', 'current-consumption'].includes(raw.intendedUse) ? raw.intendedUse : null,
     contractReference: cleanText(raw.contractReference, 120) || null,
+    // حساب مقصد، فقط برای جابه‌جایی بین حساب‌های خود واحد. برابر بودنش با
+    // مبدأ یعنی انتقالی در کار نیست، پس حذف می‌شود تا نگهبان گمراه نشود.
+    destinationAccountId: (() => {
+      const destination = cleanText(raw.destinationAccountId, 64) || null;
+      const source = eventMovesCash(kind) ? (cleanText(raw.accountId, 64) || 'cash') : null;
+      return destination && destination !== source ? destination : null;
+    })(),
     counterpartyRole: ['owner', 'supplier', 'customer', 'employee', 'authority'].includes(raw.counterpartyRole) ? raw.counterpartyRole : null,
   });
 }

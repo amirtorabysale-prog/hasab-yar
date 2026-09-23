@@ -64,6 +64,7 @@ export function factsFromEvent(event = {}) {
     [FACT_KEYS.AMOUNT]: event.amount,
     [FACT_KEYS.OCCURRED_AT]: event.occurredAt,
     [FACT_KEYS.CASH_ACCOUNT]: event.accountId,
+    [FACT_KEYS.DESTINATION_ACCOUNT]: event.destinationAccountId,
     [FACT_KEYS.COUNTERPARTY]: event.counterparty,
     [FACT_KEYS.COUNTERPARTY_ROLE]: event.counterpartyRole,
     [FACT_KEYS.CATEGORY]: event.category,

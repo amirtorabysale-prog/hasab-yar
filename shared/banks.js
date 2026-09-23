@@ -131,3 +131,46 @@ export function mentionsMultipleBanks(text) {
   }
   return seen.size > 1;
 }
+
+/**
+ * جابه‌جایی پول بین دو حساب خودِ واحد.
+ *
+ * چرا این تابع لازم بود: `mentionsMultipleBanks` از قبل وجود داشت و تست هم
+ * داشت، ولی هیچ کدی صدایش نمی‌زد و «از ملت به پاسارگاد ۵۰ میلیون منتقل کردم»
+ * هزینهٔ سایر هزینه‌ها ثبت می‌شد. یک زیان جعلی که — برخلاف پیش‌پرداخت که
+ * بالاخره هزینه می‌شود — هیچ‌وقت خودش را اصلاح نمی‌کند.
+ *
+ * صندوق هم یک مقصد معتبر است: «از بانک ملت به صندوق آوردم» همان‌قدر انتقال
+ * داخلی است که بانک به بانک.
+ *
+ * فعل جابه‌جایی اجباری است. بدون آن، «از بانک ملت به شرکت بهار پرداخت کردم»
+ * انتقال داخلی خوانده می‌شد — درحالی‌که پولی واقعاً از دفتر بیرون رفته.
+ */
+const TRANSFER_VERBS = /منتقل|انتقال|جابه\s*جا|جابجا|واریز\s*کردم\s*به|ریختم\s*به|آوردم\s*به|بردم\s*به|به\s*صندوق\s*آوردم/;
+const CASH_WORDS = /(?<![آ-ی])(صندوق|نقد|تنخواه)(?![آ-ی])/;
+
+export function detectTransferBanks(text) {
+  // کنترل ارزان اول: بدون فعل جابه‌جایی، هیچ جمله‌ای انتقال نیست. این تست روی
+  // متن خام اجرا می‌شود تا نرمال‌سازی — که یک پیمایش کامل رشته است — فقط برای
+  // جمله‌های واقعاً کاندید انجام شود. تایپ زنده بودجهٔ میلی‌ثانیه‌ای دارد.
+  if (!text || !TRANSFER_VERBS.test(text)) return null;
+  const normalized = normalizePersian(text);
+  if (!normalized || !TRANSFER_VERBS.test(normalized)) return null;
+
+  const hits = [];
+  for (const entry of COMPILED) {
+    const match = entry.pattern.exec(normalized);
+    if (!match) continue;
+    if (hits.some((hit) => hit.id === entry.bank.id)) continue;
+    hits.push({ id: entry.bank.id, name: entry.bank.name, kind: 'bank', index: match.index });
+  }
+  const cash = CASH_WORDS.exec(normalized);
+  if (cash) hits.push({ id: 'cash', name: 'صندوق نقدی', kind: 'cash', index: cash.index });
+  if (hits.length !== 2) return null;
+
+  // ترتیب از روی جای واژه در جمله: آنچه زودتر آمده مبدأ است. فارسی گفتاری
+  // تقریباً همیشه «از X به Y» است و وقتی هم نیست، ترتیب ذکر همان ترتیب است.
+  hits.sort((left, right) => left.index - right.index);
+  const [from, to] = hits;
+  return from.id === to.id ? null : { from, to };
+}
