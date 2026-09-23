@@ -18,7 +18,7 @@ import {
   classifyFamily, isEconomicFamily,
 } from './economicFamily.js';
 import {
-  FACT_LABELS, TREATMENTS, missingFactsFor, nextQuestionFor, requiredFactsFor,
+  FACT_KEYS, FACT_LABELS, TREATMENTS, isFactPresent, missingFactsFor, nextQuestionFor, requiredFactsFor,
 } from './factRequirements.js';
 
 /**
@@ -144,6 +144,20 @@ export const DEFAULT_POLICIES = Object.freeze([
      * و پرداختش دارایی می‌سازد، اینجا نوشته شده و قابل آزمون است.
      */
     categories: TIME_BOUND_SERVICE_CATEGORIES,
+    /**
+     * دسته‌هایی که پرداختشان می‌تواند مصرف‌شدنی باشد یا قابل استرداد.
+     *
+     * «بیست میلیون ودیعهٔ دفتر رو دادم» و «اجارهٔ سه ماه رو جلوجلو دادم» هر دو
+     * دستهٔ اجاره‌اند و هر دو پول خارج‌شده — ولی اولی هیچ‌وقت هزینه نمی‌شود و
+     * دومی ماه‌به‌ماه می‌شود. پرسیدن «دورهٔ پوشش» از ودیعه، سؤال غلط از رویداد
+     * درست است.
+     *
+     * بیمه و اشتراک و پشتیبانی اینجا نیستند چون ذاتاً مصرف‌شدنی‌اند؛ پرسیدن
+     * استرداد از آن‌ها فقط یک سؤال اضافه است.
+     */
+    ambiguousRefundability: Object.freeze(['اجاره']),
+    /** برخوردهایی که در این فاز قاعدهٔ ثبت دارند. بقیه به حسابدار می‌روند. */
+    supportedTreatments: Object.freeze([TREATMENTS.PREPAID_EXPENSE, TREATMENTS.PERIOD_EXPENSE]),
     appliesTo(facts) { return this.categories.includes(String(facts?.category || '').trim()); },
     /**
      * دوره‌ای که کاملاً گذشته، دارایی نمی‌سازد.
@@ -152,6 +166,17 @@ export const DEFAULT_POLICIES = Object.freeze([
      * است. ساختن دارایی و بعد مستهلک کردنش در گذشته، فقط سند اضافه می‌سازد.
      */
     resolve(facts, { today }) {
+      const category = String(facts?.category || '').trim();
+      // استرداد پیش از دوره پرسیده می‌شود، چون جوابش برخورد را عوض می‌کند و
+      // پرسیدن دوره از یک ودیعه، سؤال غلط از رویداد درست است.
+      if (this.ambiguousRefundability.includes(category) && typeof facts?.refundable !== 'boolean') {
+        return { treatment: TREATMENTS.PREPAID_EXPENSE, extraFacts: [FACT_KEYS.REFUNDABLE] };
+      }
+      if (facts?.refundable === true) {
+        // پولی که برمی‌گردد هیچ‌وقت هزینه نمی‌شود. قاعدهٔ ثبتش در این فاز
+        // ساخته نشده، پس به حسابدار می‌رود — نه اینکه هزینه ثبت شود.
+        return { treatment: TREATMENTS.REFUNDABLE_DEPOSIT };
+      }
       const end = facts?.servicePeriodEnd;
       if (end && new Date(end).getTime() < new Date(today).getTime()) {
         return { treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
@@ -220,8 +245,28 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
   }
 
   const resolved = policy.resolve(facts, { today });
-  const requiredFacts = requiredFactsFor(family, resolved.treatment);
-  const missingFacts = missingFactsFor(family, resolved.treatment, facts);
+  // `extraFacts` وقتی می‌آید که قاعده بگوید «تا این را ندانم نمی‌توانم برخورد
+  // را قطعی کنم». اول می‌نشیند تا همان اول پرسیده شود.
+  const requiredFacts = [...new Set([...(resolved.extraFacts || []), ...requiredFactsFor(family, resolved.treatment)])];
+  const missingFacts = requiredFacts.filter((key) => !isFactPresent(facts?.[key]));
+
+  // برخوردی که قاعدهٔ ثبت ندارد، تصمیمش ثبت می‌شود ولی سند نمی‌سازد. ودیعه
+  // دقیقاً همین‌جا می‌ایستد: ماهیتش شناخته شده، ولی هنوز کسی نگفته سندش چیست.
+  //
+  // این کنترل عمداً *پیش از* سؤال است. وقتی می‌دانیم نتیجه به حسابدار می‌رود،
+  // بازجویی کردن کاربر فقط اصطکاک است؛ آنچه می‌دانیم را می‌فرستیم و او خودش
+  // بقیه را می‌پرسد.
+  if (policy.supportedTreatments && !policy.supportedTreatments.includes(resolved.treatment)) {
+    return createDecision({
+      family, requiredFacts, sourceReferences,
+      treatment: resolved.treatment,
+      policyKey: policy.policyKey,
+      policyVersion: policy.version,
+      riskLevel: policy.riskLevel || riskLevel,
+      decisionStatus: DECISION_STATUS.UNSUPPORTED,
+      explanation: `ماهیت روشن است، ولی قاعدهٔ ثبت «${resolved.treatment}» در این فاز ساخته نشده است.`,
+    });
+  }
 
   if (missingFacts.length) {
     return createDecision({

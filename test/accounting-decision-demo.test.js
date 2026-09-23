@@ -138,6 +138,40 @@ test('همان پرداخت با نشانهٔ منفعت آینده، ایجاد
   assert.equal(decision.family, ECONOMIC_FAMILIES.ASSET_CREATION);
 });
 
+test('ودیعه، سؤال استرداد می‌گیرد — نه سؤال دورهٔ پوشش', () => {
+  // «بیست میلیون ودیعهٔ دفتر رو دادم» و «اجارهٔ سه ماه را جلوجلو دادم» هر دو
+  // دستهٔ اجاره‌اند و هر دو پول خارج‌شده. پرسیدن دوره از ودیعه، سؤال غلط از
+  // رویداد درست است.
+  const deposit = {
+    moneyDirection: 'out',
+    [FACT_KEYS.AMOUNT]: 20_000_000,
+    [FACT_KEYS.OCCURRED_AT]: TODAY,
+    [FACT_KEYS.CASH_ACCOUNT]: 'bank-mellat',
+    [FACT_KEYS.CATEGORY]: 'اجاره',
+  };
+  const asked = decide(deposit, { today: TODAY });
+  assert.equal(asked.decisionStatus, DECISION_STATUS.NEEDS_USER_INPUT);
+  assert.equal(asked.question.fact, FACT_KEYS.REFUNDABLE, 'اول باید استرداد پرسیده شود');
+
+  // پولی که برمی‌گردد هیچ‌وقت هزینه نمی‌شود — نه امسال، نه سال بعد.
+  const refundable = decide({ ...deposit, [FACT_KEYS.REFUNDABLE]: true }, { today: TODAY });
+  assert.equal(refundable.treatment, TREATMENTS.REFUNDABLE_DEPOSIT);
+  assert.equal(refundable.decisionStatus, DECISION_STATUS.UNSUPPORTED, 'قاعدهٔ ثبتش در این فاز نیست، پس حسابدار');
+  assert.equal(decisionAuthorizesPosting(refundable), false);
+
+  // همان دسته، جواب دیگر: حالا دوره پرسیده می‌شود.
+  const consumable = decide({ ...deposit, [FACT_KEYS.REFUNDABLE]: false }, { today: TODAY });
+  assert.equal(consumable.treatment, TREATMENTS.PREPAID_EXPENSE);
+  assert.equal(consumable.question.fact, FACT_KEYS.SERVICE_PERIOD_START);
+});
+
+test('بیمه سؤال استرداد نمی‌گیرد؛ ذاتاً مصرف‌شدنی است', () => {
+  // سؤال اضافه هم هزینه دارد: کاربری که برای هر ثبت دو بار بازجویی شود،
+  // سؤال‌ها را دور می‌زند و کل طرح بی‌اثر می‌شود.
+  const decision = decide({ ...BASE }, { today: TODAY });
+  assert.equal(decision.question.fact, FACT_KEYS.SERVICE_PERIOD_START);
+});
+
 test('ماهیت نامشخص به حسابدار می‌رود، نه به نزدیک‌ترین خانواده', () => {
   const decision = decide({ moneyDirection: 'out' }, { today: TODAY });
   assert.equal(decision.family, FAMILY_UNKNOWN);
