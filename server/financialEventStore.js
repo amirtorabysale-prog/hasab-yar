@@ -58,6 +58,42 @@ export function ensureFinancialEventSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS idx_financial_event_audit_event ON financial_event_audit(event_id,created_at);
   `);
+  // تصمیم حسابداری — ایستگاه تازه میان رویداد و سند.
+  //
+  // جدول جداست و نه چند ستون روی `financial_events`، چون تصمیم عمر خودش را
+  // دارد: یک رویداد می‌تواند تصمیم اول بگیرد، سؤال بسازد، جواب بگیرد و تصمیم
+  // دوم بگیرد. تصمیم ویرایش نمی‌شود؛ تصمیم تازه با ارجاع به قبلی ساخته می‌شود،
+  // وگرنه تاریخچه دروغ می‌گوید.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS accounting_decisions (
+      id TEXT PRIMARY KEY,
+      event_id TEXT REFERENCES financial_events(id) ON DELETE CASCADE,
+      supersedes TEXT,
+      family TEXT NOT NULL,
+      treatment TEXT,
+      policy_key TEXT,
+      policy_version TEXT,
+      recognition_date TEXT,
+      recognition_method TEXT,
+      required_facts TEXT NOT NULL DEFAULT '[]',
+      missing_facts TEXT NOT NULL DEFAULT '[]',
+      assumptions TEXT NOT NULL DEFAULT '[]',
+      risk_level TEXT NOT NULL,
+      explanation TEXT,
+      question TEXT,
+      source_references TEXT NOT NULL DEFAULT '[]',
+      decision_status TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_accounting_decisions_event ON accounting_decisions(event_id,created_at);
+  `);
+  // مهاجرت افزایشی: رویداد قدیمی هیچ‌کدام از این‌ها را ندارد و همان‌طور که بود
+  // خوانده می‌شود. هیچ دادهٔ تاریخی بازطبقه‌بندی نمی‌شود.
+  for (const column of ['decision_id TEXT', 'posting_plan TEXT']) {
+    try { database.exec(`ALTER TABLE financial_events ADD COLUMN ${column}`); }
+    catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
+  }
+
   // لنگر سند باید تا لحظهٔ تأیید زنده بماند.
   //
   // بدون این، رویدادی که روی یک تراکنش نشسته و منتظر حسابدار مانده، هنگام تأیید
@@ -65,6 +101,54 @@ export function ensureFinancialEventSchema(database) {
   // همچنان بی‌سند می‌بیند، سند دومی می‌سازد.
   try { database.exec('ALTER TABLE financial_events ADD COLUMN journal_source TEXT'); }
   catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
+}
+
+/**
+ * تصمیم را ذخیره می‌کند و شناسه‌اش را برمی‌گرداند.
+ *
+ * `null` برای رویدادی که تصمیمی همراهش نیامده — یعنی موتور نسخهٔ دو خاموش بوده.
+ * در آن حالت هیچ ردیفی ساخته نمی‌شود و رفتار دقیقاً همان قبل است.
+ */
+function storeDecision(database, eventId, decision) {
+  if (!decision) return null;
+  const id = randomUUID();
+  database.prepare(`INSERT INTO accounting_decisions
+    (id,event_id,family,treatment,policy_key,policy_version,recognition_date,recognition_method,
+     required_facts,missing_facts,assumptions,risk_level,explanation,question,source_references,decision_status)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, eventId, decision.family, decision.treatment || null, decision.policyKey || null,
+      decision.policyVersion || null, decision.recognitionDate || null, decision.recognitionMethod || null,
+      JSON.stringify(decision.requiredFacts || []), JSON.stringify(decision.missingFacts || []),
+      JSON.stringify(decision.assumptions || []), decision.riskLevel,
+      decision.explanation || null, decision.question ? JSON.stringify(decision.question) : null,
+      JSON.stringify(decision.sourceReferences || []), decision.decisionStatus);
+  return id;
+}
+
+/** تصمیم جاری یک رویداد — آخرین تصمیمی که برایش گرفته شده. */
+export function decisionForEvent(database, eventId) {
+  ensureFinancialEventSchema(database);
+  const row = database.prepare('SELECT * FROM accounting_decisions WHERE event_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1')
+    .get(String(eventId || ''));
+  if (!row) return null;
+  return {
+    id: row.id,
+    family: row.family,
+    treatment: row.treatment,
+    policyKey: row.policy_key,
+    policyVersion: row.policy_version,
+    recognitionDate: row.recognition_date,
+    recognitionMethod: row.recognition_method,
+    requiredFacts: JSON.parse(row.required_facts),
+    missingFacts: JSON.parse(row.missing_facts),
+    assumptions: JSON.parse(row.assumptions),
+    riskLevel: row.risk_level,
+    explanation: row.explanation,
+    question: row.question ? JSON.parse(row.question) : null,
+    sourceReferences: JSON.parse(row.source_references),
+    decisionStatus: row.decision_status,
+    createdAt: row.created_at,
+  };
 }
 
 function writeAudit(database, eventId, stage, detail, actor) {
@@ -103,6 +187,12 @@ export function recordFinancialEvent(database, event, {
   // آن شکل کار این تغییر نیست. تصمیمِ «ثبت بشود یا نه» اینجا گرفته می‌شود،
   // «چطور ثبت بشود» همان‌جایی می‌ماند که بود.
   postJournal = null,
+  // تصمیم موتور نسخهٔ دو، اگر روشن باشد.
+  //
+  // اختیاری است و نبودنش یعنی همان مسیر قبلی. وقتی هست، ذخیره می‌شود حتی اگر
+  // اجازهٔ ثبت ندهد — چون همان دادهٔ خامی است که گزارش اختلاف فاز بعد لازم
+  // دارد: موتور چه گفت و حسابدار چه کرد.
+  accountingDecision = null,
 } = {}) {
   ensureFinancialEventSchema(database);
   const source = String(sourceEventId || '').trim();
@@ -123,11 +213,21 @@ export function recordFinancialEvent(database, event, {
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare(`INSERT INTO financial_events
-      (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by,journal_source)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by,journal_source,posting_plan)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, source, event.kind, event.amount, event.occurredAt, event.dueAt || null,
         JSON.stringify(event), JSON.stringify(decision), decision.route, 'pending', actor,
-        journalSource ? JSON.stringify(journalSource) : null);
+        journalSource ? JSON.stringify(journalSource) : null,
+        // نقشه همین‌جا قفل می‌شود.
+        //
+        // تا امروز نقشه در تأیید دوباره با کدِ آن روز ساخته می‌شد. رویدادی که
+        // دو هفته در صف مانده و در این فاصله قاعده‌ای عوض شده، سندی می‌خورد که
+        // با آنچه به حسابدار نشان داده شده بود فرق دارد — و هیچ هشداری هم
+        // نمی‌دهد. حالا آنچه در لحظهٔ تصمیم ساخته شد، همان ثبت می‌شود.
+        JSON.stringify(plan));
+
+    const decisionId = storeDecision(database, id, accountingDecision);
+    if (decisionId) database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, id);
 
     writeAudit(database, id, 'captured', {
       rawInput: String(rawInput || '').slice(0, 1000),
@@ -136,6 +236,7 @@ export function recordFinancialEvent(database, event, {
       confidence: decision,
       rule: plan.kind,
       journalPlan: plan,
+      decision: accountingDecision || null,
     }, actor);
 
     let journalEntryId = null;
@@ -149,7 +250,7 @@ export function recordFinancialEvent(database, event, {
       if (postJournal && journalEntryId) markEventPosted(database, id, posted, plan.lines, actor);
     }
     if (!withinTransaction) database.exec('COMMIT');
-    return { id, sourceEventId: source, route: decision.route, status: journalEntryId ? 'posted' : 'pending', journalEntryId, plan, duplicate: false };
+    return { id, sourceEventId: source, route: decision.route, status: journalEntryId ? 'posted' : 'pending', journalEntryId, decisionId, plan, duplicate: false };
   } catch (error) { if (!withinTransaction) database.exec('ROLLBACK'); throw error; }
 }
 
@@ -192,7 +293,13 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   if (row.status !== 'pending') throw storeError('این رویداد دیگر در انتظار تأیید نیست.', 'EVENT_NOT_PENDING', 409);
 
   const event = JSON.parse(row.payload);
-  const plan = planJournal(event);
+  // نقشهٔ قفل‌شدهٔ لحظهٔ تصمیم، نه نقشه‌ای که کدِ امروز می‌سازد.
+  //
+  // رویدادهایی که پیش از این تغییر ثبت شده‌اند نقشهٔ ذخیره‌شده ندارند؛ برای
+  // آن‌ها مثل قبل محاسبه می‌شود و همین در ردپا نوشته می‌شود، تا حسابرسی بتواند
+  // این دو دسته را از هم تشخیص بدهد.
+  const lockedPlan = row.posting_plan ? JSON.parse(row.posting_plan) : null;
+  const plan = lockedPlan || planJournal(event);
   // همان لنگری که در لحظهٔ ثبت تصمیم گرفته شد، نه لنگر تازه.
   const journalSource = row.journal_source ? JSON.parse(row.journal_source) : null;
   database.exec('BEGIN IMMEDIATE');
@@ -205,7 +312,7 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
     } else {
       postEventJournal(database, row.id, event, plan, { actor, timeZone, journalSource });
     }
-    writeAudit(database, row.id, 'approved', { by: actor }, actor);
+    writeAudit(database, row.id, 'approved', { by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy' }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
@@ -267,6 +374,7 @@ function describeStored(database, row) {
     route: row.route,
     status: row.status,
     journalEntryId: row.journal_entry_id,
+    decisionId: row.decision_id || null,
     event: JSON.parse(row.payload),
     confidence: JSON.parse(row.confidence),
     createdAt: row.created_at,

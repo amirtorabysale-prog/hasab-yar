@@ -40,6 +40,17 @@ export const DEFAULT_AUTOMATION_POLICY = Object.freeze({
    * کرد وجود ندارد، و دفتری که این را می‌خواهد نباید به یک ترفند عددی تکیه کند.
    */
   manualOnly: false,
+  /**
+   * موتور تصمیم نسخهٔ دو.
+   *
+   * تا وقتی خاموش است، هیچ مسیر فعالی عوض نمی‌شود: تصمیم نه ساخته می‌شود و نه
+   * ذخیره. روشن که باشد، موتور برای هر رویداد ماهیتش را تعیین می‌کند و اگر
+   * واقعیت لازمی کم باشد، جلوی ثبت بی‌پرسش را می‌گیرد.
+   *
+   * فلگ در سطح دفتر است، نه سراسری: فعال‌سازی باید دفتر‌به‌دفتر و بعداً
+   * خانواده‌به‌خانواده باشد، نه یک کلید که همه‌جا را با هم روشن کند.
+   */
+  engineV2: false,
 });
 
 const clamp01 = (value, fallback) => {
@@ -65,5 +76,8 @@ export function resolveAutomationPolicy(overrides = {}) {
     allowAiOnlyAutoPost: overrides.allowAiOnlyAutoPost === true,
     minimumAmountCertainty: clamp01(overrides.minimumAmountCertainty, DEFAULT_AUTOMATION_POLICY.minimumAmountCertainty),
     manualOnly: overrides.manualOnly === true,
+    // مثل `manualOnly`، فقط `true` صریح روشنش می‌کند. مقدار خراب یا نامعلوم
+    // نباید دروازه را باز کند.
+    engineV2: overrides.engineV2 === true,
   });
 }

@@ -112,6 +112,24 @@ export function normalizeFinancialEvent(raw = {}) {
     source: ['voice', 'text', 'import', 'system'].includes(raw.source) ? raw.source : 'text',
     // متن خام گفتهٔ کاربر؛ شاهدِ رویداد و ورودی یادگیری DNA.
     evidence: cleanText(raw.evidence, 500) || null,
+
+    // --- واقعیت‌های ماهیت ---
+    //
+    // تا پیش از این، رویداد جایی برای این‌ها نداشت. نتیجه‌اش این نبود که گم
+    // می‌شدند؛ این بود که **نبودشان قابل گزارش نبود**. موتور نمی‌توانست بگوید
+    // «دورهٔ پوشش را نمی‌دانم»، چون جایی برای ندانستنش نداشت — و برای امتناع
+    // کردن، اول باید جایی برای ندانستن وجود داشته باشد.
+    //
+    // همه اختیاری‌اند و رویدادی که نداشته باشدشان معتبر می‌ماند. هیچ دادهٔ
+    // تاریخی با افزودن این‌ها بازتفسیر نمی‌شود.
+    servicePeriodStart: cleanIso(raw.servicePeriodStart),
+    servicePeriodEnd: cleanIso(raw.servicePeriodEnd),
+    // `null` یعنی پرسیده نشده؛ `false` یعنی پرسیده شد و جواب «نه» بود. یکی
+    // کردنشان باعث می‌شود سیستم برای هر «نه» دوباره همان سؤال را بپرسد.
+    refundable: typeof raw.refundable === 'boolean' ? raw.refundable : null,
+    intendedUse: ['resale', 'production', 'long-term-use', 'current-consumption'].includes(raw.intendedUse) ? raw.intendedUse : null,
+    contractReference: cleanText(raw.contractReference, 120) || null,
+    counterpartyRole: ['owner', 'supplier', 'customer', 'employee', 'authority'].includes(raw.counterpartyRole) ? raw.counterpartyRole : null,
   });
 }
 

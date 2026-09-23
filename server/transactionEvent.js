@@ -1,6 +1,10 @@
 import { CONFIDENCE_COMPONENTS, routeEvent } from '../shared/confidenceEngine.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { settlementDirection } from '../shared/counterpartySettlement.js';
+import { resolveAutomationPolicy } from '../shared/automationPolicy.js';
+import { DECISION_STATUS, decide } from '../shared/accountingDecision.js';
+import { factsFromEvent } from '../shared/eventFacts.js';
+import { FACT_LABELS } from '../shared/factRequirements.js';
 
 /**
  * پل میان ردیف تراکنش و لایهٔ رویداد مالی.
@@ -111,8 +115,56 @@ export function transactionEventDecision(item = {}, { transcript = '', aiOnly = 
   // پرچم بررسی بدون دلیلِ نوشته‌شده هم باید جلوی ثبت بی‌پرسش را بگیرد، وگرنه
   // تنها نشانهٔ تردید بی‌اثر می‌ماند.
   if (item.needsReview && !blockers.length) blockers.push('این ثبت هنگام برداشت نیازمند بررسی علامت خورده است.');
+
+  // موتور تصمیم، اگر روشن باشد.
+  //
+  // خروجی‌اش دو کار می‌کند: ذخیره می‌شود (دادهٔ خام گزارش اختلاف)، و اگر
+  // واقعیت لازمی کم باشد یک بازدارنده می‌سازد. بازدارنده عمداً به `blockers`
+  // اضافه می‌شود و نه به مؤلفه‌های اطمینان: نبودِ دورهٔ پوشش یک نمرهٔ پایین
+  // نیست، یک مانع است. میانگین بالا نباید بتواند رویش سرپوش بگذارد.
+  const accountingDecision = decideForEvent(event, policy, item);
+  if (accountingDecision && blocksPosting(accountingDecision)) {
+    blockers.push(explainBlock(accountingDecision));
+  }
+
   const decision = routeEvent(event, {
     components: transactionConfidenceComponents(item), blockers, aiOnly, policy,
   });
-  return { event, decision };
+  return { event, decision, accountingDecision };
+}
+
+/**
+ * تصمیم حسابداری این رویداد، یا `null` وقتی موتور خاموش است.
+ *
+ * شکست اینجا نباید ثبت کاربر را از بین ببرد. اگر موتور تصمیم به هر دلیلی
+ * بشکند، مسیر قبلی — که همچنان درست است — کار می‌کند و رویداد گم نمی‌شود.
+ */
+function decideForEvent(event, policyOverrides, item) {
+  const policy = resolveAutomationPolicy(policyOverrides);
+  if (!policy.engineV2) return null;
+  try {
+    return decide(factsFromEvent(event), { today: item?.occurredAt || event.occurredAt });
+  } catch { return null; }
+}
+
+/**
+ * آیا این تصمیم جلوی ثبت بی‌پرسش را می‌گیرد؟
+ *
+ * فقط `decided` اجازه می‌دهد. چهار وضعیت دیگر هرکدام دلیل خودشان را دارند ولی
+ * نتیجه‌شان یکی است: تا قبل از روشن شدن ماهیت، سند ساخته نمی‌شود.
+ */
+function blocksPosting(accountingDecision) {
+  return accountingDecision.decisionStatus !== DECISION_STATUS.DECIDED;
+}
+
+/** دلیل، به زبان حسابدار — نه نام فنی وضعیت. */
+function explainBlock(accountingDecision) {
+  const { decisionStatus, missingFacts, question } = accountingDecision;
+  if (decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT) {
+    const gap = FACT_LABELS[missingFacts?.[0]] || '';
+    return question?.text || (gap ? `${gap} هنوز معلوم نیست.` : 'یک اطلاعات لازم هنوز معلوم نیست.');
+  }
+  if (decisionStatus === DECISION_STATUS.UNSUPPORTED) return 'برای این ماهیت هنوز قاعدهٔ ثبتی تعریف نشده است.';
+  if (decisionStatus === DECISION_STATUS.BLOCKED) return 'یک مانع ساختاری جلوی ثبت را گرفته است.';
+  return 'ماهیت این رویداد برای ثبت خودکار روشن نیست.';
 }

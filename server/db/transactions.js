@@ -129,6 +129,7 @@ function routeTransactionThroughEvents(row, item, transcript) {
       withinTransaction: true,
       journalSource: { type: 'transaction', id: row.id },
       postJournal: transactionJournalPoster(row, settlement),
+      accountingDecision: draft.accountingDecision || null,
     });
     // مسیر غیرخودکار یعنی سند منتظر می‌ماند. ردیف تراکنش سر جایش است — کاربر
     // ثبتش را می‌بیند و ماندهٔ صندوقش درست است — ولی دفتر تا تأیید تکان نمی‌خورد.
