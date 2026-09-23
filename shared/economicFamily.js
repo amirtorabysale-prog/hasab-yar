@@ -156,7 +156,7 @@ const direction = (facts) => facts?.moneyDirection ?? null;
  * این یک فهرست کلیدواژه نیست: سیاست دفتر است و حسابدار تأییدش می‌کند. تفاوتش
  * با حدس‌زدن از روی واژه این است که قابل آزمون و قابل بازبینی است.
  */
-export const TIME_BOUND_SERVICE_CATEGORIES = Object.freeze(['بیمه', 'اجاره', 'اشتراک', 'پشتیبانی', 'حق عضویت']);
+export const TIME_BOUND_SERVICE_CATEGORIES = Object.freeze(['بیمه', 'اجاره', 'نرم‌افزار و اشتراک']);
 
 /**
  * آیا نشانه‌ای هست که این پرداخت منفعت آینده می‌سازد؟

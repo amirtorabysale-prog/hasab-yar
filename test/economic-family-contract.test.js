@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   ECONOMIC_FAMILIES, FAMILY_DEFAULT_RISK, FAMILY_EXAMPLES, FAMILY_LABELS, FAMILY_RULES,
-  FAMILY_UNKNOWN, RISK_LEVELS, classifyFamily, isEconomicFamily, listEconomicFamilies,
+  FAMILY_UNKNOWN, RISK_LEVELS, TIME_BOUND_SERVICE_CATEGORIES,
+  classifyFamily, isEconomicFamily, listEconomicFamilies,
 } from '../shared/economicFamily.js';
 import {
   FACT_KEYS, FACT_LABELS, FACT_QUESTIONS, FACT_REQUIREMENTS, QUESTION_KINDS,
@@ -68,6 +69,17 @@ test('پیش‌پرداخت بدون دورهٔ پوشش قابل ثبت نیس�
   const extra = TREATMENT_EXTRA_REQUIREMENTS[TREATMENTS.PREPAID_EXPENSE];
   assert.ok(extra.includes(FACT_KEYS.SERVICE_PERIOD_START), 'شروع دوره باید لازم باشد');
   assert.ok(extra.includes(FACT_KEYS.SERVICE_PERIOD_END), 'پایان دوره باید لازم باشد');
+});
+
+test('قاعده به دسته‌ای اشاره نمی‌کند که وجود ندارد', async () => {
+  // قاعده‌ای که روی نام دسته‌ای تطبیق می‌دهد که خط تولید هیچ‌وقت نمی‌سازد،
+  // بی‌صدا مرده است: نه خطا می‌دهد، نه هیچ‌وقت شلیک می‌کند. سه نام از فهرست
+  // اولیه («اشتراک»، «پشتیبانی»، «حق عضویت») دقیقاً همین‌طور بودند.
+  const { CATEGORY_DEFINITIONS } = await import('../shared/categoryRules.js');
+  const names = new Set(CATEGORY_DEFINITIONS.map((item) => item.name));
+  for (const category of TIME_BOUND_SERVICE_CATEGORIES) {
+    assert.ok(names.has(category), `دستهٔ «${category}» در قواعد دسته‌بندی وجود ندارد`);
+  }
 });
 
 test('افزودن خانوادهٔ تازه نباید هستهٔ طبقه‌بند را عوض کند', () => {

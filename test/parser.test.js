@@ -48,3 +48,36 @@ test('does not prefer a noisier candidate merely because it contains more number
   assert.equal(result.candidateDisagreement, true);
   assert.equal(result.transactions[0].reviewCode, 'candidate-count-disagreement');
 });
+
+/**
+ * موضوعِ خرج پیش از مبلغ — عادی‌ترین شکل جملهٔ فارسی.
+ *
+ * پنجرهٔ تشخیص جهت به‌محض دیدن فعلی بعد از مبلغ، هرچه قبلش بود دور می‌ریخت و
+ * دسته همان‌جا بود. نتیجه‌اش «سایر هزینه‌ها» می‌شد با این دلیلِ گمراه‌کننده که
+ * «واژهٔ شناخته‌شده‌ای در متن نبود» — در حالی که بود، فقط یک کلمه آن‌طرف‌تر.
+ */
+test('دسته وقتی موضوع پیش از مبلغ است هم پیدا می‌شود', () => {
+  const cases = [
+    ['قبض برق رو 3 میلیون پرداخت کردم', 'قبوض'],
+    ['اجاره مغازه رو 5 میلیون دادم', 'اجاره'],
+    ['حق بیمه مسئولیت یک ساله رو 12 میلیون از بانک پرداخت کردم', 'بیمه'],
+  ];
+  for (const [text, expected] of cases) {
+    const [item] = parseFinancialText(text).transactions;
+    assert.equal(item.category, expected, `«${text}» باید دستهٔ «${expected}» بگیرد`);
+    assert.equal(item.type, 'expense');
+  }
+});
+
+test('جای مبلغ در جمله، دسته را عوض نمی‌کند', () => {
+  const before = parseFinancialText('اجاره مغازه رو 5 میلیون دادم').transactions[0];
+  const after = parseFinancialText('5 میلیون اجاره مغازه دادم').transactions[0];
+  assert.equal(before.category, after.category);
+  assert.equal(before.amount, after.amount);
+});
+
+test('چند تراکنش در یک جمله، دستهٔ همدیگر را نمی‌دزدند', () => {
+  // پنجرهٔ گسترده نباید باعث شود دستهٔ تراکنش قبلی به بعدی نشت کند.
+  const { transactions } = parseFinancialText('5 میلیون اجاره و 3 میلیون قبض برق دادم');
+  assert.deepEqual(transactions.map((item) => [item.amount, item.category]), [[5_000_000, 'اجاره'], [3_000_000, 'قبوض']]);
+});

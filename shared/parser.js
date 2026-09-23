@@ -235,9 +235,26 @@ function signalScore(text, words, verbs) {
   return words.reduce((sum, word) => (text.includes(word) ? sum + (verbs.has(word) ? 2 : 1) : sum), 0);
 }
 
-function classify(context, learnings = []) {
+/**
+ * جهت پول و دستهٔ یک تراکنش.
+ *
+ * `categoryContext` عمداً جداست از `context`.
+ *
+ * برای تشخیص **جهت**، متنِ بعد از مبلغ ترجیح دارد: در جمله‌ای که چند مبلغ
+ * دارد، فعلِ هر تراکنش بعد از مبلغ خودش می‌آید و نگاه‌کردن به عقب، فعلِ
+ * تراکنش قبلی را قرض می‌گیرد.
+ *
+ * برای تشخیص **دسته** عکسش درست است: در فارسی گفتاری موضوع تقریباً همیشه پیش
+ * از مبلغ می‌آید — «قبض برق رو سه میلیون پرداخت کردم». اگر همان پنجرهٔ جهت را
+ * برای دسته هم استفاده کنیم، «قبض برق» دور ریخته می‌شود و فقط «پرداخت کردم»
+ * می‌ماند که هیچ دسته‌ای در آن نیست. نتیجه‌اش «سایر هزینه‌ها» بود با این دلیلِ
+ * گمراه‌کننده که «واژهٔ شناخته‌شده‌ای در متن نبود» — در حالی که بود، فقط یک
+ * کلمه آن‌طرف‌تر.
+ */
+function classify(context, learnings = [], categoryContext = '') {
   const normalizedContext = normalizePersian(context);
-  const learned = learnings.find((item) => normalizedContext.includes(normalizePersian(item.keyword)));
+  const normalizedCategoryContext = normalizePersian(categoryContext) || normalizedContext;
+  const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword)));
   const incomeScore = signalScore(normalizedContext, INCOME_WORDS, INCOME_VERBS);
   const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
   const hasIncome = incomeScore > 0;
@@ -261,7 +278,7 @@ function classify(context, learnings = []) {
   let categoryRunnerUp = null;
   if (learned) confidence = Math.max(confidence, 0.96);
   if (!category) {
-    let suggestion = classifyCategory(normalizedContext, type);
+    let suggestion = classifyCategory(normalizedCategoryContext, type);
     /**
      * وقتی سمتِ تشخیص‌داده‌شده هیچ واژه‌ای ندارد ولی سمت مقابل دارد، جهت پول
      * غلط خوانده شده است.
@@ -281,7 +298,7 @@ function classify(context, learnings = []) {
      */
     if (!suggestion.matched) {
       const oppositeType = type === 'income' ? 'expense' : 'income';
-      const opposite = classifyCategory(normalizedContext, oppositeType);
+      const opposite = classifyCategory(normalizedCategoryContext, oppositeType);
       if (opposite.matched && opposite.confidence >= 0.86) {
         type = oppositeType;
         typeReason = `نوع با واژهٔ دستهٔ «${opposite.category}» هماهنگ شد؛ فعل جمله جهت دیگری را نشان می‌داد.`;
@@ -395,14 +412,24 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   const counterparty = extractContactCandidate(input);
   const counterpartyName = counterparty.name;
   const moneyDirection = counterpartyName ? counterpartyMoneyDirection(input) : '';
-  const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word))];
+  const categoryWords = CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word));
+  const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...categoryWords];
   const transactions = spans.map((span, index) => {
     const previousEnd = spans[index - 1]?.end ?? 0;
     const nextStart = spans[index + 1]?.start ?? text.length;
     const afterAmount = text.slice(span.end, nextStart).trim();
     const beforeAmount = text.slice(previousEnd, span.start).trim();
     const context = containsAny(afterAmount, signalWords) ? afterAmount : `${beforeAmount} ${afterAmount}`.trim();
-    const classified = classify(context, learnings);
+    // پنجرهٔ دسته از پنجرهٔ جهت جداست.
+    //
+    // موضوعِ خرج در فارسی گفتاری تقریباً همیشه پیش از مبلغ می‌آید: «قبض برق رو
+    // سه میلیون پرداخت کردم». پنجرهٔ بالا به‌محض دیدن یک فعل بعد از مبلغ، هرچه
+    // قبلش بوده دور می‌ریزد — و دسته همان‌جا بود. پس فقط وقتی به متنِ بعد از
+    // مبلغ بسنده می‌کنیم که خودش واژهٔ دسته داشته باشد.
+    const categoryContext = containsAny(afterAmount, categoryWords)
+      ? afterAmount
+      : `${beforeAmount} ${afterAmount}`.trim();
+    const classified = classify(context, learnings, categoryContext);
     let amount = span.amount;
     // «پنجاه تومن» یعنی پنجاه هزار تومان. هیچ چیزی در ایران امروز پنجاه تومان
     // نیست، پس محدودکردن این قاعده به سه‌رقمی‌ها فقط مبلغ‌های کوچک را خراب می‌کرد.
