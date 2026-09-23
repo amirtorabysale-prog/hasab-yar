@@ -1,5 +1,6 @@
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
-import { approveFinancialEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent } from '../financialEventStore.js';
+import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { contactIdForName } from './contacts.js';
 import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { settlementFor, transactionJournalPoster } from './transactions.js';
@@ -104,7 +105,12 @@ export function approveEvent(eventId) {
   const row = database.prepare('SELECT journal_source AS journalSource FROM financial_events WHERE id=?').get(String(eventId || ''));
   const source = row?.journalSource ? JSON.parse(row.journalSource) : null;
   let postJournal = null;
-  if (source?.type === 'transaction') {
+  // ولی وقتی تصمیم برخوردی را انتخاب کرده که نقشهٔ خودش را دارد — مثل
+  // پیش‌پرداخت — مسیر تراکنش نباید برنده شود. آن مسیر فقط هزینه و درآمد
+  // می‌شناسد و سکوت‌کنان تصمیم را دور می‌زند.
+  const decision = decisionForEvent(database, eventId);
+  const decisionDrivesPlan = treatmentHasPlan(decision?.treatment);
+  if (source?.type === 'transaction' && !decisionDrivesPlan) {
     // شناسهٔ طرف حساب هم خوانده می‌شود: بدون آن، سندی که با تأیید ثبت
     // می‌شود روی دستهٔ هزینه می‌نشیند درحالی‌که همان ثبت اگر خودکار رفته بود
     // بدهی همان شخص را می‌بست. دو سند متفاوت برای یک ثبت، بسته به اینکه
@@ -142,4 +148,25 @@ export function rejectEvent(eventId, reason = '') {
 
 export function eventAudit(eventId) {
   return { items: financialEventAudit(activeWorkspaceDatabase(), eventId) };
+}
+
+/**
+ * جواب کاربر به سؤال یک رویداد.
+ *
+ * جواب دادن ثبت نیست: ابهام برطرف می‌شود و تصمیم تازه ساخته می‌شود، ولی سند
+ * همچنان با تأیید زده می‌شود. اگر جواب دادن خودش سند می‌زد، کاربر با یک کلیک
+ * روی «از همین ماه» ناخواسته دفتر را تکان می‌داد.
+ */
+export function answerEvent(eventId, { fact, value, freeText = '' } = {}) {
+  const item = answerEventQuestion(activeWorkspaceDatabase(), eventId, {
+    fact, value, freeText, actor: currentWorkspace()?.userId || null,
+  });
+  audit('answer', 'financial-event', eventId, { fact, value, status: item.decision?.decisionStatus });
+  return item;
+}
+
+/** تصمیم و برنامهٔ شناسایی یک رویداد — برای صف بررسی. */
+export function eventDecision(eventId) {
+  const database = activeWorkspaceDatabase();
+  return { decision: decisionForEvent(database, eventId), schedule: scheduleForEvent(database, eventId) };
 }

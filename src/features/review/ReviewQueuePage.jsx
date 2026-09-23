@@ -18,10 +18,68 @@ const ROUTE_STYLE = {
  * گرفتن تاریخچهٔ همه، هم کند است و هم چیزی است که حسابدار فقط برای موارد
  * مشکوک می‌خواهد.
  */
-function ReviewQueueRow({ item, busy, onApprove, onReject }) {
+/**
+ * کارت سؤال — وقتی موتور یک واقعیت لازم را ندارد.
+ *
+ * گزینه، هرجا که جواب شمردنی باشد. کاربری که روی «از اول ماه بعد» می‌زند هیچ
+ * جمله‌ای برای تفسیر باقی نمی‌گذارد، و جواب از همان اول به مورد درست چسبیده
+ * است چون روی کارت خودش زده شده.
+ *
+ * هر بار فقط یک سؤال. فرم یعنی کاربر باید همه را با هم بداند، و کسی که یکی را
+ * نمی‌داند کل کار را رها می‌کند.
+ */
+function QuestionCard({ question, busy, onAnswer }) {
+  const [text, setText] = useState('');
+  const [freeFor, setFreeFor] = useState(null);
+
+  return <div className="mt-2 rounded-[10px] border border-accent/40 bg-accent/5 p-3">
+    <p className="text-[12px] font-extrabold text-ink">{question.text}</p>
+    {question.kind === 'options'
+      ? <div className="mt-2 flex flex-wrap gap-1.5">
+          {question.options.map((option) => <button
+            key={String(option.value)}
+            disabled={busy}
+            onClick={() => (option.freeInput ? setFreeFor(option) : onAnswer({ fact: question.fact, value: option.value }))}
+            className="tap rounded-lg border border-line bg-paper px-3 py-1 text-[12px] font-bold disabled:opacity-40">
+            {option.label}
+          </button>)}
+        </div>
+      : <div className="mt-2 flex gap-1.5">
+          <input value={text} onChange={(event) => setText(event.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
+          <button disabled={busy || !text.trim()} onClick={() => onAnswer({ fact: question.fact, freeText: text.trim() })}
+            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">ثبت پاسخ</button>
+        </div>}
+
+    {/* گزینهٔ «خودم می‌گویم» یک مقدار نیست؛ ورودی آزاد می‌خواهد. */}
+    {freeFor && <div className="mt-2 flex gap-1.5">
+      <input value={text} onChange={(event) => setText(event.target.value)} placeholder={freeFor.label}
+        className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
+      <button disabled={busy || !text.trim()} onClick={() => onAnswer({ fact: question.fact, value: freeFor.value, freeText: text.trim() })}
+        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">ثبت پاسخ</button>
+    </div>}
+  </div>;
+}
+
+function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify }) {
   const [open, setOpen] = useState(false);
   const [trail, setTrail] = useState(null);
+  const [decision, setDecision] = useState(null);
   const confidence = item.confidence || {};
+
+  // تصمیم فقط برای ردیف‌هایی خوانده می‌شود که واقعاً تصمیمی دارند. صف ممکن است
+  // ده‌ها ردیف داشته باشد و اکثرشان از مسیر قدیمی آمده‌اند.
+  useEffect(() => {
+    if (!item.decisionId) return;
+    api.eventDecision(item.id).then(setDecision).catch(() => setDecision(null));
+  }, [item.id, item.decisionId]);
+
+  const answer = async (payload) => {
+    try {
+      await api.answerEvent(item.id, payload);
+      await onAnswered?.();
+    } catch (error) { notify?.(error.message); }
+  };
 
   const toggle = async () => {
     const next = !open;
@@ -56,6 +114,15 @@ function ReviewQueueRow({ item, busy, onApprove, onReject }) {
 
     {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
     {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-[11px] leading-5 text-muted">• {confidence.reasons[0]}</p>}
+
+    {/* سؤال بالاتر از جزئیات می‌نشیند: تا جوابش نیامده، بقیه‌اش موضوعیت ندارد. */}
+    {decision?.decision?.question && <QuestionCard question={decision.decision.question} busy={busy} onAnswer={answer} />}
+
+    {/* برنامهٔ تخصیص، وقتی ساخته شده — همان چیزی که ثابت می‌کند مبلغ یک‌جا هزینه نشد. */}
+    {decision?.schedule?.length > 0 && <p className="mt-1.5 text-[11px] text-muted">
+      برنامهٔ شناسایی: <span className="numbers">{toPersianDigits(decision.schedule.length)}</span> قلم ماهانه،
+      از {decision.schedule[0].periodKey} تا {decision.schedule[decision.schedule.length - 1].periodKey}
+    </p>}
 
     {open && <div className="mt-2">
       {item.event?.evidence && <blockquote className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{item.event.evidence}»</blockquote>}
@@ -208,7 +275,8 @@ export function ReviewQueuePage({ notify, access }) {
     {items?.length === 0 && <p className="mt-3 text-[13px] text-income">چیزی در صف بررسی نمانده است.</p>}
 
     {items?.length > 0 && <div className="mt-1 divide-y divide-line">
-      {items.map((item) => <ReviewQueueRow key={item.id} item={item} busy={busy === item.id} onApprove={approve} onReject={reject} />)}
+      {items.map((item) => <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
+        onApprove={approve} onReject={reject} onAnswered={load} notify={notify} />)}
     </div>}
   </section>;
 }

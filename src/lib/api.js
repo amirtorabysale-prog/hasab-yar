@@ -320,6 +320,8 @@ export const api = {
   // صف بررسی حسابدار: رویدادهایی که موتور اطمینان ثبتشان را متوقف کرده است.
   reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
   eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),
+  eventDecision: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/decision`),
+  answerEvent: (id, answer) => request(`/api/financial-events/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify(answer) }),
   approveEvent: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({}) }),
   reverseEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) }),
   rejectEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),

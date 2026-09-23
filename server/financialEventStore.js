@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
+import { buildMonthlySchedule } from '../shared/recognitionSchedule.js';
+import { normalizeFinancialEvent } from '../shared/financialEvent.js';
+import { decide } from '../shared/accountingDecision.js';
+import { factsFromEvent } from '../shared/eventFacts.js';
+import { applyAnswer } from '../shared/questionAnswer.js';
 import { ensureAccountingSchema, postJournalEntry, reverseJournalEntry } from './accounting.js';
 import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
 
@@ -87,6 +92,25 @@ export function ensureFinancialEventSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS idx_accounting_decisions_event ON accounting_decisions(event_id,created_at);
   `);
+  // برنامهٔ شناسایی — اقلامی که قرار است ماه‌به‌ماه از دارایی به هزینه بروند.
+  //
+  // `key` یکتاست و از شناسهٔ منبع و شناسهٔ دوره ساخته می‌شود، نه از شمارهٔ ردیف.
+  // یکتایی اینجا در سطح دیتابیس تضمین می‌شود، نه با کنترل بالادستی که دور زدنی
+  // است: اجرای دوبارهٔ برنامه برای یک ماه نباید سند دوم بسازد.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS recognition_schedule_items (
+      key TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL REFERENCES financial_events(id) ON DELETE CASCADE,
+      period_key TEXT NOT NULL,
+      recognition_date TEXT,
+      amount INTEGER NOT NULL CHECK(amount > 0),
+      status TEXT NOT NULL DEFAULT 'planned'
+        CHECK(status IN ('planned','posted','blocked-closed-period')),
+      journal_entry_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_recognition_schedule_event ON recognition_schedule_items(event_id,period_key);
+  `);
   // مهاجرت افزایشی: رویداد قدیمی هیچ‌کدام از این‌ها را ندارد و همان‌طور که بود
   // خوانده می‌شود. هیچ دادهٔ تاریخی بازطبقه‌بندی نمی‌شود.
   for (const column of ['decision_id TEXT', 'posting_plan TEXT']) {
@@ -109,20 +133,52 @@ export function ensureFinancialEventSchema(database) {
  * `null` برای رویدادی که تصمیمی همراهش نیامده — یعنی موتور نسخهٔ دو خاموش بوده.
  * در آن حالت هیچ ردیفی ساخته نمی‌شود و رفتار دقیقاً همان قبل است.
  */
-function storeDecision(database, eventId, decision) {
+function storeDecision(database, eventId, decision, supersedes = null) {
   if (!decision) return null;
   const id = randomUUID();
   database.prepare(`INSERT INTO accounting_decisions
-    (id,event_id,family,treatment,policy_key,policy_version,recognition_date,recognition_method,
+    (id,event_id,supersedes,family,treatment,policy_key,policy_version,recognition_date,recognition_method,
      required_facts,missing_facts,assumptions,risk_level,explanation,question,source_references,decision_status)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, eventId, decision.family, decision.treatment || null, decision.policyKey || null,
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, eventId, supersedes, decision.family, decision.treatment || null, decision.policyKey || null,
       decision.policyVersion || null, decision.recognitionDate || null, decision.recognitionMethod || null,
       JSON.stringify(decision.requiredFacts || []), JSON.stringify(decision.missingFacts || []),
       JSON.stringify(decision.assumptions || []), decision.riskLevel,
       decision.explanation || null, decision.question ? JSON.stringify(decision.question) : null,
       JSON.stringify(decision.sourceReferences || []), decision.decisionStatus);
   return id;
+}
+
+/**
+ * برنامهٔ شناسایی را می‌سازد و ذخیره می‌کند.
+ *
+ * `INSERT OR IGNORE` عمدی است: اجرای دوباره همان کلیدها را می‌سازد و ردیف دوم
+ * ساخته نمی‌شود. این تنها جایی است که idempotency واقعاً تضمین می‌شود، چون در
+ * سطح دیتابیس است و هیچ مسیری نمی‌تواند دورش بزند.
+ */
+function storeSchedule(database, eventId, decision, event) {
+  if (decision?.recognitionMethod !== 'monthly-straight-line') return 0;
+  const items = buildMonthlySchedule({
+    amount: event.amount,
+    periodStart: event.servicePeriodStart,
+    periodEnd: event.servicePeriodEnd,
+    sourceId: eventId,
+  });
+  const insert = database.prepare(`INSERT OR IGNORE INTO recognition_schedule_items
+    (key,event_id,period_key,recognition_date,amount,status) VALUES (?,?,?,?,?,?)`);
+  let written = 0;
+  for (const item of items) {
+    written += insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, item.status).changes;
+  }
+  return written;
+}
+
+/** اقلام برنامهٔ شناسایی یک رویداد. */
+export function scheduleForEvent(database, eventId) {
+  ensureFinancialEventSchema(database);
+  return database.prepare(`SELECT key,period_key AS periodKey,recognition_date AS recognitionDate,
+    amount,status,journal_entry_id AS journalEntryId
+    FROM recognition_schedule_items WHERE event_id=? ORDER BY period_key`).all(String(eventId || ''));
 }
 
 /** تصمیم جاری یک رویداد — آخرین تصمیمی که برایش گرفته شده. */
@@ -208,7 +264,8 @@ export function recordFinancialEvent(database, event, {
   const id = randomUUID();
   // نقشهٔ سند همین‌جا ساخته و ذخیره می‌شود، حتی وقتی قرار نیست همین حالا ثبت
   // شود: حسابرسی باید بداند در لحظهٔ تصمیم، قاعده چه گفته بود.
-  const plan = planJournal(event);
+  // تصمیم، شکل سند را تعیین می‌کند. بدون تصمیم، همان قاعدهٔ نوع رویداد.
+  const plan = planJournal(event, accountingDecision);
 
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
@@ -228,6 +285,7 @@ export function recordFinancialEvent(database, event, {
 
     const decisionId = storeDecision(database, id, accountingDecision);
     if (decisionId) database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, id);
+    storeSchedule(database, id, accountingDecision, event);
 
     writeAudit(database, id, 'captured', {
       rawInput: String(rawInput || '').slice(0, 1000),
@@ -282,6 +340,48 @@ function markEventPosted(database, eventId, posted, lines, actor) {
   database.prepare("UPDATE financial_events SET status='posted',journal_entry_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
     .run(posted.id, eventId);
   writeAudit(database, eventId, 'posted', { journalEntryId: posted.id, documentNumber: posted.documentNumber, lines }, actor);
+}
+
+/**
+ * جواب کاربر به سؤال یک رویداد منتظر.
+ *
+ * چهار کار پشت سر هم، همه در یک تراکنش:
+ *
+ * ۱. جواب به واقعیت تبدیل و روی رویداد نشانده می‌شود؛
+ * ۲. تصمیم دوباره گرفته می‌شود — تصمیم قبلی ویرایش نمی‌شود، تصمیم تازه با
+ *    ارجاع به آن ساخته می‌شود تا تاریخچه دروغ نگوید؛
+ * ۳. نقشهٔ سند با تصمیم تازه دوباره قفل می‌شود، چون ماهیت عوض شده؛
+ * ۴. اگر تصمیم تازه برنامهٔ شناسایی بخواهد، ساخته می‌شود.
+ *
+ * سند اینجا ثبت **نمی‌شود**. جواب دادن یعنی ابهام برطرف شد، نه اینکه کاربر
+ * تأیید کرد. ثبت همچنان کار `approveFinancialEvent` است.
+ */
+export function answerEventQuestion(database, eventId, { fact, value, freeText = '', actor = null, today = null } = {}) {
+  ensureFinancialEventSchema(database);
+  const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
+  if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
+  if (row.status !== 'pending') throw storeError('این رویداد دیگر در انتظار نیست.', 'EVENT_NOT_PENDING', 409);
+
+  const previous = decisionForEvent(database, row.id);
+  const stored = JSON.parse(row.payload);
+  const reference = today || stored.occurredAt;
+  const patch = applyAnswer(stored, { fact, value, freeText }, { today: reference });
+  const event = normalizeFinancialEvent({ ...stored, ...patch });
+  const decision = decide(factsFromEvent(event), { today: reference });
+  const plan = planJournal(event, decision);
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.prepare('UPDATE financial_events SET payload=?,posting_plan=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .run(JSON.stringify(event), JSON.stringify(plan), row.id);
+    const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
+    database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, row.id);
+    storeSchedule(database, row.id, decision, event);
+    writeAudit(database, row.id, 'answered', { fact, value, freeText, patch, decision }, actor);
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+
+  return { ...describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id)), decision };
 }
 
 /** تأیید کاربر یا حسابدار روی رویدادی که منتظر مانده بود. */

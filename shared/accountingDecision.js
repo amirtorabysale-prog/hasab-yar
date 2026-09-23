@@ -178,7 +178,10 @@ export const DEFAULT_POLICIES = Object.freeze([
         return { treatment: TREATMENTS.REFUNDABLE_DEPOSIT };
       }
       const end = facts?.servicePeriodEnd;
-      if (end && new Date(end).getTime() < new Date(today).getTime()) {
+      // `<=` و نه `<`: وقتی کاربر می‌گوید «دوره‌اش گذشته»، دوره روی خودِ تاریخ
+      // پرداخت بسته می‌شود. با مقایسهٔ اکید، همان جواب صریح نادیده می‌ماند و
+      // سیستم باز هم دارایی می‌ساخت.
+      if (end && new Date(end).getTime() <= new Date(today).getTime()) {
         return { treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
       }
       return {

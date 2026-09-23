@@ -28,6 +28,10 @@ export const ROLES = Object.freeze({
   EXPENSE_CATEGORY: 'expense-category',
   OWNER_CAPITAL: 'owner-capital',
   FIXED_ASSET: 'fixed-asset',
+  // پیش‌پرداخت: پولی که رفته ولی منفعتش هنوز نیامده. دارایی است تا وقتی دوره‌اش
+  // مصرف شود. حساب «۱۴۰۱ — پیش‌پرداخت‌ها» از قبل در جدول حساب‌ها بود و هیچ
+  // قاعده‌ای به آن نمی‌رسید.
+  PREPAID_ASSET: 'prepaid-asset',
   ACCUMULATED_DEPRECIATION: 'accumulated-depreciation',
   DEPRECIATION_EXPENSE: 'depreciation-expense',
 });
@@ -59,9 +63,48 @@ function plan(kind, debit, credit, amount, memoHint) {
  * `key` شناسهٔ زیرحساب است — نام دسته، نام طرف حساب یا نام دارایی — تا لایهٔ
  * سرور بتواند حساب دقیق را پیدا یا بسازد.
  */
-export function planJournal(event) {
+/**
+ * نقشه‌هایی که از **تصمیم** می‌آیند، نه از نوع رویداد.
+ *
+ * این همان جای خالی مسیر قدیمی است. تا امروز `cash-expense` هم‌زمان می‌گفت
+ * «پول خارج شد» و «هزینهٔ دوره شد»، پس اگر بالادست می‌فهمید این پرداخت یک
+ * پیش‌پرداخت است، جایی برای گفتنش نبود. حالا هست: تصمیم برخورد را می‌گوید و
+ * قاعده سند همان برخورد را می‌سازد.
+ *
+ * فقط برخوردهایی اینجا هستند که در این فاز قاعده دارند. بقیه به مسیر قدیمی
+ * می‌افتند و رفتارشان عوض نمی‌شود.
+ */
+const TREATMENT_PLANS = Object.freeze({
+  'prepaid-expense': (event, amount) => plan(event.kind,
+    { role: ROLES.PREPAID_ASSET, key: event.category },
+    { role: ROLES.CASH, key: event.accountId }, amount, event.category),
+});
+
+/**
+ * آیا این برخورد نقشهٔ مخصوص خودش را دارد؟
+ *
+ * لایهٔ ثبت به این نیاز دارد: رویدادی که از یک ردیف تراکنش آمده، سندش را از
+ * مسیر جاافتادهٔ تراکنش می‌گیرد — و آن مسیر فقط هزینه و درآمد می‌شناسد. اگر
+ * تصمیم گفته باشد این پرداخت پیش‌پرداخت است، آن مسیر حرف تصمیم را نمی‌فهمد و
+ * بی‌صدا هزینه ثبت می‌کند. یعنی کل لایهٔ تصمیم برای پرحجم‌ترین مسیر دور زده
+ * می‌شد.
+ */
+export function treatmentHasPlan(treatment) {
+  return Boolean(treatment) && Object.hasOwn(TREATMENT_PLANS, treatment);
+}
+
+/**
+ * نقشهٔ سند برای یک رویداد.
+ *
+ * `decision` اختیاری است. وقتی نیاید — یعنی موتور نسخهٔ دو خاموش است — رفتار
+ * دقیقاً همان قبلی است و هیچ مسیر موجودی عوض نمی‌شود.
+ */
+export function planJournal(event, decision = null) {
   if (!event || !event.kind) throw ruleError('رویداد برای ساخت سند معتبر نیست.');
   const { amount, category, counterparty, description, reference } = event;
+
+  const fromTreatment = decision?.treatment ? TREATMENT_PLANS[decision.treatment] : null;
+  if (fromTreatment) return fromTreatment(event, amount);
 
   switch (event.kind) {
     // پول از صندوق بیرون رفت و هزینهٔ دوره شد.

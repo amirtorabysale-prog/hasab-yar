@@ -191,3 +191,98 @@ test('رویداد قدیمیِ بدون نقشهٔ ذخیره‌شده همچن
     assert.equal(audit.detail.planSource, 'recomputed-legacy', 'ردپا باید این دو دسته را از هم جدا کند');
   });
 });
+
+// ---------------------------------------------------------------------------
+// سناریوی دمو، از سر تا ته
+// ---------------------------------------------------------------------------
+
+const pendingPrepaid = (sourceId) => {
+  const draft = transactionEventDecision(transaction(), { policy: { engineV2: true } });
+  return store.recordFinancialEvent(db(), draft.event, {
+    sourceEventId: sourceId, decision: draft.decision, actor: owner.id, accountingDecision: draft.accountingDecision,
+  });
+};
+
+test('سناریوی ۱ — جواب کاربر، دارایی می‌سازد نه هزینه', () => {
+  inPrimary(() => {
+    const captured = pendingPrepaid('demo:1');
+    assert.equal(captured.status, 'pending', 'تا جواب نیامده سندی زده نمی‌شود');
+
+    // «از همین ماه» بعد «یک سال» — همان دو کلیکی که کاربر می‌کند.
+    const first = store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'this-month', actor: owner.id, today: OCCURRED });
+    assert.equal(first.decision.decisionStatus, DECISION_STATUS.NEEDS_USER_INPUT);
+    assert.equal(first.decision.question.fact, 'servicePeriodEnd', 'سؤال بعدی باید پایان دوره باشد');
+
+    const second = store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodEnd', value: 'one-year', actor: owner.id, today: OCCURRED });
+    assert.equal(second.decision.decisionStatus, DECISION_STATUS.DECIDED);
+    assert.equal(second.decision.treatment, 'prepaid-expense');
+
+    const approved = store.approveFinancialEvent(db(), captured.id, { actor: owner.id });
+    const entry = accounting.listJournal(db(), { limit: 200 }).items.find((item) => item.id === approved.journalEntryId);
+    const accounts = entry.lines.map((line) => db().prepare('SELECT name FROM ledger_accounts WHERE id=?').get(line.accountId).name);
+    assert.ok(accounts.some((name) => name.includes('پیش‌پرداخت')), `سند باید به پیش‌پرداخت بخورد، خورد به: ${accounts.join(' / ')}`);
+    assert.equal(accounts.some((name) => name.includes('هزینه')), false, 'هیچ سطری نباید هزینه باشد');
+  });
+});
+
+test('برنامهٔ شناسایی ساخته می‌شود و جمعش برابر مبلغ است', () => {
+  inPrimary(() => {
+    const captured = pendingPrepaid('demo:2');
+    store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'this-month', actor: owner.id, today: OCCURRED });
+    store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodEnd', value: 'one-year', actor: owner.id, today: OCCURRED });
+
+    const schedule = store.scheduleForEvent(db(), captured.id);
+    assert.equal(schedule.length, 12, 'یک سال یعنی دوازده قلم');
+    assert.equal(schedule.reduce((sum, item) => sum + item.amount, 0), 120_000_000, 'جمع اقلام باید دقیقاً برابر مبلغ باشد');
+    assert.equal(new Set(schedule.map((item) => item.periodKey)).size, 12);
+  });
+});
+
+test('جواب دوباره، قلم دوم نمی‌سازد', () => {
+  inPrimary(() => {
+    const captured = pendingPrepaid('demo:3');
+    store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'this-month', actor: owner.id, today: OCCURRED });
+    store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodEnd', value: 'one-year', actor: owner.id, today: OCCURRED });
+    const first = store.scheduleForEvent(db(), captured.id);
+    store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodEnd', value: 'one-year', actor: owner.id, today: OCCURRED });
+    assert.deepEqual(store.scheduleForEvent(db(), captured.id), first, 'اجرای دوباره باید همان برنامه را بدهد');
+  });
+});
+
+test('سناریوی ۳ — «دوره‌اش گذشته» هزینهٔ مستقیم می‌سازد', () => {
+  inPrimary(() => {
+    const captured = pendingPrepaid('demo:4');
+    const answered = store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'already-passed', actor: owner.id, today: OCCURRED });
+
+    assert.equal(answered.decision.decisionStatus, DECISION_STATUS.DECIDED, 'یک جواب باید کافی باشد');
+    assert.equal(answered.decision.treatment, 'period-expense');
+    assert.equal(store.scheduleForEvent(db(), captured.id).length, 0, 'هزینهٔ مستقیم برنامهٔ تخصیص ندارد');
+
+    const approved = store.approveFinancialEvent(db(), captured.id, { actor: owner.id });
+    const entry = accounting.listJournal(db(), { limit: 200 }).items.find((item) => item.id === approved.journalEntryId);
+    const accounts = entry.lines.map((line) => db().prepare('SELECT name FROM ledger_accounts WHERE id=?').get(line.accountId).name);
+    assert.equal(accounts.some((name) => name.includes('پیش‌پرداخت')), false, 'نباید دارایی ساخته شود');
+  });
+});
+
+test('تصمیم تازه، تصمیم قبلی را پاک نمی‌کند', () => {
+  // تاریخچه باید بتواند بگوید موتور اول چه گفت و بعد از جواب چه گفت.
+  inPrimary(() => {
+    const captured = pendingPrepaid('demo:5');
+    store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'already-passed', actor: owner.id, today: OCCURRED });
+    const rows = db().prepare('SELECT supersedes,decision_status FROM accounting_decisions WHERE event_id=? ORDER BY created_at,rowid').all(captured.id);
+    assert.equal(rows.length, 2, 'هر دو تصمیم باید بمانند');
+    assert.equal(rows[0].supersedes, null);
+    assert.ok(rows[1].supersedes, 'تصمیم تازه باید به قبلی ارجاع بدهد');
+  });
+});
+
+test('گزینهٔ نامعتبر پذیرفته نمی‌شود', () => {
+  inPrimary(() => {
+    const captured = pendingPrepaid('demo:6');
+    assert.throws(
+      () => store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'هرچی', actor: owner.id, today: OCCURRED }),
+      (error) => error.code === 'ANSWER_OPTION_UNKNOWN',
+    );
+  });
+});

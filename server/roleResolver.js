@@ -100,6 +100,12 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.CHEQUE_PAYABLE:
       return counterpartyRoleAccount(database, 'cheque-payable', event, key || 'متفرقه', 'اسناد پرداختنی', 'liability');
 
+    // پیش‌پرداخت به تفکیک دسته، نه یک حساب یک‌کاسه: «پیش‌پرداخت بیمه» و
+    // «پیش‌پرداخت اجاره» دو ماندهٔ جدا دارند و حسابدار باید بتواند هرکدام را
+    // مستقل ببیند و تخصیصشان را دنبال کند.
+    case ROLES.PREPAID_ASSET:
+      return linkedAccount(database, 'prepaid-asset', key || 'عمومی', `پیش‌پرداخت — ${key || 'عمومی'}`, 'asset');
+
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');
 
