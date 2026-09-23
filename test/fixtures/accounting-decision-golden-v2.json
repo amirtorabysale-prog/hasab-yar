@@ -1,0 +1,37 @@
+{
+  "note": "پیکرهٔ طلایی نسخهٔ ۲ — از متن فارسی تا تصمیم، از مسیر واقعی. expectedFamily ماهیت درست حسابداری است و به فاز وابسته نیست. mayAbstain یعنی در این فاز، «نمی‌دانم» هم جواب درستی است.",
+  "cases": [
+    { "id": "CLR-001", "group": "clear", "input": "حق بیمه مسئولیت یک ساله رو 12 میلیون از بانک ملت پرداخت کردم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "servicePeriodStart", "why": "پیش‌پرداخت با منفعت آینده؛ دوره نامعلوم است پس باید بپرسد" },
+    { "id": "CLR-002", "group": "clear", "input": "اجاره دفتر رو 8 میلیون دادم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "refundable", "why": "اجاره می‌تواند ودیعه باشد یا اجارهٔ مصرفی؛ اول استرداد" },
+    { "id": "CLR-003", "group": "clear", "input": "20 میلیون ودیعه دفتر را پرداخت کردم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "refundable", "why": "ودیعه هیچ‌وقت هزینه نمی‌شود" },
+    { "id": "CLR-004", "group": "clear", "input": "اشتراک سالانه نرم‌افزار حسابداری رو 6 میلیون خریدم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "servicePeriodStart", "why": "خدمت دوره‌دار یک‌ساله" },
+    { "id": "CLR-005", "group": "clear", "input": "قبض برق رو 3 میلیون پرداخت کردم", "expectedFamily": "asset-consumption", "mayAbstain": true, "why": "هزینهٔ دورهٔ گذشته؛ قاعده‌اش فاز ۲ است" },
+    { "id": "CLR-006", "group": "clear", "input": "امروز 15 میلیون فروش نقدی داشتیم", "expectedFamily": "revenue-recognition", "mayAbstain": true, "why": "تحویل انجام شده ولی تاریخ تحویل استخراج نمی‌شود" },
+    { "id": "CLR-007", "group": "clear", "input": "حقوق مهر پرسنل رو 90 میلیون پرداخت کردم", "expectedFamily": "liability-settlement", "mayAbstain": true, "why": "حقوق بدون لیست حقوق ثبت نمی‌شود؛ فاز ۵" },
+    { "id": "CLR-008", "group": "clear", "input": "بنزین ماشین شرکت 500 هزار تومان", "expectedFamily": "asset-consumption", "mayAbstain": true, "why": "مصرف جاری" },
+    { "id": "CLR-009", "group": "clear", "input": "ملزومات اداری خریدم 2 میلیون", "expectedFamily": "asset-consumption", "mayAbstain": true, "why": "مصرف جاری؛ ولی می‌تواند موجودی هم باشد — فاز ۳" },
+    { "id": "CLR-010", "group": "clear", "input": "کارمزد بانکی این ماه 150 هزار تومان کسر شد", "expectedFamily": "asset-consumption", "mayAbstain": true, "why": "هزینهٔ قطعی دوره" },
+
+    { "id": "AMB-001", "group": "ambiguous", "input": "10 میلیون به شرکت بهار پرداخت کردم", "expectedFamily": "liability-settlement", "mayAbstain": true, "expectNotPosted": true, "why": "ممکن است تسویهٔ بدهی باشد یا هزینهٔ تازه — نگهبانش فاز ۱ است" },
+    { "id": "AMB-002", "group": "ambiguous", "input": "یک لپ‌تاپ برای شرکت خریدم 45 میلیون", "expectedFamily": "asset-creation", "mayAbstain": true, "expectNotPosted": true, "why": "دارایی ثابت یا هزینه، بسته به حد سرمایه‌ای — فاز ۳" },
+    { "id": "AMB-003", "group": "ambiguous", "input": "30 میلیون بیعانه از مشتری گرفتم", "expectedFamily": "advance-received", "mayAbstain": true, "expectNotPosted": true, "why": "دریافت پیش از انجام تعهد؛ درآمد نیست" },
+    { "id": "AMB-004", "group": "ambiguous", "input": "500 میلیون وام گرفتم و به حساب شرکت آمد", "expectedFamily": "liability-creation", "mayAbstain": true, "expectNotPosted": true, "why": "اصل وام هرگز درآمد نیست" },
+    { "id": "AMB-005", "group": "ambiguous", "input": "از حساب ملت 50 میلیون به حساب صادرات منتقل کردم", "expectedFamily": "internal-transfer", "mayAbstain": true, "expectNotPosted": true, "why": "انتقال داخلی؛ نه هزینه نه درآمد" },
+    { "id": "AMB-006", "group": "ambiguous", "input": "خودم 200 میلیون به حساب شرکت ریختم", "expectedFamily": "owner-capital-movement", "mayAbstain": true, "expectNotPosted": true, "why": "آورده یا وام شریک — باید پرسیده شود" },
+    { "id": "AMB-007", "group": "ambiguous", "input": "5 میلیون علی‌الحساب به پیمانکار دادم", "expectedFamily": "asset-creation", "mayAbstain": true, "expectNotPosted": true, "why": "پیش‌پرداخت یا هزینه؛ سؤال استرداد" },
+    { "id": "AMB-008", "group": "ambiguous", "input": "مواد اولیه خریدم 60 میلیون", "expectedFamily": "asset-creation", "mayAbstain": true, "expectNotPosted": true, "why": "موجودی است نه هزینه — فاز ۳" },
+    { "id": "AMB-009", "group": "ambiguous", "input": "3 میلیون تنخواه به آقای رضایی دادم", "expectedFamily": "asset-creation", "mayAbstain": true, "expectNotPosted": true, "why": "دریافتنی از دارندهٔ تنخواه، نه هزینه" },
+    { "id": "AMB-010", "group": "ambiguous", "input": "98 میلیون از درگاه پرداخت به حسابمان واریز شد", "expectedFamily": "revenue-recognition", "mayAbstain": true, "expectNotPosted": true, "why": "واریز خالص؛ فروش منهای کارمزد — فاز ۱" },
+
+    { "id": "INC-001", "group": "incomplete", "input": "بیمه رو پرداخت کردم", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "مبلغ ندارد" },
+    { "id": "INC-002", "group": "incomplete", "input": "یه مبلغی به فروشنده دادم", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "نه مبلغ نه ماهیت" },
+    { "id": "INC-003", "group": "incomplete", "input": "12 میلیون", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "فقط عدد؛ جهت پول معلوم نیست" },
+    { "id": "INC-004", "group": "incomplete", "input": "اشتباه شد، مبلغ پنج میلیون بود", "expectedFamily": "correction-or-reversal", "mayAbstain": true, "expectNotPosted": true, "why": "اصلاح ثبت قبلی؛ رویداد مستقل نیست" },
+    { "id": "INC-005", "group": "incomplete", "input": "قرارداد پشتیبانی رو بستیم", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "هنوز رویداد مالی نیست" },
+    { "id": "INC-006", "group": "incomplete", "input": "هفتصد هزار تومان خرج شد", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "بابتش معلوم نیست" },
+    { "id": "INC-007", "group": "incomplete", "input": "پول بیمه رو دادم ولی یادم نیست چقدر", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "کاربر خودش می‌گوید مبلغ را نمی‌داند" },
+    { "id": "INC-008", "group": "incomplete", "input": "دو میلیون و پونصد دادم بابت یه چیزی", "expectedFamily": "unknown", "mayAbstain": true, "expectNotPosted": true, "why": "مبلغ هست، ماهیت نیست" },
+    { "id": "INC-009", "group": "incomplete", "input": "چک سه میلیونی گرفتم", "expectedFamily": "receivable-creation", "mayAbstain": true, "expectNotPosted": true, "why": "چک یک دریافتنی است، نه درآمد" },
+    { "id": "INC-010", "group": "incomplete", "input": "برای سال بعد 24 میلیون دادم", "expectedFamily": "asset-creation", "mayAbstain": true, "expectNotPosted": true, "why": "منفعت آینده روشن است ولی بابتش نه" }
+  ]
+}
