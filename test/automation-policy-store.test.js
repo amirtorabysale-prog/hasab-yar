@@ -88,3 +88,22 @@ test('تغییر قانون در Audit Log می‌ماند', () => inPrimary(() 
   const row = db.prepare("SELECT COUNT(*) AS total FROM audit_log WHERE entity_type='automation-policy'").get();
   assert.ok(row.total > 0, 'چه کسی و کی آستانه را عوض کرد، بخشی از زنجیرهٔ حسابرسی است');
 }));
+
+test('فلگ موتور تصمیم ذخیره می‌شود و پیش‌فرضش خاموش است', () => {
+  // فلگی که ذخیره نشود، کلید ندارد: هر مقداری بفرستی بی‌صدا دور ریخته می‌شود و
+  // موتور هیچ‌وقت روشن نمی‌شود.
+  inPrimary(() => {
+    assert.equal(database.automationPolicy().engineV2, false, 'پیش‌فرض باید خاموش باشد');
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true });
+    assert.equal(database.automationPolicy().engineV2, true, 'روشن‌کردن باید ذخیره شود');
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: false });
+    assert.equal(database.automationPolicy().engineV2, false, 'خاموش‌کردن هم باید ذخیره شود');
+  });
+});
+
+test('مقدار نامعتبر، موتور را روشن نمی‌کند', () => {
+  inPrimary(() => {
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: 'بله' });
+    assert.equal(database.automationPolicy().engineV2, false, 'فقط true صریح باید روشن کند');
+  });
+});

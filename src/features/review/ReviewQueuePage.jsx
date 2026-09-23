@@ -191,6 +191,24 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
     {!canManage && <p className="mt-2 text-[11px] text-muted">تغییر این قانون با نقش مدیر است.</p>}
 
     {open && canManage && <div className="mt-3 space-y-3 border-t border-line pt-3">
+      {/*
+        موتور تصمیم، دفتر‌به‌دفتر.
+        روشن که باشد، پیش از نگاه به اطمینان، ماهیت رویداد سنجیده می‌شود: پرداختی
+        که ممکن است پیش‌پرداخت باشد تا روشن نشدن دوره‌اش ثبت نمی‌شود و یک سؤال
+        کوتاه می‌سازد. در پایلوت عمداً خاموش است.
+      */}
+      <div className={`rounded-lg border p-3 ${policy.engineV2 ? 'border-accent bg-accent/5' : 'border-line bg-surface'}`}>
+        <p className="text-[12px] font-extrabold">تشخیص ماهیت رویداد {policy.engineV2 ? '— روشن' : '— خاموش'}</p>
+        <p className="mt-1 text-[11px] leading-5 text-muted">
+          به‌جای «هر پرداختی هزینه است»، اول می‌پرسد این رویداد از نظر اقتصادی چیست.
+          اگر چیزی لازم باشد و ندانَد، یک سؤال کوتاه می‌پرسد و تا جواب نیامده ثبت نمی‌کند.
+        </p>
+        <button disabled={busy} onClick={() => save({ engineV2: !policy.engineV2 })}
+          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-white'}`}>
+          {policy.engineV2 ? 'خاموش کن' : 'روشن کن'}
+        </button>
+      </div>
+
       <button disabled={busy} onClick={() => save({ manualOnly: !everythingReviewed })}
         className={`tap w-full rounded-lg border px-3 text-[12px] font-bold ${everythingReviewed ? 'border-line bg-surface' : 'border-accent bg-accent/5 text-accent'}`}>
         {everythingReviewed ? 'برگرد به ثبت خودکار بالای ۹۵٪' : 'هیچ‌چیز بدون تأیید من ثبت نشود'}

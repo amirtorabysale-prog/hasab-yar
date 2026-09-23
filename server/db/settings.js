@@ -29,6 +29,9 @@ export function saveAutomationPolicy(values = {}) {
     allowAiOnlyAutoPost: values.allowAiOnlyAutoPost,
     minimumAmountCertainty: values.minimumAmountCertainty,
     manualOnly: values.manualOnly,
+    // بدون این، فلگ ساخته شده ولی کلید ندارد: هر مقداری که بفرستی بی‌صدا دور
+    // ریخته می‌شود و موتور تصمیم هیچ‌وقت روشن نمی‌شود.
+    engineV2: values.engineV2,
   });
   db.prepare("INSERT INTO settings (key,value) VALUES ('automationPolicy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     .run(JSON.stringify(next));
