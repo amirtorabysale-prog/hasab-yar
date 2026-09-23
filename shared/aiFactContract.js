@@ -71,23 +71,61 @@ export const AI_FACT_SCHEMA = Object.freeze({
     // روی نام کالا دقیقاً همان کاری است که فاز ۳ تست شکست برایش می‌نویسد.
     intendedUse: Object.freeze({ type: 'string', enum: Object.freeze(['resale', 'production', 'long-term-use', 'current-consumption']) }),
     refundable: Object.freeze({ type: 'boolean' }),
+    counterpartyRole: Object.freeze({ type: 'string', enum: Object.freeze(['owner', 'supplier', 'customer', 'employee', 'authority']) }),
     confidence: Object.freeze({ type: 'number', minimum: 0, maximum: 1 }),
     evidence: Object.freeze({ type: 'string', description: 'عین گفتهٔ کاربر، بدون خلاصه‌سازی' }),
   }),
 });
 
-function notImplemented(name) {
-  return Object.assign(new Error(`${name} هنوز پیاده‌سازی نشده است.`), { code: 'NOT_IMPLEMENTED' });
-}
+/**
+ * نام فیلد را به شکل قابل‌مقایسه می‌آورد.
+ *
+ * مدل ممکن است `accountCode` یا `account_code` یا `ACCOUNT-CODE` برگرداند و هر
+ * سه یک چیزند. مقایسه روی نام کاملِ نرمال‌شده است و نه روی زیررشته، وگرنه
+ * `cashAccountHint` هم به‌خاطر داشتن «account» رد می‌شد — در حالی که آن یک
+ * واقعیت مجاز است: نام بانکی که کاربر گفته، نه کد حساب دفتر کل.
+ */
+const normalizeFieldName = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const FORBIDDEN_SET = new Set(FORBIDDEN_FACT_FIELDS.map(normalizeFieldName));
+const ALLOWED_FIELDS = Object.freeze(Object.keys(AI_FACT_SCHEMA.properties));
+const ALLOWED_SET = new Set(ALLOWED_FIELDS);
 
 /**
  * خروجی مدل را اعتبارسنجی می‌کند.
  *
  * خروجی: `{ ok, facts, violations }`. `violations` نام هر فیلد ممنوع یا
- * ناشناخته را می‌برد تا لاگ بتواند بگوید مدل دقیقاً کجا از مرز رد شده.
+ * ناشناخته را با همان املایی که مدل نوشته برمی‌گرداند، تا لاگ بتواند بگوید
+ * دقیقاً کجا از مرز رد شده.
  *
- * هرگز پاسخ نامعتبر را «تمیز» نمی‌کند و ادامه نمی‌دهد.
+ * هرگز پاسخ نامعتبر را «تمیز» نمی‌کند و ادامه نمی‌دهد: حذف بی‌صدای فیلد ممنوع
+ * یعنی ما نمی‌فهمیم چند بار مدل از مرز رد شده و مدل هم چیزی یاد نمی‌گیرد.
  */
-export function validateExtraction(/* payload */) {
-  throw notImplemented('validateExtraction');
+export function validateExtraction(payload) {
+  const violations = [];
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return Object.freeze({ ok: false, facts: null, violations: ['payload'] });
+  }
+
+  for (const field of Object.keys(payload)) {
+    if (FORBIDDEN_SET.has(normalizeFieldName(field)) || !ALLOWED_SET.has(field)) violations.push(field);
+  }
+
+  for (const field of AI_FACT_SCHEMA.required) {
+    const value = payload[field];
+    if (value === undefined || value === null || value === '') violations.push(`missing:${field}`);
+  }
+
+  const direction = payload.moneyDirection;
+  if (direction !== undefined && !AI_FACT_SCHEMA.properties.moneyDirection.enum.includes(direction)) {
+    violations.push('moneyDirection');
+  }
+
+  if (violations.length) return Object.freeze({ ok: false, facts: null, violations: Object.freeze(violations) });
+
+  const facts = {};
+  for (const field of ALLOWED_FIELDS) {
+    if (payload[field] !== undefined) facts[field] = payload[field];
+  }
+  return Object.freeze({ ok: true, facts: Object.freeze(facts), violations: Object.freeze([]) });
 }

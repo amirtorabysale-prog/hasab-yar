@@ -109,6 +109,35 @@ test('خانواده‌ای که قاعدهٔ ثبت ندارد، تصمیمش �
   assert.equal(decisionAuthorizesPosting(decision), false);
 });
 
+test('پرداخت ساده بدون نشانهٔ منفعت آینده، «ایجاد دارایی» برچسب نمی‌خورد', () => {
+  // خرید چای دفتر و پیش‌پرداخت بیمه هر دو «پول خارج شد» هستند. اگر هر دو یک
+  // خانواده بگیرند، همان اشتباه KIND_BY_TYPE یک پله بالاتر تکرار شده. تا وقتی
+  // هدف خرید پرسیده نشده (فاز ۳)، «نمی‌دانم» صادقانه‌تر از یک برچسب مطمئن است.
+  const decision = decide({
+    moneyDirection: 'out',
+    [FACT_KEYS.AMOUNT]: 2_000_000,
+    [FACT_KEYS.OCCURRED_AT]: TODAY,
+    [FACT_KEYS.CASH_ACCOUNT]: 'cash',
+    [FACT_KEYS.CATEGORY]: 'پذیرایی',
+  }, { today: TODAY });
+
+  assert.notEqual(decision.family, ECONOMIC_FAMILIES.ASSET_CREATION);
+  assert.equal(decisionAuthorizesPosting(decision), false);
+});
+
+test('همان پرداخت با نشانهٔ منفعت آینده، ایجاد دارایی است', () => {
+  const decision = decide({
+    moneyDirection: 'out',
+    [FACT_KEYS.AMOUNT]: 2_000_000,
+    [FACT_KEYS.OCCURRED_AT]: TODAY,
+    [FACT_KEYS.CASH_ACCOUNT]: 'cash',
+    [FACT_KEYS.CATEGORY]: 'پذیرایی',
+    [FACT_KEYS.INTENDED_USE]: 'resale',
+  }, { today: TODAY });
+
+  assert.equal(decision.family, ECONOMIC_FAMILIES.ASSET_CREATION);
+});
+
 test('ماهیت نامشخص به حسابدار می‌رود، نه به نزدیک‌ترین خانواده', () => {
   const decision = decide({ moneyDirection: 'out' }, { today: TODAY });
   assert.equal(decision.family, FAMILY_UNKNOWN);

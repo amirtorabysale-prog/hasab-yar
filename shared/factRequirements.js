@@ -1,4 +1,8 @@
-import { ECONOMIC_FAMILIES, FAMILY_UNKNOWN } from './economicFamily.js';
+import { ECONOMIC_FAMILIES, FAMILY_UNKNOWN, isFactPresent } from './economicFamily.js';
+
+// جایش در `economicFamily.js` است تا حلقهٔ import ساخته نشود؛ مصرف‌کننده‌ها
+// آن را از همین‌جا برمی‌دارند چون مفهوماً به واقعیت مربوط است.
+export { isFactPresent };
 
 /**
  * واقعیت‌های لازم هر خانواده — و سؤالی که برای هر کمبود پرسیده می‌شود.
@@ -28,6 +32,9 @@ export const FACT_KEYS = Object.freeze({
   CASH_ACCOUNT: 'cashAccountId',
   DESTINATION_ACCOUNT: 'destinationAccountId',
   COUNTERPARTY: 'counterparty',
+  // نسبت طرف حساب با کسب‌وکار. بدون این، آوردهٔ مالک از پرداخت به فروشنده
+  // قابل تفکیک نیست و اصل سرمایه می‌تواند درآمد ثبت شود.
+  COUNTERPARTY_ROLE: 'counterpartyRole',
   CATEGORY: 'category',
   DESCRIPTION: 'description',
   SERVICE_PERIOD_START: 'servicePeriodStart',
@@ -57,6 +64,7 @@ export const FACT_LABELS = Object.freeze({
   [FACT_KEYS.CASH_ACCOUNT]: 'حساب پرداخت یا دریافت',
   [FACT_KEYS.DESTINATION_ACCOUNT]: 'حساب مقصد',
   [FACT_KEYS.COUNTERPARTY]: 'طرف حساب',
+  [FACT_KEYS.COUNTERPARTY_ROLE]: 'نسبت طرف حساب',
   [FACT_KEYS.CATEGORY]: 'دسته',
   [FACT_KEYS.DESCRIPTION]: 'شرح',
   [FACT_KEYS.SERVICE_PERIOD_START]: 'شروع دورهٔ پوشش',
@@ -122,9 +130,11 @@ export const FACT_REQUIREMENTS = Object.freeze({
     required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.COUNTERPARTY, FACT_KEYS.CASH_ACCOUNT]),
     optional: Object.freeze([FACT_KEYS.CONTRACT_REFERENCE, FACT_KEYS.SERVICE_PERIOD_START, FACT_KEYS.SERVICE_PERIOD_END]),
   }),
+  // `refundable` اینجا لازم است چون همان سؤالی است که آورده را از وام شریک جدا
+  // می‌کند: پولی که پس داده می‌شود بدهی است، پولی که پس داده نمی‌شود سرمایه.
   [ECONOMIC_FAMILIES.OWNER_CAPITAL_MOVEMENT]: Object.freeze({
     required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.REFUNDABLE]),
-    optional: Object.freeze([FACT_KEYS.COUNTERPARTY, FACT_KEYS.DESCRIPTION]),
+    optional: Object.freeze([FACT_KEYS.COUNTERPARTY, FACT_KEYS.COUNTERPARTY_ROLE, FACT_KEYS.DESCRIPTION]),
   }),
   [ECONOMIC_FAMILIES.INTERNAL_TRANSFER]: Object.freeze({
     required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.DESTINATION_ACCOUNT]),
@@ -239,6 +249,17 @@ export const FACT_QUESTIONS = Object.freeze({
       Object.freeze({ value: 'current-consumption', label: 'مصرف جاری' }),
     ]),
   }),
+  [FACT_KEYS.COUNTERPARTY_ROLE]: Object.freeze({
+    kind: QUESTION_KINDS.OPTIONS,
+    text: 'این شخص چه نسبتی با کسب‌وکار دارد؟',
+    options: Object.freeze([
+      Object.freeze({ value: 'owner', label: 'مالک یا شریک' }),
+      Object.freeze({ value: 'supplier', label: 'فروشنده' }),
+      Object.freeze({ value: 'customer', label: 'مشتری' }),
+      Object.freeze({ value: 'employee', label: 'کارمند' }),
+      Object.freeze({ value: 'authority', label: 'سازمان یا اداره' }),
+    ]),
+  }),
   [FACT_KEYS.AMOUNT]: Object.freeze({ kind: QUESTION_KINDS.FREE_INPUT, text: 'مبلغ چقدر بود؟' }),
   [FACT_KEYS.CASH_ACCOUNT]: Object.freeze({ kind: QUESTION_KINDS.FREE_INPUT, text: 'از کدام حساب؟' }),
   [FACT_KEYS.DESTINATION_ACCOUNT]: Object.freeze({ kind: QUESTION_KINDS.FREE_INPUT, text: 'به کدام حساب؟' }),
@@ -258,18 +279,17 @@ export const FACT_QUESTIONS = Object.freeze({
   [FACT_KEYS.CORRECTION_REASON]: Object.freeze({ kind: QUESTION_KINDS.FREE_INPUT, text: 'چه چیزی اشتباه بود؟' }),
 });
 
-function notImplemented(name) {
-  return Object.assign(new Error(`${name} هنوز پیاده‌سازی نشده است.`), { code: 'NOT_IMPLEMENTED' });
-}
-
 /**
  * واقعیت‌های لازم یک خانواده و برخوردش را برمی‌گرداند.
  *
  * `treatment` اختیاری است: وقتی هنوز معلوم نیست برخورد چیست، فقط پایهٔ خانواده
- * لازم است.
+ * لازم است. ترتیب حفظ می‌شود — اول پایهٔ خانواده، بعد اضافه‌های برخورد — چون
+ * همین ترتیب تعیین می‌کند کدام سؤال اول پرسیده شود.
  */
-export function requiredFactsFor(/* family, treatment */) {
-  throw notImplemented('requiredFactsFor');
+export function requiredFactsFor(family, treatment = null) {
+  const base = FACT_REQUIREMENTS[family]?.required || [];
+  const extra = treatment ? (TREATMENT_EXTRA_REQUIREMENTS[treatment] || []) : [];
+  return [...new Set([...base, ...extra])];
 }
 
 /**
@@ -280,16 +300,25 @@ export function requiredFactsFor(/* family, treatment */) {
  * این تفاوت کوچک به نظر می‌رسد ولی اگر رعایت نشود، سیستم برای هر «نه» دوباره
  * سؤال می‌پرسد.
  */
-export function missingFactsFor(/* family, treatment, facts */) {
-  throw notImplemented('missingFactsFor');
+export function missingFactsFor(family, treatment = null, facts = {}) {
+  return requiredFactsFor(family, treatment).filter((key) => !isFactPresent(facts?.[key]));
 }
 
 /**
  * سؤال بعدی — یکی، نه همه.
  *
- * وقتی چند واقعیت کم است، فقط اولی پرسیده می‌شود. ترتیب همان ترتیب اعلام در
- * `FACT_REQUIREMENTS` است، که از عام به خاص چیده شده.
+ * وقتی چند واقعیت کم است، فقط اولی پرسیده می‌شود. فرم یعنی کاربر باید همه را
+ * با هم بداند، و کسی که یکی را نمی‌داند کل کار را رها می‌کند.
  */
-export function nextQuestionFor(/* missingFacts */) {
-  throw notImplemented('nextQuestionFor');
+export function nextQuestionFor(missingFacts = []) {
+  const fact = (missingFacts || []).find((key) => FACT_QUESTIONS[key]);
+  if (!fact) return null;
+  const question = FACT_QUESTIONS[fact];
+  return Object.freeze({
+    fact,
+    kind: question.kind,
+    text: question.text,
+    label: FACT_LABELS[fact],
+    options: question.options ? [...question.options] : null,
+  });
 }

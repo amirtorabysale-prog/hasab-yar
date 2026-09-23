@@ -132,11 +132,138 @@ export const FAMILY_DEFAULT_RISK = Object.freeze({
  * که وقتی چند قاعده هم‌زمان می‌گیرند، قوی‌ترین برنده باشد. هیچ قاعده‌ای از
  * واژه‌های جمله استفاده نمی‌کند؛ همه از واقعیت می‌خوانند.
  */
-export const FAMILY_RULES = Object.freeze([]);
-
-function notImplemented(name) {
-  return Object.assign(new Error(`${name} هنوز پیاده‌سازی نشده است.`), { code: 'NOT_IMPLEMENTED' });
+/**
+ * آیا این واقعیت مقدار دارد؟
+ *
+ * `false` و `0` مقدارند، نه نبودِ مقدار. «قابل استرداد نیست» یک جواب است؛ اگر
+ * مفقود شمرده شود، سیستم برای هر «نه» دوباره همان سؤال را می‌پرسد و کاربر
+ * حلقه می‌خورد.
+ *
+ * اینجا زندگی می‌کند و نه در `factRequirements.js`، چون آن ماژول از این یکی
+ * import می‌کند و برعکسش حلقه می‌ساخت. از آنجا بازصادر می‌شود.
+ */
+export function isFactPresent(value) {
+  return value !== undefined && value !== null && value !== '';
 }
+
+const has = (facts, key) => isFactPresent(facts?.[key]);
+const direction = (facts) => facts?.moneyDirection ?? null;
+
+/**
+ * دسته‌هایی که ذاتاً خدمت دوره‌دار می‌سازند.
+ *
+ * اینجا زندگی می‌کند چون هم طبقه‌بند به آن نیاز دارد و هم قاعدهٔ پیش‌پرداخت.
+ * این یک فهرست کلیدواژه نیست: سیاست دفتر است و حسابدار تأییدش می‌کند. تفاوتش
+ * با حدس‌زدن از روی واژه این است که قابل آزمون و قابل بازبینی است.
+ */
+export const TIME_BOUND_SERVICE_CATEGORIES = Object.freeze(['بیمه', 'اجاره', 'اشتراک', 'پشتیبانی', 'حق عضویت']);
+
+/**
+ * آیا نشانه‌ای هست که این پرداخت منفعت آینده می‌سازد؟
+ *
+ * بدون این کنترل، هر خروج وجهی «ایجاد دارایی» می‌شد — و خرید چای دفتر کنار
+ * پیش‌پرداخت بیمه می‌نشست. این دقیقاً همان حدسی است که کل طرح برای حذفش نوشته
+ * شده، فقط یک پله بالاتر از `KIND_BY_TYPE`.
+ *
+ * پرداختی که هیچ‌کدام از این نشانه‌ها را ندارد، ماهیتش واقعاً معلوم نیست: ممکن
+ * است هزینهٔ همین دوره باشد، ممکن است موجودی باشد. جوابش یک سؤال است که فاز ۳
+ * می‌پرسد؛ تا آن‌وقت «نمی‌دانم» صادقانه‌تر از یک برچسب مطمئنِ غلط است.
+ */
+function signalsFutureBenefit(facts) {
+  if (has(facts, 'servicePeriodStart') || has(facts, 'servicePeriodEnd') || has(facts, 'contractReference')) return true;
+  if (has(facts, 'assetName') || has(facts, 'readyForUseDate')) return true;
+  if (['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)) return true;
+  return TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
+}
+
+export const FAMILY_RULES = Object.freeze([
+  // اصلاح، پیش از هر چیز دیگری. جمله‌ای که به ثبت قبلی ارجاع می‌دهد و می‌گوید
+  // چه چیزی اشتباه بود، هرگز نباید رویداد مستقل تازه بسازد.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.CORRECTION_OR_REVERSAL,
+    weight: 100,
+    reason: 'به یک ثبت قبلی ارجاع دارد و علت اصلاح را می‌گوید.',
+    test: (facts) => has(facts, 'originalEventReference') && has(facts, 'correctionReason'),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.VALUE_OR_ESTIMATE_CHANGE,
+    weight: 95,
+    reason: 'مبنای برآورد دارد، پس رویداد جدیدی اتفاق نیفتاده؛ ارزش تغییر کرده.',
+    test: (facts) => has(facts, 'estimateBasis'),
+  }),
+  // دو حساب که هر دو مال خودِ واحدند. این قاعده عمداً وزن بالایی دارد: انتقال
+  // داخلی که به هزینه یا درآمد تبدیل شود، سود دوره را بی‌دلیل تکان می‌دهد.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.INTERNAL_TRANSFER,
+    weight: 90,
+    reason: 'مبدأ و مقصد هر دو حساب خودِ واحد هستند.',
+    test: (facts) => has(facts, 'cashAccountId') && has(facts, 'destinationAccountId'),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.ASSET_CONSUMPTION,
+    weight: 85,
+    reason: 'پولی جابه‌جا نشده و به دارایی ثبت‌شدهٔ قبلی ارجاع دارد.',
+    test: (facts) => direction(facts) === 'none' && has(facts, 'originalEventReference') && !has(facts, 'correctionReason'),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.OWNER_CAPITAL_MOVEMENT,
+    weight: 84,
+    reason: 'طرف حساب، خودِ مالک یا شریک است.',
+    test: (facts) => facts?.counterpartyRole === 'owner',
+  }),
+  // ارجاع به سند باز یعنی این پول تعهد موجود را می‌بندد، نه اینکه درآمد یا
+  // هزینهٔ تازه بسازد. نگهبان کاملش در WP-1 می‌آید؛ اینجا فقط ماهیت است.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.LIABILITY_SETTLEMENT,
+    weight: 80,
+    reason: 'پول خارج شد و به یک سند باز ارجاع دارد.',
+    test: (facts) => direction(facts) === 'out' && has(facts, 'settlementReference'),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.RECEIVABLE_COLLECTION,
+    weight: 80,
+    reason: 'پول وارد شد و به یک سند باز ارجاع دارد.',
+    test: (facts) => direction(facts) === 'in' && has(facts, 'settlementReference'),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.ADVANCE_RECEIVED,
+    weight: 70,
+    reason: 'پول پیش از انجام تعهد دریافت شده است.',
+    test: (facts) => direction(facts) === 'in' && !has(facts, 'deliveryDate')
+      && (has(facts, 'contractReference') || has(facts, 'servicePeriodStart')),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,
+    weight: 65,
+    reason: 'تعهد انجام شده و پول هم دریافت شده است.',
+    test: (facts) => has(facts, 'deliveryDate') && direction(facts) === 'in',
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    weight: 64,
+    reason: 'تعهد انجام شده ولی هنوز پولی نیامده است.',
+    test: (facts) => has(facts, 'deliveryDate') && direction(facts) === 'none' && has(facts, 'counterparty'),
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    weight: 50,
+    reason: 'تعهدی به طرف حساب ساخته شده ولی هنوز پولی پرداخت نشده است.',
+    test: (facts) => direction(facts) === 'none' && has(facts, 'counterparty') && has(facts, 'amount'),
+  }),
+  // پایین‌ترین وزن عمدی است: «پول خارج شد» ضعیف‌ترین نشانهٔ ممکن است و فقط
+  // وقتی برنده می‌شود که هیچ نشانهٔ قوی‌تری نباشد. اینجا همان جایی است که
+  // پیش‌پرداخت، موجودی و دارایی ثابت می‌نشینند و برخوردشان را قاعده تعیین
+  // می‌کند، نه طبقه‌بند.
+  //
+  // شرط `signalsFutureBenefit` حیاتی است: بدون آن، هر پرداخت سادهٔ نقدی هم
+  // «ایجاد دارایی» برچسب می‌خورد و دادهٔ شادو از همان روز اول آلوده می‌شود.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.ASSET_CREATION,
+    weight: 40,
+    reason: 'پول خارج شد، به سند بازی ارجاع ندارد، و نشانهٔ منفعت آینده دارد.',
+    test: (facts) => direction(facts) === 'out' && has(facts, 'amount') && signalsFutureBenefit(facts),
+  }),
+]);
 
 /**
  * خانوادهٔ یک رویداد را از روی واقعیت‌هایش تعیین می‌کند.
@@ -144,7 +271,25 @@ function notImplemented(name) {
  * خروجی همیشه یک شیء است، حتی وقتی نتیجه `unknown` باشد: `{ family, confidence, reason }`.
  * هیچ‌وقت به خانوادهٔ پیش‌فرض برنمی‌گردد و هیچ‌وقت استثنا پرتاب نمی‌کند — رویدادی
  * که جایش معلوم نیست باید به صف حسابدار برسد، نه اینکه مسیر را بشکند.
+ *
+ * وقتی چند قاعده هم‌زمان بگیرند، قوی‌ترین برنده است. تساوی وزن ممکن نیست چون
+ * وزن‌ها یکتا انتخاب شده‌اند؛ اگر روزی تساوی پیش بیاید، اولی برنده می‌شود و
+ * این رفتار قابل‌پیش‌بینی است، نه تصادفی.
  */
-export function classifyFamily(/* facts */) {
-  throw notImplemented('classifyFamily');
+export function classifyFamily(facts = {}) {
+  let winner = null;
+  for (const rule of FAMILY_RULES) {
+    let matched = false;
+    // قاعدهٔ خراب نباید کل مسیر را بشکند؛ رویداد باید به حسابدار برسد.
+    try { matched = Boolean(rule.test(facts)); } catch { matched = false; }
+    if (matched && (!winner || rule.weight > winner.weight)) winner = rule;
+  }
+  if (!winner) {
+    return Object.freeze({
+      family: FAMILY_UNKNOWN,
+      confidence: 0,
+      reason: 'هیچ‌کدام از نشانه‌های دوازده خانواده در واقعیت‌های موجود پیدا نشد.',
+    });
+  }
+  return Object.freeze({ family: winner.family, confidence: winner.weight / 100, reason: winner.reason });
 }

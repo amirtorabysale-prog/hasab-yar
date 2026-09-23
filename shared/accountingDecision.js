@@ -13,7 +13,13 @@
  * قاعدهٔ سخت: هیچ `PostingPlan` بدون یک تصمیم معتبر و نسخه‌دار ساخته نمی‌شود.
  */
 
-import { FAMILY_UNKNOWN, RISK_LEVELS, isEconomicFamily } from './economicFamily.js';
+import {
+  ECONOMIC_FAMILIES, FAMILY_DEFAULT_RISK, FAMILY_UNKNOWN, RISK_LEVELS, TIME_BOUND_SERVICE_CATEGORIES,
+  classifyFamily, isEconomicFamily,
+} from './economicFamily.js';
+import {
+  FACT_LABELS, TREATMENTS, missingFactsFor, nextQuestionFor, requiredFactsFor,
+} from './factRequirements.js';
 
 /**
  * پنج وضعیت.
@@ -124,18 +130,123 @@ export function decisionAuthorizesPosting(decision) {
  * `version` اینجا هست ولی انتخاب بر اساس تاریخ رویداد در WP-2 اضافه می‌شود.
  * فعلاً فقط ذخیره می‌شود تا تصمیم بدون نسخه ساخته نشود.
  */
-export const DEFAULT_POLICIES = Object.freeze([]);
-
-function notImplemented(name) {
-  return Object.assign(new Error(`${name} هنوز پیاده‌سازی نشده است.`), { code: 'NOT_IMPLEMENTED' });
-}
+export const DEFAULT_POLICIES = Object.freeze([
+  Object.freeze({
+    policyKey: 'prepaid-service',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.ASSET_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    /**
+     * دسته‌هایی که خدمت دوره‌دار می‌سازند.
+     *
+     * این فهرست سیاست دفتر است و حسابدار تأییدش می‌کند — نه حدسی که مدل زبانی
+     * می‌زند. مدل فقط می‌گوید دسته «بیمه» بود؛ اینکه بیمه یک خدمت دوره‌دار است
+     * و پرداختش دارایی می‌سازد، اینجا نوشته شده و قابل آزمون است.
+     */
+    categories: TIME_BOUND_SERVICE_CATEGORIES,
+    appliesTo(facts) { return this.categories.includes(String(facts?.category || '').trim()); },
+    /**
+     * دوره‌ای که کاملاً گذشته، دارایی نمی‌سازد.
+     *
+     * پیش‌پرداختی که منفعت آینده ندارد، دارایی نیست — همان لحظه هزینهٔ دوره
+     * است. ساختن دارایی و بعد مستهلک کردنش در گذشته، فقط سند اضافه می‌سازد.
+     */
+    resolve(facts, { today }) {
+      const end = facts?.servicePeriodEnd;
+      if (end && new Date(end).getTime() < new Date(today).getTime()) {
+        return { treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
+      }
+      return {
+        treatment: TREATMENTS.PREPAID_EXPENSE,
+        recognitionMethod: RECOGNITION_METHODS.MONTHLY_STRAIGHT_LINE,
+        recognitionDate: facts?.servicePeriodStart || null,
+      };
+    },
+  }),
+]);
 
 /**
  * از واقعیت‌ها، یک تصمیم.
  *
- * تابع خالص: هیچ دیتابیسی، هیچ ساعتی، هیچ تصادفی. همان ورودی همیشه همان تصمیم
- * را می‌دهد — بدون این، replay بعد از تغییر نسخهٔ قاعده قابل اثبات نیست.
+ * تابع خالص: هیچ دیتابیسی، هیچ ساعتی، هیچ تصادفی. `today` صریح پاس داده
+ * می‌شود و از `Date.now()` خوانده نمی‌شود — بدون این، replay بعد از تغییر
+ * نسخهٔ قاعده قابل اثبات نیست و همان ورودی فردا تصمیم دیگری می‌دهد.
+ *
+ * ترتیب کنترل‌ها عمدی است:
+ *
+ * ۱. خانواده معلوم نیست → حسابدار. هیچ قاعده‌ای روی ماهیت نامعلوم اجرا نمی‌شود.
+ * ۲. واقعیت پایهٔ خانواده کم است → سؤال، حتی پیش از انتخاب قاعده.
+ * ۳. قاعده‌ای برای این خانواده نیست → `unsupported`، نه حدس.
+ * ۴. قاعده هست ولی واقعیت اضافه‌اش کم است → سؤال.
+ * ۵. همه‌چیز هست → تصمیم.
+ *
+ * اطمینان مدل در هیچ‌کدام از این پنج گام دخالت ندارد. یک برداشت با اطمینان
+ * کامل، جای دورهٔ پوشش نامعلوم را نمی‌گیرد.
  */
-export function decide(/* facts, { policies, today } */) {
-  throw notImplemented('decide');
+export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null } = {}) {
+  const classified = classifyFamily(facts);
+  const family = classified.family;
+  const riskLevel = FAMILY_DEFAULT_RISK[family] || RISK_LEVELS.RED;
+  const sourceReferences = facts?.evidence ? [facts.evidence] : [];
+
+  if (family === FAMILY_UNKNOWN) {
+    return createDecision({
+      family, riskLevel, sourceReferences,
+      decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+      explanation: classified.reason,
+    });
+  }
+
+  const baseMissing = missingFactsFor(family, null, facts);
+  if (baseMissing.length) {
+    return createDecision({
+      family, riskLevel, sourceReferences,
+      requiredFacts: requiredFactsFor(family, null),
+      missingFacts: baseMissing,
+      decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
+      explanation: `${classified.reason} ولی ${FACT_LABELS[baseMissing[0]] || baseMissing[0]} معلوم نیست.`,
+      question: nextQuestionFor(baseMissing),
+    });
+  }
+
+  const policy = policies.find((candidate) => candidate.family === family && candidate.appliesTo(facts));
+  if (!policy) {
+    return createDecision({
+      family, riskLevel, sourceReferences,
+      requiredFacts: requiredFactsFor(family, null),
+      decisionStatus: DECISION_STATUS.UNSUPPORTED,
+      explanation: `${classified.reason} قاعدهٔ ثبتی برای این ماهیت هنوز تعریف نشده است.`,
+    });
+  }
+
+  const resolved = policy.resolve(facts, { today });
+  const requiredFacts = requiredFactsFor(family, resolved.treatment);
+  const missingFacts = missingFactsFor(family, resolved.treatment, facts);
+
+  if (missingFacts.length) {
+    return createDecision({
+      family, riskLevel, requiredFacts, missingFacts, sourceReferences,
+      treatment: resolved.treatment,
+      policyKey: policy.policyKey,
+      policyVersion: policy.version,
+      decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
+      explanation: `${classified.reason} برای تصمیم نهایی ${FACT_LABELS[missingFacts[0]] || missingFacts[0]} لازم است.`,
+      question: nextQuestionFor(missingFacts),
+    });
+  }
+
+  return createDecision({
+    family,
+    treatment: resolved.treatment,
+    policyKey: policy.policyKey,
+    policyVersion: policy.version,
+    recognitionDate: resolved.recognitionDate,
+    recognitionMethod: resolved.recognitionMethod,
+    requiredFacts,
+    missingFacts: [],
+    riskLevel: policy.riskLevel || riskLevel,
+    sourceReferences,
+    decisionStatus: DECISION_STATUS.DECIDED,
+    explanation: classified.reason,
+  });
 }
