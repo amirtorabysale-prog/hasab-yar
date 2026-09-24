@@ -11,6 +11,7 @@ import { extractDateMention } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
 import { detectTaxMention, parseInvoiceLines, wantsImmediateIssue } from './invoiceSpeech.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from './financialEvent.js';
+import { EVENT_NATURES, readEventNature } from './eventNature.js';
 
 /**
  * نیت گفته را تشخیص می‌دهد.
@@ -46,12 +47,15 @@ const PAYABLE_PATTERNS = [
   /طلبکار\s*(?:ه|است|هست(?!\s*(?:م|یم))|ند|شد(?!\s*(?:م|یم))|شده(?!\s*(?:ام|ایم)))/,
   /بدهی\s*دار(?:م|یم)/, /بدهیم\s*شد/,
   /باید\s*(?:بهش|به\s*\S+)\s*بدم/, /قرض\s*گرفت(?:م|یم)/,
+  // «طلبکارش کنین» — دستور به ما: او را طلبکار کن، یعنی بدهی ما.
+  /طلبکار(?:ش|شون)\s*(?:کن|کنین|کنید|بکن)/,
 ];
 
 // `\b` با حروف فارسی کار نمی‌کند — برای جاوااسکریپت حرف فارسی «word» نیست، پس
 // `\bچک\b` هیچ‌وقت تطبیق نمی‌خورد. مرز واژه باید با lookaround ساخته شود.
 const CHEQUE_PATTERNS = [/(?<![آ-ی])چک(?![آ-ی])/, /(?<![آ-ی])چکی(?![آ-ی])/, /صیاد/];
-const INVOICE_SALES_PATTERNS = [/فاکتور\s*فروش/, /فاکتور\s*زدم\s*برای/, /پیش\s*فاکتور\s*فروش/];
+// «فاکتور فروشنده» فاکتوری است که فروشنده به ما داده، نه فاکتور فروش ما.
+const INVOICE_SALES_PATTERNS = [/فاکتور\s*فروش(?!نده)/, /فاکتور\s*زدم\s*برای/, /پیش\s*فاکتور\s*فروش(?!نده)/];
 const INVOICE_PURCHASE_PATTERNS = [/فاکتور\s*خرید/, /فاکتور\s*خریدم/];
 
 
@@ -115,6 +119,42 @@ function matchesAny(text, patterns) {
 function spokenAmount(input) {
   const parsed = parseFinancialText(input, { source: 'voice' });
   return parsed.transactions.reduce((largest, item) => Math.max(largest, Number(item.amount) || 0), 0);
+}
+
+/**
+ * چند مبلغ مستقل در یک جمله — مبلغ سند از خودِ جمله درنمی‌آید.
+ *
+ * «جمع فاکتور هشتاد میلیون شد، پنج میلیون تخفیف دادیم، مانده رو چک دادن» چکِ
+ * هفتاد و پنج میلیونی است؛ ولی بزرگ‌ترین عدد، هشتاد، روی کارت می‌نشست و با یک
+ * «تأیید» چک هشتاد میلیونی ثبت می‌شد. وقتی جمله بیش از یک مبلغ دارد، مبلغ
+ * پرسیده می‌شود.
+ */
+function hasSeveralAmounts(input) {
+  // از پارسر، نه از استخراج خام: تاریخ («۱۵/۳/۱۴۰۵») و واحدهای زمان آنجا
+  // کنار گذاشته شده‌اند و مبلغ حساب نمی‌شوند.
+  const amounts = parseFinancialText(input, { source: 'voice' }).transactions
+    .filter((item) => !item.amountScaleAmbiguous && Number(item.amount) >= 1_000)
+    .map((item) => Number(item.amount));
+  return new Set(amounts).size > 1;
+}
+
+// پرداختِ انجام‌شده، نه صدور فاکتور. «سی میلیون به حساب کاظمی زدیم ولی نمیدونم
+// فاکتور خریدش قبلاً ثبت شده» دربارهٔ پولی است که رفته؛ پیش‌نویس فاکتور خرید
+// برایش ساختن یعنی یک خرید دوم.
+const PAYMENT_DONE = /(?:زدیم|زدم|ریختیم|ریختم|واریز\s*کرد(?:یم|م)|پرداخت\s*کرد(?:یم|م)|دادیم|دادم)(?![آ-ی])/;
+
+/**
+ * چکِ طرف سوم که ما خرجش کردیم — پشت‌نویسی.
+ *
+ * نه چک صادرهٔ ماست و نه دریافتی تازه: چک دریافتنی از دفتر بیرون می‌رود و بدهی
+ * طرف مقابل بسته می‌شود. کارت چک یا کارت تسویه هیچ‌کدام این شکل را ندارند و
+ * هرکدام سند غلطی می‌زدند (نقد یا چک پرداختنی)؛ پس به حسابدار می‌رود.
+ */
+export function isChequeEndorsement(input) {
+  const text = normalizePersian(input);
+  if (!/(?<![آ-ی])چک/.test(text)) return false;
+  if (/خرج\s*کرد|پشت\s*نویس/.test(text)) return true;
+  return /چک\s*(?:\S+\s*){0,2}(?:مشتری|شخص\s*ثالث)/.test(text) && /(?:دادیم|دادم|واگذار\s*کردیم)(?![آ-ی])/.test(text);
 }
 
 /**
@@ -183,11 +223,23 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   if (!text) return null;
   const obligationContext = context === 'obligation';
 
+  // اصلاح، برگشت، تغییر برآورد و مانندشان رویداد تازه نیستند. «فاکتور خرید
+  // دیروز اشتباهاً بیست و یک میلیون ثبت شده بود» پیش‌نویس فاکتور تازه می‌ساخت؛
+  // این جمله‌ها از مسیر موتور تصمیم به حسابدار می‌روند.
+  if (readEventNature(input) !== EVENT_NATURES.NEW) return null;
+  if (isChequeEndorsement(input)) return null;
+  // کاربر خودش گفته نمی‌داند، یا چک ضمانت است. کارت ساختاری فقط بین دو گزینهٔ
+  // از پیش تعیین‌شده می‌پرساند و هیچ‌کدام درست نیست؛ این‌ها به حسابدار می‌روند.
+  if (/نمی\s*دونم|نمیدونم|نمی\s*دانم|معلوم\s*نیس|مشخص\s*نیس|مطمئن\s*نیستم/.test(text)) return null;
+  if (/ضمانت|تضمین|وثیقه|نه\s*تاریخ\s*داره|در\s*وجه\s*کسی|دستت\s*باشه/.test(text)) return null;
+
   const amount = spokenAmount(input);
   const contactName = extractContactName(input, { allowBare: obligationContext });
-  const isCheque = matchesAny(text, CHEQUE_PATTERNS);
+  // «دسته چک جدید رو تحویل گرفتیم… کارمزدش کم شد» دربارهٔ کارمزد بانک است، نه
+  // یک چک؛ کارت چک برایش سؤال «بابت فروش تازه یا طلب قبلی؟» می‌پرسید.
+  const isCheque = matchesAny(text, CHEQUE_PATTERNS) && !/دسته\s*چک/.test(text);
 
-  if (matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) {
+  if ((matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) && !PAYMENT_DONE.test(text)) {
     if (!amount) return null;
     const documentType = matchesAny(text, INVOICE_PURCHASE_PATTERNS) ? 'purchase' : 'sales';
     return {
@@ -206,7 +258,10 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
     };
   }
 
-  if (matchesAny(text, CAPITAL_PATTERNS)) {
+  // آورده یعنی پول تازه از مالک. جابه‌جایی درون حقوق صاحبان سهام — جاری شرکا یا
+  // سود انباشته به سرمایه — پولی جابه‌جا نمی‌کند؛ کارت آورده صندوق را بدهکار
+  // می‌کرد و پولی که نیامده بود در بانک می‌نشست.
+  if (matchesAny(text, CAPITAL_PATTERNS) && !/جاری\s*شرکا|مطالبات|سود\s*انباشته|اندوخته|منتقل\s*شد|انتقال\s*(?:به|یافت)/.test(text)) {
     if (!amount) return null;
     return {
       intent: 'capital',
@@ -235,7 +290,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   // فعل معمولاً از «چک» فاصله دارد («چک پنج میلیون دادم»)، پس چسبیدگی شرط
   // نیست؛ وجود فعل جهت‌دار در همان جمله کافی است.
   const receivable = matchesAny(text, RECEIVABLE_PATTERNS)
-    || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما))/.test(text));
+    || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*دادن(?![آ-ی]))/.test(text));
   const payable = matchesAny(text, PAYABLE_PATTERNS)
     || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(text));
   if (!receivable && !payable) return null;
@@ -243,13 +298,15 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
 
   // هر دو نشانه یعنی جمله واقعاً مبهم است؛ اجرا نمی‌شود تا کاربر روشنش کند.
   const direction = receivable && payable ? null : receivable ? 'receivable' : 'payable';
+  const severalAmounts = hasSeveralAmounts(input);
   return {
     intent: isCheque ? 'cheque' : 'obligation',
     direction,
     ambiguous: !direction,
-    amount,
+    amount: severalAmounts ? 0 : amount,
     // مبلغ خالی یعنی «هنوز گفته نشده»، نه صفر؛ کارت تأیید تا نوشتنش پیش نمی‌رود.
-    needsAmount: !amount,
+    needsAmount: !amount || severalAmounts,
+    ...(severalAmounts ? { amountHint: amount } : {}),
     contactName,
     ...splitDateRoles(input, { now, isCheque }),
     title: [isCheque ? 'چک' : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),

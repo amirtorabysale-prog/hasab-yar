@@ -99,7 +99,7 @@ export function handOverPending(eventId) {
   return item;
 }
 
-export function approveEvent(eventId) {
+export function approveEvent(eventId, { reason = '' } = {}) {
   const database = activeWorkspaceDatabase();
   // رویدادی که روی یک تراکنش نشسته، سندش را از همان مسیر تراکنش می‌گیرد. اگر
   // اینجا نقشهٔ نقش‌محور اجرا شود، دو تراکنش هم‌شکل بسته به اینکه خودکار ثبت
@@ -123,7 +123,7 @@ export function approveEvent(eventId) {
     if (transaction) postJournal = transactionJournalPoster(transaction, settlementFor(transaction));
   }
   const item = approveFinancialEvent(database, eventId, {
-    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal,
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal, overrideReason: reason,
   });
   if (source?.type === 'transaction') database.prepare('UPDATE transactions SET journal_deferred=0 WHERE id=?').run(source.id);
   audit('approve', 'financial-event', eventId, { status: item.status });

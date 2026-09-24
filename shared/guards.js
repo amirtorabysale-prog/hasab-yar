@@ -197,6 +197,11 @@ function vatSplitGuard(event, facts, { decision, vat, sentence, rewrittenBy }) {
   // پرداخت به سازمان: پول رفته، ارزش افزوده موضوع جمله است و خرید و فروشی در
   // کار نیست.
   if (mention.form === VAT_FORMS.BARE && direction === 'out' && !mention.trade) {
+    // «اظهارنامه ارسال شد، بدهی قابل پرداخت ۲۷ میلیون شد» پرداخت نیست. بستن
+    // بدهی با پولی که نرفته، ماندهٔ بانک را غلط می‌گذارد.
+    if (!mention.paid) {
+      return check(name, GUARD_VERDICTS.BLOCK, 'از ارزش افزوده گفته شده ولی پرداختی انجام نشده؛ ثبت بدهی اظهارنامه کار حسابدار است.', noted);
+    }
     if (!vat) return check(name, GUARD_VERDICTS.BLOCK, 'ماندهٔ ارزش افزودهٔ دفتر بررسی نشد؛ این پرداخت بدون آن ثبت نمی‌شود.', noted);
     const outputTax = Math.max(0, Number(vat.outputTax) || 0);
     if (outputTax < event.amount) {

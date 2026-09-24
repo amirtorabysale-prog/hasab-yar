@@ -92,6 +92,7 @@ export function factsFromEvent(event = {}) {
     prepaymentSignal: event.prepaymentSignal || undefined,
     amountScaleAmbiguous: event.amountScaleAmbiguous || undefined,
     evidence: event.evidence,
+    utterance: event.utterance,
   };
   for (const [key, value] of Object.entries(facts)) {
     if (value === undefined || value === null || value === '') delete facts[key];

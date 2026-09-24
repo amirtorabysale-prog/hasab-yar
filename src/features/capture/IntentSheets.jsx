@@ -35,7 +35,13 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
   const isCapital = draft.intent === 'capital';
   const isAsset = draft.intent === 'fixed-asset';
   const isEquityMove = isCapital || isAsset;
-  const ready = isInvoice ? true : isEquityMove ? Boolean(String(draft.title || '').trim()) : Boolean(draft.direction);
+  const hasAmount = Number(draft.amount) > 0;
+  // چک بدون پاسخ «بابت چه؟» ثبت نمی‌شود: پیش‌فرض «معاملهٔ تازه» همان فروش را
+  // دو بار در درآمد می‌آورد وقتی چک بابت طلب قبلی بود.
+  const chequeReady = !isCheque || (['income', 'receivable'].includes(draft.against) && Boolean(String(draft.contactName || '').trim()));
+  const ready = isInvoice ? true
+    : isEquityMove ? Boolean(String(draft.title || '').trim())
+      : Boolean(draft.direction) && hasAmount && chequeReady;
   const label = isInvoice ? 'فاکتور' : isCapital ? 'سرمایه' : isAsset ? 'دارایی ثابت' : isCheque ? 'چک' : 'طلب و بدهی';
   const submit = async () => {
     if (!ready) return;
@@ -57,7 +63,15 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
 
       <div className="mt-4 rounded-[10px] border border-line bg-surface px-3 py-3">
         <p className="text-xs font-bold text-muted">مبلغ</p>
-        <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>
+        {draft.needsAmount && !isInvoice && !isEquityMove ? <>
+          {/* جمله بیش از یک مبلغ داشت یا مبلغی نگفت؛ حدس نمی‌زنیم، می‌پرسیم. */}
+          <input dir="ltr" inputMode="numeric" value={draft.amount || ''} placeholder="مبلغ به تومان"
+            onChange={(event) => setDraft({ ...draft, amount: Number(String(event.target.value).replace(/[^\d]/g, '')) || 0 })}
+            className="tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-lg numbers" />
+          <p className="mt-1 text-[11px] leading-5 text-expense">
+            {draft.amountHint ? 'جمله بیش از یک مبلغ داشت؛ مبلغ همین سند را خودت بنویس.' : 'مبلغ از جمله برداشت نشد؛ خودت بنویس.'}
+          </p>
+        </> : <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>}
       </div>
 
       {isEquityMove ? <>
@@ -176,10 +190,33 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
           </div>
         </div>
 
-        <label className="mt-3 block text-xs font-bold text-muted">عنوان
+        {isCheque ? <>
+          <label className="mt-3 block text-xs font-bold text-muted">{draft.direction === 'payable' ? 'گیرندهٔ چک' : 'صاحب چک'}
+            <input value={draft.contactName || ''} onChange={(event) => setDraft({ ...draft, contactName: event.target.value })}
+              placeholder="نام شخص یا شرکت" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+          </label>
+          <div className="mt-3">
+            <p className="text-xs font-bold text-muted">این چک بابت چیست؟</p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {(draft.direction === 'payable'
+                ? [['income', 'خرید یا هزینهٔ تازه'], ['receivable', 'بدهی قبلی ما']]
+                : [['income', 'فروش تازه'], ['receivable', 'طلب قبلی ما']]).map(([value, text]) => (
+                <button key={value} onClick={() => setDraft({ ...draft, against: value })}
+                  className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.against === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{text}</button>
+              ))}
+            </div>
+            <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-[11px] leading-6 text-accent">
+              {draft.against === 'receivable'
+                ? 'بابت حساب قبلی است، پس درآمد یا هزینهٔ تازه‌ای شناسایی نمی‌شود؛ فقط شکل طلب یا بدهی به چک عوض می‌شود.'
+                : draft.against === 'income'
+                  ? 'بابت معاملهٔ تازه است، پس همین حالا درآمد یا هزینه شناسایی می‌شود. اگر بابت حساب قبلی است، گزینه را عوض کن وگرنه همان معامله دو بار در سود می‌آید.'
+                  : 'تا انتخاب نکنی ثبت نمی‌شود: اگر بابت حساب قبلی باشد و «تازه» ثبت شود، همان معامله دو بار در سود دوره می‌آید.'}
+            </p>
+          </div>
+        </> : <label className="mt-3 block text-xs font-bold text-muted">عنوان
           <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
             className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
-        </label>
+        </label>}
 
         {draft.occurredAt && <p className="mt-3 text-xs text-muted">تاریخ بدهکار/طلبکار شدن: <b className="text-ink">{persianDate(draft.occurredAt)}</b></p>}
       {draft.dueAt && <p className="mt-1 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}

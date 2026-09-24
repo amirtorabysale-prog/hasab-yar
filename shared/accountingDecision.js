@@ -15,7 +15,7 @@
 
 import {
   ECONOMIC_FAMILIES, FAMILY_DEFAULT_RISK, FAMILY_UNKNOWN, RISK_LEVELS, TIME_BOUND_SERVICE_CATEGORIES,
-  classifyFamily, isEconomicFamily,
+  classifyFamily, isEconomicFamily, isTimeBoundService,
 } from './economicFamily.js';
 import {
   FACT_KEYS, FACT_LABELS, TREATMENTS, isFactPresent, missingFactsFor, nextQuestionFor, requiredFactsFor,
@@ -148,7 +148,23 @@ export const DEFAULT_POLICIES = Object.freeze([
     family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
     riskLevel: RISK_LEVELS.YELLOW,
     supportedTreatments: Object.freeze([TREATMENTS.ACCRUED_EXPENSE]),
-    appliesTo(facts) { return facts?.moneyDirection === 'none' && !facts?.chequeDirection; },
+    /**
+     * فقط خدمت و مصرفی که همان دوره تمام می‌شود.
+     *
+     * «پرداخت‌نشده» به‌تنهایی نمی‌گوید چه چیزی خریده شده. پیش از این هر بدهیِ
+     * بی‌پرداخت هزینه می‌شد: میز و صندلیِ نسیه، ساخت سوله، سود وام. در آزمون
+     * استرس همهٔ این‌ها «تصمیم قطعی» گرفتند و همه غلط بودند — دارایی یا
+     * تسهیلات، نه هزینهٔ دوره. بیرون از این فهرست، قاعده‌ای نیست و مورد به
+     * حسابدار می‌رود.
+     */
+    categories: Object.freeze([
+      'قبوض', 'اجاره', 'حمل‌ونقل', 'سوخت و ایاب‌وذهاب', 'تبلیغات و بازاریابی',
+      'نرم‌افزار و اشتراک', 'کارمزد بانکی', 'تعمیر و نگهداری', 'خوراک', 'آموزش',
+    ]),
+    appliesTo(facts) {
+      return facts?.moneyDirection === 'none' && !facts?.chequeDirection
+        && this.categories.includes(String(facts?.category || '').trim());
+    },
     resolve(facts) {
       return {
         treatment: TREATMENTS.ACCRUED_EXPENSE,
@@ -289,7 +305,7 @@ export const DEFAULT_POLICIES = Object.freeze([
      * وقتی دوره صریح است، دیگر نیازی به حدس از روی دسته نیست.
      */
     appliesTo(facts) {
-      if (this.categories.includes(String(facts?.category || '').trim())) return true;
+      if (isTimeBoundService(facts)) return true;
       return isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
     },
     /**

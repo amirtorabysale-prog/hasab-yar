@@ -766,6 +766,20 @@ export default function App() {
           : 'دارایی ثابت ثبت شد؛ هزینهٔ این ماه نشد و به بهای تمام‌شده در دارایی‌ها نشست.');
         return;
       }
+      // چک صوتی همان مسیر فرم چک را می‌رود، با همان پرسش «بابت چه؟». تا امروز
+      // به‌عنوان طلب یا بدهی عادی ذخیره می‌شد و همیشه درآمد یا هزینهٔ تازه
+      // می‌ساخت — حتی وقتی چک بابت فاکتور قبلی بود.
+      if (draft.intent === 'cheque') {
+        await withCounterpartyConfirmation((counterpartyResolution) => api.recordCheque({
+          direction: draft.direction, counterpartyName: draft.contactName, amount: draft.amount,
+          against: draft.against, dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
+          note: draft.transcript.slice(0, 300), counterpartyResolution,
+        }));
+        setIntentDraft(null);
+        await load();
+        notify(draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
+        return;
+      }
       await api.saveObligation({
         title: draft.title, amount: draft.amount, direction: draft.direction,
         dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
@@ -794,6 +808,8 @@ export default function App() {
   const persistConfirmed = async (payload, transactions, allowDuplicates = false, offlineAudioId = '') => {
     const result = await api.saveTransactions({ ...payload, allowDuplicates });
     await finalizeOfflineAudio(offlineAudioId);
+    // اصلاحِ ثبت قبلی تراکنش تازه نمی‌سازد؛ کاربر باید بداند کجا رفت.
+    if (result.queuedForAccountant) notify(`ردیف نقدی ساخته نشد و به صف حسابدار رفت: ${result.queuedReasons?.[0] || 'این جمله تراکنش نقدی تازه نیست.'}`);
     setUndoSave({ ids: result.ids || [], count: transactions.length });
     setRedoSave(null);
     setDuplicatePrompt(null);

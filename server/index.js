@@ -349,7 +349,7 @@ app.post('/api/transactions', (request, response, next) => {
       if (duplicates.length) throw Object.assign(new Error('یک ثبت بسیار مشابه در چند دقیقهٔ اخیر پیدا شد.'), { code: 'POSSIBLE_DUPLICATE', status: 409, details: { duplicates } });
     }
     const ids = insertTransactions({ transcript: request.body.transcript, transactions, counterpartyResolution: request.body.counterpartyResolution });
-    return response.status(201).json({ ids, ...getToday() });
+    return response.status(201).json({ ids, queuedForAccountant: ids.queuedForAccountant || 0, queuedReasons: ids.queuedReasons || [], ...getToday() });
   } catch (error) { return next(error); }
 });
 app.get('/api/reports', (request, response) => response.json(report(['week', 'month', 'quarter'].includes(request.query.range) ? request.query.range : 'month')));
@@ -560,7 +560,7 @@ app.post('/api/financial-events/:id/answer', (request, response, next) => {
   try { return response.json({ item: answerEvent(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
 });
 app.post('/api/financial-events/:id/approve', (request, response, next) => {
-  try { return response.json({ item: approveEvent(request.params.id) }); } catch (error) { return next(error); }
+  try { return response.json({ item: approveEvent(request.params.id, { reason: String(request.body?.reason || '').slice(0, 500) }) }); } catch (error) { return next(error); }
 });
 app.post('/api/financial-events/:id/reverse', (request, response, next) => {
   try { return response.json({ item: reverseEvent(request.params.id, String(request.body?.reason || '')) }); } catch (error) { return next(error); }

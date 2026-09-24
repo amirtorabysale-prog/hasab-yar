@@ -159,6 +159,23 @@ const direction = (facts) => facts?.moneyDirection ?? null;
 export const TIME_BOUND_SERVICE_CATEGORIES = Object.freeze(['بیمه', 'اجاره', 'نرم‌افزار و اشتراک']);
 
 /**
+ * «بیمه» همیشه حق‌بیمهٔ دوره‌دار نیست.
+ *
+ * بیمهٔ تأمین اجتماعی پرسنل، بدهیِ حقوق است که تسویه می‌شود؛ و پولی که شرکت
+ * بیمه بابت خسارت می‌دهد، اصلاً پرداخت ما نیست. هر دو دستهٔ «بیمه» می‌گیرند و
+ * تا امروز سؤال «دورهٔ پوشش از کی تا کی؟» می‌گرفتند — سؤال غلط از رویداد درست.
+ */
+const NOT_A_PREMIUM = /ت[اأ]مین\s*اجتماع|لیست\s*بیمه|بیمه\s*(?:پرسنل|کارگر|کارکنان|بیکاری)|سهم\s*(?:کارفرما|کارگر)|خسارت|غرامت/;
+
+export function isTimeBoundService(facts) {
+  const category = String(facts?.category || '').trim();
+  if (!TIME_BOUND_SERVICE_CATEGORIES.includes(category)) return false;
+  // کل گفته هم دیده می‌شود: «انبار آتش گرفت… شرکت بیمه بیست و پنج میلیونش رو
+  // واریز کرد» دو ردیف دارد و «خسارت» فقط در تکهٔ ردیف اول است.
+  return !(category === 'بیمه' && NOT_A_PREMIUM.test(`${facts?.evidence || ''} ${facts?.utterance || ''}`));
+}
+
+/**
  * آیا نشانه‌ای هست که این پرداخت منفعت آینده می‌سازد؟
  *
  * بدون این کنترل، هر خروج وجهی «ایجاد دارایی» می‌شد — و خرید چای دفتر کنار
@@ -175,7 +192,7 @@ function signalsFutureBenefit(facts) {
   if (['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)) return true;
   // «پیش‌پیش»، «بیعانه»، «علی‌الحساب»: پول رفته و هنوز هیچ چیزی مصرف نشده.
   if (facts?.prepaymentSignal === true) return true;
-  return TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
+  return isTimeBoundService(facts);
 }
 
 export const FAMILY_RULES = Object.freeze([

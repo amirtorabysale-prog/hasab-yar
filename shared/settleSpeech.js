@@ -1,4 +1,6 @@
 import { normalizePersian } from './normalize.js';
+import { readServicePeriod } from './periodSpeech.js';
+import { isChequeEndorsement } from './voiceIntent.js';
 import { extractDateMention } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
 
@@ -115,6 +117,16 @@ export function detectSettleIntent(input, { now = new Date() } = {}) {
   const settles = matchesAny(text, EXPLICIT_SETTLE_PATTERNS)
     || (mentionsDocument && matchesAny(text, DOCUMENT_SETTLE_PATTERNS));
   if (!settles) return null;
+  // «تسویه» همیشه بستن یک سند باز نیست.
+  //
+  // «پونزده میلیون شارژ ساختمان رو برای شش ماه جلوتر تسویه کردم» یعنی پرداخت
+  // کردم — پیش‌پرداخت شش‌ماهه، نه بستن بدهی. کارت تسویه اینجا سندی برای انتخاب
+  // ندارد و رویداد درست هیچ‌وقت ساخته نمی‌شد.
+  if (readServicePeriod(input, { occurredAt: now.toISOString() })) return null;
+  // چک ابزار تسویه است، نه نقد. «برای تسویهٔ طلب ما چک شخص ثالث واگذار کرد»
+  // با کارت تسویه به‌صورت وصول نقدی بسته می‌شد؛ کارت چک همان را با پرسش
+  // «بابت طلب قبلی؟» درست ثبت می‌کند. پشت‌نویسی چک مشتری هم هیچ‌کدام نیست.
+  if (matchesAny(text, CHEQUE_HINTS) && (/واگذار\s*کرد|چک\s*دادن|داد\s*به\s*ما/.test(text) || isChequeEndorsement(input))) return null;
   const number = extractDocumentNumber(text);
   // شمارهٔ سند نباید مبلغ خوانده شود: «FR-1405-0002» مبلغ ۱۴۰۷ می‌ساخت و همان
   // قید، سند درست را از نتیجه حذف می‌کرد.
