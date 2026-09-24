@@ -7,6 +7,7 @@ import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
+import { EVENT_NATURES, readEventNature } from './eventNature.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
 
@@ -430,6 +431,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   const prepayment = readPrepaymentMention(input);
   // دوره و نشانهٔ پرداخت‌نشدن هم یک بار برای کل جمله، نه برای هر تراکنش.
   const unpaid = readUnpaidSignal(input);
+  const eventNature = readEventNature(input);
   // دوره نسبت به تاریخ رویداد حساب می‌شود، نه تاریخ اجرای کد: «برای شش ماه
   // جلوتر» در جمله‌ای که تاریخش دیروز است، از دیروز شروع می‌شود.
   const servicePeriod = readServicePeriod(input, { occurredAt: occurredAt || now.toISOString() });
@@ -515,6 +517,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // نشانهٔ ماهیت، نه دسته: پول رفته ولی هنوز هیچ چیزی بابتش نگرفته‌ایم.
       ...(prepayment ? { prepaymentSignal: true } : {}),
       ...(unpaid ? { unpaidSignal: true } : {}),
+      ...(eventNature !== EVENT_NATURES.NEW ? { eventNature } : {}),
       ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
       ...(counterpartyName ? {
         contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,

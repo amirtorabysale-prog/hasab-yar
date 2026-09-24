@@ -20,6 +20,9 @@ import {
 import {
   FACT_KEYS, FACT_LABELS, TREATMENTS, isFactPresent, missingFactsFor, nextQuestionFor, requiredFactsFor,
 } from './factRequirements.js';
+import {
+  EVENT_NATURES, NATURE_EXPLANATIONS, natureAffectsPast, natureNeedsAccountant,
+} from './eventNature.js';
 
 /**
  * پنج وضعیت.
@@ -426,6 +429,25 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
       decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
       explanation: 'مبلغ به شکل محاوره‌ای گفته شده و مقیاسش روشن نیست.',
       question: nextQuestionFor([FACT_KEYS.AMOUNT_SCALE], facts),
+    });
+  }
+
+  // نوع رویداد در دوره، پیش از هر قاعده‌ای.
+  //
+  // اصلاح ثبت قبلی، تغییر برآورد، برگشت سند، تعدیلی پایان دوره و افتتاحیه
+  // هیچ‌کدام رویداد تازه نیستند و هیچ‌کدام خودکار ثبت نمی‌شوند. اجرای قاعده‌های
+  // عادی رویشان یعنی یک اصلاح، سند مستقل تازه‌ای می‌سازد و همان مبلغ دو بار در
+  // دفتر می‌نشیند.
+  if (facts?.eventNature && natureNeedsAccountant(facts.eventNature)) {
+    return createDecision({
+      family: facts.eventNature === EVENT_NATURES.ESTIMATE_CHANGE
+        ? ECONOMIC_FAMILIES.VALUE_OR_ESTIMATE_CHANGE
+        : ECONOMIC_FAMILIES.CORRECTION_OR_REVERSAL,
+      riskLevel: RISK_LEVELS.RED,
+      sourceReferences: facts?.evidence ? [facts.evidence] : [],
+      decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+      explanation: NATURE_EXPLANATIONS[facts.eventNature] || 'این رویداد قضاوت حسابدار لازم دارد.',
+      assumptions: natureAffectsPast(facts.eventNature) ? ['این ثبت دورهٔ گذشته را تغییر می‌دهد.'] : [],
     });
   }
 

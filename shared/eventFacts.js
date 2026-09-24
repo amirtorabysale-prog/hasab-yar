@@ -88,6 +88,7 @@ export function factsFromEvent(event = {}) {
     // یکی دیده می‌شود، چون هر دو پولی جابه‌جا نمی‌کنند و طرف حساب دارند.
     obligationDirection: event.kind === EVENT_KINDS.RECEIVABLE_OPENED || event.kind === EVENT_KINDS.SALES_INVOICE ? 'receivable'
       : event.kind === EVENT_KINDS.PAYABLE_OPENED || event.kind === EVENT_KINDS.PURCHASE_INVOICE ? 'payable' : undefined,
+    eventNature: event.eventNature && event.eventNature !== 'new' ? event.eventNature : undefined,
     prepaymentSignal: event.prepaymentSignal || undefined,
     amountScaleAmbiguous: event.amountScaleAmbiguous || undefined,
     evidence: event.evidence,

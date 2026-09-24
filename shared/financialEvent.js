@@ -146,6 +146,9 @@ export function normalizeFinancialEvent(raw = {}) {
     deliveryDate: cleanIso(raw.deliveryDate),
     // مبنای برآورد: وجودش یعنی مبلغ قطعی نیست و قضاوت لازم دارد.
     estimateBasis: cleanText(raw.estimateBasis, 200) || null,
+    // نوع رویداد در دوره: تازه، اصلاح، تغییر برآورد، برگشت، تعدیلی، افتتاحیه.
+    // مقدار نامعتبر به «تازه» برمی‌گردد — حالت امن.
+    eventNature: ['correction', 'estimate-change', 'reversal', 'period-end-adjustment', 'opening', 'post-reporting'].includes(raw.eventNature) ? raw.eventNature : 'new',
     prepaymentSignal: raw.prepaymentSignal === true,
     amountScaleAmbiguous: raw.amountScaleAmbiguous === true,
     chequeAgainst: ['income', 'receivable'].includes(raw.chequeAgainst) ? raw.chequeAgainst : null,

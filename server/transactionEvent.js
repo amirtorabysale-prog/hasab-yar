@@ -122,6 +122,7 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     // بی‌صدا سی هزار ثبت می‌شود.
     amountScaleAmbiguous: item.amountScaleAmbiguous === true,
     prepaymentSignal: item.prepaymentSignal === true,
+    eventNature: item.eventNature || 'new',
     servicePeriodStart: item.servicePeriodStart || null,
     servicePeriodEnd: item.servicePeriodEnd || null,
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
