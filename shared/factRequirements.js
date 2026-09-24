@@ -187,6 +187,10 @@ export const TREATMENTS = Object.freeze({
   // پیش‌پرداخت به تأمین‌کننده: پول رفته، کالا یا خدمت هنوز نیامده. دارایی است
   // نه هزینه، و تا تحویل، هیچ سود و زیانی نمی‌سازد.
   SUPPLIER_ADVANCE: 'supplier-advance',
+  // درآمد تحقق‌یافته: تعهد انجام شده، پول نیامده.
+  ACCRUED_REVENUE: 'accrued-revenue',
+  // پیش‌دریافت بدون دورهٔ مشخص: بدهی، بدون برنامهٔ پخش.
+  CUSTOMER_ADVANCE: 'customer-advance',
 });
 
 /**

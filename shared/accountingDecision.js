@@ -132,6 +132,82 @@ export function decisionAuthorizesPosting(decision) {
  */
 export const DEFAULT_POLICIES = Object.freeze([
   /**
+   * جهت ب — مصرف پیش از پرداخت.
+   *
+   * قبض اسفند در **اسفند** هزینه است، نه در فروردین که پرداخت می‌شود. بدون
+   * این، هزینه در دورهٔ اشتباه می‌نشیند و سود هر دو دوره غلط می‌شود.
+   *
+   * مبلغ برآوردی همیشه به حسابدار می‌رود: برآورد قضاوت است، نه واقعیت.
+   */
+  Object.freeze({
+    policyKey: 'accrued-expense',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.ACCRUED_EXPENSE]),
+    appliesTo(facts) { return facts?.moneyDirection === 'none' && !facts?.chequeDirection; },
+    resolve(facts) {
+      return {
+        treatment: TREATMENTS.ACCRUED_EXPENSE,
+        recognitionMethod: RECOGNITION_METHODS.IMMEDIATE,
+        recognitionDate: facts?.servicePeriodEnd || facts?.occurredAt || null,
+        // برآورد، قضاوت است. حتی با طرف حساب و دورهٔ روشن، حسابدار باید ببیند.
+        forceReview: isFactPresent(facts?.estimateBasis),
+      };
+    },
+  }),
+
+  /**
+   * جهت ج — دریافت پیش از انجام تعهد.
+   *
+   * بدترین خطای این جهت، درآمد جعلی است: هم سود را باد می‌کند و هم مالیات
+   * می‌سازد، در حالی که هنوز هیچ کاری انجام نشده. پس هیچ سطر درآمدی ساخته
+   * نمی‌شود.
+   *
+   * بدون دورهٔ خدمت، پخش کردن ممکن نیست و حدس زدنش همان خطای پیش‌پرداخت است؛
+   * پس فقط بدهی ثبت می‌شود و برنامه‌ای در کار نیست.
+   */
+  Object.freeze({
+    policyKey: 'advance-received',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.ADVANCE_RECEIVED,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.CUSTOMER_ADVANCE, TREATMENTS.DEFERRED_REVENUE]),
+    appliesTo() { return true; },
+    resolve(facts) {
+      const hasPeriod = isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
+      return hasPeriod
+        ? {
+          treatment: TREATMENTS.DEFERRED_REVENUE,
+          recognitionMethod: RECOGNITION_METHODS.MONTHLY_STRAIGHT_LINE,
+          recognitionDate: facts.servicePeriodStart,
+        }
+        : { treatment: TREATMENTS.CUSTOMER_ADVANCE };
+    },
+  }),
+
+  /**
+   * جهت د — انجام تعهد پیش از دریافت.
+   *
+   * کار تحویل شده و پولی نیامده: درآمد همان‌جا شناسایی می‌شود و طلب ساخته
+   * می‌شود. به تاریخ تحویل تکیه می‌کند، نه به تاریخ فاکتور.
+   */
+  Object.freeze({
+    policyKey: 'accrued-revenue',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.ACCRUED_REVENUE]),
+    appliesTo(facts) { return isFactPresent(facts?.deliveryDate) && !facts?.chequeDirection; },
+    resolve(facts) {
+      return {
+        treatment: TREATMENTS.ACCRUED_REVENUE,
+        recognitionMethod: RECOGNITION_METHODS.IMMEDIATE,
+        recognitionDate: facts.deliveryDate,
+      };
+    },
+  }),
+  /**
    * پیش‌پرداخت به تأمین‌کننده.
    *
    * «صد و بیست میلیون پیش‌پیش ریختیم واسه خرید ورق» تا امروز ماهیتش «نامشخص»
@@ -202,7 +278,17 @@ export const DEFAULT_POLICIES = Object.freeze([
     ambiguousRefundability: Object.freeze(['اجاره']),
     /** برخوردهایی که در این فاز قاعدهٔ ثبت دارند. بقیه به حسابدار می‌روند. */
     supportedTreatments: Object.freeze([TREATMENTS.PREPAID_EXPENSE, TREATMENTS.PERIOD_EXPENSE]),
-    appliesTo(facts) { return this.categories.includes(String(facts?.category || '').trim()); },
+    /**
+     * دسته یکی از دو راه ورود است، نه تنها راه.
+     *
+     * «پونزده میلیون شارژ ساختمان رو برای شش ماه جلوتر تسویه کردم» دسته‌اش
+     * «قبوض» است و در فهرست خدمات دوره‌دار نیست — ولی خودِ جمله دوره را گفته.
+     * وقتی دوره صریح است، دیگر نیازی به حدس از روی دسته نیست.
+     */
+    appliesTo(facts) {
+      if (this.categories.includes(String(facts?.category || '').trim())) return true;
+      return isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
+    },
     /**
      * دوره‌ای که کاملاً گذشته، دارایی نمی‌سازد.
      *
@@ -349,6 +435,22 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
       decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
       explanation: `${classified.reason} برای تصمیم نهایی ${FACT_LABELS[missingFacts[0]] || missingFacts[0]} لازم است.`,
       question: nextQuestionFor(missingFacts, facts),
+    });
+  }
+
+  // قاعده می‌تواند بگوید حتی با دادهٔ کامل هم قضاوت لازم است — مثل مبلغ
+  // برآوردی. این با «واقعیت کم است» فرق دارد و سؤال نمی‌سازد.
+  if (resolved.forceReview) {
+    return createDecision({
+      family, requiredFacts, sourceReferences,
+      treatment: resolved.treatment,
+      policyKey: policy.policyKey,
+      policyVersion: policy.version,
+      recognitionDate: resolved.recognitionDate,
+      recognitionMethod: resolved.recognitionMethod,
+      riskLevel: RISK_LEVELS.RED,
+      decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+      explanation: `${classified.reason} مبلغ برآوردی است و قضاوت حسابدار لازم دارد.`,
     });
   }
 

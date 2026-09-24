@@ -8,6 +8,7 @@ import { factsFromEvent } from '../shared/eventFacts.js';
 import { DECISION_STATUS, decide, decisionAuthorizesPosting } from '../shared/accountingDecision.js';
 import { ECONOMIC_FAMILIES } from '../shared/economicFamily.js';
 import { TREATMENTS } from '../shared/factRequirements.js';
+import { ROLES, planJournal } from '../shared/accountingRules.js';
 
 /**
  * «پیش‌پیش»، «بیعانه»، «علی‌الحساب» — پول رفته ولی هیچ چیزی مصرف نشده.
@@ -90,7 +91,11 @@ test('بیعانهٔ دریافتی، دریافت پیش از انجام تعه
   });
   const decision = decide(factsFromEvent(event), { today: TODAY });
   assert.equal(decision.family, ECONOMIC_FAMILIES.ADVANCE_RECEIVED);
-  assert.equal(decisionAuthorizesPosting(decision), false, 'درآمد شناسایی نمی‌شود');
+  // تا فاز ۲ این مورد قاعدهٔ ثبت نداشت و فقط به حسابدار می‌رفت. حالا سند
+  // می‌زند — ولی ادعای اصلی همان است و باید بماند: هیچ سطر درآمدی.
+  const roles = planJournal(event, decision).lines.map((line) => line.role);
+  assert.equal(roles.includes(ROLES.INCOME_CATEGORY), false, 'درآمد شناسایی نمی‌شود');
+  assert.ok(roles.includes(ROLES.CUSTOMER_ADVANCE), 'پیش‌دریافت بدهی ماست');
 });
 
 test('پرداخت عادی دست‌نخورده می‌ماند', () => {

@@ -141,6 +141,11 @@ export function normalizeFinancialEvent(raw = {}) {
     // ابهام مقیاس مبلغ در گفتار محاوره‌ای: «سی تومن» یعنی سی هزار یا سی
     // میلیون؟ تا جواب نیامده، هیچ سندی از این رویداد ساخته نمی‌شود.
     // پول رفته یا آمده ولی تعهدش هنوز انجام نشده. دسته نیست، ماهیت است.
+    // تاریخ تحویل یا اتمام کار — زمان شناسایی درآمد، که با تاریخ فاکتور و
+    // تاریخ دریافت پول یکی نیست.
+    deliveryDate: cleanIso(raw.deliveryDate),
+    // مبنای برآورد: وجودش یعنی مبلغ قطعی نیست و قضاوت لازم دارد.
+    estimateBasis: cleanText(raw.estimateBasis, 200) || null,
     prepaymentSignal: raw.prepaymentSignal === true,
     amountScaleAmbiguous: raw.amountScaleAmbiguous === true,
     chequeAgainst: ['income', 'receivable'].includes(raw.chequeAgainst) ? raw.chequeAgainst : null,

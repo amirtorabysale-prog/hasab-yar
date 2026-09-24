@@ -82,6 +82,12 @@ export function factsFromEvent(event = {}) {
     // بدهی، و طبقه‌بند بدون آن چک دریافتی را بدهی می‌خواند.
     chequeDirection: event.kind === EVENT_KINDS.CHEQUE_RECEIVED ? 'receivable'
       : event.kind === EVENT_KINDS.CHEQUE_ISSUED ? 'payable' : undefined,
+    [FACT_KEYS.DELIVERY_DATE]: event.deliveryDate,
+    [FACT_KEYS.ESTIMATE_BASIS]: event.estimateBasis,
+    // جهت تعهد از نوع رویداد درمی‌آید. بدون آن، «طلب باز شد» با «بدهی باز شد»
+    // یکی دیده می‌شود، چون هر دو پولی جابه‌جا نمی‌کنند و طرف حساب دارند.
+    obligationDirection: event.kind === EVENT_KINDS.RECEIVABLE_OPENED || event.kind === EVENT_KINDS.SALES_INVOICE ? 'receivable'
+      : event.kind === EVENT_KINDS.PAYABLE_OPENED || event.kind === EVENT_KINDS.PURCHASE_INVOICE ? 'payable' : undefined,
     prepaymentSignal: event.prepaymentSignal || undefined,
     amountScaleAmbiguous: event.amountScaleAmbiguous || undefined,
     evidence: event.evidence,

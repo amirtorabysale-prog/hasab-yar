@@ -43,7 +43,18 @@ test('voice fixture: multiple transactions stay separate', () => {
   ]);
 });
 
+/**
+ * تایپ زنده بودجهٔ میلی‌ثانیه‌ای دارد و این تست دو بار جلوی رگرسیون واقعی را
+ * گرفته: یک بار تشخیص انتقال داخلی و یک بار نشانهٔ پیش‌پرداخت، هر دو چون
+ * نرمال‌سازی فارسی را روی هر جمله اجرا می‌کردند.
+ *
+ * دور گرم‌کننده عمدی است: بدون آن، تست هزینهٔ JIT را هم اندازه می‌گرفت و زیر
+ * بار موازیِ کل مجموعه شکننده می‌شد. حالا توان پایدار را می‌سنجد — که همان
+ * چیزی است که کاربر موقع تایپ تجربه می‌کند — و هنوز هر دو رگرسیون بالا را
+ * می‌گرفت.
+ */
 test('local parser is fast enough for live preview', () => {
+  for (let index = 0; index < 200; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
   const startedAt = performance.now();
   for (let index = 0; index < 2_000; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
   assert.ok(performance.now() - startedAt < 1_000);

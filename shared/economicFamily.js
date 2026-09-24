@@ -215,6 +215,21 @@ export const FAMILY_RULES = Object.freeze([
   }),
   // ارجاع به سند باز یعنی این پول تعهد موجود را می‌بندد، نه اینکه درآمد یا
   // هزینهٔ تازه بسازد. نگهبان کاملش در WP-1 می‌آید؛ اینجا فقط ماهیت است.
+  // تعهدی که خودِ رویداد جهتش را می‌گوید، پیش از قاعده‌های عمومی. بدون این،
+  // «طلب باز شد» با «بدهی باز شد» یکی دیده می‌شود: هر دو پولی جابه‌جا نمی‌کنند
+  // و طرف حساب دارند، و قاعدهٔ عمومی هر دو را بدهی می‌خواند.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    weight: 88,
+    reason: 'تعهدی به نفع ما ساخته شده؛ هنوز پولی نیامده.',
+    test: (facts) => facts?.obligationDirection === 'receivable',
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    weight: 88,
+    reason: 'تعهدی به عهدهٔ ما ساخته شده؛ هنوز پولی پرداخت نشده.',
+    test: (facts) => facts?.obligationDirection === 'payable',
+  }),
   // چک، پیش از قاعده‌های عمومی. بدون این، چک دریافتی — که پولی جابه‌جا نمی‌کند
   // و طرف حساب دارد — «ایجاد بدهی» خوانده می‌شد.
   Object.freeze({

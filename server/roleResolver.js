@@ -106,6 +106,14 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.PREPAID_ASSET:
       return linkedAccount(database, 'prepaid-asset', key || 'عمومی', `پیش‌پرداخت — ${key || 'عمومی'}`, 'asset');
 
+    // پیش‌دریافت و درآمد انتقالی هر دو بدهی‌اند و به تفکیک طرف حساب نگه
+    // داشته می‌شوند: ماندهٔ هر مشتری باید مستقل دیده شود.
+    case ROLES.CUSTOMER_ADVANCE:
+      return counterpartyRoleAccount(database, 'customer-advance', event, key || 'مشتری متفرقه', 'پیش‌دریافت از مشتری', 'liability');
+
+    case ROLES.DEFERRED_REVENUE:
+      return counterpartyRoleAccount(database, 'deferred-revenue', event, key || 'مشتری متفرقه', 'درآمد انتقالی', 'liability');
+
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');
 

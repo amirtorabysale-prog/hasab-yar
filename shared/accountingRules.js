@@ -32,6 +32,11 @@ export const ROLES = Object.freeze({
   // مصرف شود. حساب «۱۴۰۱ — پیش‌پرداخت‌ها» از قبل در جدول حساب‌ها بود و هیچ
   // قاعده‌ای به آن نمی‌رسید.
   PREPAID_ASSET: 'prepaid-asset',
+  // پیش‌دریافت از مشتری: پول آمده ولی هنوز کاری نکرده‌ایم. بدهی ماست، نه
+  // درآمد. شناسایی درآمد وقتی است که تعهد انجام شود.
+  CUSTOMER_ADVANCE: 'customer-advance',
+  // درآمد انتقالی: پیش‌دریافتی که دوره‌اش مشخص است و ماه‌به‌ماه درآمد می‌شود.
+  DEFERRED_REVENUE: 'deferred-revenue',
   // ارزش افزوده پول سازمان است که کسب‌وکار فقط جمعش می‌کند یا جلو می‌دهد؛
   // هیچ‌کدام هزینه یا درآمد نیست. همان دو حسابی که فاکتور و تسویهٔ دوره
   // می‌شناسند، نه حساب تازه، وگرنه ماندهٔ تسویه از دو جا جمع می‌شود.
@@ -80,6 +85,28 @@ function plan(kind, debit, credit, amount, memoHint) {
  * می‌افتند و رفتارشان عوض نمی‌شود.
  */
 const TREATMENT_PLANS = Object.freeze({
+  // جهت ب — مصرف پیش از پرداخت. هزینه در دورهٔ مصرف شناسایی می‌شود و بدهی
+  // ساخته می‌شود؛ نقد اصلاً لمس نمی‌شود چون هنوز پولی جابه‌جا نشده.
+  'accrued-expense': (event, amount) => plan(event.kind,
+    { role: ROLES.EXPENSE_CATEGORY, key: event.category },
+    { role: ROLES.PAYABLE, key: event.counterparty }, amount, event.category),
+
+  // جهت ج — دریافت پیش از انجام تعهد. پیش‌دریافت بدهی ماست، نه درآمد.
+  // شناسایی درآمد وقتی است که تعهد انجام شود.
+  'customer-advance': (event, amount) => plan(event.kind,
+    { role: ROLES.CASH, key: event.accountId },
+    { role: ROLES.CUSTOMER_ADVANCE, key: event.counterparty }, amount, event.counterparty),
+
+  'deferred-revenue': (event, amount) => plan(event.kind,
+    { role: ROLES.CASH, key: event.accountId },
+    { role: ROLES.DEFERRED_REVENUE, key: event.counterparty }, amount, event.counterparty),
+
+  // جهت د — انجام تعهد پیش از دریافت. تعهد انجام شده، پس درآمد شناسایی
+  // می‌شود و طلب ساخته می‌شود.
+  'accrued-revenue': (event, amount) => plan(event.kind,
+    { role: ROLES.RECEIVABLE, key: event.counterparty },
+    { role: ROLES.INCOME_CATEGORY, key: event.category }, amount, event.counterparty),
+
   // چک بابت طلب قبلی: فقط شکل طلب عوض می‌شود. آن فروش همان روزی که فاکتور
   // ثبت شد درآمد شده؛ شناسایی دوباره‌اش یعنی یک فروش، دو بار در سود دوره و
   // دو بار در مالیات.
