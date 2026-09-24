@@ -123,7 +123,8 @@ function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
     if (!draft) return false;
     // ضبط شادو پیش از هر ثبتی و مستقل از نتیجه‌اش: مواردی که موتور جلویشان را
     // می‌گیرد بیشترین ارزش را برای گزارش اختلاف دارند.
-    if (automationPolicy().shadowMode && draft.accountingDecision) {
+    const shadow = automationPolicy().shadowMode && draft.accountingDecision;
+    if (shadow) {
       try {
         recordShadowRun(db, {
           event: draft.event, decision: draft.accountingDecision,
@@ -141,7 +142,13 @@ function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
       withinTransaction: true,
       journalSource: { type: 'transaction', id: row.id },
       postJournal: transactionJournalPoster(row, settlement),
-      accountingDecision: draft.accountingDecision || null,
+      // در شادو مود، تصمیم **پاس داده نمی‌شود**.
+      //
+      // این تنها چیزی است که وعدهٔ «دفتر دست نمی‌خورد» را واقعی می‌کند: تصمیم
+      // ضبط شده، ولی نگهبان‌ها و نقشهٔ موتور روی ثبت اثر نمی‌گذارند و سند
+      // دقیقاً همان‌طور می‌خورد که تا امروز می‌خورده. بدون این، شادو مود فقط
+      // یک لایهٔ ضبط روی موتورِ فعال بود و هیچ‌کس نمی‌توانست بی‌ریسک روشنش کند.
+      accountingDecision: shadow ? null : (draft.accountingDecision || null),
       // `undefined` وقتی طرف حساب شناسایی نشده: نگهبان باید بتواند بگوید
       // «نتوانستم بررسی کنم»، نه اینکه سکوت کند.
       openDocuments: row.contactId ? openDocumentsFor(row.contactId) : undefined,

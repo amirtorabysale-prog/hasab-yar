@@ -160,3 +160,37 @@ test('ثبت واقعیِ حسابدار روی همان ردیف می‌نشی�
     assert.ok(updated.differences.length > 0, 'و اختلافش محاسبه شود');
   });
 });
+
+test('در شادو مود، موتور روی ثبت اثر نمی‌گذارد', () => {
+  // این همان وعده‌ای است که روی دکمه نوشته شده: «دفتر دست نمی‌خورد».
+  // تصمیم ضبط می‌شود ولی به لایهٔ ثبت پاس داده نمی‌شود، وگرنه نگهبان‌ها و
+  // نقشهٔ موتور سند را عوض می‌کنند و شادو مود فقط یک لایهٔ ضبط روی موتورِ
+  // فعال می‌شد — چیزی که هیچ‌کس نمی‌تواند بی‌ریسک روشنش کند.
+  const { automationPolicy, saveAutomationPolicy, insertTransactions, listTransactions } = database;
+  inPrimary(() => {
+    saveAutomationPolicy({ ...automationPolicy(), engineV2: true, shadowMode: true });
+
+    const before = ledgerSnapshot();
+    insertTransactions({
+      transcript: 'حق بیمه یک‌ساله دوازده میلیون از بانک ملت دادم',
+      transactions: [{
+        amount: 12_000_000, type: 'expense', category: 'بیمه', source: 'voice',
+        occurredAt: OCCURRED, rawText: 'حق بیمه یک‌ساله دوازده میلیون از بانک ملت دادم',
+      }],
+    });
+
+    // ثبت کاربر باید انجام شده باشد — شادو مود ثبت را متوقف نمی‌کند.
+    assert.ok(listTransactions({ limit: 50 }).items.some((item) => item.amount === 12_000_000), 'تراکنش باید ثبت شود');
+    // تصمیم باید ضبط شده باشد — شادو مود کارش همین است.
+    assert.ok(store.shadowRuns(db()).some((run) => run.amount === 12_000_000), 'تصمیم باید ضبط شود');
+
+    // ولی سند نباید شکل موتور را گرفته باشد: پیش از این تغییر، همین ثبت به
+    // حساب پیش‌پرداخت می‌رفت. اینکه سند همین حالا خورده یا منتظر تأیید مانده،
+    // به آستانهٔ اطمینان بستگی دارد و ربطی به شادو مود ندارد.
+    const entries = accounting.listJournal(db(), { limit: 50 }).items;
+    const names = entries.flatMap((entry) => entry.lines.map((line) => line.accountName || ''));
+    assert.equal(names.some((name) => String(name).includes('پیش‌پرداخت')), false, 'نقشهٔ موتور نباید اجرا شده باشد');
+
+    saveAutomationPolicy({ ...automationPolicy(), engineV2: false, shadowMode: false });
+  });
+});
