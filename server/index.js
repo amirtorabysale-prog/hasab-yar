@@ -10,7 +10,7 @@ import {
   correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision,
+  submitFinancialEvent, reviewQueue, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -549,6 +549,9 @@ app.get('/api/financial-events/review-queue', (request, response, next) => {
 });
 app.get('/api/financial-events/:id/audit', (request, response, next) => {
   try { return response.json(eventAudit(request.params.id)); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/run-recognition', (_request, response, next) => {
+  try { return response.json(runRecognition()); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/:id/decision', (request, response, next) => {
   try { return response.json(eventDecision(request.params.id)); } catch (error) { return next(error); }

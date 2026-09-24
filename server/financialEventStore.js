@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { planJournal } from '../shared/accountingRules.js';
+import { ROLES, planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
 import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
 import { normalizeFinancialEvent } from '../shared/financialEvent.js';
@@ -759,4 +759,109 @@ export function shadowRuns(database, { limit = 500 } = {}) {
 /** خلاصهٔ اختلاف، خانواده‌به‌خانواده — همان چیزی که تصمیم فعال‌سازی رویش سوار است. */
 export function shadowDisagreementReport(database, options = {}) {
   return summarizeDisagreements(shadowRuns(database, options));
+}
+
+// ---------------------------------------------------------------------------
+// اجرای اقلام شناسایی در سررسید
+// ---------------------------------------------------------------------------
+
+/**
+ * سندِ تخصیص یک قلم، بر اساس برخوردِ رویداد اصلی.
+ *
+ * پیش‌پرداخت: از دارایی کم می‌شود و به هزینه می‌رود.
+ * درآمد انتقالی: از بدهی کم می‌شود و به درآمد می‌رود.
+ *
+ * برخوردی که اینجا نیست، تخصیص ماهانه ندارد و قلمش اصلاً ساخته نمی‌شود.
+ */
+const ALLOCATION_PLANS = Object.freeze({
+  'prepaid-expense': (event, amount) => ([
+    { role: ROLES.EXPENSE_CATEGORY, key: event.category, debit: amount, credit: 0 },
+    { role: ROLES.PREPAID_ASSET, key: event.category, debit: 0, credit: amount },
+  ]),
+  'deferred-revenue': (event, amount) => ([
+    { role: ROLES.DEFERRED_REVENUE, key: event.counterparty, debit: amount, credit: 0 },
+    { role: ROLES.INCOME_CATEGORY, key: event.category, debit: 0, credit: amount },
+  ]),
+});
+
+/**
+ * اقلامی که سررسیدشان رسیده را ثبت می‌کند.
+ *
+ * این نیمهٔ گمشدهٔ فاز ۲ بود: برنامه ساخته و باطل می‌شد، ولی کسی سررسید که
+ * می‌رسید ثبتش نمی‌کرد. یعنی پیش‌پرداخت تا ابد دارایی می‌ماند و هیچ‌وقت هزینه
+ * نمی‌شد.
+ *
+ * چهار چیزی که اینجا هرگز نباید بشکند:
+ *
+ * ۱. **اجرای دوباره سند دوم نمی‌سازد.** کار زمان‌بندی‌شده ممکن است چند بار در
+ *    روز اجرا شود. وضعیت قلم و لنگر سند هر دو این را تضمین می‌کنند.
+ * ۲. **قلمِ رویدادی که هنوز سند نخورده ثبت نمی‌شود.** تخصیص از دارایی‌ای کم
+ *    می‌کند که هنوز ساخته نشده؛ مانده منفی می‌شود و هیچ‌کس نمی‌فهمد از کجا آمده.
+ * ۳. **دورهٔ بسته باز نمی‌شود.** قلم علامت می‌خورد و می‌ماند تا حسابدار
+ *    تصمیم بگیرد.
+ * ۴. **قلم باطل‌شده هیچ‌وقت ثبت نمی‌شود.**
+ */
+export function postDueRecognitionItems(database, { today = null, actor = null, timeZone = 'Asia/Tehran', limit = 500 } = {}) {
+  ensureFinancialEventSchema(database);
+  const at = today || new Date().toISOString();
+  const summary = { posted: 0, blocked: 0, skipped: 0 };
+
+  const due = database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,
+    recognition_date AS recognitionDate,amount
+    FROM recognition_schedule_items
+    WHERE status='planned' AND recognition_date IS NOT NULL AND recognition_date <= ?
+    ORDER BY recognition_date LIMIT ?`).all(at, Math.max(1, Math.min(2000, Number(limit) || 500)));
+
+  const lockedPeriods = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'")
+    .all().map((row) => row.period));
+
+  for (const item of due) {
+    const row = database.prepare('SELECT payload,status FROM financial_events WHERE id=?').get(item.eventId);
+    // رویدادی که سند نخورده، دارایی‌ای هم نساخته.
+    if (!row || row.status !== 'posted') { summary.skipped += 1; continue; }
+
+    if (lockedPeriods.has(periodForDate(item.recognitionDate, timeZone))) {
+      database.prepare("UPDATE recognition_schedule_items SET status='blocked-closed-period' WHERE key=?").run(item.key);
+      summary.blocked += 1;
+      continue;
+    }
+
+    const decision = decisionForEvent(database, item.eventId);
+    const build = ALLOCATION_PLANS[decision?.treatment];
+    if (!build) { summary.skipped += 1; continue; }
+
+    const event = JSON.parse(row.payload);
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      const lines = build(event, item.amount).map((line) => ({
+        accountId: resolveEventRole(database, line.role, line.key, event),
+        analyticId: resolveEventAnalytic(database, line.role, event, line.key),
+        debit: line.debit,
+        credit: line.credit,
+        description: `شناسایی ${item.periodKey}`,
+      }));
+      // لنگر سند، خودِ کلید قلم است: اگر همین قلم دوباره به اینجا برسد،
+      // `postJournalEntry` آن را تکراری می‌بیند.
+      const posted = postJournalEntry(database, {
+        sourceType: 'recognition-schedule',
+        sourceId: item.key,
+        occurredAt: item.recognitionDate,
+        memo: `تخصیص ${event.category || ''} — ${item.periodKey}`.trim(),
+        lines,
+      }, { createdBy: actor, timeZone });
+
+      database.prepare("UPDATE recognition_schedule_items SET status='posted',journal_entry_id=? WHERE key=?")
+        .run(posted.id, item.key);
+      writeAudit(database, item.eventId, 'recognized', { periodKey: item.periodKey, amount: item.amount, journalEntryId: posted.id }, actor);
+      database.exec('COMMIT');
+      summary.posted += 1;
+    } catch (error) {
+      database.exec('ROLLBACK');
+      // یک قلم خراب نباید بقیهٔ اجرا را متوقف کند؛ ولی بی‌صدا هم رد نمی‌شود.
+      writeAudit(database, item.eventId, 'recognition-failed', { periodKey: item.periodKey, reason: String(error.message).slice(0, 300) }, actor);
+      summary.skipped += 1;
+    }
+  }
+
+  return summary;
 }

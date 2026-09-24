@@ -1,5 +1,5 @@
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems } from '../financialEventStore.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { contactIdForName } from './contacts.js';
 import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEvent.js';
@@ -174,6 +174,20 @@ export function answerEvent(eventId, { fact, value, freeText = '' } = {}) {
 }
 
 /** تصمیم و برنامهٔ شناسایی یک رویداد — برای صف بررسی. */
+/**
+ * اجرای اقلام شناسایی سررسیدرسیده.
+ *
+ * دستی صدا زده می‌شود، نه خودکار: تا وقتی کسی ندیده موتور چه می‌سازد، اجرای
+ * خودکارش روی دفتر واقعی همان حدسی است که کل طرح برای حذفش نوشته شده.
+ */
+export function runRecognition() {
+  const result = postDueRecognitionItems(activeWorkspaceDatabase(), {
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  });
+  if (result.posted) audit('recognize', 'recognition-schedule', 'due', result);
+  return result;
+}
+
 export function eventDecision(eventId) {
   const database = activeWorkspaceDatabase();
   return { decision: decisionForEvent(database, eventId), schedule: scheduleForEvent(database, eventId) };
