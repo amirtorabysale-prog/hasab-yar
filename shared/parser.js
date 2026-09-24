@@ -89,8 +89,24 @@ function parseNumericToken(token) {
   return Number(value);
 }
 
+/**
+ * «یه» و «یک» پیش از عدد دیگر، حرف تعریف‌اند نه عدد.
+ *
+ * «یه سی تومن» را ۳۱ می‌خواند، چون «یه» و «سی» با هم جمع می‌شدند. مبلغ اشتباه
+ * بدترین نوع خطاست: سند با عددی غلط ثبت می‌شود و هیچ نشانه‌ای هم ندارد.
+ *
+ * پیش از **مقیاس** دست نمی‌خورد: «یک میلیون» باید یک میلیون بماند.
+ */
+function dropLeadingArticle(tokens) {
+  if (tokens.length < 2) return tokens;
+  const [first, second] = tokens;
+  if (first !== 'یه' && first !== 'یک') return tokens;
+  if (SCALES[second] || FRACTIONS[second] != null) return tokens;
+  return VALUES[second] != null || /^\d/.test(second) ? tokens.slice(1) : tokens;
+}
+
 export function wordsToNumber(tokens) {
-  const normalizedTokens = tokens.map(normalizePersian).filter(Boolean);
+  const normalizedTokens = dropLeadingArticle(tokens.map(normalizePersian).filter(Boolean));
   const shorthandSeparator = normalizedTokens.lastIndexOf('و');
   const hasExplicitScale = normalizedTokens.some((token) => SCALES[token] || FRACTIONS[token] != null);
   if (!hasExplicitScale && shorthandSeparator > 0 && shorthandSeparator < normalizedTokens.length - 1) {
@@ -134,7 +150,12 @@ function isNumericWord(value) { return /^\d/.test(value) || NUMBER_WORDS.has(val
 
 // نام ماه پس از عدد یعنی تاریخ، نه مبلغ. بدون این، «۲۵ مرداد قبض دادم» یک ثبت
 // بیست‌وپنج تومانی می‌ساخت — همان خطای بی‌صدایی که در بخش مبلغ بسته شد.
+// واحد زمان هم مبلغ نیست و این در آزمون صوتی روی سناریوهای واقعی پیدا شد:
+// «برای شش ماه جلوتر تسویه کردم» یک تراکنش شش تومانی می‌ساخت و «بیمه یک‌ساله»
+// یک تراکنش یک‌تومانی. رکورد شبح در دفتر بدتر از ثبت‌نشدن است، چون هیچ‌کس
+// دنبالش نمی‌گردد و در تراز هم گم می‌شود.
 const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن',
+  'ماه', 'ماهه', 'ماهانه', 'سال', 'ساله', 'سالانه', 'هفته', 'هفتگی', 'روزه', 'روزانه', 'ساعته',
   ...PERSIAN_MONTHS.map(([name]) => name)];
 const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
 
@@ -192,6 +213,9 @@ export function extractAmounts(input) {
       // مقیاس بدون عدد («... هزار تومان») تقریباً همیشه یعنی عددِ پیش از آن
       // شنیده نشده است. wordsToNumber ناچار ۱×مقیاس برمی‌گرداند؛ این پرچم
       // جلوی ثبت آن به‌عنوان یک مبلغ مطمئن را می‌گیرد.
+      // «یه» تنها هیچ‌وقت مبلغ نیست: «یه جوری ثبت کن» یک تراکنش هزارتومانی
+      // می‌ساخت. حرف تعریف بدون عدد و بدون مقیاس، عدد نیست.
+      if (collected.length === 1 && (collected[0] === 'یه' || collected[0] === 'یک')) { index = cursor - 1; continue; }
       const bareScale = Boolean(SCALES[collected[0]]);
       const span = { amount, start: token.start, end, raw: text.slice(token.start, end), bareScale };
       if (!isNonAmountSpan(text, span)) spans.push(span);

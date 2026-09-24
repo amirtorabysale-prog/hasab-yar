@@ -189,7 +189,14 @@ export const DEFAULT_POLICIES = Object.freeze([
       const category = String(facts?.category || '').trim();
       // استرداد پیش از دوره پرسیده می‌شود، چون جوابش برخورد را عوض می‌کند و
       // پرسیدن دوره از یک ودیعه، سؤال غلط از رویداد درست است.
-      if (this.ambiguousRefundability.includes(category) && typeof facts?.refundable !== 'boolean') {
+      // ودیعه سؤال استرداد لازم دارد، ولی اجارهٔ یک ماهِ نام‌برده آشکارا
+      // مصرف‌شدنی است. پرسیدن از آن فقط اصطکاک است، و کاربری که برای هر اجاره
+      // بازجویی شود سؤال‌ها را دور می‌زند — همان چیزی که کل این طرح رویش سوار
+      // است. پس فقط وقتی می‌پرسیم که نشانهٔ استرداد در گفته باشد.
+      const refundableWords = /ودیعه|رهن|قرض\s*الحسنه|سپرده|تضمین|حسن\s*انجام/;
+      if (this.ambiguousRefundability.includes(category)
+        && refundableWords.test(String(facts?.evidence || ''))
+        && typeof facts?.refundable !== 'boolean') {
         return { treatment: TREATMENTS.PREPAID_EXPENSE, extraFacts: [FACT_KEYS.REFUNDABLE] };
       }
       if (facts?.refundable === true) {

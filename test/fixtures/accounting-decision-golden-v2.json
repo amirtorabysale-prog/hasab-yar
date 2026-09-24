@@ -2,7 +2,7 @@
   "note": "پیکرهٔ طلایی نسخهٔ ۲ — از متن فارسی تا تصمیم، از مسیر واقعی. expectedFamily ماهیت درست حسابداری است و به فاز وابسته نیست. mayAbstain یعنی در این فاز، «نمی‌دانم» هم جواب درستی است.",
   "cases": [
     { "id": "CLR-001", "group": "clear", "input": "حق بیمه مسئولیت یک ساله رو 12 میلیون از بانک ملت پرداخت کردم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "servicePeriodStart", "why": "پیش‌پرداخت با منفعت آینده؛ دوره نامعلوم است پس باید بپرسد" },
-    { "id": "CLR-002", "group": "clear", "input": "اجاره دفتر رو 8 میلیون دادم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "refundable", "why": "اجاره می‌تواند ودیعه باشد یا اجارهٔ مصرفی؛ اول استرداد" },
+    { "id": "CLR-002", "group": "clear", "input": "اجاره دفتر رو 8 میلیون دادم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "servicePeriodStart", "why": "اجارهٔ بدون دوره: سؤال دوره. سؤال استرداد فقط وقتی است که نشانهٔ ودیعه در جمله باشد" },
     { "id": "CLR-003", "group": "clear", "input": "20 میلیون ودیعه دفتر را پرداخت کردم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "refundable", "why": "ودیعه هیچ‌وقت هزینه نمی‌شود" },
     { "id": "CLR-004", "group": "clear", "input": "اشتراک سالانه نرم‌افزار حسابداری رو 6 میلیون خریدم", "expectedFamily": "asset-creation", "mayAbstain": false, "expectAsks": "servicePeriodStart", "why": "خدمت دوره‌دار یک‌ساله" },
     { "id": "CLR-005", "group": "clear", "input": "قبض برق رو 3 میلیون پرداخت کردم", "expectedFamily": "asset-consumption", "mayAbstain": true, "why": "هزینهٔ دورهٔ گذشته؛ قاعده‌اش فاز ۲ است" },

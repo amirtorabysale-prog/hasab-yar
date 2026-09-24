@@ -148,6 +148,9 @@ test('ودیعه، سؤال استرداد می‌گیرد — نه سؤال د�
     [FACT_KEYS.OCCURRED_AT]: TODAY,
     [FACT_KEYS.CASH_ACCOUNT]: 'bank-mellat',
     [FACT_KEYS.CATEGORY]: 'اجاره',
+    // گفتهٔ کاربر لازم است: سؤال استرداد فقط وقتی پرسیده می‌شود که نشانه‌اش
+    // در جمله باشد، وگرنه هر اجارهٔ عادی هم بازجویی می‌شد.
+    evidence: 'بیست میلیون ودیعه دفتر را پرداخت کردم',
   };
   const asked = decide(deposit, { today: TODAY });
   assert.equal(asked.decisionStatus, DECISION_STATUS.NEEDS_USER_INPUT);
@@ -210,4 +213,38 @@ test('برنامهٔ شناسایی: هر قلم کلید یکتای خودش ر
   const a = buildMonthlySchedule({ amount: 12_000_000, periodStart: '2026-09-23T00:00:00.000Z', periodEnd: '2027-09-22T00:00:00.000Z', sourceId: 'evt-a' });
   const b = buildMonthlySchedule({ amount: 12_000_000, periodStart: '2026-09-23T00:00:00.000Z', periodEnd: '2027-09-22T00:00:00.000Z', sourceId: 'evt-b' });
   assert.equal(a[0].key === b[0].key, false, 'دو منبع متفاوت نباید کلید یکسان بسازند');
+});
+
+/**
+ * اجارهٔ یک ماه مشخص، سؤال استرداد نمی‌گیرد.
+ *
+ * در آزمون صوتی پیدا شد: «دوازده میلیون بابت اجاره اردیبهشت ماه دفتر» سؤال
+ * «قابل استرداد است یا مصرف می‌شود؟» می‌گرفت. ودیعه سؤال لازم دارد، ولی
+ * اجارهٔ یک ماهِ نام‌برده آشکارا مصرف‌شدنی است و پرسیدن از آن فقط اصطکاک است —
+ * کاربری که برای هر اجاره بازجویی شود، سؤال‌ها را دور می‌زند.
+ */
+test('اجاره با دورهٔ نام‌برده، سؤال استرداد نمی‌گیرد', () => {
+  const decision = decide({
+    moneyDirection: 'out',
+    [FACT_KEYS.AMOUNT]: 12_000_000,
+    [FACT_KEYS.OCCURRED_AT]: TODAY,
+    [FACT_KEYS.CASH_ACCOUNT]: 'bank-saman',
+    [FACT_KEYS.CATEGORY]: 'اجاره',
+    evidence: 'دوازده میلیون بابت اجاره اردیبهشت ماه دفتر مرکزی',
+  }, { today: TODAY });
+
+  assert.notEqual(decision.question?.fact, FACT_KEYS.REFUNDABLE, 'نباید استرداد بپرسد');
+});
+
+test('ولی ودیعه همچنان سؤال استرداد می‌گیرد', () => {
+  const decision = decide({
+    moneyDirection: 'out',
+    [FACT_KEYS.AMOUNT]: 20_000_000,
+    [FACT_KEYS.OCCURRED_AT]: TODAY,
+    [FACT_KEYS.CASH_ACCOUNT]: 'bank-mellat',
+    [FACT_KEYS.CATEGORY]: 'اجاره',
+    evidence: 'بیست میلیون ودیعه دفتر را پرداخت کردم',
+  }, { today: TODAY });
+
+  assert.equal(decision.question.fact, FACT_KEYS.REFUNDABLE);
 });

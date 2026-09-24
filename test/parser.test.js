@@ -81,3 +81,55 @@ test('چند تراکنش در یک جمله، دستهٔ همدیگر را نم
   const { transactions } = parseFinancialText('5 میلیون اجاره و 3 میلیون قبض برق دادم');
   assert.deepEqual(transactions.map((item) => [item.amount, item.category]), [[5_000_000, 'اجاره'], [3_000_000, 'قبوض']]);
 });
+
+/**
+ * واحدهای زمانی مبلغ نیستند.
+ *
+ * در آزمون صوتی روی سناریوهای واقعی پیدا شد: «برای شش ماه جلوتر تسویه کردم»
+ * یک تراکنش شش تومانی می‌ساخت و «بیمه یک‌ساله» یک تراکنش یک‌تومانی. رکورد شبح
+ * در دفتر، بدتر از ثبت‌نشدن است: هیچ‌کس دنبالش نمی‌گردد.
+ */
+test('واحد زمان بعد از عدد، مبلغ نمی‌سازد', () => {
+  for (const text of [
+    'پونزده میلیون شارژ رو برای شش ماه جلوتر تسویه کردم',
+    'بیمه یک‌ساله از اول فروردین تا آخر اسفند همین امسال',
+    'قرارداد دو ساله بستیم',
+    'سه هفته دیگه پرداخت می‌کنیم',
+  ]) {
+    const amounts = extractAmounts(text).spans.map((span) => span.amount);
+    const durations = amounts.filter((amount) => amount < 100);
+    assert.deepEqual(durations, [], `«${text}» عدد زمانی را مبلغ خواند: ${JSON.stringify(amounts)}`);
+  }
+});
+
+test('مبلغ واقعیِ کنار واحد زمان از دست نمی‌رود', () => {
+  const amounts = extractAmounts('پونزده میلیون شارژ رو برای شش ماه جلوتر تسویه کردم').spans.map((span) => span.amount);
+  assert.deepEqual(amounts, [15_000_000]);
+});
+
+/**
+ * «یه» حرف تعریف است، نه عدد یک.
+ *
+ * «یه سی تومن» مبلغ را ۳۱ می‌خواند — «یه» و «سی» با هم جمع می‌شدند. مبلغ
+ * اشتباه بدترین نوع خطاست چون سند با عددی غلط ثبت می‌شود و هیچ نشانه‌ای هم
+ * ندارد.
+ */
+test('«یه» پیش از عدد دیگر، به آن اضافه نمی‌شود', () => {
+  assert.deepEqual(extractAmounts('یه سی تومن ریختم').spans.map((s) => s.amount), [30]);
+  assert.deepEqual(extractAmounts('یه پنج تومن دادم').spans.map((s) => s.amount), [5]);
+  assert.deepEqual(extractAmounts('یه دویست تومن').spans.map((s) => s.amount), [200]);
+});
+
+test('«یک» پیش از مقیاس همچنان عدد است', () => {
+  // «یک میلیون» باید یک میلیون بماند؛ اصلاح بالا نباید این را بشکند.
+  assert.deepEqual(extractAmounts('یک میلیون دادم').spans.map((s) => s.amount), [1_000_000]);
+  assert.deepEqual(extractAmounts('یه میلیون و پانصد هزار').spans.map((s) => s.amount), [1_500_000]);
+});
+
+test('«یه» تنها هیچ‌وقت مبلغ نیست', () => {
+  // «همینو یه جوری ثبت کن» یک تراکنش هزارتومانی می‌ساخت.
+  assert.deepEqual(extractAmounts('همینو یه جوری ثبت کن').spans.map((s) => s.amount), []);
+  assert.deepEqual(extractAmounts('یه کم دیر شد').spans.map((s) => s.amount), []);
+  // ولی «یک میلیون» مقیاس دارد و مبلغ است.
+  assert.deepEqual(extractAmounts('یک میلیون دادم').spans.map((s) => s.amount), [1_000_000]);
+});
