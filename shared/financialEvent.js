@@ -138,6 +138,9 @@ export function normalizeFinancialEvent(raw = {}) {
     })(),
     // چک بابت فروش تازه است یا بابت طلبی که قبلاً ثبت شده؟ فرم این را می‌پرسد
     // و صدا نمی‌پرسید؛ نتیجه‌اش شناسایی دوبارهٔ همان فروش بود.
+    // ابهام مقیاس مبلغ در گفتار محاوره‌ای: «سی تومن» یعنی سی هزار یا سی
+    // میلیون؟ تا جواب نیامده، هیچ سندی از این رویداد ساخته نمی‌شود.
+    amountScaleAmbiguous: raw.amountScaleAmbiguous === true,
     chequeAgainst: ['income', 'receivable'].includes(raw.chequeAgainst) ? raw.chequeAgainst : null,
     counterpartyRole: ['owner', 'supplier', 'customer', 'employee', 'authority'].includes(raw.counterpartyRole) ? raw.counterpartyRole : null,
   });

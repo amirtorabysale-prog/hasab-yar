@@ -106,6 +106,9 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     counterpartyId: item.contactId || null,
     accountId: item.accountId || null,
     source: item.source === 'voice' ? 'voice' : 'text',
+    // ابهام مقیاس از پارسر می‌آید و باید تا موتور تصمیم برسد، وگرنه «سی تومن»
+    // بی‌صدا سی هزار ثبت می‌شود.
+    amountScaleAmbiguous: item.amountScaleAmbiguous === true,
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(sentence || item.rawText || transcript || '').slice(0, 1000),

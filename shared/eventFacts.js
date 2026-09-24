@@ -82,6 +82,7 @@ export function factsFromEvent(event = {}) {
     // بدهی، و طبقه‌بند بدون آن چک دریافتی را بدهی می‌خواند.
     chequeDirection: event.kind === EVENT_KINDS.CHEQUE_RECEIVED ? 'receivable'
       : event.kind === EVENT_KINDS.CHEQUE_ISSUED ? 'payable' : undefined,
+    amountScaleAmbiguous: event.amountScaleAmbiguous || undefined,
     evidence: event.evidence,
   };
   for (const [key, value] of Object.entries(facts)) {

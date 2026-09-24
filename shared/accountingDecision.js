@@ -239,6 +239,24 @@ export const DEFAULT_POLICIES = Object.freeze([
  * کامل، جای دورهٔ پوشش نامعلوم را نمی‌گیرد.
  */
 export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null } = {}) {
+  // ابهام مقیاس مبلغ، پیش از هر چیز دیگری.
+  //
+  // «سی تومن» یعنی سی هزار یا سی میلیون؟ تا این روشن نشده، پرسیدن دورهٔ پوشش
+  // یا هر سؤال دیگری بی‌معناست — و حدس زدنش یک خطای هزاربرابری در مبلغ است،
+  // یعنی گران‌ترین خطایی که این سیستم می‌تواند بکند.
+  if (facts?.amountScaleAmbiguous === true) {
+    return createDecision({
+      family: classifyFamily(facts).family,
+      riskLevel: RISK_LEVELS.RED,
+      sourceReferences: facts?.evidence ? [facts.evidence] : [],
+      requiredFacts: [FACT_KEYS.AMOUNT_SCALE],
+      missingFacts: [FACT_KEYS.AMOUNT_SCALE],
+      decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
+      explanation: 'مبلغ به شکل محاوره‌ای گفته شده و مقیاسش روشن نیست.',
+      question: nextQuestionFor([FACT_KEYS.AMOUNT_SCALE], facts),
+    });
+  }
+
   const classified = classifyFamily(facts);
   const family = classified.family;
   const riskLevel = FAMILY_DEFAULT_RISK[family] || RISK_LEVELS.RED;
@@ -260,7 +278,7 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
       missingFacts: baseMissing,
       decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
       explanation: `${classified.reason} ولی ${FACT_LABELS[baseMissing[0]] || baseMissing[0]} معلوم نیست.`,
-      question: nextQuestionFor(baseMissing),
+      question: nextQuestionFor(baseMissing, facts),
     });
   }
 
@@ -306,7 +324,7 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
       policyVersion: policy.version,
       decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
       explanation: `${classified.reason} برای تصمیم نهایی ${FACT_LABELS[missingFacts[0]] || missingFacts[0]} لازم است.`,
-      question: nextQuestionFor(missingFacts),
+      question: nextQuestionFor(missingFacts, facts),
     });
   }
 

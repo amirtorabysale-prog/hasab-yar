@@ -52,6 +52,7 @@ export const FACT_KEYS = Object.freeze({
   ORIGINAL_EVENT_REFERENCE: 'originalEventReference',
   CORRECTION_REASON: 'correctionReason',
   CHEQUE_AGAINST: 'chequeAgainst',
+  AMOUNT_SCALE: 'amountScale',
 });
 
 const FACT_VALUES = Object.freeze(Object.values(FACT_KEYS));
@@ -83,6 +84,7 @@ export const FACT_LABELS = Object.freeze({
   [FACT_KEYS.ORIGINAL_EVENT_REFERENCE]: 'رویداد اصلی',
   [FACT_KEYS.CORRECTION_REASON]: 'علت اصلاح',
   [FACT_KEYS.CHEQUE_AGAINST]: 'بابت چه چیزی',
+  [FACT_KEYS.AMOUNT_SCALE]: 'مقیاس مبلغ',
 });
 
 /**
@@ -265,6 +267,25 @@ export const FACT_QUESTIONS = Object.freeze({
       Object.freeze({ value: 'authority', label: 'سازمان یا اداره' }),
     ]),
   }),
+  /**
+   * گزینه‌هایش پویاست: خودِ دو مبلغ نشان داده می‌شوند، نه اصطلاح فنی.
+   * «۳۰٬۰۰۰ تومان» یا «۳۰٬۰۰۰٬۰۰۰ تومان» — کاربر عدد را می‌بیند و انتخاب
+   * می‌کند؛ پرسیدن «هزار یا میلیون؟» یک پلهٔ فکری اضافه است.
+   */
+  [FACT_KEYS.AMOUNT_SCALE]: Object.freeze({
+    kind: QUESTION_KINDS.OPTIONS,
+    text: 'کدام مبلغ درست است؟',
+    options: Object.freeze([]),
+    buildOptions(facts) {
+      const base = Math.round(Number(facts?.amount) || 0);
+      if (!(base > 0)) return [];
+      const money = (value) => value.toLocaleString('fa-IR');
+      return [
+        { value: base, label: `${money(base)} تومان` },
+        { value: base * 1000, label: `${money(base * 1000)} تومان` },
+      ];
+    },
+  }),
   [FACT_KEYS.CHEQUE_AGAINST]: Object.freeze({
     kind: QUESTION_KINDS.OPTIONS,
     text: 'این چک بابت چیست؟',
@@ -323,15 +344,18 @@ export function missingFactsFor(family, treatment = null, facts = {}) {
  * وقتی چند واقعیت کم است، فقط اولی پرسیده می‌شود. فرم یعنی کاربر باید همه را
  * با هم بداند، و کسی که یکی را نمی‌داند کل کار را رها می‌کند.
  */
-export function nextQuestionFor(missingFacts = []) {
+export function nextQuestionFor(missingFacts = [], facts = {}) {
   const fact = (missingFacts || []).find((key) => FACT_QUESTIONS[key]);
   if (!fact) return null;
   const question = FACT_QUESTIONS[fact];
+  // گزینه‌های پویا از خودِ واقعیت‌ها ساخته می‌شوند: سؤال مقیاس مبلغ باید دو
+  // عددِ واقعی را نشان بدهد، نه دو اصطلاح.
+  const options = question.buildOptions ? question.buildOptions(facts) : (question.options ? [...question.options] : null);
   return Object.freeze({
     fact,
     kind: question.kind,
     text: question.text,
     label: FACT_LABELS[fact],
-    options: question.options ? [...question.options] : null,
+    options: options && options.length ? options : null,
   });
 }

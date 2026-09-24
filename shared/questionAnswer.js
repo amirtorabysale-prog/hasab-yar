@@ -60,7 +60,9 @@ export function applyAnswer(event, { fact, value, freeText = '' } = {}, { today 
   const reference = today || event?.occurredAt;
 
   if (question.kind === QUESTION_KINDS.OPTIONS) {
-    const chosen = question.options.find((option) => option.value === value);
+    // گزینهٔ پویا از خودِ رویداد ساخته می‌شود؛ فهرست ثابت برایش خالی است.
+    const choices = question.buildOptions ? question.buildOptions(event) : question.options;
+    const chosen = choices.find((option) => option.value === value);
     if (!chosen) throw answerError('این گزینه برای این سؤال معتبر نیست.', 'ANSWER_OPTION_UNKNOWN');
     // گزینهٔ «تاریخش را می‌گویم» خودش مقدار نیست؛ ورودی آزاد می‌خواهد.
     if (chosen.freeInput) {
@@ -73,6 +75,9 @@ export function applyAnswer(event, { fact, value, freeText = '' } = {}, { today 
       if (!start) throw answerError('اول باید شروع دوره مشخص شود.', 'ANSWER_ORDER_INVALID');
       return { [fact]: persianPeriodEnd(start, END_MONTHS[value]) };
     }
+    // جواب مقیاس مبلغ، خودِ مبلغ را می‌نشاند و ابهام را می‌بندد؛ وگرنه همان
+    // سؤال دوباره پرسیده می‌شود.
+    if (fact === FACT_KEYS.AMOUNT_SCALE) return { amount: chosen.value, amountScaleAmbiguous: false };
     return { [fact]: chosen.value };
   }
 

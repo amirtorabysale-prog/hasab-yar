@@ -496,7 +496,11 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
-      amount, type: classified.type, category: classified.category, chartCode: classified.chartCode, rawText: rawContext || text,
+      amount, type: classified.type, category: classified.category,
+      // مقیاس محاوره‌ای ابهام دارد و حدس‌زدنش خطای هزاربرابری می‌سازد.
+      // مقدار همان ×۱۰۰۰ می‌ماند تا مسیر قدیمی نشکند؛ این پرچم می‌گوید موتور
+      // تصمیم باید بپرسد.
+      ...(colloquialThousands ? { amountScaleAmbiguous: true } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
       ...(counterpartyName ? {
         contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
       } : {}),

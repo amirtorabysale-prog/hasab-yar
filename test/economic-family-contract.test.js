@@ -52,8 +52,13 @@ test('هر واقعیت برچسب فارسی و سؤال دارد', () => {
     assert.ok(question?.text?.trim(), `${fact}: سؤالی برایش تعریف نشده`);
     assert.ok(Object.values(QUESTION_KINDS).includes(question.kind), `${fact}: نوع سؤال نامعتبر`);
     if (question.kind === QUESTION_KINDS.OPTIONS) {
-      assert.ok(question.options?.length >= 2, `${fact}: سؤال گزینه‌ای باید دست‌کم دو گزینه داشته باشد`);
-      for (const option of question.options) assert.ok(option.label?.trim(), `${fact}: گزینهٔ بی‌برچسب`);
+      // گزینه‌ها یا ثابت‌اند یا از خودِ رویداد ساخته می‌شوند — مثل سؤال مقیاس
+      // مبلغ که باید دو عددِ واقعی را نشان بدهد، نه دو اصطلاح.
+      const options = question.buildOptions
+        ? question.buildOptions({ amount: 30_000 })
+        : question.options;
+      assert.ok(options?.length >= 2, `${fact}: سؤال گزینه‌ای باید دست‌کم دو گزینه بسازد`);
+      for (const option of options) assert.ok(option.label?.trim(), `${fact}: گزینهٔ بی‌برچسب`);
     }
   }
 });
