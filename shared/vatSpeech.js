@@ -76,11 +76,20 @@ export function readVatMention(input) {
     trade: TRADE.test(text),
     refund: REFUND.test(text),
   };
+  // واژهٔ تنهای «مالیات» بدون نشانهٔ داد و ستد، ارزش افزوده نیست.
+  //
+  // «حقوق پرسنل رو با مالیات ۱۰۰ میلیون دادم» مالیات حقوق است، نه ارزش افزوده.
+  // بدون این کنترل، الگوی «با ... مالیات» می‌گرفت و نگهبان ۹ درصد از حقوق را
+  // اعتبار مالیاتی می‌کرد — یک اعتبار جعلی که هیچ‌وقت قابل استفاده نیست و در
+  // تسویهٔ دوره با سازمان نمی‌خواند. «با» در فارسی آن‌قدر عام است که
+  // نمی‌تواند به‌تنهایی نشانهٔ قیمت باشد.
+  const vatMeant = base.explicitVat || base.trade;
+
   // ترتیب مهم است: «بدون احتساب مالیات» با «بدون مالیات» شروع می‌شود ولی
   // معنایش برعکس است — مالیات هست، فقط در مبلغ نیست.
-  if (EXCLUSIVE.test(text) || EXCLUSIVE_AFTER.test(text)) return { ...base, form: VAT_FORMS.EXCLUSIVE, ratePercent: statedRate(text) };
+  if (vatMeant && (EXCLUSIVE.test(text) || EXCLUSIVE_AFTER.test(text))) return { ...base, form: VAT_FORMS.EXCLUSIVE, ratePercent: statedRate(text) };
   if (EXEMPT.test(text)) return { ...base, form: VAT_FORMS.EXEMPT };
-  if (INCLUSIVE.test(text)) return { ...base, form: VAT_FORMS.INCLUSIVE, ratePercent: statedRate(text) };
+  if (vatMeant && INCLUSIVE.test(text)) return { ...base, form: VAT_FORMS.INCLUSIVE, ratePercent: statedRate(text) };
   if (base.explicitVat) return { ...base, form: VAT_FORMS.BARE, ratePercent: statedRate(text) };
   return { ...base, form: VAT_FORMS.NONE };
 }
