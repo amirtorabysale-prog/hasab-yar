@@ -90,7 +90,7 @@ function settlementDirectionFor(item, counterpartyBalance) {
   return settlementDirection(item.type, counterpartyBalance);
 }
 
-export function transactionEventDecision(item = {}, { transcript = '', aiOnly = false, policy = {}, counterpartyBalance = null } = {}) {
+export function transactionEventDecision(item = {}, { transcript = '', sentence = '', aiOnly = false, policy = {}, counterpartyBalance = null } = {}) {
   const baseKind = KIND_BY_TYPE[item.type];
   if (!baseKind) return null;
   const settlementDirection = settlementDirectionFor(item, counterpartyBalance);
@@ -106,7 +106,9 @@ export function transactionEventDecision(item = {}, { transcript = '', aiOnly = 
     counterpartyId: item.contactId || null,
     accountId: item.accountId || null,
     source: item.source === 'voice' ? 'voice' : 'text',
-    evidence: String(item.rawText || transcript || '').slice(0, 1000),
+    // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
+    // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
+    evidence: String(sentence || item.rawText || transcript || '').slice(0, 1000),
   });
   const blockers = Array.isArray(item.reviewReasons) ? item.reviewReasons.filter(Boolean) : [];
   // تسویه بازدارنده نیست: برگهٔ تأیید پیش از ارسال صریح می‌گوید این پول به

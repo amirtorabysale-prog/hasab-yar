@@ -178,11 +178,11 @@ function cogsLedgerAccount(database, product) {
   return linkedLedgerAccount(database, 'cogs-product', product.id, `بهای تمام‌شده — ${String(product.name).slice(0, 100)}`, 'expense');
 }
 
-function outputTaxLedgerAccount(database) {
+export function outputTaxLedgerAccount(database) {
   return linkedLedgerAccount(database, 'system', 'output-tax', 'مالیات و عوارض فروش پرداختنی', 'liability');
 }
 
-function inputTaxLedgerAccount(database) {
+export function inputTaxLedgerAccount(database) {
   return linkedLedgerAccount(database, 'system', 'input-tax', 'اعتبار مالیات و عوارض خرید', 'asset');
 }
 

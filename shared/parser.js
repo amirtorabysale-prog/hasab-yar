@@ -5,6 +5,7 @@ import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
 import { detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
+import { withoutVatQualifiers } from './vatSpeech.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -421,9 +422,19 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   const transactions = spans.map((span, index) => {
     const previousEnd = spans[index - 1]?.end ?? 0;
     const nextStart = spans[index + 1]?.start ?? text.length;
-    const afterAmount = text.slice(span.end, nextStart).trim();
-    const beforeAmount = text.slice(previousEnd, span.start).trim();
-    const context = containsAny(afterAmount, signalWords) ? afterAmount : `${beforeAmount} ${afterAmount}`.trim();
+    const afterRaw = text.slice(span.end, nextStart).trim();
+    const beforeRaw = text.slice(previousEnd, span.start).trim();
+    // نشانه‌های قیمتی ارزش افزوده — «با ارزش افزوده»، «به علاوهٔ مالیات» — از
+    // پنجرهٔ دسته و جهت کنار می‌روند. آن‌ها می‌گویند قیمت چطور حساب شده، نه
+    // موضوع خرج چیست؛ ولی قوی‌ترین واژهٔ جمله بودند و «لپ‌تاپ خریدم با احتساب
+    // ارزش افزوده» را «مالیات و عوارض» می‌کردند و «فروش ۱۰۰ میلیون به علاوه
+    // ارزش افزوده» را حتی هزینه. متن خام ردیف دست‌نخورده می‌ماند تا نگهبان
+    // ارزش افزوده همان را ببیند.
+    const afterAmount = withoutVatQualifiers(afterRaw);
+    const beforeAmount = withoutVatQualifiers(beforeRaw);
+    const afterSignals = containsAny(afterAmount, signalWords);
+    const context = afterSignals ? afterAmount : `${beforeAmount} ${afterAmount}`.trim();
+    const rawContext = afterSignals ? afterRaw : `${beforeRaw} ${afterRaw}`.trim();
     // پنجرهٔ دسته از پنجرهٔ جهت جداست.
     //
     // موضوعِ خرج در فارسی گفتاری تقریباً همیشه پیش از مبلغ می‌آید: «قبض برق رو
@@ -461,7 +472,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
-      amount, type: classified.type, category: classified.category, chartCode: classified.chartCode, rawText: context || text,
+      amount, type: classified.type, category: classified.category, chartCode: classified.chartCode, rawText: rawContext || text,
       ...(counterpartyName ? {
         contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
       } : {}),

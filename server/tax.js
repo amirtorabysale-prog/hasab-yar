@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { vatBalances } from './accounting.js';
 
 function taxError(message, code = 'TAX_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -132,4 +133,24 @@ export function taxReport(database, { from, to } = {}) {
   });
   summary.netTax = summary.outputTax - summary.inputTax;
   return { from: start, to: end, summary, rows, rates: listTaxRates(database), disclaimer: 'این گزارش مدیریتی است و اظهارنامه یا صورتحساب الکترونیکی رسمی محسوب نمی‌شود.' };
+}
+
+/**
+ * آنچه نگهبان ارزش افزوده از دفتر لازم دارد — فقط خواندن.
+ *
+ * `ratesBps` همهٔ نرخ‌های مشمول فعال است و خالی بودنش یعنی دفتر مشمول ارزش
+ * افزوده نیست. `rateBps` نرخی است که وقتی کاربر نرخی نگفته به کار می‌رود:
+ * پیش‌فرضِ مشمول، یا تنها نرخ مشمول. وقتی چند نرخ هست و هیچ‌کدام پیش‌فرض
+ * نیست، `null` می‌ماند — انتخاب میان‌شان حدس است و نگهبان حدس نمی‌زند.
+ *
+ * `outputTax` از **دفتر** می‌آید نه از فاکتورها، به همان دلیلی که تسویهٔ دوره
+ * از دفتر می‌خواند: پرداخت به سازمان باید مانده‌ای را ببندد که واقعاً نشسته.
+ */
+export function vatGuardContext(database) {
+  ensureTaxSchema(database);
+  const rows = database.prepare(`SELECT rate_bps AS rateBps,is_default AS isDefault FROM tax_rates
+    WHERE active=1 AND treatment='taxable' AND rate_bps>0`).all();
+  const ratesBps = [...new Set(rows.map((row) => Number(row.rateBps)))];
+  const preferred = rows.find((row) => row.isDefault)?.rateBps ?? (ratesBps.length === 1 ? ratesBps[0] : null);
+  return { ratesBps, rateBps: preferred === null ? null : Number(preferred), outputTax: vatBalances(database).outputTax };
 }

@@ -32,6 +32,11 @@ export const ROLES = Object.freeze({
   // مصرف شود. حساب «۱۴۰۱ — پیش‌پرداخت‌ها» از قبل در جدول حساب‌ها بود و هیچ
   // قاعده‌ای به آن نمی‌رسید.
   PREPAID_ASSET: 'prepaid-asset',
+  // ارزش افزوده پول سازمان است که کسب‌وکار فقط جمعش می‌کند یا جلو می‌دهد؛
+  // هیچ‌کدام هزینه یا درآمد نیست. همان دو حسابی که فاکتور و تسویهٔ دوره
+  // می‌شناسند، نه حساب تازه، وگرنه ماندهٔ تسویه از دو جا جمع می‌شود.
+  VAT_OUTPUT: 'vat-output',
+  VAT_INPUT: 'vat-input',
   ACCUMULATED_DEPRECIATION: 'accumulated-depreciation',
   DEPRECIATION_EXPENSE: 'depreciation-expense',
 });

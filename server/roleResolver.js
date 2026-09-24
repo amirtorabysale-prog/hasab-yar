@@ -4,7 +4,7 @@ import {
   analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount,
 } from './chartOfAccounts.js';
 import { counterpartyAnalyticForKey } from './chartOfAccounts.js';
-import { counterpartyAccountKey } from './accounting.js';
+import { counterpartyAccountKey, inputTaxLedgerAccount, outputTaxLedgerAccount } from './accounting.js';
 
 // همان‌جایی که تفصیلی ساخته می‌شود تعریف شده؛ اینجا فقط مصرف و بازصادر می‌شود.
 export { counterpartyAnalyticForKey };
@@ -120,6 +120,15 @@ export function resolveEventRole(database, role, key, event = {}) {
       // کم‌کردن، دارایی را زیاد نشان می‌دهد.
       return linkedAccount(database, 'accumulated-depreciation', key, `استهلاک انباشته — ${key}`, 'asset', 'credit');
     }
+
+    // همان حساب‌های فاکتور و تسویهٔ دوره. ساختنشان با `linkedAccount` این فایل
+    // نامشان را متفاوت می‌کرد و `vatBalances` هر دو را با کلید سیستمی پیدا
+    // می‌کند؛ یک منبع، یک نام.
+    case ROLES.VAT_OUTPUT:
+      return outputTaxLedgerAccount(database);
+
+    case ROLES.VAT_INPUT:
+      return inputTaxLedgerAccount(database);
 
     case ROLES.DEPRECIATION_EXPENSE:
       return linkedAccount(database, 'system', 'depreciation-expense', 'هزینهٔ استهلاک', 'expense');
