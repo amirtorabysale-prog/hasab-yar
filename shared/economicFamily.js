@@ -173,6 +173,8 @@ function signalsFutureBenefit(facts) {
   if (has(facts, 'servicePeriodStart') || has(facts, 'servicePeriodEnd') || has(facts, 'contractReference')) return true;
   if (has(facts, 'assetName') || has(facts, 'readyForUseDate')) return true;
   if (['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)) return true;
+  // «پیش‌پیش»، «بیعانه»، «علی‌الحساب»: پول رفته و هنوز هیچ چیزی مصرف نشده.
+  if (facts?.prepaymentSignal === true) return true;
   return TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
 }
 
@@ -244,7 +246,7 @@ export const FAMILY_RULES = Object.freeze([
     weight: 70,
     reason: 'پول پیش از انجام تعهد دریافت شده است.',
     test: (facts) => direction(facts) === 'in' && !has(facts, 'deliveryDate')
-      && (has(facts, 'contractReference') || has(facts, 'servicePeriodStart')),
+      && (has(facts, 'contractReference') || has(facts, 'servicePeriodStart') || facts?.prepaymentSignal === true),
   }),
   Object.freeze({
     family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,

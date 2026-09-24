@@ -4,6 +4,7 @@ import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './
 import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
 import { detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
+import { readPrepaymentMention } from './prepaymentSpeech.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
 
@@ -422,6 +423,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   // زیان جعلی می‌ساخت که — برخلاف خطای پیش‌پرداخت — هیچ‌وقت خودش را اصلاح
   // نمی‌کند. تشخیصش از قبل نوشته شده بود و هیچ‌کس صدایش نمی‌زد.
   const transferPair = detectTransferBanks(input);
+  // یک بار برای کل جمله، نه برای هر تراکنش: تایپ زنده بودجهٔ میلی‌ثانیه‌ای
+  // دارد و همین اشتباه یک بار با تشخیص انتقال تکرار شده بود.
+  const prepayment = readPrepaymentMention(input);
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
   let amountSource = mentionedDate?.match || bank
     ? normalizePersian(input)
@@ -500,7 +504,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // مقیاس محاوره‌ای ابهام دارد و حدس‌زدنش خطای هزاربرابری می‌سازد.
       // مقدار همان ×۱۰۰۰ می‌ماند تا مسیر قدیمی نشکند؛ این پرچم می‌گوید موتور
       // تصمیم باید بپرسد.
-      ...(colloquialThousands ? { amountScaleAmbiguous: true } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
+      ...(colloquialThousands ? { amountScaleAmbiguous: true } : {}),
+      // نشانهٔ ماهیت، نه دسته: پول رفته ولی هنوز هیچ چیزی بابتش نگرفته‌ایم.
+      ...(prepayment ? { prepaymentSignal: true } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
       ...(counterpartyName ? {
         contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
       } : {}),

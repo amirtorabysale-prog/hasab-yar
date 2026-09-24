@@ -131,6 +131,30 @@ export function decisionAuthorizesPosting(decision) {
  * فعلاً فقط ذخیره می‌شود تا تصمیم بدون نسخه ساخته نشود.
  */
 export const DEFAULT_POLICIES = Object.freeze([
+  /**
+   * پیش‌پرداخت به تأمین‌کننده.
+   *
+   * «صد و بیست میلیون پیش‌پیش ریختیم واسه خرید ورق» تا امروز ماهیتش «نامشخص»
+   * می‌شد. پول رفته، ولی هیچ چیزی بابتش نگرفته‌ایم — این دارایی است نه هزینه.
+   *
+   * قاعدهٔ ثبتش در این فاز ساخته نشده و عمداً هم ساخته نمی‌شود: تسویه‌اش با
+   * فاکتوری که بعداً می‌آید، کار نگهبان تسویه و فاز خرید است. ارزش این سیاست
+   * فقط **نام‌گذاری درست** است، و همان دادهٔ خامی است که گزارش اختلاف لازم
+   * دارد: موتور فهمید این پیش‌پرداخت است، ولی هنوز بلد نیست ثبتش کند.
+   */
+  Object.freeze({
+    policyKey: 'supplier-advance',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.ASSET_CREATION,
+    riskLevel: RISK_LEVELS.RED,
+    supportedTreatments: Object.freeze([]),
+    appliesTo(facts) {
+      // خدمت دوره‌دار سیاست خودش را دارد و آنجا قاعدهٔ ثبت هم هست.
+      return facts?.prepaymentSignal === true
+        && !TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
+    },
+    resolve() { return { treatment: TREATMENTS.SUPPLIER_ADVANCE }; },
+  }),
   Object.freeze({
     policyKey: 'cheque-received',
     version: '1.0.0',

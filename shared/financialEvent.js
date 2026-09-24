@@ -140,6 +140,8 @@ export function normalizeFinancialEvent(raw = {}) {
     // و صدا نمی‌پرسید؛ نتیجه‌اش شناسایی دوبارهٔ همان فروش بود.
     // ابهام مقیاس مبلغ در گفتار محاوره‌ای: «سی تومن» یعنی سی هزار یا سی
     // میلیون؟ تا جواب نیامده، هیچ سندی از این رویداد ساخته نمی‌شود.
+    // پول رفته یا آمده ولی تعهدش هنوز انجام نشده. دسته نیست، ماهیت است.
+    prepaymentSignal: raw.prepaymentSignal === true,
     amountScaleAmbiguous: raw.amountScaleAmbiguous === true,
     chequeAgainst: ['income', 'receivable'].includes(raw.chequeAgainst) ? raw.chequeAgainst : null,
     counterpartyRole: ['owner', 'supplier', 'customer', 'employee', 'authority'].includes(raw.counterpartyRole) ? raw.counterpartyRole : null,
