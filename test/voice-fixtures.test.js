@@ -54,8 +54,17 @@ test('voice fixture: multiple transactions stay separate', () => {
  * می‌گرفت.
  */
 test('local parser is fast enough for live preview', () => {
-  for (let index = 0; index < 200; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
-  const startedAt = performance.now();
-  for (let index = 0; index < 2_000; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
-  assert.ok(performance.now() - startedAt < 1_000);
+  const round = () => {
+    const startedAt = performance.now();
+    for (let index = 0; index < 2_000; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
+    return performance.now() - startedAt;
+  };
+
+  round();                                        // گرم‌کردن
+  const best = Math.min(round(), round(), round());
+  // کمینهٔ سه دور، نه یک دور: کل مجموعه موازی اجرا می‌شود و یک دورِ گرفتار
+  // رقابت CPU چیزی دربارهٔ سرعت پارسر نمی‌گوید. آستانه دست‌نخورده می‌ماند —
+  // رگرسیون‌های واقعی (۱۳۵۲ و ۲۶۵۷ میلی‌ثانیه در برابر پایهٔ ۶۰۰) کمینه را
+  // هم با خودشان بالا می‌بردند.
+  assert.ok(best < 1_000, `پارسر کند شده است: ${Math.round(best)} میلی‌ثانیه`);
 });

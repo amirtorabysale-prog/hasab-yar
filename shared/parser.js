@@ -5,6 +5,8 @@ import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
 import { detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
+import { readServicePeriod } from './periodSpeech.js';
+import { readUnpaidSignal } from './accrualSpeech.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
 
@@ -426,6 +428,11 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   // یک بار برای کل جمله، نه برای هر تراکنش: تایپ زنده بودجهٔ میلی‌ثانیه‌ای
   // دارد و همین اشتباه یک بار با تشخیص انتقال تکرار شده بود.
   const prepayment = readPrepaymentMention(input);
+  // دوره و نشانهٔ پرداخت‌نشدن هم یک بار برای کل جمله، نه برای هر تراکنش.
+  const unpaid = readUnpaidSignal(input);
+  // دوره نسبت به تاریخ رویداد حساب می‌شود، نه تاریخ اجرای کد: «برای شش ماه
+  // جلوتر» در جمله‌ای که تاریخش دیروز است، از دیروز شروع می‌شود.
+  const servicePeriod = readServicePeriod(input, { occurredAt: occurredAt || now.toISOString() });
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
   let amountSource = mentionedDate?.match || bank
     ? normalizePersian(input)
@@ -506,7 +513,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // تصمیم باید بپرسد.
       ...(colloquialThousands ? { amountScaleAmbiguous: true } : {}),
       // نشانهٔ ماهیت، نه دسته: پول رفته ولی هنوز هیچ چیزی بابتش نگرفته‌ایم.
-      ...(prepayment ? { prepaymentSignal: true } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
+      ...(prepayment ? { prepaymentSignal: true } : {}),
+      ...(unpaid ? { unpaidSignal: true } : {}),
+      ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
       ...(counterpartyName ? {
         contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
       } : {}),

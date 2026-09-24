@@ -18,6 +18,18 @@ import { FACT_LABELS } from '../shared/factRequirements.js';
  * «چقدر مطمئنیم». اینکه سندش چه می‌شود کار `shared/accountingRules.js` است.
  */
 
+/**
+ * هزینه‌ای که هنوز پرداخت نشده، بدهی می‌سازد نه خروج وجه.
+ *
+ * بدون این، «قبض اومده، موعد پرداختش هفته بعده» یک پرداخت نقدی ثبت می‌شد:
+ * ماندهٔ بانک بی‌دلیل کم می‌شد و بدهی به ادارهٔ برق اصلاً ساخته نمی‌شد. بعد هم
+ * پرداخت واقعی همان قبض، هزینهٔ دوم می‌ساخت.
+ */
+const UNPAID_KIND = Object.freeze({
+  expense: EVENT_KINDS.PAYABLE_OPENED,
+  income: EVENT_KINDS.RECEIVABLE_OPENED,
+});
+
 const KIND_BY_TYPE = Object.freeze({
   income: EVENT_KINDS.CASH_INCOME,
   expense: EVENT_KINDS.CASH_EXPENSE,
@@ -91,7 +103,7 @@ function settlementDirectionFor(item, counterpartyBalance) {
 }
 
 export function transactionEventDecision(item = {}, { transcript = '', sentence = '', aiOnly = false, policy = {}, counterpartyBalance = null } = {}) {
-  const baseKind = KIND_BY_TYPE[item.type];
+  const baseKind = (item.unpaidSignal === true ? UNPAID_KIND[item.type] : null) || KIND_BY_TYPE[item.type];
   if (!baseKind) return null;
   const settlementDirection = settlementDirectionFor(item, counterpartyBalance);
   const kind = settlementDirection ? EVENT_KINDS.OBLIGATION_SETTLED : baseKind;
@@ -110,6 +122,8 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     // بی‌صدا سی هزار ثبت می‌شود.
     amountScaleAmbiguous: item.amountScaleAmbiguous === true,
     prepaymentSignal: item.prepaymentSignal === true,
+    servicePeriodStart: item.servicePeriodStart || null,
+    servicePeriodEnd: item.servicePeriodEnd || null,
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(sentence || item.rawText || transcript || '').slice(0, 1000),
