@@ -282,7 +282,13 @@ function record(sentence) {
   return { id, event };
 }
 
-const settle = (event) => (event.status === 'pending' ? database.approveEvent(event.id) : event);
+// موتور برای «فروختم» ساده هنوز خانواده‌ای نمی‌شناسد، پس مورد به صف حسابدار
+// می‌رود و فقط با دلیل ثبت می‌شود — همان کاری که حسابدار واقعی می‌کند.
+const settle = (event) => {
+  if (event.status !== 'pending') return event;
+  assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_OVERRIDE_REASON_REQUIRED' }, 'تأیید بی‌دلیل نباید ممکن باشد');
+  return database.approveEvent(event.id, { reason: 'حسابدار: ماهیت بررسی و تأیید شد.' });
+};
 
 test('آماده‌سازی: دفتر مشمول با نرخ ده درصد و موتور روشن', () => {
   inPrimary(() => {

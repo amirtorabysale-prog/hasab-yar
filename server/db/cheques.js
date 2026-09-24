@@ -87,7 +87,12 @@ export function recordCheque(values = {}) {
   const counterpartyName = String(values.counterpartyName || '').trim().slice(0, 120)
     || (contactId ? db_.prepare('SELECT name FROM contacts WHERE id=?').get(contactId)?.name || '' : '');
   if (!counterpartyName) throw invalidInput('نام صاحب چک یا گیرندهٔ آن لازم است.');
-  const against = values.against === 'receivable' ? 'receivable' : 'income';
+  // «بابت چه؟» پیش‌فرض ندارد. پیش‌فرض «معاملهٔ تازه» یعنی چکی که بابت طلب
+  // قبلی آمده، همان فروش را دو بار در درآمد می‌آورد — بی‌آنکه کسی پرسیده باشد.
+  if (!['income', 'receivable'].includes(values.against)) {
+    throw invalidInput('مشخص کن این چک بابت معاملهٔ تازه است یا حساب قبلی.');
+  }
+  const against = values.against;
   const category = String(values.category || (direction === 'receivable' ? 'فروش' : 'مواد و کالا')).trim().slice(0, 80);
   const occurredAt = values.occurredAt || new Date().toISOString();
   const id = randomUUID();

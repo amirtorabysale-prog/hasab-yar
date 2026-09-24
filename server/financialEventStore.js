@@ -3,7 +3,7 @@ import { ROLES, planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
 import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
 import { normalizeFinancialEvent } from '../shared/financialEvent.js';
-import { decide } from '../shared/accountingDecision.js';
+import { DECISION_STATUS, decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { applyAnswer } from '../shared/questionAnswer.js';
 import { GUARD_VERDICTS, guardedPlan, isGuardPlan, runGuards } from '../shared/guards.js';
@@ -339,7 +339,7 @@ export function recordFinancialEvent(database, event, {
   // موردی که نگهبان گفته بود نباید ثبت شود، بی‌صدا ثبت می‌شد.
   const blocked = guards?.verdict === GUARD_VERDICTS.BLOCK;
   const routing = blocked
-    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(decision.reasons || []), guards.reason])] }
+    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), guards.reason])] }
     : decision;
   // تصمیم، شکل سند را تعیین می‌کند. بدون تصمیم، همان قاعدهٔ نوع رویداد.
   const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);
@@ -477,7 +477,7 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
       .run(JSON.stringify(event), JSON.stringify(plan), row.id);
     if (blocked) {
       const confidence = JSON.parse(row.confidence);
-      const routing = { ...confidence, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(confidence.reasons || []), guards.reason])] };
+      const routing = { ...confidence, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(confidence.reasons || []), guards.reason])] };
       database.prepare('UPDATE financial_events SET route=?,confidence=? WHERE id=?').run(routing.route, JSON.stringify(routing), row.id);
     }
     const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
@@ -491,12 +491,31 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
 }
 
 /** تأیید کاربر یا حسابدار روی رویدادی که منتظر مانده بود. */
-export function approveFinancialEvent(database, eventId, { actor = null, timeZone = 'Asia/Tehran', postJournal = null } = {}) {
+export function approveFinancialEvent(database, eventId, { actor = null, timeZone = 'Asia/Tehran', postJournal = null, overrideReason = '' } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
   if (row.status === 'posted') return describeStored(database, row);
   if (row.status !== 'pending') throw storeError('این رویداد دیگر در انتظار تأیید نیست.', 'EVENT_NOT_PENDING', 409);
+
+  // تأییدِ موردی که موتور دربارهٔ آن تصمیم قطعی ندارد، override است — و
+  // override بدون دلیل نوشته‌شده انجام نمی‌شود (تصمیم پایهٔ «اختیار کامل
+  // حسابدار، با دلیل اجباری»).
+  //
+  // بدون این، کلید «تأیید» هر چیزی را ثبت می‌کرد: رویدادی که سؤالش بی‌جواب مانده
+  // بود با نقشهٔ نیمه‌کاره سند می‌خورد، و موردی که نگهبان جلویش را گرفته بود با
+  // همان نقشه‌ای ثبت می‌شد که نگهبان گفته بود غلط است.
+  const decision = decisionForEvent(database, row.id);
+  const undecided = decision && decision.decisionStatus !== DECISION_STATUS.DECIDED;
+  // صف حسابدارِ مسیر قدیمی — اطمینان پایین، بدون موتور تصمیم — همان رفتار
+  // همیشگی را دارد؛ فقط مانعِ نگهبان override حساب می‌شود.
+  const heldForAccountant = row.route === ROUTES.ACCOUNTANT_REVIEW && JSON.parse(row.confidence || '{}').guardBlocked === true;
+  const reason = String(overrideReason || '').trim();
+  if ((undecided || heldForAccountant) && reason.length < 5) {
+    throw storeError(decision?.decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT
+      ? 'این مورد هنوز یک سؤال بی‌جواب دارد؛ یا جوابش را بده یا دلیل ثبت بدون جواب را بنویس.'
+      : 'موتور برای این مورد تصمیم قطعی ندارد؛ ثبتش فقط با نوشتن دلیل ممکن است.', 'EVENT_OVERRIDE_REASON_REQUIRED', 409);
+  }
 
   const event = JSON.parse(row.payload);
   // نقشهٔ قفل‌شدهٔ لحظهٔ تصمیم، نه نقشه‌ای که کدِ امروز می‌سازد.
@@ -513,7 +532,10 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
     // سندِ رویدادی که روی تراکنش نشسته باید همان شکلی را داشته باشد که اگر
     // خودکار ثبت می‌شد داشت. تأیید حسابدار زمانِ ثبت را عوض می‌کند، نه سند را.
     postPlanned(database, { id: row.id, event, plan, actor, timeZone, journalSource, postJournal });
-    writeAudit(database, row.id, 'approved', { by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy' }, actor);
+    writeAudit(database, row.id, 'approved', {
+      by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy',
+      ...(undecided || heldForAccountant ? { override: true, reason: reason.slice(0, 500), decisionStatus: decision?.decisionStatus || null, route: row.route } : {}),
+    }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));

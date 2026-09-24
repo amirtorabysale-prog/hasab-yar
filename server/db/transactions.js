@@ -13,6 +13,11 @@ import { recordFinancialEvent, recordShadowRun } from '../financialEventStore.js
 import { openDocumentsFor } from './counterpartyCard.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 import { vatGuardContext } from '../tax.js';
+import { NATURE_EXPLANATIONS, natureNeedsAccountant, readEventNature, readNonCashInstrument } from '../../shared/eventNature.js';
+import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
+import { decide } from '../../shared/accountingDecision.js';
+import { factsFromEvent } from '../../shared/eventFacts.js';
+import { ROUTES } from '../../shared/confidenceEngine.js';
 
 export function getToday() {
   const today = localDay();
@@ -198,12 +203,76 @@ function counterpartyFromSentence(item, transcript, counterpartyResolution) {
   return saveContact({ name, counterpartyResolution }).id;
 }
 
-export function insertTransactionRows({ transcript, transactions, counterpartyResolution = '' }) {
+/**
+ * جمله‌ای که اصلاح یک ثبت قبلی است، تراکنش تازه نیست.
+ *
+ * «فاکتور خرید دیروز اشتباهاً بیست و یک میلیون ثبت شده بود، اصلاحش کن» روی
+ * برگهٔ تأیید دو ردیف نقدی تازه می‌ساخت — دوازده و بیست و یک میلیون — و ماندهٔ
+ * صندوق سی و سه میلیون کم می‌شد، درحالی‌که هیچ پولی جابه‌جا نشده بود. اصلاح،
+ * سند اصلاحی با ارجاع به سند اول می‌خواهد و آن کار حسابدار است.
+ *
+ * فقط برای گفتهٔ کاربر (صدا یا متن). مسیرهای داخلی — تسویه، رسید، تکرار —
+ * متن خودشان را می‌سازند و این واژه‌ها در آن‌ها معنای دیگری ندارند.
+ */
+function correctionNature(item, transcript) {
+  if (item.journalManaged || item.restoredFrom || !['voice', 'text', undefined].includes(item.source)) return null;
+  const nature = item.eventNature || readEventNature(String(item.rawText || '')) || null;
+  const fromSentence = readEventNature(String(transcript || ''));
+  const chosen = natureNeedsAccountant(nature) ? nature : fromSentence;
+  return natureNeedsAccountant(chosen) ? chosen : null;
+}
+
+const NON_CASH_REASON = 'این جمله از چک یا سفته‌ای می‌گوید که هنوز وصول نشده؛ چک تا وصول نشود پول نیست و ردیف نقدی ساخته نشد.';
+
+/** چکی که پول نیست — همان مسیر اصلاح: بدون ردیف نقدی، مستقیم به حسابدار. */
+function nonCashInstrument(item, transcript) {
+  if (item.journalManaged || item.restoredFrom || !['voice', 'text', undefined].includes(item.source)) return false;
+  return readNonCashInstrument(transcript || item.rawText || '');
+}
+
+function queueCorrectionForAccountant(item, transcript, nature) {
+  const amount = Math.round(Number(item.amount));
+  const event = normalizeFinancialEvent({
+    kind: item.type === 'income' ? EVENT_KINDS.CASH_INCOME : EVENT_KINDS.CASH_EXPENSE,
+    amount, occurredAt: item.occurredAt || new Date().toISOString(),
+    category: item.category, description: item.category, accountId: resolveAccountId(item),
+    source: item.source === 'voice' ? 'voice' : 'text', eventNature: nature === 'non-cash-instrument' ? 'new' : nature,
+    evidence: String(transcript || item.rawText || '').slice(0, 1000),
+  });
+  const accountingDecision = decide(factsFromEvent(event), { today: event.occurredAt });
+  const reason = nature === 'non-cash-instrument' ? NON_CASH_REASON
+    : NATURE_EXPLANATIONS[nature] || 'این جمله اصلاح یک ثبت قبلی است، نه تراکنش تازه.';
+  return recordFinancialEvent(db, event, {
+    sourceEventId: `correction:${item.clientId || randomUUID()}`,
+    decision: { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [reason], summary: reason },
+    actor: currentWorkspace()?.userId || null, transcript, rawInput: transcript,
+    timeZone: currentTimeZone(), withinTransaction: true, accountingDecision,
+  });
+}
+
+// `fromUtterance` فقط از مسیر عمومی ثبت (گفته یا متن کاربر) روشن است. مسیرهای
+// داخلی — رسید، صورت‌حساب بانک، تسویهٔ تعهد، فاکتور، تکرار — متن خودشان را
+// می‌سازند («واریز چک»، «شماره چک» در رسید) و شناسهٔ ردیف ساخته‌شده را لازم
+// دارند؛ صف کردنشان بدون ردیف آن مسیرها را می‌شکست.
+export function insertTransactionRows({ transcript, transactions, counterpartyResolution = '', fromUtterance = false }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
     (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at,settlement_choice)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const ids = [];
+  let queuedForAccountant = 0;
+  const queuedReasons = [];
   for (const item of transactions) {
+    const nature = fromUtterance
+      ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null)
+      : null;
+    if (nature) {
+      const amount = Math.round(Number(item.amount));
+      if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
+      queueCorrectionForAccountant(item, transcript, nature);
+      queuedForAccountant += 1;
+      queuedReasons.push(nature === 'non-cash-instrument' ? NON_CASH_REASON : (NATURE_EXPLANATIONS[nature] || ''));
+      continue;
+    }
     const id = randomUUID();
     const amount = Math.round(Number(item.amount));
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
@@ -260,7 +329,8 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
       if (existing) ids.push(existing.id);
     }
   }
-  return ids;
+  // تعداد اصلاح‌هایی که به‌جای ردیف نقدی به صف حسابدار رفتند، کنار شناسه‌ها.
+  return Object.assign(ids, { queuedForAccountant, queuedReasons });
 }
 
 /**
@@ -310,7 +380,7 @@ export function insertTransactions(payload) {
     const transactions = (payload.transactions || []).map((item) => ({
       ...item, status: 'confirmed', restoredFrom: null, journalManaged: false, capitalFlow: '',
     }));
-    const ids = insertTransactionRows({ ...payload, transactions });
+    const ids = insertTransactionRows({ ...payload, transactions, fromUtterance: true });
     db.exec('COMMIT');
     return ids;
   } catch (error) { db.exec('ROLLBACK'); throw error; }

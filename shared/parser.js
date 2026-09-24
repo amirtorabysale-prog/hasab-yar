@@ -7,7 +7,7 @@ import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
-import { EVENT_NATURES, readEventNature } from './eventNature.js';
+import { EVENT_NATURES, natureNeedsAccountant, readEventNature } from './eventNature.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
 
@@ -37,12 +37,17 @@ const SCALES = {
   میلیارد: 1_000_000_000, میلیاردی: 1_000_000_000,
 };
 const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS), ...Object.keys(SCALES)]);
-const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'دخل', 'وصول', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد'];
+// پول آمده به حساب خودِ واحد. آزمون استرس نشان داد این شکل‌های رایج جهت نداشتند
+// و «یه پولی اومده تو حساب ملی» یا «اداره دارایی… عودت داد» خروج پول ثبت
+// می‌شد — ردیف تراکنش هم با همان جهت غلط ماندهٔ بانک را جابه‌جا می‌کرد.
+const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'فروختیم', 'دخل', 'وصول', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد',
+  'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد'];
 const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
 // فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
 // هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و نوع بی‌دلیل
 // هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
-const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'واریز', 'واریزی', 'دریافت']);
+const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'فروختیم', 'واریز', 'واریزی', 'دریافت',
+  'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد']);
 const EXPENSE_VERBS = new Set(['دادم', 'خریدم', 'برداشت']);
 const LEARNING_STOP_WORDS = new Set(['امروز', 'دیروز', 'تومان', 'تومن', 'تومنی', 'ریال', 'بابت', 'برای', 'از', 'به', 'را', 'رو', 'کردم', 'دادم', 'گرفتم', 'داشتم', 'خریدم', 'فروختم', 'پرداخت', 'هزینه', 'درآمد', 'فروش', 'حقوق', 'و']);
 
@@ -60,8 +65,15 @@ const SCALE_WORDS = Object.keys(SCALES).sort((left, right) => right.length - lef
 const JOINED_SCALE_PATTERN = new RegExp(`(?<![آ-ی])(${JOINABLE_VALUES.join('|')})(${SCALE_WORDS.join('|')})(?![آ-ی])`, 'g');
 const TRAILING_VAV_PATTERN = new RegExp(`(?<![آ-ی])(${JOINABLE_VALUES.join('|')})و(?![آ-ی])`, 'g');
 
+// پسوند محاوره‌ای روی واژهٔ مقیاس: «پنجاه میلیونیش»، «چهل میلیونشو»، «ده
+// هزارشو». بدون جدا کردنش واژهٔ مقیاس شناخته نمی‌شد و «بدهی پنجاه میلیونیش»
+// یک ثبت پنجاه‌تومانی می‌ساخت — در آزمون استرس، به صف حسابدار با مبلغی
+// یک‌میلیون‌بار کوچک‌تر.
+const SCALE_SUFFIX_PATTERN = /(?<![آ-ی])(هزار|میلیون|میلیارد)(?:ی(?:ش|شو|شم|شون)|ش|شو|شم|شون)(?![آ-ی])/g;
+
 export function repairNumberSpeech(text) {
   return String(text || '')
+    .replace(SCALE_SUFFIX_PATTERN, '$1')
     .replace(JOINED_SCALE_PATTERN, '$1 $2')
     .replace(TRAILING_VAV_PATTERN, '$1 و')
     .replace(/\s+/g, ' ')
@@ -280,9 +292,28 @@ function signalScore(text, words, verbs) {
  * گمراه‌کننده که «واژهٔ شناخته‌شده‌ای در متن نبود» — در حالی که بود، فقط یک
  * کلمه آن‌طرف‌تر.
  */
+/**
+ * نام نقش، فعل نیست.
+ *
+ * «فروشنده»، «فروشگاه» و «خریدار» هر کدام واژهٔ جهت را در خود دارند و با
+ * تطبیق زیررشته‌ای جهت پول را برعکس می‌کردند: «یه دستگاه خریدیم… فروشنده
+ * فاکتور غیررسمی داده» درآمد ثبت می‌شد.
+ */
+const ROLE_NOUNS = /فروشنده|فروشگاه|خریدار/g;
+
+const MONEY_IN_PHRASE = /اومده?\s*تو\s*حساب|به\s*حساب\s*(?:\S+\s*)?اومد|عودت\s*(?:داد|دادن|کرد)|به\s*حساب\s*شرکت\s*(?:انتقال\s*داد|واریز\s*کرد|ریخت)|واریز\s*شد\s*به\s*حساب/;
+// فعل پرداختِ اول‌شخص. «برای خرید مواد اولیه» اسم است، نه فعل؛ جلوی تشخیص
+// ورود را نمی‌گیرد.
+const MONEY_OUT_VERB = /(?:دادم|دادیم|ریختم|ریختیم|زدم|زدیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم)|برداشت\s*کرد)/;
+
+function sentenceMoneyIn(input) {
+  const text = normalizePersian(input);
+  return MONEY_IN_PHRASE.test(text) && !MONEY_OUT_VERB.test(text);
+}
+
 function classify(context, learnings = [], categoryContext = '') {
-  const normalizedContext = normalizePersian(context);
-  const normalizedCategoryContext = normalizePersian(categoryContext) || normalizedContext;
+  const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ');
+  const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ');
   const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword)));
   const incomeScore = signalScore(normalizedContext, INCOME_WORDS, INCOME_VERBS);
   const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
@@ -481,7 +512,21 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const categoryContext = containsAny(afterAmount, categoryWords)
       ? afterAmount
       : `${beforeAmount} ${afterAmount}`.trim();
-    const classified = classify(context, learnings, categoryContext);
+    let classified = classify(context, learnings, categoryContext);
+    // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
+    //
+    // پنجرهٔ جهت فقط متنِ کنار مبلغ را می‌بیند و «یه پولی اومده تو حساب ملی
+    // بیست و دو میلیون، معلوم نیس کی ریخته» را خروج پول می‌خواند چون نشانهٔ
+    // ورود پیش از مبلغ آمده. ردیف تراکنش با جهت غلط، ماندهٔ بانک را غلط
+    // می‌گذارد — حتی وقتی سندش به صف حسابدار رفته.
+    if (spans.length === 1 && classified.type === 'expense' && sentenceMoneyIn(input)) {
+      const incomeCategory = classifyCategory(normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' '), 'income');
+      classified = {
+        ...classified, type: 'income', category: incomeCategory.category, chartCode: chartCodeForCategory(incomeCategory.category),
+        confidence: Math.min(classified.confidence, 0.68),
+        typeReason: 'جمله صریح می‌گوید پول به حساب آمده؛ جهت از کل جمله برداشت شد و باید کنترل شود.',
+      };
+    }
     let amount = span.amount;
     // «پنجاه تومن» یعنی پنجاه هزار تومان. هیچ چیزی در ایران امروز پنجاه تومان
     // نیست، پس محدودکردن این قاعده به سه‌رقمی‌ها فقط مبلغ‌های کوچک را خراب می‌کرد.
@@ -504,6 +549,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const capitalWording = mentionsCapitalOrAsset(normalizePersian(context || text));
     if (capitalWording === 'capital') reviewReasons.push('این جمله از آوردهٔ سرمایه می‌گوید؛ آورده درآمد نیست و باید در بخش سرمایه ثبت شود.');
     if (capitalWording === 'fixed-asset') reviewReasons.push('این جمله از دارایی ثابت می‌گوید؛ دارایی ثابت هزینهٔ این ماه نیست.');
+    if (natureNeedsAccountant(eventNature)) reviewReasons.push('این جمله اصلاح یک ثبت قبلی است؛ تراکنش تازه ساخته نمی‌شود و برای اصلاح به حسابدار می‌رسد.');
     if (unusual) reviewReasons.push('مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.');
     if (colloquialThousands) reviewReasons.push('واحد هزار از گفتار محاوره‌ای برداشت شده است.');
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
@@ -525,7 +571,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // دستهٔ مبهم یعنی دو دسته به یک اندازه موجه بودند؛ ثبت چنین چیزی بدون
       // نگاه کاربر همان خطای بی‌صداست که در بخش مبلغ بستیم.
       confidence: classified.confidence,
-      needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording),
+      needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording) || natureNeedsAccountant(eventNature),
       source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),
       // شناسهٔ بانک می‌رود، نه شناسهٔ حساب: پارسر دفتر را نمی‌شناسد و نمی‌داند

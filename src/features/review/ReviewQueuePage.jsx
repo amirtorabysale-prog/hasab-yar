@@ -276,7 +276,18 @@ export function ReviewQueuePage({ notify, access }) {
   const approve = async (item) => {
     setBusy(item.id);
     try { await api.approveEvent(item.id); notify('سند ثبت شد.'); await load(); }
-    catch (error) { notify(error.message); }
+    catch (error) {
+      // موردی که تصمیم قطعی ندارد فقط با دلیل ثبت می‌شود؛ سرور همین را می‌گوید
+      // و ما دلیل را می‌پرسیم، نه اینکه بی‌صدا دوباره بفرستیم.
+      if (error.code !== 'EVENT_OVERRIDE_REASON_REQUIRED') notify(error.message);
+      else {
+        const reason = window.prompt(`${error.message}\n\nدلیل ثبت:`);
+        if (reason?.trim()) {
+          try { await api.approveEvent(item.id, reason.trim()); notify('سند با دلیل ثبت شد.'); await load(); }
+          catch (retry) { notify(retry.message); }
+        }
+      }
+    }
     setBusy('');
   };
 

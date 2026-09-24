@@ -1,4 +1,4 @@
-import { persianToISO, todayPersian } from './persianDate.js';
+import { PERSIAN_MONTHS, persianToISO, todayPersian } from './persianDate.js';
 
 /**
  * دورهٔ پوششِ گفته‌شده در جمله.
@@ -50,12 +50,94 @@ function endOfPeriod(startIso, months) {
   return next ? new Date(new Date(next).getTime() - 86_400_000).toISOString() : null;
 }
 
+/**
+ * شرط پرداخت، دورهٔ خدمت نیست.
+ *
+ * «نسیه دو ماهه»، «چک شش‌ماهه»، «وام دوساله» همان صفت دوره را دارند ولی
+ * دربارهٔ **مهلت پرداخت** حرف می‌زنند، نه مدت خدمتی که خریده شده. در آزمون
+ * استرس، «پنج تا صندلی… نسیه دو ماهه» پیش‌پرداخت قطعی شد و «سهم‌الشرکه… چک
+ * شش‌ماهه» هم — هر دو با اطمینان و هر دو غلط.
+ */
+const CREDIT_TERM = new RegExp(`(?:نس${YA}ه|چک|وام|قسط|اقساط|مهلت|سررس${YA}د|مدت${GAP}دار|تسه${YA}لات|سپرده|اعتبار|ضمانت)${GAP}(?:[^\\s]+${GAP}){0,2}$`);
+
+function termOfPayment(text, index) {
+  return CREDIT_TERM.test(text.slice(Math.max(0, index - 30), index));
+}
+
+const MONTH_NAMES = PERSIAN_MONTHS.map(([name]) => name).join('|');
+const monthNumber = (name) => PERSIAN_MONTHS.find(([candidate]) => candidate === name)?.[1] || 0;
+
+/** «از اول فروردین تا آخر اسفند» — بازهٔ صریح ماه‌ها. */
+const MONTH_RANGE = new RegExp(`(?<![آ-ی])از${GAP}(?:اول${GAP}|ابتدا${YA}${GAP})?(${MONTH_NAMES})${GAP}(?:ماه${GAP})?تا${GAP}(?:آخر${GAP}|پا${YA}ان${GAP}|انتها${YA}${GAP})?(${MONTH_NAMES})`);
+/**
+ * «بابت اجاره اردیبهشت ماه» — یک ماه نام‌برده، به‌عنوان موضوع پرداخت.
+ *
+ * مرز واژه لازم است: «مال» درون «مالیات» و «دی» درون «عیدی» پیدا می‌شد و
+ * «مالیات عیدی» دورهٔ دی‌ماه می‌گرفت. «مهر»، «تیر» و «دی» واژه‌های روزمره هم
+ * هستند («بابت مهر شرکت»)، پس فقط با «ماه» پشتشان ماه شمرده می‌شوند.
+ */
+const COMMON_WORD_MONTHS = ['تیر', 'تير', 'مهر', 'دی'];
+const DISTINCT_MONTHS = PERSIAN_MONTHS.map(([name]) => name).filter((name) => !COMMON_WORD_MONTHS.includes(name)).join('|');
+const NAMED_MONTH = new RegExp(`(?<![آ-ی])(?:بابت|مال|برا${YA}|واسه)(?![آ-ی])${GAP}(?:[^\\s\\d]+[\\s\\u200c]+){0,3}?(?:(${DISTINCT_MONTHS})(?![آ-ی])|(${COMMON_WORD_MONTHS.join('|')})${GAP}ماه)(?![^\\s]*\\d)`);
+
+function yearShift(text) {
+  if (/پارسال|سال${GAP}(?:قبل|گذشته)/.test(text)) return -1;
+  if (/سال${GAP}(?:بعد|آ[یي]نده)/.test(text)) return 1;
+  return 0;
+}
+
+/** روز آخرِ یک ماه شمسی: یک روز پیش از اول ماه بعد. */
+function lastDayOf(year, month) {
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const first = persianToISO(nextYear, nextMonth, 1);
+  return first ? new Date(new Date(first).getTime() - 86_400_000).toISOString() : null;
+}
+
+function monthSpan(year, fromMonth, toMonth) {
+  const endYear = toMonth < fromMonth ? year + 1 : year;
+  const start = persianToISO(year, fromMonth, 1);
+  const end = lastDayOf(endYear, toMonth);
+  if (!start || !end) return null;
+  const months = ((endYear - year) * 12) + (toMonth - fromMonth) + 1;
+  return { start, end, months };
+}
+
+/**
+ * ماه‌های نام‌برده، پیش از هر صفتی.
+ *
+ * «بیمهٔ یک‌ساله، از اول فروردین تا آخر اسفند» دوره را از خودِ جمله دارد؛
+ * شروع کردنش از روز پرداخت — که ممکن است مهر باشد — نیمی از پوشش را به
+ * آینده هل می‌داد. سال از تاریخ رویداد می‌آید، مگر جمله خودش سال دیگری بگوید.
+ */
+function namedMonths(text, occurredAt) {
+  const reference = todayPersian(new Date(occurredAt));
+  const year = reference.year + yearShift(text);
+  const range = MONTH_RANGE.exec(text);
+  if (range) return monthSpan(year, monthNumber(range[1]), monthNumber(range[2]));
+  const single = NAMED_MONTH.exec(text);
+  if (single) {
+    const month = monthNumber(single[1] || single[2]);
+    return month ? monthSpan(year, month, month) : null;
+  }
+  return null;
+}
+
 export function readServicePeriod(input, { occurredAt } = {}) {
   const text = String(input || '');
-  if (!/ماه|سال/.test(text)) return null;
+  if (!/ماه|سال|فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند/.test(text)) return null;
   if (PAST.test(text)) return null;
+  const start = occurredAt || null;
+  if (!start) return null;
 
-  const match = ADJECTIVE.exec(text) || FORWARD.exec(text);
+  const named = namedMonths(text, start);
+  if (named) return named;
+
+  let match = null;
+  for (const pattern of [ADJECTIVE, FORWARD]) {
+    const candidate = pattern.exec(text);
+    if (candidate && !termOfPayment(text, candidate.index)) { match = candidate; break; }
+  }
   if (!match) return null;
 
   const count = monthsOf(match[1]);
@@ -63,8 +145,6 @@ export function readServicePeriod(input, { occurredAt } = {}) {
   const months = /سال/.test(match[2]) ? count * 12 : count;
   if (months > 120) return null;
 
-  const start = occurredAt || null;
-  if (!start) return null;
   const end = endOfPeriod(start, months);
   return end ? { start, end, months } : null;
 }

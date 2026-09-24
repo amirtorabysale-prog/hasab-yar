@@ -1,4 +1,4 @@
-import { CONFIDENCE_COMPONENTS, routeEvent } from '../shared/confidenceEngine.js';
+import { CONFIDENCE_COMPONENTS, ROUTES, routeEvent } from '../shared/confidenceEngine.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { settlementDirection } from '../shared/counterpartySettlement.js';
 import { resolveAutomationPolicy } from '../shared/automationPolicy.js';
@@ -128,6 +128,7 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(sentence || item.rawText || transcript || '').slice(0, 1000),
+    utterance: sentence ? null : String(transcript || '').slice(0, 1000) || null,
   });
   const blockers = Array.isArray(item.reviewReasons) ? item.reviewReasons.filter(Boolean) : [];
   // تسویه بازدارنده نیست: برگهٔ تأیید پیش از ارسال صریح می‌گوید این پول به
@@ -148,9 +149,20 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     blockers.push(explainBlock(accountingDecision));
   }
 
-  const decision = routeEvent(event, {
+  const routed = routeEvent(event, {
     components: transactionConfidenceComponents(item), blockers, aiOnly, policy,
   });
+  // تصمیمی که نه قطعی است و نه با یک سؤال حل می‌شود، جایش صف حسابدار است.
+  //
+  // تا اینجا «نمی‌دانم» و «قاعده ندارم» فقط یک بازدارنده بودند و اگر اطمینان
+  // برداشت بالا بود، مسیر «تأیید کاربر» می‌گرفتند. تأیید کاربر همان نقشهٔ
+  // قدیمی نوع تراکنش را ثبت می‌کرد: وام دریافتی درآمد می‌شد، برداشت شریک
+  // هزینه، و پیش‌پرداخت به تأمین‌کننده هزینهٔ همان ماه — دقیقاً همان‌جایی که
+  // موتور گفته بود ماهیت را نمی‌داند. صاحب کسب‌وکار نمی‌تواند ماهیتی را تأیید
+  // کند که موتور هم نمی‌داند.
+  const decision = accountingDecision && needsAccountant(accountingDecision)
+    ? { ...routed, route: ROUTES.ACCOUNTANT_REVIEW }
+    : routed;
   return { event, decision, accountingDecision };
 }
 
@@ -176,6 +188,11 @@ function decideForEvent(event, policyOverrides, item) {
  */
 function blocksPosting(accountingDecision) {
   return accountingDecision.decisionStatus !== DECISION_STATUS.DECIDED;
+}
+
+/** وضعیتی که فقط حسابدار می‌تواند تمامش کند — نه یک سؤال ساده از کاربر. */
+function needsAccountant(accountingDecision) {
+  return ![DECISION_STATUS.DECIDED, DECISION_STATUS.NEEDS_USER_INPUT].includes(accountingDecision.decisionStatus);
 }
 
 /** دلیل، به زبان حسابدار — نه نام فنی وضعیت. */

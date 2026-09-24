@@ -322,7 +322,7 @@ export const api = {
   eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),
   eventDecision: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/decision`),
   answerEvent: (id, answer) => request(`/api/financial-events/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify(answer) }),
-  approveEvent: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({}) }),
+  approveEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
   reverseEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) }),
   rejectEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
   journalTemplates: () => request('/api/accounting/templates'),

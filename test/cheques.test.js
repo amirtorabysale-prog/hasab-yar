@@ -35,7 +35,7 @@ test('چک دریافتی بابت فروش تازه، اسناد دریافتن
   inWorkspace(() => {
     const cheque = database.recordCheque({
       direction: 'receivable', counterpartyName: 'پخش نوین', amount: 12_000_000,
-      dueAt: '2026-12-20T00:00:00.000Z', serial: '۴۴۱۷۸', bankName: 'ملت', category: 'فروش',
+      dueAt: '2026-12-20T00:00:00.000Z', serial: '۴۴۱۷۸', bankName: 'ملت', category: 'فروش', against: 'income',
     });
     assert.equal(cheque.status, 'open');
     assert.equal(cheque.statusLabel, 'در جریان');
@@ -114,7 +114,7 @@ test('چک برگشتی، بدهی شخص را برمی‌گرداند', () => {
 test('چک پرداختی، اسناد پرداختنی می‌سازد و با پرداخت بسته می‌شود', () => {
   inWorkspace(() => {
     const cheque = database.recordCheque({
-      direction: 'payable', counterpartyName: 'مواد شیمیایی پارس', amount: 6_000_000, category: 'مواد و کالا',
+      direction: 'payable', counterpartyName: 'مواد شیمیایی پارس', amount: 6_000_000, category: 'مواد و کالا', against: 'income',
     });
     assert.equal(balanceOfKind('cheque-payable'), -6_000_000, 'اسناد پرداختنی بستانکار می‌شود');
     database.clearCheque(cheque.id, { account: 'cash' });
@@ -140,3 +140,12 @@ test('حساب چک خودکار به معین اسناد دریافتنی نگ�
 });
 
 test.after(() => removeTempDatabase(databasePath));
+
+test('چک بدون پاسخ «بابت چه؟» ثبت نمی‌شود', () => {
+  // پیش‌فرض «معاملهٔ تازه» همان فروش را دو بار در درآمد می‌آورد وقتی چک بابت
+  // طلب قبلی بود؛ مسیر صدا این را هیچ‌وقت نمی‌پرسید.
+  inWorkspace(() => {
+    assert.throws(() => database.recordCheque({ direction: 'receivable', counterpartyName: 'پخش نوین', amount: 5_000_000 }),
+      /بابت معاملهٔ تازه است یا حساب قبلی/);
+  });
+});
