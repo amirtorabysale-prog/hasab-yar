@@ -10,6 +10,7 @@ import { normalizePersian } from '../../shared/parser.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
+import { openDocumentsFor } from './counterpartyCard.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 
 export function getToday() {
@@ -130,6 +131,9 @@ function routeTransactionThroughEvents(row, item, transcript) {
       journalSource: { type: 'transaction', id: row.id },
       postJournal: transactionJournalPoster(row, settlement),
       accountingDecision: draft.accountingDecision || null,
+      // `undefined` وقتی طرف حساب شناسایی نشده: نگهبان باید بتواند بگوید
+      // «نتوانستم بررسی کنم»، نه اینکه سکوت کند.
+      openDocuments: row.contactId ? openDocumentsFor(row.contactId) : undefined,
     });
     // مسیر غیرخودکار یعنی سند منتظر می‌ماند. ردیف تراکنش سر جایش است — کاربر
     // ثبتش را می‌بیند و ماندهٔ صندوقش درست است — ولی دفتر تا تأیید تکان نمی‌خورد.

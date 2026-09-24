@@ -199,3 +199,55 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
     reconciliation: from || to ? null : reconcile(balance),
   };
 }
+
+/**
+ * اسناد بازِ یک طرف حساب — ردیف‌به‌ردیف، نه جمعشان.
+ *
+ * `documentBalance` بالا همین منابع را جمع می‌زند و یک عدد می‌دهد. نگهبان
+ * تسویه به عدد نیاز ندارد؛ به خودِ سندها نیاز دارد تا بتواند بگوید «این پول
+ * فاکتور ۱۲۳ را می‌بندد» — نه فقط «این شخص بدهکار است».
+ *
+ * `remaining` همان ماندهٔ واقعی است، نه مبلغ اولیه: سندی که نیمی‌اش پرداخت
+ * شده، با مبلغ کاملش تطبیق داده نمی‌شود.
+ */
+export function openDocumentsFor(contactId) {
+  const id = String(contactId || '').trim();
+  if (!id) return [];
+
+  const obligations = db.prepare(`SELECT id,direction,title,occurred_at AS occurredAt,
+    amount-COALESCE(paid_amount,0) AS remaining
+    FROM obligations WHERE contact_id=? AND status='open' AND amount-COALESCE(paid_amount,0) > 0`).all(id);
+
+  const invoices = db.prepare(`SELECT id,number,document_type AS documentType,created_at AS occurredAt,
+    total-COALESCE((SELECT SUM(amount) FROM invoice_payments WHERE invoice_id=invoices.id),0) AS remaining
+    FROM invoices WHERE contact_id=? AND status='sent'`).all(id);
+
+  // جدول چک تنبل ساخته می‌شود — دفتری که هنوز چکی ثبت نکرده آن را ندارد.
+  // پرسیدن از `sqlite_master` صریح‌تر از بلعیدن خطاست: اگر روزی کوئری واقعاً
+  // خراب شود، باید بشکند نه اینکه بی‌صدا فهرست ناقص بدهد.
+  const chequeTableExists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cheques'").get();
+  const cheques = chequeTableExists
+    ? db.prepare(`SELECT id,direction,serial,occurred_at AS occurredAt,amount AS remaining
+      FROM cheques WHERE contact_id=? AND status='open'`).all(id)
+    : [];
+
+  return [
+    ...obligations.map((row) => ({
+      kind: 'obligation', id: row.id, direction: row.direction,
+      remaining: Number(row.remaining), occurredAt: row.occurredAt,
+      reference: row.title || 'تعهد بدون عنوان',
+    })),
+    ...invoices.filter((row) => Number(row.remaining) > 0).map((row) => ({
+      kind: 'invoice', id: row.id,
+      // فاکتور فروش یعنی او به ما بدهکار است؛ فاکتور خرید یعنی ما به او.
+      direction: row.documentType === 'purchase' ? 'payable' : 'receivable',
+      remaining: Number(row.remaining), occurredAt: row.occurredAt,
+      reference: `فاکتور ${row.number}`,
+    })),
+    ...cheques.map((row) => ({
+      kind: 'cheque', id: row.id, direction: row.direction,
+      remaining: Number(row.remaining), occurredAt: row.occurredAt,
+      reference: row.serial ? `چک ${row.serial}` : 'چک بدون شماره',
+    })),
+  ].sort((left, right) => String(left.occurredAt).localeCompare(String(right.occurredAt)));
+}

@@ -6,6 +6,7 @@ import { normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { applyAnswer } from '../shared/questionAnswer.js';
+import { GUARD_VERDICTS, guardedPlan, runGuards } from '../shared/guards.js';
 import { ensureAccountingSchema, postJournalEntry, reverseJournalEntry } from './accounting.js';
 import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
 
@@ -249,6 +250,12 @@ export function recordFinancialEvent(database, event, {
   // اجازهٔ ثبت ندهد — چون همان دادهٔ خامی است که گزارش اختلاف فاز بعد لازم
   // دارد: موتور چه گفت و حسابدار چه کرد.
   accountingDecision = null,
+  // اسناد باز طرف حساب، برای نگهبان تسویه.
+  //
+  // `undefined` یعنی بررسی ممکن نبود و `[]` یعنی بررسی شد و چیزی نبود. این دو
+  // عمداً یکی نشده‌اند: امروز در transactionEvent هر دو بی‌صدا به هزینه می‌رسند
+  // و بعداً نمی‌شود گفت نگهبان اصلاً اجرا شده یا نه.
+  openDocuments = undefined,
 } = {}) {
   ensureFinancialEventSchema(database);
   const source = String(sourceEventId || '').trim();
@@ -264,8 +271,16 @@ export function recordFinancialEvent(database, event, {
   const id = randomUUID();
   // نقشهٔ سند همین‌جا ساخته و ذخیره می‌شود، حتی وقتی قرار نیست همین حالا ثبت
   // شود: حسابرسی باید بداند در لحظهٔ تصمیم، قاعده چه گفته بود.
+  // نگهبان‌ها پس از تصمیم و پیش از قاعده. بدون تصمیم — یعنی موتور نسخهٔ دو
+  // خاموش — اجرا نمی‌شوند و مسیر دقیقاً همان قبلی است.
+  const guards = accountingDecision
+    ? runGuards(event, factsFromEvent(event), { decision: accountingDecision, openDocuments })
+    : null;
+  if (guards?.verdict === GUARD_VERDICTS.BLOCK) {
+    throw storeError(guards.reason, 'EVENT_GUARD_BLOCKED', 409);
+  }
   // تصمیم، شکل سند را تعیین می‌کند. بدون تصمیم، همان قاعدهٔ نوع رویداد.
-  const plan = planJournal(event, accountingDecision);
+  const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);
 
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
@@ -295,6 +310,7 @@ export function recordFinancialEvent(database, event, {
       rule: plan.kind,
       journalPlan: plan,
       decision: accountingDecision || null,
+      guards: guards?.checks || null,
     }, actor);
 
     let journalEntryId = null;

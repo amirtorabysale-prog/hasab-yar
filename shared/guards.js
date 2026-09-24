@@ -1,5 +1,6 @@
 import { ECONOMIC_FAMILIES } from './economicFamily.js';
 import { ROLES, planJournal } from './accountingRules.js';
+import { SETTLEMENT_MATCH, matchOpenDocument } from './settlementMatch.js';
 
 /**
  * نگهبان‌ها — ایست بازرسی پیش از ورود به دفتر.
@@ -65,7 +66,65 @@ function internalTransferGuard(event, facts, { decision }) {
     });
 }
 
-const GUARDS = Object.freeze([internalTransferGuard]);
+/**
+ * نگهبان «اول تسویه».
+ *
+ * پیش از ساختن هر درآمد یا هزینهٔ تازه، اسناد باز آن طرف حساب بررسی می‌شوند.
+ * «۹۳ میلیون به شرکت آراد پرداخت کردم» وقتی به او بدهکاریم، هزینهٔ تازه
+ * نمی‌سازد — بدهی موجود را می‌بندد. ثبتش به‌عنوان هزینه دو خطا با هم دارد: سود
+ * دوره بی‌دلیل کم می‌شود، و بدهی آن شرکت در دفتر باز می‌ماند انگار پولی
+ * نداده‌ایم.
+ *
+ * `openDocuments === null` یعنی بررسی **ممکن نبود** — طرف حساب شناسایی نشده.
+ * این با «بررسی شد و چیزی نبود» یکی نیست و همین تفاوت، چیزی است که امروز در
+ * `transactionEvent.js` بی‌صدا گم می‌شود.
+ */
+function settlementFirstGuard(event, facts, { openDocuments }) {
+  const name = 'settlement-first';
+  if (openDocuments === null || openDocuments === undefined) {
+    return check(name, GUARD_VERDICTS.PASS,
+      'بررسی تسویه ممکن نبود، چون طرف حساب شناسایی نشده است.', { openDocumentCount: null });
+  }
+
+  const match = matchOpenDocument({ amount: event.amount, moneyDirection: facts.moneyDirection }, openDocuments);
+  const counted = { openDocumentCount: openDocuments.length };
+
+  if (match.kind === SETTLEMENT_MATCH.NONE) {
+    return check(name, GUARD_VERDICTS.PASS, 'سند بازی که با این مبلغ بخواند پیدا نشد.', counted);
+  }
+
+  // ابهام حدس نمی‌زند. بستن سند اشتباه در تراز دیده نمی‌شود و هیچ‌وقت پیدا
+  // نمی‌شود — بدترین نوع خطا.
+  if (match.kind === SETTLEMENT_MATCH.AMBIGUOUS) {
+    const names = match.candidates.map((document) => document.reference).filter(Boolean).join(' یا ');
+    return check(name, GUARD_VERDICTS.BLOCK,
+      `این مبلغ با بیش از یک سند باز می‌خواند (${names}); کدام‌یک بسته شود؟`, counted);
+  }
+
+  const document = match.document;
+  const settling = document.direction === 'payable';
+  const partial = match.kind === SETTLEMENT_MATCH.PARTIAL ? ' (تسویهٔ جزئی)' : '';
+  return check(name, GUARD_VERDICTS.REWRITE,
+    `این پول «${document.reference}» را می‌بندد${partial}؛ هزینه یا درآمد تازه‌ای ساخته نمی‌شود.`, {
+      ...counted,
+      settlement: { documentKind: document.kind, documentId: document.id, reference: document.reference, matchKind: match.kind },
+      plan: {
+        kind: 'settlement',
+        lines: settling
+          ? [
+            { role: ROLES.PAYABLE, key: event.counterparty, debit: event.amount, credit: 0 },
+            { role: ROLES.CASH, key: event.accountId, debit: 0, credit: event.amount },
+          ]
+          : [
+            { role: ROLES.CASH, key: event.accountId, debit: event.amount, credit: 0 },
+            { role: ROLES.RECEIVABLE, key: event.counterparty, debit: 0, credit: event.amount },
+          ],
+        memoHint: document.reference,
+      },
+    });
+}
+
+const GUARDS = Object.freeze([internalTransferGuard, settlementFirstGuard]);
 
 /**
  * همهٔ نگهبان‌ها را روی یک تلاش ثبت اجرا می‌کند.
