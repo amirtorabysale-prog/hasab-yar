@@ -331,6 +331,68 @@ export const DEFAULT_POLICIES = Object.freeze([
 ]);
 
 /**
+ * ترتیب نسخه‌ها — عددی، نه الفبایی.
+ *
+ * `'10.0.0' < '9.0.0'` در مقایسهٔ رشته‌ای درست است و در معنا غلط. نسخهٔ دهم
+ * قاعده روزی می‌آید و آن روز نباید بی‌صدا نادیده گرفته شود.
+ */
+function versionRank(version) {
+  return String(version || '0.0.0').split('.').reduce((sum, part) => (sum * 1000) + (Number(part) || 0), 0);
+}
+
+const withinWindow = (policy, eventDate) => {
+  const at = new Date(eventDate).getTime();
+  if (!Number.isFinite(at)) return true;
+  if (policy.effectiveFrom && at < new Date(policy.effectiveFrom).getTime()) return false;
+  if (policy.effectiveTo && at >= new Date(policy.effectiveTo).getTime()) return false;
+  return true;
+};
+
+/**
+ * قاعده‌ای که برای این رویداد اثر دارد.
+ *
+ * انتخاب بر اساس **تاریخ رویداد** است، نه تاریخ اجرای کد. رویدادی که برای
+ * اسفند پارسال ثبت می‌شود باید قاعدهٔ اسفند پارسال را بگیرد — وگرنه یک ثبت
+ * گذشته‌نگر سندی می‌خورد متفاوت با آنچه آن روز درست بود، و حسابرسی نمی‌تواند
+ * بازسازی‌اش کند.
+ *
+ * میان چند نسخهٔ معتبر، تازه‌ترین برنده است.
+ */
+export function selectPolicy(policies, family, facts, eventDate) {
+  let chosen = null;
+  for (const policy of policies || []) {
+    if (policy.family !== family) continue;
+    if (!withinWindow(policy, eventDate)) continue;
+    let applies = false;
+    try { applies = Boolean(policy.appliesTo(facts)); } catch { applies = false; }
+    if (!applies) continue;
+    if (!chosen || versionRank(policy.version) > versionRank(chosen.version)) chosen = policy;
+  }
+  return chosen;
+}
+
+/**
+ * اثر یک تغییر قاعده، پیش از فعال‌سازی.
+ *
+ * بدون این، تنها راه فهمیدن اینکه یک نسخهٔ تازه چه چیزی را عوض می‌کند، فعال
+ * کردنش روی دفتر واقعی است. گزارش می‌گوید کدام رویدادها عوض می‌شوند و چطور —
+ * و مهم‌تر، ثابت می‌کند کدام‌ها **نباید** عوض شوند و نشده‌اند.
+ */
+export function simulatePolicyChange(factsList = [], currentPolicies = [], candidatePolicies = [], { today = null } = {}) {
+  const changed = [];
+  let unchanged = 0;
+  for (const facts of factsList) {
+    const before = decide(facts, { policies: currentPolicies, today });
+    const after = decide(facts, { policies: candidatePolicies, today });
+    if (before.treatment === after.treatment
+      && before.decisionStatus === after.decisionStatus
+      && before.policyVersion === after.policyVersion) { unchanged += 1; continue; }
+    changed.push({ facts, before, after });
+  }
+  return { total: factsList.length, unchanged, changed };
+}
+
+/**
  * از واقعیت‌ها، یک تصمیم.
  *
  * تابع خالص: هیچ دیتابیسی، هیچ ساعتی، هیچ تصادفی. `today` صریح پاس داده
@@ -392,7 +454,9 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
     });
   }
 
-  const policy = policies.find((candidate) => candidate.family === family && candidate.appliesTo(facts));
+  // تاریخ رویداد، نه تاریخ اجرای کد. ثبت گذشته‌نگر باید قاعدهٔ همان روز را
+  // بگیرد، وگرنه سندش با آنچه آن روز درست بود فرق می‌کند.
+  const policy = selectPolicy(policies, family, facts, facts?.occurredAt || today);
   if (!policy) {
     return createDecision({
       family, riskLevel, sourceReferences,
