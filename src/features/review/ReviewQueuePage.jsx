@@ -207,6 +207,25 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
           className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-white'}`}>
           {policy.engineV2 ? 'خاموش کن' : 'روشن کن'}
         </button>
+
+        {/*
+          شادو مود زیر همان کادر می‌نشیند چون بدون موتور تصمیم بی‌معناست، و
+          مهم‌ترین نکته‌اش همان جمله‌ای است که نوشته شده: دفتر دست نمی‌خورد.
+          کسی که این را روشن می‌کند باید مطمئن باشد هیچ ریسکی ندارد، وگرنه
+          روی دفتر واقعی روشنش نمی‌کند — و تنها جایی که این اندازه‌گیری ارزش
+          دارد همان دفتر واقعی است.
+        */}
+        {policy.engineV2 && <div className="mt-3 border-t border-line pt-3">
+          <p className="text-[12px] font-extrabold">ضبط بدون ثبت {policy.shadowMode ? '— روشن' : '— خاموش'}</p>
+          <p className="mt-1 text-[11px] leading-5 text-muted">
+            موتور برای هر ثبت نظرش را می‌دهد و ذخیره می‌کند، ولی سند همان‌طور که تا امروز می‌خورده می‌خورد.
+            <b className="text-ink"> دفتر دست نمی‌خورد.</b> بعد می‌شود دید موتور کجا با تو اختلاف داشته.
+          </p>
+          <button disabled={busy} onClick={() => save({ shadowMode: !policy.shadowMode })}
+            className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.shadowMode ? 'border-line bg-paper' : 'border-accent bg-accent/10 text-accent'}`}>
+            {policy.shadowMode ? 'خاموش کن' : 'روشن کن'}
+          </button>
+        </div>}
       </div>
 
       <button disabled={busy} onClick={() => save({ manualOnly: !everythingReviewed })}
