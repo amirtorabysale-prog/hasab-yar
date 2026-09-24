@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
-import { buildMonthlySchedule } from '../shared/recognitionSchedule.js';
+import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
 import { normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
@@ -9,7 +9,7 @@ import { applyAnswer } from '../shared/questionAnswer.js';
 import { GUARD_VERDICTS, guardedPlan, isGuardPlan, runGuards } from '../shared/guards.js';
 import { eventFingerprint } from '../shared/eventFingerprint.js';
 import { compareProposalWithActual, summarizeDisagreements } from '../shared/shadowReport.js';
-import { ensureAccountingSchema, postJournalEntry, reverseJournalEntry } from './accounting.js';
+import { ensureAccountingSchema, periodForDate, postJournalEntry, reverseJournalEntry } from './accounting.js';
 import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
 
 /**
@@ -108,7 +108,7 @@ export function ensureFinancialEventSchema(database) {
       recognition_date TEXT,
       amount INTEGER NOT NULL CHECK(amount > 0),
       status TEXT NOT NULL DEFAULT 'planned'
-        CHECK(status IN ('planned','posted','blocked-closed-period')),
+        CHECK(status IN ('planned','posted','blocked-closed-period','superseded')),
       journal_entry_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -159,7 +159,7 @@ function storeDecision(database, eventId, decision, supersedes = null) {
  * ساخته نمی‌شود. این تنها جایی است که idempotency واقعاً تضمین می‌شود، چون در
  * سطح دیتابیس است و هیچ مسیری نمی‌تواند دورش بزند.
  */
-function storeSchedule(database, eventId, decision, event) {
+function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Tehran' } = {}) {
   if (decision?.recognitionMethod !== 'monthly-straight-line') return 0;
   const items = buildMonthlySchedule({
     amount: event.amount,
@@ -167,11 +167,43 @@ function storeSchedule(database, eventId, decision, event) {
     periodEnd: event.servicePeriodEnd,
     sourceId: eventId,
   });
+
+  // برنامه که عوض شود، اقلام قدیمی **باطل** می‌شوند نه حذف.
+  //
+  // بدون این، قرارداد یک‌ساله‌ای که به شش ماه تغییر می‌کند شش قلم یتیم باقی
+  // می‌گذارد که شش ماه هزینهٔ جعلی می‌سازند. و حذف‌کردنشان تاریخچه را پاک
+  // می‌کند: هیچ‌کس نمی‌فهمد چرا برنامه عوض شد.
+  //
+  // قلمی که ثبت شده دست نمی‌خورد؛ آن سند در دفتر است و باطل‌کردن یک ردیف
+  // برنامه، سند را برنمی‌گرداند.
+  const keeping = new Set(items.map((item) => item.key));
+  const existing = database.prepare("SELECT key,amount,status FROM recognition_schedule_items WHERE event_id=? AND status='planned'").all(eventId);
+  const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
+  const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=? WHERE key=?');
+  for (const row of existing) {
+    if (!keeping.has(row.key)) supersede.run(row.key);
+  }
+  // ماه‌هایی که می‌مانند ممکن است سهم تازه‌ای بگیرند: همان مبلغ روی دورهٔ
+  // کوتاه‌تر پخش می‌شود.
+  for (const item of items) {
+    const row = existing.find((entry) => entry.key === item.key);
+    if (row && row.amount !== item.amount) reprice.run(item.amount, item.key);
+  }
   const insert = database.prepare(`INSERT OR IGNORE INTO recognition_schedule_items
     (key,event_id,period_key,recognition_date,amount,status) VALUES (?,?,?,?,?,?)`);
+  // قلمی که در دورهٔ بسته می‌افتد ثبت نمی‌شود و علامت می‌خورد.
+  //
+  // تصمیم ۳ فاز صفر: نه به دورهٔ بعد منتقل می‌شود — که سود دوره را بدون تأیید
+  // جابه‌جا می‌کند — و نه دورهٔ بسته را باز می‌کند. با دلیل روشن می‌ماند تا
+  // حسابدار تصمیم بگیرد.
+  const lockedPeriods = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'")
+    .all().map((row) => row.period));
+
   let written = 0;
   for (const item of items) {
-    written += insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, item.status).changes;
+    const blocked = item.recognitionDate && lockedPeriods.has(periodForDate(item.recognitionDate, timeZone));
+    const status = blocked ? SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD : item.status;
+    written += insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, status).changes;
   }
   return written;
 }

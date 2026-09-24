@@ -25,6 +25,9 @@ export const SCHEDULE_ITEM_STATUS = Object.freeze({
   PLANNED: 'planned',
   POSTED: 'posted',
   BLOCKED_CLOSED_PERIOD: 'blocked-closed-period',
+  // برنامه عوض شده و این قلم دیگر جزو آن نیست. حذف نمی‌شود: تاریخچه باید
+  // بگوید چرا برنامه عوض شد.
+  SUPERSEDED: 'superseded',
 });
 
 import { persianToISO, todayPersian } from './persianDate.js';
