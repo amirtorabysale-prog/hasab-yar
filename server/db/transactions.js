@@ -9,7 +9,7 @@ import { extractContactName } from '../../shared/voiceIntent.js';
 import { normalizePersian } from '../../shared/parser.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
-import { recordFinancialEvent } from '../financialEventStore.js';
+import { recordFinancialEvent, recordShadowRun } from '../financialEventStore.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 import { vatGuardContext } from '../tax.js';
@@ -121,6 +121,16 @@ function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
       contactId: row.contactId, contactName: settlement?.contactName || item.contactName || '',
     }, { transcript, sentence, policy: automationPolicy(), counterpartyBalance: settlement?.balance ?? null });
     if (!draft) return false;
+    // ضبط شادو پیش از هر ثبتی و مستقل از نتیجه‌اش: مواردی که موتور جلویشان را
+    // می‌گیرد بیشترین ارزش را برای گزارش اختلاف دارند.
+    if (automationPolicy().shadowMode && draft.accountingDecision) {
+      try {
+        recordShadowRun(db, {
+          event: draft.event, decision: draft.accountingDecision,
+          confidence: draft.decision, sourceEventId: `transaction:${row.id}`,
+        });
+      } catch { /* ضبط شادو نباید ثبت کاربر را از بین ببرد. */ }
+    }
     const result = recordFinancialEvent(db, draft.event, {
       sourceEventId: `transaction:${row.id}`,
       decision: draft.decision,

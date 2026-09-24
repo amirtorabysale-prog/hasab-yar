@@ -51,6 +51,14 @@ export const DEFAULT_AUTOMATION_POLICY = Object.freeze({
    * خانواده‌به‌خانواده باشد، نه یک کلید که همه‌جا را با هم روشن کند.
    */
   engineV2: false,
+  /**
+   * شادو مود — موتور نظر می‌دهد، دفتر دست نمی‌خورد.
+   *
+   * تنها راهی است که می‌شود موتور را روی دفتر واقعی روشن کرد بدون ریسک: برای
+   * هر رویداد تصمیم گرفته و ثبت می‌شود، ولی سند از همان مسیر قبلی می‌خورد.
+   * بعد می‌شود پرسید موتور کجا با حسابدار اختلاف داشت.
+   */
+  shadowMode: false,
 });
 
 const clamp01 = (value, fallback) => {
@@ -79,5 +87,6 @@ export function resolveAutomationPolicy(overrides = {}) {
     // مثل `manualOnly`، فقط `true` صریح روشنش می‌کند. مقدار خراب یا نامعلوم
     // نباید دروازه را باز کند.
     engineV2: overrides.engineV2 === true,
+    shadowMode: overrides.shadowMode === true,
   });
 }
