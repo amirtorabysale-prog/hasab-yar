@@ -7,6 +7,7 @@ import { decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { applyAnswer } from '../shared/questionAnswer.js';
 import { GUARD_VERDICTS, guardedPlan, isGuardPlan, runGuards } from '../shared/guards.js';
+import { eventFingerprint } from '../shared/eventFingerprint.js';
 import { ensureAccountingSchema, postJournalEntry, reverseJournalEntry } from './accounting.js';
 import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
 
@@ -114,7 +115,7 @@ export function ensureFinancialEventSchema(database) {
   `);
   // مهاجرت افزایشی: رویداد قدیمی هیچ‌کدام از این‌ها را ندارد و همان‌طور که بود
   // خوانده می‌شود. هیچ دادهٔ تاریخی بازطبقه‌بندی نمی‌شود.
-  for (const column of ['decision_id TEXT', 'posting_plan TEXT']) {
+  for (const column of ['decision_id TEXT', 'posting_plan TEXT', 'fingerprint TEXT']) {
     try { database.exec(`ALTER TABLE financial_events ADD COLUMN ${column}`); }
     catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
   }
@@ -266,7 +267,26 @@ export function recordFinancialEvent(database, event, {
   if (!event || !event.kind) throw storeError('رویداد مالی معتبر نیست.');
   if (!decision || !decision.route) throw storeError('تصمیم موتور اطمینان لازم است.', 'EVENT_DECISION_MISSING');
 
-  const existing = database.prepare('SELECT * FROM financial_events WHERE source_event_id=?').get(source);
+  const fingerprint = eventFingerprint(event);
+
+  const existing = database.prepare('SELECT * FROM financial_events WHERE source_event_id=?').get(source)
+    // همان رویداد از کانال دیگر: شناسهٔ منبع فرق دارد ولی محتوا یکی است.
+    //
+    // رویداد ردشده یا معکوس‌شده از این کنترل بیرون است: کاربر آن ثبت را پس
+    // گرفته و دوباره درستش را گفته؛ مسدود کردنش یعنی ثبت درست هیچ‌وقت وارد
+    // نمی‌شود.
+    // همان رویداد از کانال **دیگر**: شناسهٔ منبع فرق دارد ولی محتوا یکی است.
+    //
+    // شرط «کانال متفاوت» حیاتی است. دو پرداخت واقعاً یکسان در یک روز — دو بار
+    // بنزین پانصد هزاری — محتوای یکسان دارند و هر دو درست‌اند؛ یکی‌کردنشان
+    // ثبت درست کاربر را می‌خورد و او هیچ‌وقت نمی‌فهمد. آنچه واقعاً مشکوک است
+    // همان فاکتوری است که یک بار گفته شده و یک بار عکسش فرستاده شده.
+    //
+    // رویداد ردشده یا معکوس‌شده هم از این کنترل بیرون است: کاربر آن ثبت را پس
+    // گرفته و دوباره درستش را گفته.
+    || (fingerprint && database.prepare(`SELECT * FROM financial_events
+      WHERE fingerprint=? AND status IN ('pending','posted')
+        AND COALESCE(json_extract(payload,'$.source'),'') <> ?`).get(fingerprint, event.source || ''));
   // تکرار خطا نیست؛ همان نتیجهٔ قبلی برگردانده می‌شود تا فراخوان لازم نباشد
   // بین «شکست» و «قبلاً انجام شده» فرق بگذارد.
   if (existing) return { ...describeStored(database, existing), duplicate: true };
@@ -294,8 +314,8 @@ export function recordFinancialEvent(database, event, {
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare(`INSERT INTO financial_events
-      (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by,journal_source,posting_plan)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by,journal_source,posting_plan,fingerprint)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, source, event.kind, event.amount, event.occurredAt, event.dueAt || null,
         JSON.stringify(event), JSON.stringify(routing), routing.route, 'pending', actor,
         journalSource ? JSON.stringify(journalSource) : null,
@@ -305,7 +325,7 @@ export function recordFinancialEvent(database, event, {
         // دو هفته در صف مانده و در این فاصله قاعده‌ای عوض شده، سندی می‌خورد که
         // با آنچه به حسابدار نشان داده شده بود فرق دارد — و هیچ هشداری هم
         // نمی‌دهد. حالا آنچه در لحظهٔ تصمیم ساخته شد، همان ثبت می‌شود.
-        JSON.stringify(plan));
+        JSON.stringify(plan), fingerprint);
 
     const decisionId = storeDecision(database, id, accountingDecision);
     if (decisionId) database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, id);
