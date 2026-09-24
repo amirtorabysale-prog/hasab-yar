@@ -213,6 +213,20 @@ export const FAMILY_RULES = Object.freeze([
   }),
   // ارجاع به سند باز یعنی این پول تعهد موجود را می‌بندد، نه اینکه درآمد یا
   // هزینهٔ تازه بسازد. نگهبان کاملش در WP-1 می‌آید؛ اینجا فقط ماهیت است.
+  // چک، پیش از قاعده‌های عمومی. بدون این، چک دریافتی — که پولی جابه‌جا نمی‌کند
+  // و طرف حساب دارد — «ایجاد بدهی» خوانده می‌شد.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    weight: 86,
+    reason: 'چک دریافتی، حق دریافت آینده می‌سازد.',
+    test: (facts) => facts?.chequeDirection === 'receivable',
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    weight: 86,
+    reason: 'چک پرداختی، تعهد پرداخت آینده می‌سازد.',
+    test: (facts) => facts?.chequeDirection === 'payable',
+  }),
   Object.freeze({
     family: ECONOMIC_FAMILIES.LIABILITY_SETTLEMENT,
     weight: 80,

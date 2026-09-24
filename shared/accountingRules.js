@@ -80,6 +80,12 @@ function plan(kind, debit, credit, amount, memoHint) {
  * می‌افتند و رفتارشان عوض نمی‌شود.
  */
 const TREATMENT_PLANS = Object.freeze({
+  // چک بابت طلب قبلی: فقط شکل طلب عوض می‌شود. آن فروش همان روزی که فاکتور
+  // ثبت شد درآمد شده؛ شناسایی دوباره‌اش یعنی یک فروش، دو بار در سود دوره و
+  // دو بار در مالیات.
+  'cheque-form-change': (event, amount) => plan(event.kind,
+    { role: ROLES.CHEQUE_RECEIVABLE, key: event.counterparty },
+    { role: ROLES.RECEIVABLE, key: event.counterparty }, amount, event.counterparty),
   'prepaid-expense': (event, amount) => plan(event.kind,
     { role: ROLES.PREPAID_ASSET, key: event.category },
     { role: ROLES.CASH, key: event.accountId }, amount, event.category),

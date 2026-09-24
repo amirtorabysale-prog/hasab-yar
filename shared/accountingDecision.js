@@ -132,6 +132,26 @@ export function decisionAuthorizesPosting(decision) {
  */
 export const DEFAULT_POLICIES = Object.freeze([
   Object.freeze({
+    policyKey: 'cheque-received',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.RECOGNIZED_REVENUE, TREATMENTS.CHEQUE_FORM_CHANGE]),
+    appliesTo(facts) { return facts?.chequeDirection === 'receivable'; },
+    /**
+     * تنها سؤال این خانواده همان سؤالی است که فرم می‌پرسد و صدا نمی‌پرسید.
+     * بدون جوابش، پیش‌فرض ناامنِ «فروش تازه» اجرا می‌شد.
+     */
+    resolve(facts) {
+      if (facts?.chequeAgainst !== 'income' && facts?.chequeAgainst !== 'receivable') {
+        return { treatment: TREATMENTS.RECOGNIZED_REVENUE, extraFacts: [FACT_KEYS.CHEQUE_AGAINST] };
+      }
+      return facts.chequeAgainst === 'receivable'
+        ? { treatment: TREATMENTS.CHEQUE_FORM_CHANGE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null }
+        : { treatment: TREATMENTS.RECOGNIZED_REVENUE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
+    },
+  }),
+  Object.freeze({
     policyKey: 'prepaid-service',
     version: '1.0.0',
     family: ECONOMIC_FAMILIES.ASSET_CREATION,

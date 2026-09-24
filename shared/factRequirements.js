@@ -51,6 +51,7 @@ export const FACT_KEYS = Object.freeze({
   ESTIMATE_BASIS: 'estimateBasis',
   ORIGINAL_EVENT_REFERENCE: 'originalEventReference',
   CORRECTION_REASON: 'correctionReason',
+  CHEQUE_AGAINST: 'chequeAgainst',
 });
 
 const FACT_VALUES = Object.freeze(Object.values(FACT_KEYS));
@@ -81,6 +82,7 @@ export const FACT_LABELS = Object.freeze({
   [FACT_KEYS.ESTIMATE_BASIS]: 'مبنای برآورد',
   [FACT_KEYS.ORIGINAL_EVENT_REFERENCE]: 'رویداد اصلی',
   [FACT_KEYS.CORRECTION_REASON]: 'علت اصلاح',
+  [FACT_KEYS.CHEQUE_AGAINST]: 'بابت چه چیزی',
 });
 
 /**
@@ -115,8 +117,8 @@ export const FACT_REQUIREMENTS = Object.freeze({
     optional: Object.freeze([FACT_KEYS.COUNTERPARTY]),
   }),
   [ECONOMIC_FAMILIES.RECEIVABLE_CREATION]: Object.freeze({
-    required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.COUNTERPARTY, FACT_KEYS.DELIVERY_DATE]),
-    optional: Object.freeze([FACT_KEYS.CATEGORY, FACT_KEYS.CONTRACT_REFERENCE]),
+    required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.COUNTERPARTY]),
+    optional: Object.freeze([FACT_KEYS.CATEGORY, FACT_KEYS.CONTRACT_REFERENCE, FACT_KEYS.DELIVERY_DATE]),
   }),
   [ECONOMIC_FAMILIES.RECEIVABLE_COLLECTION]: Object.freeze({
     required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.SETTLEMENT_REFERENCE]),
@@ -177,6 +179,9 @@ export const TREATMENTS = Object.freeze({
   OWNER_DRAWING: 'owner-drawing',
   INTERNAL_MOVE: 'internal-move',
   SCHEDULED_ALLOCATION: 'scheduled-allocation',
+  // تغییر شکل طلب: از حساب دریافتنی به اسناد دریافتنی. درآمدی شناسایی نمی‌شود
+  // چون آن فروش قبلاً درآمد شده.
+  CHEQUE_FORM_CHANGE: 'cheque-form-change',
 });
 
 /**
@@ -258,6 +263,14 @@ export const FACT_QUESTIONS = Object.freeze({
       Object.freeze({ value: 'customer', label: 'مشتری' }),
       Object.freeze({ value: 'employee', label: 'کارمند' }),
       Object.freeze({ value: 'authority', label: 'سازمان یا اداره' }),
+    ]),
+  }),
+  [FACT_KEYS.CHEQUE_AGAINST]: Object.freeze({
+    kind: QUESTION_KINDS.OPTIONS,
+    text: 'این چک بابت چیست؟',
+    options: Object.freeze([
+      Object.freeze({ value: 'income', label: 'بابت فروش یا خرید تازه' }),
+      Object.freeze({ value: 'receivable', label: 'بابت طلب یا بدهی قبلی' }),
     ]),
   }),
   [FACT_KEYS.AMOUNT]: Object.freeze({ kind: QUESTION_KINDS.FREE_INPUT, text: 'مبلغ چقدر بود؟' }),

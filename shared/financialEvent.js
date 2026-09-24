@@ -136,6 +136,9 @@ export function normalizeFinancialEvent(raw = {}) {
       const source = eventMovesCash(kind) ? (cleanText(raw.accountId, 64) || 'cash') : null;
       return destination && destination !== source ? destination : null;
     })(),
+    // چک بابت فروش تازه است یا بابت طلبی که قبلاً ثبت شده؟ فرم این را می‌پرسد
+    // و صدا نمی‌پرسید؛ نتیجه‌اش شناسایی دوبارهٔ همان فروش بود.
+    chequeAgainst: ['income', 'receivable'].includes(raw.chequeAgainst) ? raw.chequeAgainst : null,
     counterpartyRole: ['owner', 'supplier', 'customer', 'employee', 'authority'].includes(raw.counterpartyRole) ? raw.counterpartyRole : null,
   });
 }

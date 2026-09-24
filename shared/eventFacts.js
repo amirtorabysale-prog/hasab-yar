@@ -77,6 +77,11 @@ export function factsFromEvent(event = {}) {
     // ارجاع تسویه فقط وقتی معنا دارد که رویداد واقعاً تسویه باشد. چسباندنش به
     // هر رویدادی که `reference` دارد، یک هزینهٔ عادی را تسویه جا می‌زد.
     [FACT_KEYS.SETTLEMENT_REFERENCE]: event.settlementDirection ? event.reference : undefined,
+    [FACT_KEYS.CHEQUE_AGAINST]: event.chequeAgainst,
+    // چک ابزار است نه ماهیت؛ ولی جهتش تعیین می‌کند دریافتنی ساخته می‌شود یا
+    // بدهی، و طبقه‌بند بدون آن چک دریافتی را بدهی می‌خواند.
+    chequeDirection: event.kind === EVENT_KINDS.CHEQUE_RECEIVED ? 'receivable'
+      : event.kind === EVENT_KINDS.CHEQUE_ISSUED ? 'payable' : undefined,
     evidence: event.evidence,
   };
   for (const [key, value] of Object.entries(facts)) {
