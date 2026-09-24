@@ -6,7 +6,7 @@ import { normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { applyAnswer } from '../shared/questionAnswer.js';
-import { GUARD_VERDICTS, guardedPlan, runGuards } from '../shared/guards.js';
+import { GUARD_VERDICTS, guardedPlan, isGuardPlan, runGuards } from '../shared/guards.js';
 import { ensureAccountingSchema, postJournalEntry, reverseJournalEntry } from './accounting.js';
 import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
 
@@ -256,6 +256,9 @@ export function recordFinancialEvent(database, event, {
   // عمداً یکی نشده‌اند: امروز در transactionEvent هر دو بی‌صدا به هزینه می‌رسند
   // و بعداً نمی‌شود گفت نگهبان اصلاً اجرا شده یا نه.
   openDocuments = undefined,
+  // نرخ‌های مشمول و ماندهٔ ارزش افزودهٔ دفتر، برای نگهبان ارزش افزوده.
+  // نبودش یعنی بررسی ممکن نبود؛ نگهبان خودش می‌داند با آن چه کند.
+  vat = undefined,
 } = {}) {
   ensureFinancialEventSchema(database);
   const source = String(sourceEventId || '').trim();
@@ -274,11 +277,17 @@ export function recordFinancialEvent(database, event, {
   // نگهبان‌ها پس از تصمیم و پیش از قاعده. بدون تصمیم — یعنی موتور نسخهٔ دو
   // خاموش — اجرا نمی‌شوند و مسیر دقیقاً همان قبلی است.
   const guards = accountingDecision
-    ? runGuards(event, factsFromEvent(event), { decision: accountingDecision, openDocuments })
+    ? runGuards(event, factsFromEvent(event), { decision: accountingDecision, openDocuments, vat })
     : null;
-  if (guards?.verdict === GUARD_VERDICTS.BLOCK) {
-    throw storeError(guards.reason, 'EVENT_GUARD_BLOCKED', 409);
-  }
+  // مانعِ نگهبان به صف حسابدار می‌رود، با دلیلش — نه خطا.
+  //
+  // تا اینجا مانع یک خطای ۴۰۹ بود، و مسیر تراکنش هر خطای این لایه را «لایهٔ
+  // رویداد نتوانست» می‌خواند و سند را از مسیر قدیمی می‌زد. یعنی درست همان
+  // موردی که نگهبان گفته بود نباید ثبت شود، بی‌صدا ثبت می‌شد.
+  const blocked = guards?.verdict === GUARD_VERDICTS.BLOCK;
+  const routing = blocked
+    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(decision.reasons || []), guards.reason])] }
+    : decision;
   // تصمیم، شکل سند را تعیین می‌کند. بدون تصمیم، همان قاعدهٔ نوع رویداد.
   const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);
 
@@ -288,7 +297,7 @@ export function recordFinancialEvent(database, event, {
       (id,source_event_id,kind,amount,occurred_at,due_at,payload,confidence,route,status,created_by,journal_source,posting_plan)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, source, event.kind, event.amount, event.occurredAt, event.dueAt || null,
-        JSON.stringify(event), JSON.stringify(decision), decision.route, 'pending', actor,
+        JSON.stringify(event), JSON.stringify(routing), routing.route, 'pending', actor,
         journalSource ? JSON.stringify(journalSource) : null,
         // نقشه همین‌جا قفل می‌شود.
         //
@@ -306,26 +315,44 @@ export function recordFinancialEvent(database, event, {
       rawInput: String(rawInput || '').slice(0, 1000),
       transcript: String(transcript || event.evidence || '').slice(0, 1000),
       event,
-      confidence: decision,
+      confidence: routing,
       rule: plan.kind,
       journalPlan: plan,
       decision: accountingDecision || null,
       guards: guards?.checks || null,
+      // آنچه نگهبان‌ها دیدند، نه فقط حکمشان: گزارش اختلاف باید بتواند بگوید
+      // تفکیک با کدام نرخ و کدام مانده انجام شد.
+      guardContext: guards ? { vat: vat ?? null, openDocumentCount: Array.isArray(openDocuments) ? openDocuments.length : null } : null,
     }, actor);
 
     let journalEntryId = null;
-    if (decision.route === ROUTES.AUTO) {
-      const posted = postJournal
-        ? postJournal(database, { event, plan, eventId: id, actor, timeZone })
-        : postEventJournal(database, id, event, plan, { actor, timeZone, journalSource });
+    if (routing.route === ROUTES.AUTO) {
+      const posted = postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal });
       journalEntryId = posted?.id || null;
-      // مسیر تزریقی وضعیت و ردپا را خودش نمی‌نویسد؛ ردپا نباید به انتخاب
-      // ثبت‌کننده وابسته باشد.
-      if (postJournal && journalEntryId) markEventPosted(database, id, posted, plan.lines, actor);
     }
     if (!withinTransaction) database.exec('COMMIT');
-    return { id, sourceEventId: source, route: decision.route, status: journalEntryId ? 'posted' : 'pending', journalEntryId, decisionId, plan, duplicate: false };
+    return { id, sourceEventId: source, route: routing.route, status: journalEntryId ? 'posted' : 'pending', journalEntryId, decisionId, plan, guards: guards?.checks || null, duplicate: false };
   } catch (error) { if (!withinTransaction) database.exec('ROLLBACK'); throw error; }
+}
+
+/**
+ * سند یک رویداد — با ثبت‌کنندهٔ تزریقی یا با نقشهٔ نقش‌محور.
+ *
+ * نقشه‌ای که نگهبان بازنویسی کرده هرگز به ثبت‌کنندهٔ تزریقی نمی‌رود. آن
+ * ثبت‌کننده سند جاافتادهٔ تراکنش را می‌زند که فقط هزینه و درآمد می‌شناسد و
+ * نقشه را اصلاً نمی‌خواند: فروش با ارزش افزوده دوباره کل مبلغ را درآمد می‌کرد،
+ * درحالی‌که ردپا می‌گفت تفکیک شده. لنگر همان تراکنش می‌ماند تا ویرایش و
+ * برگشت، سند را پیدا کنند.
+ */
+function postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal }) {
+  if (postJournal && !isGuardPlan(plan)) {
+    const posted = postJournal(database, { event, plan, eventId: id, actor, timeZone });
+    // مسیر تزریقی وضعیت و ردپا را خودش نمی‌نویسد؛ ردپا نباید به انتخاب
+    // ثبت‌کننده وابسته باشد.
+    if (posted?.id) markEventPosted(database, id, posted, plan.lines, actor);
+    return posted;
+  }
+  return postEventJournal(database, id, event, plan, { actor, timeZone, journalSource });
 }
 
 /** نقشه را به سند تبدیل می‌کند؛ نقش‌ها اینجا به حساب واقعی نگاشت می‌شوند. */
@@ -372,7 +399,7 @@ function markEventPosted(database, eventId, posted, lines, actor) {
  * سند اینجا ثبت **نمی‌شود**. جواب دادن یعنی ابهام برطرف شد، نه اینکه کاربر
  * تأیید کرد. ثبت همچنان کار `approveFinancialEvent` است.
  */
-export function answerEventQuestion(database, eventId, { fact, value, freeText = '', actor = null, today = null } = {}) {
+export function answerEventQuestion(database, eventId, { fact, value, freeText = '', actor = null, today = null, guardContext = {} } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
@@ -384,16 +411,26 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
   const patch = applyAnswer(stored, { fact, value, freeText }, { today: reference });
   const event = normalizeFinancialEvent({ ...stored, ...patch });
   const decision = decide(factsFromEvent(event), { today: reference });
-  const plan = planJournal(event, decision);
+  // نگهبان‌ها دوباره، چون ماهیت عوض شده. بدون این، جواب دادن به سؤال دورهٔ
+  // پوشش نقشهٔ تفکیک ارزش افزوده را با نقشهٔ سادهٔ قاعده عوض می‌کرد و کل مبلغ
+  // دوباره به سود و زیان می‌رفت — بی‌آنکه نگهبانی دوباره نگاه کند.
+  const guards = runGuards(event, factsFromEvent(event), { ...guardContext, decision });
+  const plan = guardedPlan(event, decision, guards);
+  const blocked = guards.verdict === GUARD_VERDICTS.BLOCK;
 
   database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare('UPDATE financial_events SET payload=?,posting_plan=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
       .run(JSON.stringify(event), JSON.stringify(plan), row.id);
+    if (blocked) {
+      const confidence = JSON.parse(row.confidence);
+      const routing = { ...confidence, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(confidence.reasons || []), guards.reason])] };
+      database.prepare('UPDATE financial_events SET route=?,confidence=? WHERE id=?').run(routing.route, JSON.stringify(routing), row.id);
+    }
     const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
     database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, row.id);
     storeSchedule(database, row.id, decision, event);
-    writeAudit(database, row.id, 'answered', { fact, value, freeText, patch, decision }, actor);
+    writeAudit(database, row.id, 'answered', { fact, value, freeText, patch, decision, guards: guards.checks }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
 
@@ -422,12 +459,7 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   try {
     // سندِ رویدادی که روی تراکنش نشسته باید همان شکلی را داشته باشد که اگر
     // خودکار ثبت می‌شد داشت. تأیید حسابدار زمانِ ثبت را عوض می‌کند، نه سند را.
-    if (postJournal) {
-      const posted = postJournal(database, { event, plan, eventId: row.id, actor, timeZone });
-      if (posted?.id) markEventPosted(database, row.id, posted, plan.lines, actor);
-    } else {
-      postEventJournal(database, row.id, event, plan, { actor, timeZone, journalSource });
-    }
+    postPlanned(database, { id: row.id, event, plan, actor, timeZone, journalSource, postJournal });
     writeAudit(database, row.id, 'approved', { by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy' }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }

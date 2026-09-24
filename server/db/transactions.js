@@ -12,6 +12,7 @@ import { matchCounterparty } from '../counterparties.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { transactionEventDecision } from '../transactionEvent.js';
+import { vatGuardContext } from '../tax.js';
 
 export function getToday() {
   const today = localDay();
@@ -112,13 +113,13 @@ export function settlementFor(row) {
  * واقعیت دارد؛ اگر لایهٔ رویداد به هر دلیلی نتواند تصمیم بگیرد، مسیر قبلی —
  * که همچنان درست است — کار می‌کند.
  */
-function routeTransactionThroughEvents(row, item, transcript) {
+function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
   try {
     const settlement = settlementFor(row);
     const draft = transactionEventDecision({
       ...item, amount: row.amount, occurredAt: row.occurredAt, accountId: row.accountId, rawText: row.rawText,
       contactId: row.contactId, contactName: settlement?.contactName || item.contactName || '',
-    }, { transcript, policy: automationPolicy(), counterpartyBalance: settlement?.balance ?? null });
+    }, { transcript, sentence, policy: automationPolicy(), counterpartyBalance: settlement?.balance ?? null });
     if (!draft) return false;
     const result = recordFinancialEvent(db, draft.event, {
       sourceEventId: `transaction:${row.id}`,
@@ -134,6 +135,8 @@ function routeTransactionThroughEvents(row, item, transcript) {
       // `undefined` وقتی طرف حساب شناسایی نشده: نگهبان باید بتواند بگوید
       // «نتوانستم بررسی کنم»، نه اینکه سکوت کند.
       openDocuments: row.contactId ? openDocumentsFor(row.contactId) : undefined,
+      // فقط وقتی موتور روشن است خوانده می‌شود؛ بدون تصمیم، نگهبانی اجرا نمی‌شود.
+      vat: draft.accountingDecision ? vatGuardContext(db) : undefined,
     });
     // مسیر غیرخودکار یعنی سند منتظر می‌ماند. ردیف تراکنش سر جایش است — کاربر
     // ثبتش را می‌بیند و ماندهٔ صندوقش درست است — ولی دفتر تا تأیید تکان نمی‌خورد.
@@ -226,7 +229,12 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
         const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt, contactId: contactId || null, settlement: item.settlement || null };
         // اگر لایهٔ رویداد کار را به عهده گرفت، سند اینجا زده نمی‌شود؛ یا خودش
         // زده یا عمداً نگه داشته است.
-        if (!routeTransactionThroughEvents(row, entry, transcript)) {
+        // جملهٔ کامل فقط وقتی شاهد همین ردیف است که جمله یک ردیف بیشتر نساخته.
+        // `rawText` فقط تکهٔ کنار مبلغ است و در «ارزش افزودهٔ فصل رو ۲۰ میلیون
+        // دادم» به «دادم» کوتاه می‌شود؛ ولی در جملهٔ چندمبلغی، ارزش افزودهٔ یک
+        // ردیف نباید به ردیف دیگر بچسبد.
+        const sentence = transactions.length === 1 ? transcript : '';
+        if (!routeTransactionThroughEvents(row, entry, transcript, sentence)) {
           syncTransactionJournal(db, row, { createdBy: currentWorkspace()?.userId, settlement: settlementFor(row) });
         }
       }
