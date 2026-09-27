@@ -3,20 +3,25 @@ import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEven
 import { audit, cleanAmount, currentWorkspace, db, invalidInput } from './core.js';
 import { automationPolicy } from './settings.js';
 import { contactIdForName } from './contacts.js';
-import { findEventBySource, recordFinancialEvent } from '../financialEventStore.js';
+import { ensureFinancialEventSchema, findEventBySource, recordFinancialEvent } from '../financialEventStore.js';
 import { insertTransactionRows, transactionRow } from './transactions.js';
 import { resolveAccountId } from './accounts.js';
 import { routeEvent } from '../../shared/confidenceEngine.js';
 
 export function listObligations({ status = 'open' } = {}) {
+  ensureFinancialEventSchema(db);
   const where = ['open', 'paid', 'cancelled'].includes(status) ? 'WHERE obligations.status=?' : '';
   const args = where ? [status] : [];
   return db.prepare(`SELECT obligations.id,obligations.contact_id AS contactId,contacts.name AS contactName,
     obligations.title,obligations.amount,obligations.direction,obligations.due_at AS dueAt,
     obligations.occurred_at AS occurredAt,COALESCE(obligations.paid_amount,0) AS paidAmount,
     obligations.amount-COALESCE(obligations.paid_amount,0) AS remaining,
-    obligations.status,obligations.note,obligations.created_at AS createdAt
-    FROM obligations LEFT JOIN contacts ON contacts.id=obligations.contact_id ${where}
+    obligations.status,obligations.note,obligations.created_at AS createdAt,
+    CASE WHEN opened.status='posted' AND journal.id IS NOT NULL THEN 'posted'
+      WHEN opened.id IS NULL THEN 'legacy' ELSE 'pending' END AS journalStatus
+    FROM obligations LEFT JOIN contacts ON contacts.id=obligations.contact_id
+    LEFT JOIN financial_events AS opened ON opened.source_event_id='obligation:' || obligations.id
+    LEFT JOIN journal_entries AS journal ON journal.id=opened.journal_entry_id ${where}
     ORDER BY CASE WHEN obligations.due_at IS NULL THEN 1 ELSE 0 END,obligations.due_at,obligations.created_at DESC`).all(...args);
 }
 
@@ -58,6 +63,16 @@ export function saveObligation(values = {}) {
 export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested } = {}) {
   const item = db.prepare("SELECT * FROM obligations WHERE id=? AND status='open'").get(id);
   if (!item) return null;
+  // تعهدهای قدیمی ممکن است قبلاً در دفتر یا در فاکتور دیگری شناسایی شده باشند.
+  // هیچ راه مطمئنی برای حدسِ حساب مقابل از عنوان آن‌ها نداریم؛ مسیر قدیمی هنگام
+  // وصول، «درآمد/هزینهٔ تازه» می‌ساخت. پیش از هر تغییر در مانده یا تراکنش متوقف شو.
+  const opened = findEventBySource(db, `obligation:${id}`);
+  const journalExists = opened?.journalEntryId && db.prepare('SELECT 1 FROM journal_entries WHERE id=?').get(opened.journalEntryId);
+  if (opened?.status !== 'posted' || !journalExists) {
+    throw invalidInput(opened
+      ? 'سند حسابداری این طلب یا بدهی قطعی نشده است؛ پیش از تسویه، وضعیت سند را در صف بررسی حسابدار پیگیری کن.'
+      : 'این طلب یا بدهی قدیمی سند ایجاد ندارد؛ پیش از تسویه باید مانده و سند اولیه با حسابدار تطبیق داده شود. برای جلوگیری از ثبت دوبارهٔ درآمد یا هزینه، تسویه انجام نشد.');
+  }
   const remaining = item.amount - (item.paid_amount || 0);
   const amount = requested == null || requested === '' ? remaining : cleanAmount(requested);
   if (amount <= 0) throw invalidInput('مبلغ تسویه باید بیشتر از صفر باشد.');
@@ -72,10 +87,6 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
     // ردیف تراکنش می‌ماند — مانده و گزارش نقدی به آن نیاز دارند — ولی سندش را
     // خودمان می‌زنیم: نقد در برابر حساب دریافتنی/پرداختنی.
     //
-    // تعهدهای پیش از این تغییر سند ندارند و حساب دریافتنی‌شان موجودی ندارد؛
-    // برای آن‌ها همان مسیر قدیمی می‌ماند تا حساب منفی نشود.
-    const opened = findEventBySource(db, `obligation:${id}`);
-    const accrued = opened?.status === 'posted';
     [transactionId] = insertTransactionRows({ transcript: `تسویه ${item.title}`, transactions: [{
       clientId: `obligation:${id}:${(item.paid_amount || 0) + amount}`, amount,
       type: item.direction === 'receivable' ? 'income' : 'expense',
@@ -84,10 +95,10 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
       // مثل تسویهٔ فاکتور «تخصیص‌یافته» است: سندش را همین‌جا زده‌ایم و اگر
       // جداگانه ویرایش شود، سند تسویه معکوس می‌شود و به‌جایش سند درآمد
       // می‌نشیند — همان فروش، دو بار در سود دوره.
-      status: accrued ? 'allocated' : 'confirmed',
-      journalManaged: accrued,
+      status: 'allocated',
+      journalManaged: true,
     }] });
-    if (accrued) postObligationSettled(id, item, { occurredAt, accountId: resolveAccountId({ account, accountId }), transactionId, amount });
+    postObligationSettled(id, item, { occurredAt, accountId: resolveAccountId({ account, accountId }), transactionId, amount });
     // شرط روی مبلغ پرداخت‌شده است، نه فقط روی وضعیت: دو تسویهٔ هم‌زمان نباید
     // بتوانند بیشتر از ماندهٔ تعهد را ببرند.
     const updated = db.prepare(`UPDATE obligations SET paid_amount=COALESCE(paid_amount,0)+?,

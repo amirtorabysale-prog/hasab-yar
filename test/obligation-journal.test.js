@@ -117,17 +117,29 @@ test('پس از تسویه، حساب دریافتنی آن طرف حساب صف
   });
 });
 
-// تعهدهای پیش از این تغییر سند ندارند؛ تسویه‌شان نباید حساب دریافتنی را منفی کند.
-test('تعهد قدیمیِ بدون سند، مسیر قبلی را نگه می‌دارد', () => {
+// از عنوان یک طلب قدیمی نمی‌توان فهمید درآمدش در سند دیگری قبلاً ثبت شده یا نه.
+test('تعهد قدیمیِ بدون سند، درآمد تازه نمی‌سازد و برای تطبیق متوقف می‌شود', () => {
   inPrimary(() => {
-    const item = database.saveObligation({ title: 'طلب قدیمی', amount: 2_000_000, direction: 'receivable' });
-    // شبیه‌سازی تعهدی که پیش از این تغییر ساخته شده: رویدادش را برمی‌داریم.
-    db().prepare('DELETE FROM financial_events WHERE source_event_id=?').run(`obligation:${item.id}`);
-
-    const settled = database.settleObligation(item.id);
-    assert.equal(settled.item.status, 'paid');
-    assert.equal(settled.transaction.type, 'income', 'مسیر قدیمی باید دست‌نخورده بماند');
+    const id = crypto.randomUUID();
+    db().prepare("INSERT INTO obligations (id,title,amount,direction,status) VALUES (?,?,?,'receivable','open')")
+      .run(id, 'طلب قدیمی', 2_000_000);
+    const before = database.listTransactions({}).total;
+    const item = database.listObligations().find((row) => row.id === id);
+    assert.equal(item.journalStatus, 'legacy');
+    assert.throws(() => database.settleObligation(id, { amount: 500_000 }), /تطبیق داده شود/);
+    assert.equal(database.listTransactions({}).total, before);
+    assert.equal(database.listObligations().find((row) => row.id === id).remaining, 2_000_000);
     balanced();
+  });
+});
+
+test('تعهد با سند اولیهٔ غیرقطعی نیز قابل تسویه نیست', () => {
+  inPrimary(() => {
+    const item = database.saveObligation({ title: 'طلب منتظر بررسی', amount: 3_000_000, direction: 'receivable' });
+    db().prepare("UPDATE financial_events SET status='pending' WHERE source_event_id=?").run(`obligation:${item.id}`);
+    assert.equal(database.listObligations().find((row) => row.id === item.id).journalStatus, 'pending');
+    assert.throws(() => database.settleObligation(item.id), /سند حسابداری.*قطعی نشده/);
+    assert.equal(database.listObligations().find((row) => row.id === item.id).remaining, 3_000_000);
   });
 });
 

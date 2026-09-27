@@ -188,6 +188,8 @@ export function matchSettleTargets(intent = {}, { invoices = [], obligations = [
   if (wantsObligation) {
     for (const obligation of obligations) {
       if (obligation.status && obligation.status !== 'open') continue;
+      // تعهد تاریخیِ بدون سند اولیه با دریافت پول، خودکار به درآمد تبدیل نشود.
+      if (obligation.journalStatus && obligation.journalStatus !== 'posted') continue;
       candidates.push({
         kind: 'obligation', id: obligation.id, label: obligation.title,
         name: obligation.contactName || obligation.title || '',
