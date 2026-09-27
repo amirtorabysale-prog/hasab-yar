@@ -11,7 +11,7 @@ import { periodForDate } from '../accounting.js';
 import { summarize } from './transactions.js';
 
 function financialTransactionRows(window, filters = {}) {
-  const clauses = ["transactions.status!='deleted'", 'transactions.occurred_at>=?', 'transactions.occurred_at<?'];
+  const clauses = ["transactions.status!='deleted'", 'transactions.journal_deferred=0', 'transactions.occurred_at>=?', 'transactions.occurred_at<?'];
   const values = [window.from, window.to];
   if (filters.type) { clauses.push('transactions.type=?'); values.push(filters.type); }
   if (filters.category) { clauses.push('transactions.category=?'); values.push(filters.category); }

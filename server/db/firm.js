@@ -88,7 +88,7 @@ function firmClientSnapshot(month = '', now = new Date()) {
       COUNT(*) AS count,
       COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income,
       COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS expense
-    FROM transactions WHERE status!='deleted' AND datetime(occurred_at)>=datetime(?) AND datetime(occurred_at)<datetime(?)`).get(range.from, range.toExclusive);
+    FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND datetime(occurred_at)>=datetime(?) AND datetime(occurred_at)<datetime(?)`).get(range.from, range.toExclusive);
 
   const lastBatch = db.prepare(`SELECT id,period,target_system AS targetSystem,status,row_count AS rowCount,
     created_at AS createdAt FROM accounting_transfer_batches ORDER BY created_at DESC LIMIT 1`).get() || null;
