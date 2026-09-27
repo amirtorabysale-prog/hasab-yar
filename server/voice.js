@@ -19,6 +19,7 @@ export async function parseFinancialAudio(context) {
         const transcription = await transcribeWithOpenAI(context);
         heardTranscript = heardTranscript || transcription.transcript;
         const parsed = parseFinancialText(transcription.transcript, { learnings: context.learnings, averages: context.averages, source: 'voice' });
+        if (parsed.clarification) return { ...parsed, provider: transcription.provider, model: transcription.model, engine: 'openai-transcribe+deterministic-parser' };
         if (!parsed.transactions.length) {
           errors.push(Object.assign(new Error('از متن صدا مبلغ قابل اتکا استخراج نشد.'), { code: 'VOICE_NO_AMOUNT', status: 422 }));
           continue;

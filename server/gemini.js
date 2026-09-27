@@ -136,6 +136,7 @@ ${browserHint ? `برداشت ناقص مرورگر فقط برای سرنخ ا�
   catch { throw providerFailure('پاسخ صوت قابل خواندن نبود؛ دوباره تلاش کن.', 'VOICE_PARSE_ERROR', 502); }
   const aiTransactions = (parsed.transactions || []).filter((item) => Number.isFinite(item.amount) && item.amount > 0);
   const deterministic = parseFinancialText(parsed.transcript, { learnings, averages, source: 'voice' });
+  if (deterministic.clarification) return { ...deterministic, engine: 'gemini-audio-wav', model };
   if (deterministic.transactions.length) {
     parsed.transactions = deterministic.transactions.map((item, index) => {
       const aiAmount = Number(aiTransactions[index]?.amount || 0);

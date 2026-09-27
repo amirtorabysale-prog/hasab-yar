@@ -58,6 +58,17 @@ export const FINANCIAL_SPEECH_PHRASES = [
 
 export { normalizePersian };
 
+// «جمع + اجزا» یک رویداد است، نه چند جابه‌جایی پول. تا وقتی مبلغ قابل ثبت و
+// تفکیک سند جداگانه تأیید نشده، حتی ردیف نقدی هم نباید ساخته شود.
+export const COMPOSITE_AMOUNT_MESSAGE = 'چند مبلغ برای یک رویداد گفته شد (جمع و اجزا)؛ هیچ ثبتی انجام نشد. مبلغ پرداخت یا دریافت و تفکیک اصل، سود، مالیات یا کسورات را با سند اصلی در بخش بررسی حسابداری مشخص کن.';
+export function hasCompositeAmounts(input) {
+  const normalized = normalizePersian(input);
+  if (extractAmounts(normalized).spans.length < 2) return false;
+  return /شامل|از این مبلغ|جمع کل|مجموع|تفکیک|ناخالص|(?:اصل\s*(?:وام|قسط|تسهیلات)?\s*و\s*(?:سود|بهره))/.test(normalized)
+    || /(?:قسط|وام).*(?:اصل).*(?:سود|بهره)/.test(normalized)
+    || /(?:اصل\s*(?:وام|قسط|تسهیلات)|سهم\s*کارمند|بهای\s*کالا).*(?:سود|بهره|مالیات|بیمه)/.test(normalized);
+}
+
 // موتور تشخیص گفتار عدد و مقیاس را گاهی سرِ هم می‌نویسد («دوهزار»، «دومیلیون»)
 // یا «و» را به عدد می‌چسباند («سیصدو»). بدون این ترمیم، هیچ مبلغی پیدا نمی‌شد.
 const JOINABLE_VALUES = Object.keys(VALUES).sort((left, right) => right.length - left.length);
@@ -444,12 +455,18 @@ function collapseRepeatedTransactions(transactions) {
 }
 
 export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
+  if (hasCompositeAmounts(input)) return { transcript: normalizePersian(input), transactions: [], clarification: COMPOSITE_AMOUNT_MESSAGE };
   // تاریخ پیش از مبلغ خوانده می‌شود، چون رقم‌های تاریخ نباید مبلغ شمرده شوند.
   //
   // «در تاریخ 15 5 1405 13 میلیون تومان» مبلغ را ۱٬۴۳۸٬۰۰۰٬۰۰۰ می‌خواند:
   // ۱۵ و ۵ و ۱۴۰۵ و ۱۳ همه در یک عدد جمع می‌شدند. این بدترین نوع خطاست، چون
   // سند با مبلغی صد برابر ثبت می‌شود و هیچ نشانه‌ای هم ندارد.
-  const mentionedDate = extractDateMention(input, { now, preferPast: true });
+  // طول خدمت («برای ۶ ماه آینده») تاریخ وقوع پرداخت نیست.
+  const duration = readServicePeriod(normalizePersian(input), { occurredAt: now.toISOString() });
+  const dateSource = duration
+    ? normalizePersian(input).replace(/(?:برای\s*)?(?:\d+|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|دوازده)\s*ماه\s*(?:آینده|جلوتر|بعد|پیش\s*رو|آتی)/g, ' ')
+    : input;
+  const mentionedDate = extractDateMention(dateSource, { now, preferPast: true });
   const occurredAt = mentionedDate?.iso || null;
   // بانک روی متن اصلی خوانده می‌شود، پیش از هر ماسکی، تا جای تطبیق جابه‌جا نشود.
   const bank = detectBank(input);
@@ -465,7 +482,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   const eventNature = readEventNature(input);
   // دوره نسبت به تاریخ رویداد حساب می‌شود، نه تاریخ اجرای کد: «برای شش ماه
   // جلوتر» در جمله‌ای که تاریخش دیروز است، از دیروز شروع می‌شود.
-  const servicePeriod = readServicePeriod(input, { occurredAt: occurredAt || now.toISOString() });
+  const servicePeriod = readServicePeriod(normalizePersian(input), { occurredAt: occurredAt || now.toISOString() });
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
   let amountSource = mentionedDate?.match || bank
     ? normalizePersian(input)

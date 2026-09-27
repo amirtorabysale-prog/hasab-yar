@@ -10,6 +10,31 @@ test('splits a sentence into income and expense transactions', () => {
   assert.equal(result.transactions.length, 2);
   assert.deepEqual(result.transactions.map((item) => [item.amount, item.type, item.category]), [[12_000_000, 'income', 'فروش'], [2_500_000, 'expense', 'حقوق و دستمزد']]);
 });
+
+test('جمع و اجزا را سه جریان نقدی نمی‌سازد و توضیح قابل اقدام می‌دهد', () => {
+  for (const sentence of [
+    'فروش کالا ۲۲ میلیون تومان شامل ۲۰ میلیون بهای کالا و ۲ میلیون مالیات ارزش افزوده',
+    'قسط وام ۱۱ میلیون تومان دادم، ۹ میلیون اصل و ۲ میلیون سود',
+    'حقوق ناخالص ۳۲ میلیون، بیمه سهم کارمند ۲ میلیون، مالیات ۱ میلیون',
+  ]) {
+    const result = parseFinancialText(sentence);
+    assert.deepEqual(result.transactions, [], sentence);
+    assert.match(result.clarification, /هیچ ثبتی انجام نشد/);
+  }
+  assert.deepEqual(parseFinancialText('۵ میلیون اجاره و ۳ میلیون قبض برق دادم').transactions.map((item) => item.amount), [5_000_000, 3_000_000]);
+});
+
+test('دورهٔ شش‌ماهه تاریخ پرداخت را شش ماه جلو نمی‌برد', () => {
+  const now = new Date('2026-09-27T12:00:00Z');
+  const [insurance] = parseFinancialText('بیمه مسئولیت ۱۲ میلیون تومان برای ۶ ماه آینده پرداخت کردم', { now }).transactions;
+  assert.equal(insurance.occurredAt, undefined);
+  assert.equal(insurance.servicePeriodStart, now.toISOString());
+  assert.ok(insurance.servicePeriodEnd);
+  const [past] = parseFinancialText('بیمه مسئولیت ۱۲ میلیون تومان دیروز برای ۶ ماه آینده پرداخت کردم', { now }).transactions;
+  assert.ok(new Date(past.occurredAt) < now);
+  assert.equal(past.servicePeriodStart, past.occurredAt);
+  assert.ok(parseFinancialText('چک ۶ ماه آینده ۱۲ میلیون تومان سررسید می‌شود', { now }).transactions[0].occurredAt);
+});
 test('converts rial to toman', () => assert.equal(parseFinancialText('پانصد هزار ریال کرایه دادم').transactions[0].amount, 50_000));
 test('uses learned categorization', () => {
   const result = parseFinancialText('ششصد هزار اسنپ‌فود دادم', { learnings: [{ keyword: 'اسنپ‌فود', category: 'خوراک' }] });
