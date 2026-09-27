@@ -245,7 +245,7 @@ function importSummary(database, row) {
   const lastBalance = database.prepare(`SELECT statement_balance AS balance FROM bank_statement_lines
     WHERE import_id=? AND statement_balance IS NOT NULL ORDER BY occurred_at DESC,row_number DESC LIMIT 1`).get(row.id)?.balance ?? null;
   const book = database.prepare(`SELECT accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END),0) AS balance
-    FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id AND transactions.status!='deleted' AND transactions.occurred_at<=?
+    FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id AND transactions.status!='deleted' AND transactions.journal_deferred=0 AND transactions.occurred_at<=?
     WHERE accounts.id=? GROUP BY accounts.id`).get(row.periodEnd, row.accountId)?.balance ?? 0;
   const summary = { ...row, ...Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value || 0)])), statementBalance: lastBalance, bookBalance: Number(book), difference: lastBalance == null ? null : Number(lastBalance) - Number(book) };
   summary.blockingReasons = [

@@ -26,15 +26,16 @@ export function getToday() {
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
+    transactions.journal_deferred AS journalDeferred,
     transactions.capital_flow AS capitalFlow,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.account_id AS accountId,
     accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
-    WHERE transactions.occurred_at>=? AND transactions.occurred_at<? AND transactions.status!='deleted'
+    WHERE transactions.occurred_at>=? AND transactions.occurred_at<? AND transactions.status!='deleted' AND transactions.journal_deferred=0
     ORDER BY transactions.occurred_at DESC,transactions.created_at DESC`).all(start, endExclusive).map(hydrateTransaction);
   const totals = summarize(transactions);
   const previousBounds = dayBounds(addLocalDays(today, -1));
-  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND capital_flow='' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
+  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND capital_flow='' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
   totals.comparison = previous > 0 ? Math.round(((totals.income - previous) / previous) * 100) : null;
   return { transactions, summary: totals };
 }
@@ -114,9 +115,8 @@ export function settlementFor(row) {
  * برمی‌گرداند: آیا لایهٔ رویداد مسئولیت سند را گرفت؟ اگر نه، فراخوان باید مثل
  * قبل خودش سند بزند.
  *
- * شکست اینجا نباید ثبت کاربر را از بین ببرد. کاربر هزینه‌اش را گفته و آن
- * واقعیت دارد؛ اگر لایهٔ رویداد به هر دلیلی نتواند تصمیم بگیرد، مسیر قبلی —
- * که همچنان درست است — کار می‌کند.
+ * اگر موتور نسخهٔ دو روشن است، شکست این لایه ثبت را متوقف می‌کند؛ بازگشت
+ * خودکار به سند قدیمی می‌تواند یک پیش‌پرداخت یا تسویه را هزینه/درآمد کند.
  */
 function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
   try {
@@ -166,7 +166,10 @@ function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
       db.prepare('UPDATE transactions SET journal_deferred=1 WHERE id=?').run(row.id);
     }
     return true;
-  } catch { return false; }
+  } catch (error) {
+    if (automationPolicy().engineV2) throw error;
+    return false;
+  }
 }
 
 /**
@@ -434,7 +437,7 @@ export function report(range = 'month', now = new Date()) {
   const startDay = addLocalDays(today, -(days - 1));
   const start = dayBounds(startDay, timeZone).start;
   const endExclusive = dayBounds(addLocalDays(today, 1), timeZone).start;
-  const items = db.prepare("SELECT amount,type,category,capital_flow AS capitalFlow,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
+  const items = db.prepare("SELECT amount,type,category,capital_flow AS capitalFlow,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
   const summary = summarize(items);
   const bucketCount = range === 'quarter' ? 12 : range === 'month' ? 10 : 7;
   const bucketDays = Math.ceil(days / bucketCount);
@@ -476,6 +479,7 @@ function transactionQuery(includeDeleted = false) {
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
+    transactions.journal_deferred AS journalDeferred,
     transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,transactions.status,
     transactions.capital_flow AS capitalFlow,
     transactions.account_id AS accountId,accounts.name AS accountName,
@@ -521,6 +525,7 @@ export function listTransactions({ query = '', type = '', category = '', from = 
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
+    transactions.journal_deferred AS journalDeferred,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.status,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName
@@ -533,6 +538,7 @@ export function listTransactions({ query = '', type = '', category = '', from = 
 export function updateTransaction(id, values = {}) {
   const current = transactionRow(id);
   if (!current) return null;
+  if (current.journalDeferred) throw Object.assign(new Error('این ثبت هنوز در صف بررسی است؛ ابتدا آن را از همان صف تعیین‌تکلیف کن.'), { code: 'PENDING_TRANSACTION_LOCKED', status: 409 });
   if (current.status === 'allocated') throw Object.assign(new Error('این جابه‌جایی پول از تسویهٔ یک سند ساخته شده و فقط از داخل همان سند قابل اصلاح است.'), { code: 'ALLOCATED_TRANSACTION_LOCKED', status: 409 });
   const type = ['income', 'expense'].includes(values.type) ? values.type : current.type;
   const amount = values.amount == null ? current.amount : cleanAmount(values.amount);
@@ -601,6 +607,7 @@ export function correctLatestTransaction(targetId, command, changes = {}) {
 export function deleteTransaction(id) {
   const current = transactionRow(id);
   if (!current) return false;
+  if (current.journalDeferred) throw Object.assign(new Error('برای حذف ثبت معلق، آن را در صف بررسی رد کن تا رویداد و تراکنش با هم بسته شوند.'), { code: 'PENDING_TRANSACTION_LOCKED', status: 409 });
   if (current.status === 'allocated') throw Object.assign(new Error('تراکنش تخصیص‌یافته به سند را نمی‌توان جداگانه حذف کرد.'), { code: 'ALLOCATED_TRANSACTION_LOCKED', status: 409 });
   assertAccountingPeriodOpen(db, periodForDate(current.occurredAt, currentTimeZone()));
   db.exec('BEGIN IMMEDIATE');

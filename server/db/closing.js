@@ -9,9 +9,9 @@ export function previewDayClosing(values = {}) {
   const movementStart = previous ? dayBounds(addLocalDays(previous.day, 1)).start : null;
   const totals = movementStart
     ? db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
-      FROM transactions WHERE status!='deleted' AND account_id='cash' AND occurred_at>=? AND occurred_at<?`).get(movementStart, bounds.endExclusive)
+      FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND account_id='cash' AND occurred_at>=? AND occurred_at<?`).get(movementStart, bounds.endExclusive)
     : db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE -amount END),0) AS net
-      FROM transactions WHERE status!='deleted' AND account_id='cash' AND occurred_at<?`).get(bounds.endExclusive);
+      FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND account_id='cash' AND occurred_at<?`).get(bounds.endExclusive);
   const expectedCash = Number(previous?.countedCash ?? cashAccount?.openingBalance ?? 0) + Number(totals.net || 0);
   return { day, expectedCash, previousDay: previous?.day || null, previousCountedCash: previous?.countedCash ?? null };
 }

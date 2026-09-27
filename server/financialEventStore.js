@@ -498,23 +498,26 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   if (row.status === 'posted') return describeStored(database, row);
   if (row.status !== 'pending') throw storeError('این رویداد دیگر در انتظار تأیید نیست.', 'EVENT_NOT_PENDING', 409);
 
-  // تأییدِ موردی که موتور دربارهٔ آن تصمیم قطعی ندارد، override است — و
-  // override بدون دلیل نوشته‌شده انجام نمی‌شود (تصمیم پایهٔ «اختیار کامل
-  // حسابدار، با دلیل اجباری»).
-  //
-  // بدون این، کلید «تأیید» هر چیزی را ثبت می‌کرد: رویدادی که سؤالش بی‌جواب مانده
-  // بود با نقشهٔ نیمه‌کاره سند می‌خورد، و موردی که نگهبان جلویش را گرفته بود با
-  // همان نقشه‌ای ثبت می‌شد که نگهبان گفته بود غلط است.
+  // نوشتن دلیل جایگزین اصلاح سند نیست. در مورد مبهم یا مسدود، نقشهٔ قفل‌شده
+  // همچنان می‌تواند سند قدیمیِ درآمد/هزینه باشد؛ حتی حسابدار نباید آن را با
+  // یک توضیح متنی بدون تعیین دوبارهٔ حساب‌ها تأیید کند.
   const decision = decisionForEvent(database, row.id);
   const undecided = decision && decision.decisionStatus !== DECISION_STATUS.DECIDED;
+  const lockedPlan = row.posting_plan ? JSON.parse(row.posting_plan) : null;
   // صف حسابدارِ مسیر قدیمی — اطمینان پایین، بدون موتور تصمیم — همان رفتار
   // همیشگی را دارد؛ فقط مانعِ نگهبان override حساب می‌شود.
   const heldForAccountant = row.route === ROUTES.ACCOUNTANT_REVIEW && JSON.parse(row.confidence || '{}').guardBlocked === true;
   const reason = String(overrideReason || '').trim();
-  if ((undecided || heldForAccountant) && reason.length < 5) {
+  // نگهبانی که واقعاً سند را بازنویسی کرده، نقشهٔ مشخص و متوازن دارد؛ حسابدار
+  // می‌تواند همان نقشه را با دلیل تأیید کند. نقشهٔ عمومیِ حدسی چنین مجوزی ندارد.
+  const reviewedGuardPlan = undecided && !heldForAccountant && isGuardPlan(lockedPlan);
+  if (reviewedGuardPlan && reason.length < 5) {
+    throw storeError('برای ثبت نقشهٔ اصلاح‌شدهٔ نگهبان، دلیل بررسی حسابدار لازم است.', 'EVENT_OVERRIDE_REASON_REQUIRED', 409);
+  }
+  if ((undecided && !reviewedGuardPlan) || heldForAccountant) {
     throw storeError(decision?.decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT
-      ? 'این مورد هنوز یک سؤال بی‌جواب دارد؛ یا جوابش را بده یا دلیل ثبت بدون جواب را بنویس.'
-      : 'موتور برای این مورد تصمیم قطعی ندارد؛ ثبتش فقط با نوشتن دلیل ممکن است.', 'EVENT_OVERRIDE_REASON_REQUIRED', 409);
+      ? 'پیش از ثبت، به سؤال این مورد پاسخ بده تا تصمیم و نقشهٔ سند دوباره ساخته شوند.'
+      : 'نقشهٔ سند این مورد قطعی نیست؛ آن را بررسی و در مسیر ثبت دستیِ حسابدار اصلاح کن.', 'EVENT_PLAN_REVISION_REQUIRED', 409);
   }
 
   const event = JSON.parse(row.payload);
@@ -523,7 +526,6 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   // رویدادهایی که پیش از این تغییر ثبت شده‌اند نقشهٔ ذخیره‌شده ندارند؛ برای
   // آن‌ها مثل قبل محاسبه می‌شود و همین در ردپا نوشته می‌شود، تا حسابرسی بتواند
   // این دو دسته را از هم تشخیص بدهد.
-  const lockedPlan = row.posting_plan ? JSON.parse(row.posting_plan) : null;
   const plan = lockedPlan || planJournal(event);
   // همان لنگری که در لحظهٔ ثبت تصمیم گرفته شد، نه لنگر تازه.
   const journalSource = row.journal_source ? JSON.parse(row.journal_source) : null;
@@ -534,7 +536,7 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
     postPlanned(database, { id: row.id, event, plan, actor, timeZone, journalSource, postJournal });
     writeAudit(database, row.id, 'approved', {
       by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy',
-      ...(undecided || heldForAccountant ? { override: true, reason: reason.slice(0, 500), decisionStatus: decision?.decisionStatus || null, route: row.route } : {}),
+      ...(reviewedGuardPlan ? { override: true, reason: reason.slice(0, 500), guard: lockedPlan.guard } : {}),
     }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }

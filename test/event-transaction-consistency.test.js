@@ -35,7 +35,7 @@ const queuedFor = (id) => database.reviewQueue().items.find((item) => item.sourc
 test('رد کردن، ردیف تراکنش را هم از ماندهٔ کاربر بیرون می‌برد', () => inWorkspace(() => {
   const before = cashBalance();
   const [id] = database.insertTransactions({ transcript: 'مشکوک', transactions: [doubtful(500_000)] });
-  assert.equal(cashBalance(), before - 500_000, 'تا وقتی رد نشده، در ماندهٔ کاربر هست');
+  assert.equal(cashBalance(), before, 'مورد معلق پیش از تأیید نباید ماندهٔ قطعی را تغییر دهد');
 
   database.rejectEvent(queuedFor(id).id, 'اصلاً اتفاق نیفتاده بود');
 
@@ -63,9 +63,12 @@ test('ردیف ردشده حذف فیزیکی نمی‌شود و ردپایش م
  */
 test('برگشت رویدادِ ثبت‌شده واقعاً سند معکوس می‌زند', () => inWorkspace(() => {
   const db = database.activeWorkspaceDatabase();
+  const before = cashBalance();
   const [id] = database.insertTransactions({ transcript: 'مشکوک سوم', transactions: [doubtful(220_000)] });
   const queued = queuedFor(id);
+  assert.equal(cashBalance(), before, 'تا پیش از تأیید، ماندهٔ قطعی ثابت است');
   database.approveEvent(queued.id);
+  assert.equal(cashBalance(), before - 220_000, 'پس از تأیید، ردیف در مانده می‌نشیند');
 
   const normal = () => db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='transaction' AND source_id=? AND entry_kind='normal'").get(id).n;
   const reversals = () => db.prepare("SELECT COUNT(*) AS n FROM journal_entries WHERE source_type='transaction' AND source_id=? AND entry_kind='reversal'").get(id).n;
@@ -78,6 +81,7 @@ test('برگشت رویدادِ ثبت‌شده واقعاً سند معکوس �
   assert.equal(accounting.trialBalance(db).balanced, true);
   // و ردیف کاربر هم باید برود، وگرنه ماندهٔ صندوق با دفتر نمی‌خواند.
   assert.equal(db.prepare('SELECT status FROM transactions WHERE id=?').get(id).status, 'deleted');
+  assert.equal(cashBalance(), before, 'پس از برگشت، مانده دوباره اصلاح می‌شود');
 }));
 
 // دفتر و برنامه باید یک عدد بگویند. این آزمون همان اختلافی را می‌گیرد که

@@ -6,7 +6,7 @@ import { bankById, detectBank } from '../../shared/banks.js';
 export function listAccounts() {
   return db.prepare(`SELECT accounts.id,accounts.name,accounts.kind,accounts.opening_balance AS openingBalance,accounts.active,
     accounts.created_at AS createdAt,accounts.bank_id AS bankId,
-    accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' THEN
+    accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' AND COALESCE(transactions.journal_deferred,0)=0 THEN
       CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
     GROUP BY accounts.id ORDER BY accounts.active DESC,accounts.sort_order,accounts.name`).all();

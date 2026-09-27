@@ -75,7 +75,31 @@ test('T010 — «نمی‌دانم» به صف حسابدار می‌رود و �
     const [event] = events;
     assert.equal(event.route, 'accountant-review');
     assert.deepEqual(journalFor(ids[0]), [], 'پیش از بررسی هیچ سندی نباید بخورد');
-    assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_OVERRIDE_REASON_REQUIRED' });
+    assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+    assert.throws(() => database.approveEvent(event.id, { reason: 'ثبت به تشخیص حسابدار' }), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+    assert.deepEqual(journalFor(ids[0]), [], 'توضیح متنی نقشهٔ سند مبهم را تأیید نمی‌کند');
+  });
+});
+
+test('رویداد معلق تا زمان تصمیم، موجودی حساب و گزارش نقدی را تغییر نمی‌دهد', () => {
+  inPrimary(() => {
+    const before = database.listAccounts().find((account) => account.id === 'cash').balance;
+    const beforeToday = database.getToday().summary.netCashFlow;
+    const beforeReport = database.report('month').summary.netCashFlow;
+    const beforeClosing = database.previewDayClosing().expectedCash;
+    const text = 'فروش نسیه ۲۰ میلیون تومان به شرکت گاما، پولی دریافت نکردیم';
+    const transactions = parseFinancialText(text, { source: 'text' }).transactions;
+    const ids = database.insertTransactions({ transcript: text, transactions });
+    assert.ok(ids.length > 0, 'ثبت برای بررسی حفظ می‌شود');
+    const row = db().prepare('SELECT journal_deferred AS deferred FROM transactions WHERE id=?').get(ids[0]);
+    assert.equal(row.deferred, 1);
+    assert.equal(database.listTransactions({ limit: 50 }).items.find((item) => item.id === ids[0]).journalDeferred, 1);
+    assert.throws(() => database.updateTransaction(ids[0], { category: 'فروش' }), { code: 'PENDING_TRANSACTION_LOCKED' });
+    assert.throws(() => database.deleteTransaction(ids[0]), { code: 'PENDING_TRANSACTION_LOCKED' });
+    assert.equal(database.listAccounts().find((account) => account.id === 'cash').balance, before);
+    assert.equal(database.getToday().summary.netCashFlow, beforeToday);
+    assert.equal(database.report('month').summary.netCashFlow, beforeReport);
+    assert.equal(database.previewDayClosing().expectedCash, beforeClosing);
   });
 });
 

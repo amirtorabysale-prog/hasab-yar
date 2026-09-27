@@ -169,15 +169,15 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
 /**
  * تصمیم حسابداری این رویداد، یا `null` وقتی موتور خاموش است.
  *
- * شکست اینجا نباید ثبت کاربر را از بین ببرد. اگر موتور تصمیم به هر دلیلی
- * بشکند، مسیر قبلی — که همچنان درست است — کار می‌کند و رویداد گم نمی‌شود.
+ * شکست تصمیم در دفترِ دارای موتور نسخهٔ دو نباید به ثبت قطعیِ مسیر قدیمی
+ * تبدیل شود؛ دروازهٔ ثبت‌کننده خطا را به کاربر برمی‌گرداند.
  */
 function decideForEvent(event, policyOverrides, item) {
   const policy = resolveAutomationPolicy(policyOverrides);
   if (!policy.engineV2) return null;
   try {
     return decide(factsFromEvent(event), { today: item?.occurredAt || event.occurredAt });
-  } catch { return null; }
+  } catch (error) { throw error; }
 }
 
 /**
