@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
 import { ROUTE_LABELS } from '../../../shared/confidenceEngine.js';
 import { api } from '../../lib/api.js';
@@ -65,6 +65,9 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
   const [open, setOpen] = useState(false);
   const [trail, setTrail] = useState(null);
   const [decision, setDecision] = useState(null);
+  const [ai, setAi] = useState(item.aiProposal || null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
   const confidence = item.confidence || {};
 
   // تصمیم فقط برای ردیف‌هایی خوانده می‌شود که واقعاً تصمیمی دارند. صف ممکن است
@@ -73,6 +76,27 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
     if (!item.decisionId) return;
     api.eventDecision(item.id).then(setDecision).catch(() => setDecision(null));
   }, [item.id, item.decisionId]);
+
+  useEffect(() => { setAi(item.aiProposal || null); }, [item.id, item.aiProposal?.id]);
+
+  const analyze = async () => {
+    setAiBusy(true); setAiError('');
+    try { setAi((await api.reviewAiProposal(item.id)).proposal); }
+    catch (error) { setAiError(error.message); }
+    setAiBusy(false);
+  };
+
+  const feedback = async (accepted) => {
+    const reason = accepted ? '' : window.prompt('چرا پیشنهاد AI درست نیست؟ دلیل مشخص بنویس:');
+    if (!accepted && !reason?.trim()) return;
+    setAiBusy(true);
+    try {
+      const result = await api.reviewAiFeedback(item.id, ai.id, accepted, reason || '');
+      if (accepted) { notify?.('پیشنهاد مطابق نقشهٔ قطعی تأیید و سند ثبت شد.'); await onAnswered?.(); }
+      else { setAi(result.proposal); notify?.('دلیل رد در سابقهٔ حسابداری این دفتر ثبت شد.'); }
+    } catch (error) { setAiError(error.message); }
+    setAiBusy(false);
+  };
 
   const answer = async (payload) => {
     try {
@@ -114,6 +138,26 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
 
     {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
     {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-[11px] leading-5 text-muted">• {confidence.reasons[0]}</p>}
+
+    {item.route === 'accountant-review' && <div className="mt-2 rounded-lg border border-line bg-paper p-3 text-[12px] leading-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <b>پیشنهاد AI برای بررسی حسابدار</b>
+        {(!ai || ai.state === 'rejected') && <button disabled={busy || aiBusy} onClick={analyze} className="tap rounded-lg border border-accent px-2 py-1 font-bold text-accent disabled:opacity-40">{aiBusy ? 'در حال تحلیل…' : ai ? 'تحلیل دوباره' : 'تحلیل کن'}</button>}
+      </div>
+      {ai?.state === 'proposed' && <>
+        <p className="mt-1 font-bold">{ai.summary}</p>
+        <p className="text-muted">{ai.explanation}</p>
+        <div className="mt-1 rounded border border-line p-2 numbers" dir="ltr">{ai.lines.map((line, index) => <p key={index}>{line.debit ? 'Dr' : 'Cr'} {line.role}{line.key ? ` (${line.key})` : ''}: {formatAmount(line.debit || line.credit)}</p>)}</div>
+        {ai.missingFacts?.length > 0 && <p className="mt-1 text-expense">اطلاعات لازم: {ai.missingFacts.join('، ')}</p>}
+        <p className="mt-1 text-muted">این پیشنهاد سند نیست؛ فقط در صورت تطبیق با نقشهٔ قطعی سیستم با تأیید ثبت می‌شود.</p>
+        <div className="mt-2 flex gap-2">
+          <button disabled={busy || aiBusy || ai.missingFacts?.length > 0} onClick={() => feedback(true)} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">تأیید پیشنهاد و ثبت</button>
+          <button disabled={busy || aiBusy} onClick={() => feedback(false)} className="tap rounded border border-expense px-2 py-1 text-expense disabled:opacity-40">رد پیشنهاد با دلیل</button>
+        </div>
+      </>}
+      {ai?.state === 'rejected' && <p className="mt-1 text-muted">پیشنهاد رد شد: {ai.reason}</p>}
+      {aiError && <p className="mt-1 text-expense">{aiError}</p>}
+    </div>}
 
     {/* سؤال بالاتر از جزئیات می‌نشیند: تا جوابش نیامده، بقیه‌اش موضوعیت ندارد. */}
     {decision?.decision?.question && <QuestionCard question={decision.decision.question} busy={busy} onAnswer={answer} />}
@@ -265,6 +309,8 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
 export function ReviewQueuePage({ notify, access }) {
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
+  const aiAttempted = useRef(new Set());
+  const queueKeys = items?.map((item) => item.id).join('|') || '';
 
   const load = useCallback(async () => {
     try { setItems((await api.reviewQueue()).items); }
@@ -273,12 +319,34 @@ export function ReviewQueuePage({ notify, access }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // صف در پس‌زمینه و با دو کارگر تحلیل می‌شود؛ باز شدن صفحه منتظر سرویس AI نمی‌ماند.
+  useEffect(() => {
+    if (!items) return undefined;
+    const pending = items.filter((item) => item.route === 'accountant-review' && !item.aiProposal && !aiAttempted.current.has(item.id));
+    if (!pending.length) return undefined;
+    pending.forEach((item) => aiAttempted.current.add(item.id));
+    let cancelled = false;
+    let cursor = 0;
+    const worker = async () => {
+      while (!cancelled && cursor < pending.length) {
+        const item = pending[cursor++];
+        try {
+          const { proposal } = await api.reviewAiProposal(item.id);
+          if (!cancelled) setItems((current) => current?.map((entry) => entry.id === item.id ? { ...entry, aiProposal: proposal } : entry));
+        } catch (error) {
+          // پیکربندی‌نشدن سرویس یا قطعی آن نباید درخواست‌های بقیهٔ صف را تکرار کند.
+          if (['AI_NOT_CONFIGURED', 'AI_UNAVAILABLE'].includes(error.code)) { cancelled = true; break; }
+        }
+      }
+    };
+    void Promise.all([worker(), worker()]);
+    return () => { cancelled = true; };
+  }, [queueKeys]);
+
   const approve = async (item) => {
     setBusy(item.id);
     try { await api.approveEvent(item.id); notify('سند ثبت شد.'); await load(); }
     catch (error) {
-      // موردی که تصمیم قطعی ندارد فقط با دلیل ثبت می‌شود؛ سرور همین را می‌گوید
-      // و ما دلیل را می‌پرسیم، نه اینکه بی‌صدا دوباره بفرستیم.
       if (error.code !== 'EVENT_OVERRIDE_REASON_REQUIRED') notify(error.message);
       else {
         const reason = window.prompt(`${error.message}\n\nدلیل ثبت:`);

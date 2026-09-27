@@ -69,6 +69,21 @@ test('T050 — چک دستی که وصول نشده، پول نیست', () => {
   });
 });
 
+test('خرید نسیهٔ آزمون واقعی، نه ماندهٔ نقدی می‌سازد نه با تأیید ساده سند نقدی', () => {
+  inPrimary(() => {
+    const text = 'امروز 15 میلیون تومان کالا نسیه از شرکت اپسیلون خریدیم و پولی ندادیم';
+    const transactions = parseFinancialText(text, { source: 'voice' }).transactions.map((item) => ({ ...item, source: 'voice' }));
+    const before = db().prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted'").get().count;
+    const ids = database.insertTransactions({ transcript: text, transactions });
+    assert.ok(ids.queuedForAccountant >= 1);
+    assert.equal(db().prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted'").get().count, before);
+    const event = store.listReviewQueue(db(), { route: 'accountant-review' }).find((item) => item.event.evidence === text);
+    assert.ok(event);
+    assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+    assert.equal(db().prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status, 'pending');
+  });
+});
+
 test('T010 — «نمی‌دانم» به صف حسابدار می‌رود و بدون دلیل تأیید نمی‌شود', () => {
   inPrimary(() => {
     const { ids, events } = say('T010');
@@ -90,12 +105,11 @@ test('رویداد معلق تا زمان تصمیم، موجودی حساب و 
     const text = 'فروش نسیه ۲۰ میلیون تومان به شرکت گاما، پولی دریافت نکردیم';
     const transactions = parseFinancialText(text, { source: 'text' }).transactions;
     const ids = database.insertTransactions({ transcript: text, transactions });
-    assert.ok(ids.length > 0, 'ثبت برای بررسی حفظ می‌شود');
-    const row = db().prepare('SELECT journal_deferred AS deferred FROM transactions WHERE id=?').get(ids[0]);
-    assert.equal(row.deferred, 1);
-    assert.equal(database.listTransactions({ limit: 50 }).items.find((item) => item.id === ids[0]).journalDeferred, 1);
-    assert.throws(() => database.updateTransaction(ids[0], { category: 'فروش' }), { code: 'PENDING_TRANSACTION_LOCKED' });
-    assert.throws(() => database.deleteTransaction(ids[0]), { code: 'PENDING_TRANSACTION_LOCKED' });
+    assert.equal(ids.length, 0, 'رویداد غیرنقدی ردیف نقدی نمی‌سازد');
+    assert.ok(ids.queuedForAccountant > 0, 'شاهد در صف حسابدار حفظ می‌شود');
+    const event = store.listReviewQueue(db(), { route: 'accountant-review' }).find((item) => item.event.evidence === text);
+    assert.ok(event);
+    assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
     assert.equal(database.listAccounts().find((account) => account.id === 'cash').balance, before);
     assert.equal(database.getToday().summary.netCashFlow, beforeToday);
     assert.equal(database.report('month').summary.netCashFlow, beforeReport);

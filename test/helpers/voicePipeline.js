@@ -7,7 +7,7 @@ import { DECISION_STATUS } from '../../shared/accountingDecision.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
 import { GUARD_VERDICTS, guardedPlan, runGuards } from '../../shared/guards.js';
 import { transactionEventDecision } from '../../server/transactionEvent.js';
-import { natureNeedsAccountant, readEventNature, readNonCashInstrument } from '../../shared/eventNature.js';
+import { natureNeedsAccountant, readEventNature, readNonCashInstrument, readExplicitNonCash } from '../../shared/eventNature.js';
 
 /**
  * یک گفتهٔ صوتی، از همان راهی که برنامه می‌رود — بدون دیتابیس.
@@ -59,7 +59,7 @@ export function runVoice(text, {
   const items = parseFinancialText(text, { source: 'voice', now }).transactions || [];
   // همان کاری که `insertTransactionRows` می‌کند: اصلاح ثبت قبلی و چکِ وصول‌نشده
   // ردیف نقدی نمی‌سازند و مستقیم به صف حسابدار می‌روند.
-  const queued = natureNeedsAccountant(readEventNature(text)) ? 'correction' : readNonCashInstrument(text) ? 'non-cash-instrument' : null;
+  const queued = natureNeedsAccountant(readEventNature(text)) ? 'correction' : readNonCashInstrument(text) ? 'non-cash-instrument' : readExplicitNonCash(text) ? 'explicit-non-cash' : null;
   if (queued) {
     return { path: 'queued', items: items.map((item) => ({ outcome: 'accountant', amount: item.amount, kind: item.type, noCashRow: true, reason: queued })) };
   }
