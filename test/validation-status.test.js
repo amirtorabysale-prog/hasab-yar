@@ -38,6 +38,17 @@ test('مبلغ خارج از بازه، خطای ورودی است نه خراب
   });
 });
 
+test('ارسال مستقیم جمع و اجزا حتی پس از ویرایش پیش‌نمایش هیچ ردیفی نمی‌سازد', () => {
+  inWorkspace(() => {
+    const before = database.listTransactions({}).total;
+    assertUserFacing(() => database.insertTransactions({
+      transcript: 'قسط وام ۱۱ میلیون دادم، ۹ میلیون اصل و ۲ میلیون سود',
+      transactions: [{ amount: 11_000_000, type: 'expense', category: 'سایر', rawText: 'قسط وام' }],
+    }), 'چند مبلغ');
+    assert.equal(database.listTransactions({}).total, before);
+  });
+});
+
 test('نوع تراکنش نامعتبر، خطای ورودی است', () => {
   inWorkspace(() => {
     assertUserFacing(() => database.insertTransactions({

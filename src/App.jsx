@@ -16,7 +16,7 @@ import { countOfflineAudio, failOfflineAudio, markOfflineAudioForReview, pending
 import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
 import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
-import { inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
+import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
 import { isNetworkQueueError, isPermanentQueueError } from './lib/offlineScope.js';
 import { realtimeWorthTrying } from './lib/voiceStatus.js';
@@ -369,7 +369,7 @@ export default function App() {
       });
       if (isCorrectionCommand(result.transcript)) await openCorrection(result.transcript);
       else if (routeIntent(result.transcript)) { /* نیت ساختاری، نه ثبت سادهٔ تراکنش */ }
-      else if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.' });
+      else if (!result.transactions?.length) setFailure({ transcript: result.transcript || 'متن صدا مشخص نشد.', message: result.clarification });
       else setParseResult({ ...result, responseMs: Date.now() - requestedAt });
     } catch (error) {
       if (controller.signal.aborted && controller.signal.reason !== 'timeout') notify('پردازش صدا لغو شد.');
@@ -424,6 +424,7 @@ export default function App() {
       };
       if (isCorrectionCommand(result.transcript)) void openCorrection(result.transcript);
       else if (routeIntent(result.transcript)) { /* نیت ساختاری، نه ثبت سادهٔ تراکنش */ }
+      else if (result.clarification) setFailure({ transcript: result.transcript, message: result.clarification });
       else setParseResult(reviewedResult);
       if (online) {
         api.recordVoiceMetric({
@@ -705,7 +706,7 @@ export default function App() {
     // همان کنترلی که سرور روی مسیر صدا می‌زند؛ ثبت متنی محلی پارس می‌شود و نباید
     // از الگوی خودِ پرونده بی‌خبر بماند.
     const result = applyDnaSignals(parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' }), data.dnaProfiles);
-    if (!result.transactions?.length) setFailure({ transcript: text });
+    if (!result.transactions?.length) setFailure({ transcript: text, message: result.clarification });
     else { setParseResult({ ...result, engine: 'local-text', latencyMs: 0 }); setManualText(''); }
   };
 
@@ -715,6 +716,10 @@ export default function App() {
    */
   const routeIntent = (transcript) => {
     if (!canWrite) return false;
+    if (hasCompositeAmounts(transcript)) {
+      setFailure({ transcript, message: COMPOSITE_AMOUNT_MESSAGE });
+      return true;
+    }
     // تسویه پیش از ساخت سنجیده می‌شود: «طلب رضایی وصول شد» هم واژهٔ «طلب» دارد
     // هم فعل تسویه، و اگر اول مسیر ساخت برود یک طلب تازه می‌سازد به‌جای بستن
     // طلب موجود.
