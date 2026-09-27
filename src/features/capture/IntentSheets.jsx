@@ -279,7 +279,7 @@ export function SettleSheet({ draft, obligations = [], close, confirm }) {
 
         {!loadingInvoices && !targets.length && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
           سند بازی که با این توضیح بخورد پیدا نشد. شاید نام یا مبلغ فرق دارد، یا سند هنوز صادر نشده است
-          — پیش‌نویس تسویه نمی‌شود.
+          — پیش‌نویس تسویه نمی‌شود. تعهدهای قدیمیِ بدون سند اولیه هم تا بررسی حسابدار قابل تسویه نیستند؛ وضعیتشان در «طلب و بدهی» نمایش داده می‌شود.
         </p>}
 
         {targets.length > 1 && <p className="mt-4 text-[12px] leading-6 text-expense">

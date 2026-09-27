@@ -46,6 +46,10 @@ test('دریافت طلب قبلی به جای ساخت طلب تازه، سند
   ] });
   assert.deepEqual(targets.map((target) => [target.id, target.amount, target.paymentAmount]), [['old-claim', 12_000_000, 7_000_000]]);
   assert.deepEqual(matchSettleTargets(intent, { obligations: [
+    { id: 'legacy', title: 'طلب قبلی', amount: 12_000_000, direction: 'receivable', status: 'open', journalStatus: 'legacy' },
+    { id: 'pending', title: 'طلب تازه', amount: 12_000_000, direction: 'receivable', status: 'open', journalStatus: 'pending' },
+  ] }), [], 'صدای وصول نباید سند بدون پشتوانهٔ دفتر را برای انتخاب عرضه کند');
+  assert.deepEqual(matchSettleTargets(intent, { obligations: [
     { id: 'small-claim', title: 'طلب قدیمی', amount: 5_000_000, direction: 'receivable', status: 'open' },
   ] }), [], 'مبلغ دریافت نباید از ماندهٔ سند بیشتر باشد');
   const invoiceTargets = matchSettleTargets(intent, { invoices: [
