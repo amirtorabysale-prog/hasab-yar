@@ -6,6 +6,7 @@ import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEv
 import { settlementFor, transactionJournalPoster } from './transactions.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { vatGuardContext } from '../tax.js';
+import { latestReviewProposal, proposeReview, proposalIsCurrent, proposalMatchesPlan, recordReviewFeedback } from '../accountingReviewAi.js';
 
 // ---------------------------------------------------------------------------
 // رویدادهای مالی و صف بررسی
@@ -35,7 +36,36 @@ export function submitFinancialEvent(event, options = {}) {
 }
 
 export function reviewQueue(options = {}) {
-  return { items: listReviewQueue(activeWorkspaceDatabase(), options) };
+  const database = activeWorkspaceDatabase();
+  return { items: listReviewQueue(database, options).map((item) => ({ ...item, aiProposal: item.route === 'accountant-review' ? latestReviewProposal(database, item.id) : null })) };
+}
+
+export async function analyzeReviewEvent(eventId) {
+  return { proposal: await proposeReview(activeWorkspaceDatabase(), eventId) };
+}
+
+export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason = '' } = {}) {
+  const database = activeWorkspaceDatabase();
+  const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
+  if (!row || row.status !== 'pending' || row.route !== 'accountant-review') throw Object.assign(new Error('این مورد دیگر در صف حسابدار نیست.'), { code: 'EVENT_NOT_REVIEWABLE', status: 409 });
+  const proposal = latestReviewProposal(database, eventId);
+  if (!proposal || proposal.id !== proposalId || proposal.state !== 'proposed' || !proposalIsCurrent(proposal, row)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صفحه را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
+  const actor = currentWorkspace()?.userId || null;
+  if (accepted) {
+    const locked = row.posting_plan ? JSON.parse(row.posting_plan) : null;
+    const source = row.journal_source ? JSON.parse(row.journal_source) : null;
+    const decision = decisionForEvent(database, eventId);
+    if (!proposalMatchesPlan(proposal, locked) || (source?.type === 'transaction' && !treatmentHasPlan(decision?.treatment))) {
+      throw Object.assign(new Error('پیشنهاد با نقشهٔ قطعی دفتر برابر نیست؛ برای ثبت متفاوت ابتدا حساب‌ها را در مسیر سند دستی تعیین کن. بازخورد رد و دلیل را در همین کارت ثبت کن.'), { code: 'AI_PLAN_REVISION_REQUIRED', status: 409 });
+    }
+    const item = approveEvent(eventId, { reason: reason || 'بررسی پیشنهاد AI و تطبیق سطرها با نقشهٔ قفل‌شده' });
+    recordReviewFeedback(database, eventId, proposalId, { state: 'accepted', reason, actor });
+    audit('accept-ai-proposal', 'financial-event', eventId, { proposalId, journalEntryId: item.journalEntryId });
+    return { item };
+  }
+  const updated = recordReviewFeedback(database, eventId, proposalId, { state: 'rejected', reason, actor });
+  audit('reject-ai-proposal', 'financial-event', eventId, { proposalId, reason: String(reason).slice(0, 200) });
+  return { proposal: updated };
 }
 
 /**

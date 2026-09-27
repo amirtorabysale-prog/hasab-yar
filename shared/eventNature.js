@@ -130,3 +130,9 @@ export function readNonCashInstrument(input) {
   const text = String(input || '').replace(/\u200c/g, ' ');
   return CHEQUE_WORD.test(text) && !CHEQUE_CLEARED.test(text);
 }
+
+/** تصریح «هنوز پولی جابه‌جا نشده» نباید حتی ردیف نقدیِ در انتظار بسازد. */
+export function readExplicitNonCash(input) {
+  const text = String(input || '').replace(/\u200c/g, ' ');
+  return /(?:بدون\s+(?:پرداخت|دریافت)\s+(?:وجه|پول)|پولی\s+(?:ندادیم|نگرفتیم|پرداخت\s+نشد|دریافت\s+نشد)|هنوز\s+(?:پرداخت|دریافت)\s+(?:نکردیم|نکردم|نشده)|نسیه)/.test(text);
+}

@@ -5,6 +5,7 @@ import { ensureTaxSchema } from '../tax.js';
 import { insertTransactions } from './transactions.js';
 import { migrateAccountingLedger } from '../accounting.js';
 import { migrateInventory } from '../inventory.js';
+import { ensureReviewAiSchema } from '../accountingReviewAi.js';
 
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
@@ -13,10 +14,12 @@ export const FINANCIAL_BACKUP_TABLES = [
   'tax_knowledge_sources', 'tax_assistant_questions',
   'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
+  'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai',
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
+  'accounting_review_ai', 'financial_event_audit', 'recognition_schedule_items', 'accounting_decisions', 'financial_events',
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
@@ -26,6 +29,8 @@ const BACKUP_DELETE_ORDER = [
 ];
 
 export function financialBackupSnapshot(workspace = currentWorkspace()) {
+  // جدول پیشنهادهای AI و بازخورد حسابدار جزئی از سابقهٔ همان دفتر است.
+  ensureReviewAiSchema(db);
   const tables = {};
   for (const table of FINANCIAL_BACKUP_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {

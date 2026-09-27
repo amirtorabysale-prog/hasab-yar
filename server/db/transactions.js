@@ -14,7 +14,7 @@ import { recordFinancialEvent, recordShadowRun } from '../financialEventStore.js
 import { openDocumentsFor } from './counterpartyCard.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 import { vatGuardContext } from '../tax.js';
-import { NATURE_EXPLANATIONS, natureNeedsAccountant, readEventNature, readNonCashInstrument } from '../../shared/eventNature.js';
+import { NATURE_EXPLANATIONS, natureNeedsAccountant, readEventNature, readNonCashInstrument, readExplicitNonCash } from '../../shared/eventNature.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { decide } from '../../shared/accountingDecision.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
@@ -240,15 +240,18 @@ function queueCorrectionForAccountant(item, transcript, nature) {
     kind: item.type === 'income' ? EVENT_KINDS.CASH_INCOME : EVENT_KINDS.CASH_EXPENSE,
     amount, occurredAt: item.occurredAt || new Date().toISOString(),
     category: item.category, description: item.category, accountId: resolveAccountId(item),
-    source: item.source === 'voice' ? 'voice' : 'text', eventNature: nature === 'non-cash-instrument' ? 'new' : nature,
+    source: item.source === 'voice' ? 'voice' : 'text', eventNature: ['non-cash-instrument', 'explicit-non-cash'].includes(nature) ? 'new' : nature,
     evidence: String(transcript || item.rawText || '').slice(0, 1000),
   });
   const accountingDecision = decide(factsFromEvent(event), { today: event.occurredAt });
-  const reason = nature === 'non-cash-instrument' ? NON_CASH_REASON
+  const reason = nature === 'explicit-non-cash' ? 'طبق گفتهٔ کاربر هنوز وجهی جابه‌جا نشده است؛ ثبت نقدی ساخته نشد و ماهیت تعهد یا موجودی باید بررسی شود.'
+    : nature === 'non-cash-instrument' ? NON_CASH_REASON
     : NATURE_EXPLANATIONS[nature] || 'این جمله اصلاح یک ثبت قبلی است، نه تراکنش تازه.';
   return recordFinancialEvent(db, event, {
     sourceEventId: `correction:${item.clientId || randomUUID()}`,
-    decision: { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [reason], summary: reason },
+    // این رویداد صرفاً حامل شاهد در صف است؛ نقشهٔ نقدیِ ناشی از نوعِ موقت
+    // هرگز با دکمهٔ تأیید نباید ثبت شود. حسابدار باید سند درست را تعیین کند.
+    decision: { route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [reason], summary: reason },
     actor: currentWorkspace()?.userId || null, transcript, rawInput: transcript,
     timeZone: currentTimeZone(), withinTransaction: true, accountingDecision,
   });
@@ -267,14 +270,14 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
   const queuedReasons = [];
   for (const item of transactions) {
     const nature = fromUtterance
-      ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null)
+      ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null) || (readExplicitNonCash(transcript || item.rawText) ? 'explicit-non-cash' : null)
       : null;
     if (nature) {
       const amount = Math.round(Number(item.amount));
       if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
       queueCorrectionForAccountant(item, transcript, nature);
       queuedForAccountant += 1;
-      queuedReasons.push(nature === 'non-cash-instrument' ? NON_CASH_REASON : (NATURE_EXPLANATIONS[nature] || ''));
+      queuedReasons.push(nature === 'non-cash-instrument' ? NON_CASH_REASON : nature === 'explicit-non-cash' ? 'وجهی جابه‌جا نشده؛ ثبت نقدی ساخته نشد.' : (NATURE_EXPLANATIONS[nature] || ''));
       continue;
     }
     const id = randomUUID();
