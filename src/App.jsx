@@ -735,9 +735,9 @@ export default function App() {
   const applySettlement = async (target, { occurredAt = null } = {}) => {
     try {
       if (target.kind === 'invoice') {
-        await api.recordInvoicePayment(target.id, { occurredAt: occurredAt || undefined });
+        await api.recordInvoicePayment(target.id, { amount: target.paymentAmount, occurredAt: occurredAt || undefined });
       } else {
-        await api.settleObligation(target.id, occurredAt ? { occurredAt } : {});
+        await api.settleObligation(target.id, { amount: target.paymentAmount, ...(occurredAt ? { occurredAt } : {}) });
       }
       setSettleDraft(null);
       await load();

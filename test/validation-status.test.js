@@ -49,6 +49,17 @@ test('ارسال مستقیم جمع و اجزا حتی پس از ویرایش �
   });
 });
 
+test('ارسال مستقیم وصول طلب قبلی نمی‌تواند سند درآمد تازه بسازد', () => {
+  inWorkspace(() => {
+    const before = database.listTransactions({}).total;
+    assertUserFacing(() => database.insertTransactions({
+      transcript: '۷ میلیون تومان از طلب قبلی دریافت کردم',
+      transactions: [{ amount: 7_000_000, type: 'income', category: 'فروش', rawText: 'طلب قبلی' }],
+    }), 'سند باز');
+    assert.equal(database.listTransactions({}).total, before);
+  });
+});
+
 test('نوع تراکنش نامعتبر، خطای ورودی است', () => {
   inWorkspace(() => {
     assertUserFacing(() => database.insertTransactions({

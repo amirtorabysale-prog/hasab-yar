@@ -3,6 +3,7 @@ import { readServicePeriod } from './periodSpeech.js';
 import { isChequeEndorsement } from './voiceIntent.js';
 import { extractDateMention } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
+import { priorSettlementDirection } from './priorSettlement.js';
 
 /**
  * تسویه و پرداخت سندهای موجود با صدا.
@@ -115,7 +116,8 @@ export function detectSettleIntent(input, { now = new Date() } = {}) {
     return { intent: 'settle', bounced: true, transcript: text };
   }
   const settles = matchesAny(text, EXPLICIT_SETTLE_PATTERNS)
-    || (mentionsDocument && matchesAny(text, DOCUMENT_SETTLE_PATTERNS));
+    || (mentionsDocument && matchesAny(text, DOCUMENT_SETTLE_PATTERNS))
+    || Boolean(priorSettlementDirection(text));
   if (!settles) return null;
   // «تسویه» همیشه بستن یک سند باز نیست.
   //
@@ -134,10 +136,13 @@ export function detectSettleIntent(input, { now = new Date() } = {}) {
   const amount = parseFinancialText(withoutNumber, { source: 'voice' }).transactions[0]?.amount || 0;
   const kind = matchesAny(text, INVOICE_HINTS) ? 'invoice'
     : matchesAny(text, CHEQUE_HINTS) ? 'cheque'
-      : matchesAny(text, OBLIGATION_HINTS) ? 'obligation' : 'any';
+      // «طلب قبلی» می‌تواند از فاکتور فروش یا از تعهد ثبت‌شده آمده باشد.
+      // هر دو سندِ باز نشان داده می‌شوند و انتخاب با کاربر است.
+      : 'any';
   return {
     intent: 'settle',
     kind,
+    direction: priorSettlementDirection(text),
     contactName: extractName(text),
     number,
     amount,
@@ -186,7 +191,7 @@ export function matchSettleTargets(intent = {}, { invoices = [], obligations = [
       candidates.push({
         kind: 'obligation', id: obligation.id, label: obligation.title,
         name: obligation.contactName || obligation.title || '',
-        amount: Number(obligation.amount || 0),
+        amount: Number(obligation.remaining ?? obligation.amount ?? 0),
         number: '',
         direction: obligation.direction,
       });
@@ -197,9 +202,12 @@ export function matchSettleTargets(intent = {}, { invoices = [], obligations = [
     // چک فقط وقتی خواسته شده که خودِ عنوان چک باشد؛ «چک احمدی» نباید طلب عادی
     // احمدی را تسویه کند.
     if (intent.kind === 'cheque' && !/چک/.test(normalizePersian(candidate.label))) return false;
+    if (intent.direction && candidate.direction && intent.direction !== candidate.direction) return false;
+    if (intent.direction && candidate.kind === 'invoice'
+      && (candidate.documentType === 'purchase' ? 'payable' : 'receivable') !== intent.direction) return false;
     if (intent.number && !normalizePersian(candidate.number).includes(normalizePersian(intent.number))) return false;
     if (intent.contactName && !includesName(`${candidate.name} ${candidate.label}`, intent.contactName)) return false;
-    if (intent.amount && candidate.amount !== intent.amount) return false;
+    if (intent.amount && (candidate.amount < intent.amount || (intent.kind === 'cheque' && candidate.amount !== intent.amount))) return false;
     return true;
-  });
+  }).map((candidate) => ({ ...candidate, paymentAmount: intent.amount || candidate.amount }));
 }

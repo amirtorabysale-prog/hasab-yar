@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { detectSettleIntent, matchSettleTargets } from '../shared/settleSpeech.js';
+import { runVoice } from './helpers/voicePipeline.js';
 
 const invoices = [
   { id: 'inv-1', number: 'FR-1405-0001', customerName: 'احمدی', status: 'sent', balanceDue: 3_000_000, documentType: 'sales' },
@@ -30,6 +31,35 @@ test('فعل‌های تسویه شناخته می‌شوند', () => {
     'طلب رضایی وصول شد',
     'بدهی شرکت پارس خودرو پرداخت شد',
   ]) assert.equal(detectSettleIntent(sentence)?.intent, 'settle', sentence);
+});
+
+test('دریافت طلب قبلی به جای ساخت طلب تازه، سند باز را برای انتخاب نشان می‌دهد', () => {
+  const sentence = '۷ میلیون تومان از طلب قبلی دریافت کردم';
+  const intent = detectSettleIntent(sentence);
+  assert.equal(intent?.kind, 'any');
+  assert.equal(intent.direction, 'receivable');
+  assert.equal(intent.amount, 7_000_000);
+  assert.equal(runVoice(sentence).path, 'settle');
+  const targets = matchSettleTargets(intent, { obligations: [
+    { id: 'old-claim', title: 'طلب قدیمی', amount: 20_000_000, remaining: 12_000_000, direction: 'receivable', status: 'open' },
+    { id: 'old-debt', title: 'بدهی قدیمی', amount: 7_000_000, direction: 'payable', status: 'open' },
+  ] });
+  assert.deepEqual(targets.map((target) => [target.id, target.amount, target.paymentAmount]), [['old-claim', 12_000_000, 7_000_000]]);
+  assert.deepEqual(matchSettleTargets(intent, { obligations: [
+    { id: 'small-claim', title: 'طلب قدیمی', amount: 5_000_000, direction: 'receivable', status: 'open' },
+  ] }), [], 'مبلغ دریافت نباید از ماندهٔ سند بیشتر باشد');
+  const invoiceTargets = matchSettleTargets(intent, { invoices: [
+    { id: 'sales-invoice', number: 'FR-1405-0001', status: 'sent', balanceDue: 12_000_000, documentType: 'sales' },
+    { id: 'purchase-invoice', number: 'KH-1405-0001', status: 'sent', balanceDue: 12_000_000, documentType: 'purchase' },
+  ] });
+  assert.deepEqual(invoiceTargets.map((target) => [target.id, target.paymentAmount]), [['sales-invoice', 7_000_000]]);
+});
+
+test('پرداخت بدهی قبلی هم به انتخاب سند می‌رود و ایجاد بدهی تازه نمی‌کند', () => {
+  const intent = detectSettleIntent('۲ میلیون تومان از بدهی قبلی رو پرداخت کردم');
+  assert.equal(intent?.direction, 'payable');
+  assert.equal(intent?.amount, 2_000_000);
+  assert.equal(runVoice('۲ میلیون تومان از بدهی قبلی رو پرداخت کردم').path, 'settle');
 });
 
 // چک برگشتی تسویه نیست؛ اجرای تسویه رویش یک سند باز را دروغ می‌بندد.
