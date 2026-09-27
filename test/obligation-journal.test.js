@@ -93,6 +93,21 @@ test('تسویه درآمد را دوباره نمی‌شناسد', () => {
   });
 });
 
+test('وصول جزئی طلب قبلی فقط نقد و دریافتنی را جابه‌جا می‌کند', () => {
+  inPrimary(() => {
+    const contact = database.saveContact({ name: 'شرکت مهرگان حساب' });
+    const item = database.saveObligation({ title: 'طلب قبلی شرکت مهرگان حساب', amount: 20_000_000, direction: 'receivable', contactId: contact.id });
+    const before = accounting.trialBalance(db()).rows.filter((row) => row.type === 'income').reduce((sum, row) => sum + row.credit, 0);
+    const result = database.settleObligation(item.id, { amount: 7_000_000 });
+    assert.equal(result.item.remaining, 13_000_000);
+    assert.equal(result.item.status, 'open');
+    const after = accounting.trialBalance(db()).rows.filter((row) => row.type === 'income').reduce((sum, row) => sum + row.credit, 0);
+    assert.equal(after, before, 'درآمدی بابت وصول دوباره ساخته نمی‌شود');
+    assert.equal(database.counterpartyCard(contact.id).totals.balance, 13_000_000);
+    balanced();
+  });
+});
+
 test('پس از تسویه، حساب دریافتنی آن طرف حساب صفر می‌شود', () => {
   inPrimary(() => {
     const receivable = accounting.listLedgerAccounts(db())

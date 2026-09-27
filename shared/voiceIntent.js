@@ -1,4 +1,5 @@
 import { normalizePersian } from './normalize.js';
+import { priorSettlementDirection } from './priorSettlement.js';
 import {
   CONTACT_STOP_WORDS, DIRECTION_WORDS, NUMBER_WORDS, TITLE_PREFIXES, extractContactName,
 } from './counterpartySpeech.js';
@@ -221,6 +222,8 @@ function splitDateRoles(input, { now, isCheque = false } = {}) {
 export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}) {
   const text = normalizePersian(input);
   if (!text) return null;
+  // دریافتِ طلبِ قبلی نباید کارت «ساخت طلب» را باز کند.
+  if (priorSettlementDirection(input)) return null;
   const obligationContext = context === 'obligation';
 
   // اصلاح، برگشت، تغییر برآورد و مانندشان رویداد تازه نیستند. «فاکتور خرید

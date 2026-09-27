@@ -7,6 +7,7 @@ import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseT
 import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
 import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
+import { priorSettlementDirection } from '../../shared/priorSettlement.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
 import { recordFinancialEvent, recordShadowRun } from '../financialEventStore.js';
@@ -377,6 +378,7 @@ export function recordCapitalEntry(values = {}) {
 
 export function insertTransactions(payload) {
   if (hasCompositeAmounts(payload.transcript)) throw invalidInput(COMPOSITE_AMOUNT_MESSAGE);
+  if (priorSettlementDirection(payload.transcript)) throw invalidInput('این دریافت یا پرداخت مربوط به طلب یا بدهی قبلی است. ابتدا سند باز را در بخش تسویه انتخاب کن؛ درآمد یا هزینهٔ تازه ثبت نشد.');
   db.exec('BEGIN IMMEDIATE');
   try {
     // Public transaction writes may describe review metadata, but cannot forge an

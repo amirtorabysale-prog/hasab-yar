@@ -303,6 +303,7 @@ export function SettleSheet({ draft, obligations = [], close, confirm }) {
           ))}
         </div>
 
+        {selected && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs text-accent">مبلغ این تسویه: <b className="numbers">{formatAmount(selected.paymentAmount)}</b> تومان از ماندهٔ <b className="numbers">{formatAmount(selected.amount)}</b> تومان.</p>}
         {draft.occurredAt && <p className="mt-3 text-xs text-muted">تاریخ تسویه: <b className="text-ink">{persianDate(draft.occurredAt)}</b></p>}
       </>}
 
