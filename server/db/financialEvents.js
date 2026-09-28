@@ -1,5 +1,5 @@
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { contactIdForName } from './contacts.js';
 import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEvent.js';
@@ -66,6 +66,34 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
   const updated = recordReviewFeedback(database, eventId, proposalId, { state: 'rejected', reason, actor });
   audit('reject-ai-proposal', 'financial-event', eventId, { proposalId, reason: String(reason).slice(0, 200) });
   return { proposal: updated };
+}
+
+/** حسابدار سطرهای قطعی را انتخاب می‌کند؛ AI فقط شاهد پیشنهاد است. */
+export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false } = {}) {
+  const database = activeWorkspaceDatabase();
+  const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
+  if (!row || row.status !== 'pending') throw Object.assign(new Error('این مورد دیگر در انتظار نیست.'), { code: 'EVENT_NOT_PENDING', status: 409 });
+  const proposal = latestReviewProposal(database, eventId);
+  if (proposal?.state === 'proposed') {
+    if (!proposalId || proposal.id !== proposalId || !proposalIsCurrent(proposal, row)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صف را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
+    if (aiAccepted && (proposal.missingFacts.length || !proposal.lines || proposal.lines.length !== lines?.length || proposal.lines.some((line, index) => line.debit !== lines[index].debit || line.credit !== lines[index].credit))) {
+      throw Object.assign(new Error('مبالغ سند با پیشنهاد AI برابر نیست؛ اصلاح را با دلیل ثبت کن.'), { code: 'AI_PLAN_REVISION_REQUIRED', status: 409 });
+    }
+    if (!aiAccepted && String(reason || '').trim().length < 8) throw Object.assign(new Error('دلیل اصلاح پیشنهاد AI را بنویس.'), { code: 'AI_REASON_REQUIRED', status: 400 });
+  } else if (proposalId || aiAccepted) {
+    throw Object.assign(new Error('پیشنهاد AI معتبر برای این مورد وجود ندارد.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
+  }
+  const actor = currentWorkspace()?.userId || null;
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const item = postReviewedComposite(database, eventId, { lines, reason, actor, timeZone: currentTimeZone() });
+    if (proposal?.state === 'proposed') recordReviewFeedback(database, eventId, proposal.id, {
+      state: aiAccepted ? 'accepted' : 'rejected', reason, actor,
+    });
+    database.exec('COMMIT');
+    audit('reviewed-composite', 'financial-event', eventId, { journalEntryId: item.journalEntryId, proposalId: proposal?.id || null, aiAccepted: Boolean(proposal && aiAccepted) });
+    return { item };
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
 }
 
 /**
