@@ -543,6 +543,47 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
 
+/** ثبتِ بررسی‌شدهٔ گفتهٔ چندمبلغی؛ حسابدار حساب‌ها و همهٔ مبالغ را صریح انتخاب می‌کند. */
+export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran' } = {}) {
+  ensureFinancialEventSchema(database);
+  const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
+  if (!row || row.status !== 'pending' || row.route !== ROUTES.ACCOUNTANT_REVIEW || row.kind !== EVENT_KINDS.REVIEW_PLACEHOLDER || row.journal_source) {
+    throw storeError('فقط گفتهٔ چندمبلغیِ در انتظار را می‌توان از این مسیر ثبت کرد.', 'EVENT_NOT_REVIEWABLE', 409);
+  }
+  const explanation = String(reason || '').trim().slice(0, 500);
+  if (explanation.length < 8) throw storeError('مبنای ثبت حسابدار را با حداقل هشت نویسه بنویس.', 'REVIEW_REASON_REQUIRED', 400);
+  if (!Array.isArray(lines) || lines.length < 2 || lines.length > 12) throw storeError('سند بررسی‌شده باید بین ۲ تا ۱۲ سطر داشته باشد.', 'REVIEW_LINES_INVALID', 400);
+  if (lines.some((line) => !Number.isSafeInteger(line?.debit) || !Number.isSafeInteger(line?.credit) || line.debit < 0 || line.credit < 0)) {
+    throw storeError('مبلغ هر سطر باید عدد صحیح نامنفی به تومان باشد.', 'REVIEW_LINES_INVALID', 400);
+  }
+  const counterpartyAccounts = new Set(['customer-receivable', 'vendor-payable', 'cheque-receivable', 'cheque-payable']);
+  for (const line of lines) {
+    const account = database.prepare('SELECT source_kind AS sourceKind FROM ledger_accounts WHERE id=?').get(String(line.accountId || ''));
+    if (counterpartyAccounts.has(account?.sourceKind) && !line.analyticId) {
+      throw storeError('برای سطر طرف حساب، تفصیلی همان طرف را تعیین کن.', 'REVIEW_ANALYTIC_REQUIRED', 400);
+    }
+  }
+  // مبلغ مرجع در این خانواده مبلغ سند نیست. تراز و اعتبار حساب‌ها در
+  // postJournalEntry بررسی می‌شود، نه با حدس از بزرگ‌ترین عدد گفتار.
+  const safeLines = lines.map((line) => ({
+    accountId: String(line.accountId || '').trim(),
+    debit: line.debit, credit: line.credit,
+    description: String(line.description || '').slice(0, 300),
+    analyticId: line.analyticId || null, costCenterId: line.costCenterId || null,
+  }));
+  const event = JSON.parse(row.payload);
+  const posted = postJournalEntry(database, {
+    sourceType: 'financial-event', sourceId: row.id, occurredAt: event.occurredAt,
+    memo: `ثبت بررسی‌شده: ${explanation}`.slice(0, 500), lines: safeLines,
+  }, { createdBy: actor, timeZone });
+  database.prepare('UPDATE financial_events SET posting_plan=? WHERE id=?').run(JSON.stringify({
+    kind: 'accountant-reviewed', lines: safeLines, memoHint: explanation,
+  }), row.id);
+  markEventPosted(database, row.id, posted, safeLines, actor);
+  writeAudit(database, row.id, 'accountant-reviewed', { reason: explanation, journalEntryId: posted.id }, actor);
+  return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
+}
+
 /**
  * برگشت یک رویداد ثبت‌شده.
  *

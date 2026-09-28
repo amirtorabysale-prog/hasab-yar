@@ -61,6 +61,83 @@ function QuestionCard({ question, busy, onAnswer }) {
   </div>;
 }
 
+function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
+  const [open, setOpen] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [analytics, setAnalytics] = useState([]);
+  const [costCenters, setCostCenters] = useState([]);
+  const [lines, setLines] = useState([{ accountId: '', debit: '', credit: '', analyticId: '', costCenterId: '' }, { accountId: '', debit: '', credit: '', analyticId: '', costCenterId: '' }]);
+  const [reason, setReason] = useState('');
+  const [aiAccepted, setAiAccepted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const digits = (value) => String(value ?? '').replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit))).replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit))).replace(/[,،\s]/g, '');
+  const updateLine = (index, patch) => setLines((current) => current.map((line, position) => position === index ? { ...line, ...patch } : line));
+  const openEditor = async () => {
+    if (open) { setOpen(false); return; }
+    try {
+      const [ledger, chart] = await Promise.all([api.accountingAccounts(), api.chartOverview()]);
+      setAccounts(ledger.items.filter((account) => account.active));
+      setAnalytics((chart.analytics || []).filter((analytic) => analytic.active));
+      setCostCenters((chart.costCenters || []).filter((center) => center.active));
+      setOpen(true);
+    } catch (failure) { notify(failure.message); }
+  };
+  const useSuggestion = () => {
+    if (ai?.state !== 'proposed' || ai.missingFacts?.length) return;
+    setLines(ai.lines.map((line) => ({ accountId: '', debit: line.debit || '', credit: line.credit || '', analyticId: '', costCenterId: '' })));
+    setAiAccepted(true);
+  };
+  const submit = async () => {
+    setError('');
+    const parsed = lines.map((line) => ({ accountId: line.accountId, debit: Number(digits(line.debit || 0)), credit: Number(digits(line.credit || 0)), analyticId: line.analyticId || null, costCenterId: line.costCenterId || null }));
+    if (reason.trim().length < 8 || parsed.some((line) => !line.accountId || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) {
+      setError('برای هر سطر حساب و مبلغ معتبر، و برای سند دلیل حداقل هشت نویسه‌ای وارد کن.'); return;
+    }
+    setSaving(true);
+    try {
+      await api.reviewedJournal(item.id, { lines: parsed, reason: reason.trim(), proposalId: ai?.state === 'proposed' ? ai.id : '', aiAccepted });
+      notify('سند بررسی‌شده با ردپای تصمیم حسابدار ثبت شد.');
+      await onSaved();
+    } catch (failure) { setError(failure.message); }
+    setSaving(false);
+  };
+  return <div className="mt-2 rounded-lg border border-accent/40 bg-accent/5 p-3 text-[12px]">
+    <button onClick={openEditor} className="tap font-bold text-accent">{open ? 'بستن ثبت بررسی‌شده' : 'تعیین سطرهای قطعی و ثبت توسط حسابدار'}</button>
+    {open && <div className="mt-2 space-y-2">
+      <p className="text-muted">مبلغ بالای کارت فقط مرجع است. هر سطر سند و حسابش را از متن کامل تعیین کن؛ سند متوازن و دورهٔ باز الزامی است.</p>
+      {item.event?.utterance && <blockquote className="rounded border border-line bg-paper p-2">«{item.event.utterance}»</blockquote>}
+      {ai?.state === 'proposed' && <button disabled={saving || ai.missingFacts?.length > 0} onClick={useSuggestion} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">برداشتن مبالغ پیشنهاد AI برای بازبینی</button>}
+      {lines.map((line, index) => <div key={index} className="flex flex-wrap gap-1.5">
+        <select aria-label={`حساب سطر ${index + 1}`} value={line.accountId} onChange={(event) => {
+          const selected = accounts.find((account) => account.id === event.target.value);
+          const analytic = analytics.find((entry) => entry.sourceKind === 'contact' && entry.sourceKey === selected?.sourceKey);
+          updateLine(index, { accountId: event.target.value, analyticId: analytic?.id || '' });
+        }} className="min-w-[160px] flex-1 rounded border border-line bg-paper p-2">
+          <option value="">انتخاب سرفصل سطر {toPersianDigits(index + 1)}</option>
+          {accounts.map((account) => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}
+        </select>
+        <input aria-label={`بدهکار سطر ${index + 1} به تومان`} inputMode="numeric" placeholder="بدهکار (تومان)" value={line.debit} onChange={(event) => updateLine(index, { debit: event.target.value, credit: '' })} className="w-32 rounded border border-line bg-paper p-2" />
+        <input aria-label={`بستانکار سطر ${index + 1} به تومان`} inputMode="numeric" placeholder="بستانکار (تومان)" value={line.credit} onChange={(event) => updateLine(index, { credit: event.target.value, debit: '' })} className="w-32 rounded border border-line bg-paper p-2" />
+        <select aria-label={`تفصیلی سطر ${index + 1}`} value={line.analyticId || ''} onChange={(event) => updateLine(index, { analyticId: event.target.value })} className="min-w-[110px] rounded border border-line bg-paper p-2">
+          <option value="">بدون تفصیلی</option>
+          {analytics.map((analytic) => <option key={analytic.id} value={analytic.id}>{analytic.code} · {analytic.name}</option>)}
+        </select>
+        <select aria-label={`مرکز هزینه سطر ${index + 1}`} value={line.costCenterId || ''} onChange={(event) => updateLine(index, { costCenterId: event.target.value })} className="min-w-[110px] rounded border border-line bg-paper p-2">
+          <option value="">بدون مرکز هزینه</option>
+          {costCenters.map((center) => <option key={center.id} value={center.id}>{center.code} · {center.name}</option>)}
+        </select>
+        {lines.length > 2 && <button onClick={() => setLines((current) => current.filter((_, position) => position !== index))} className="tap px-2 text-expense">حذف</button>}
+      </div>)}
+      {lines.length < 12 && <button onClick={() => setLines((current) => [...current, { accountId: '', debit: '', credit: '', analyticId: '', costCenterId: '' }])} className="tap rounded border border-line px-2 py-1">افزودن سطر</button>}
+      {ai?.state === 'proposed' && <label className="flex items-center gap-2"><input type="checkbox" checked={aiAccepted} disabled={ai.missingFacts?.length > 0} onChange={(event) => setAiAccepted(event.target.checked)} />مبالغ پیشنهاد AI را پس از انتخاب حساب‌ها تأیید می‌کنم؛ در صورت اصلاح، دلیل را می‌نویسم.</label>}
+      <textarea aria-label="دلیل و مبنای ثبت حسابدار" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="مبنای حسابداری و اطلاعات بررسی‌شده" className="w-full rounded border border-line bg-paper p-2" rows={2} />
+      {error && <p className="text-expense">{error}</p>}
+      <button disabled={saving} onClick={submit} className="tap rounded bg-accent px-3 py-1.5 font-bold text-white disabled:opacity-40">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
+    </div>}
+  </div>;
+}
+
 function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify }) {
   const [open, setOpen] = useState(false);
   const [trail, setTrail] = useState(null);
@@ -151,13 +228,15 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
         {ai.missingFacts?.length > 0 && <p className="mt-1 text-expense">اطلاعات لازم: {ai.missingFacts.join('، ')}</p>}
         <p className="mt-1 text-muted">این پیشنهاد سند نیست؛ فقط در صورت تطبیق با نقشهٔ قطعی سیستم با تأیید ثبت می‌شود.</p>
         <div className="mt-2 flex gap-2">
-          <button disabled={busy || aiBusy || ai.missingFacts?.length > 0} onClick={() => feedback(true)} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">تأیید پیشنهاد و ثبت</button>
+          <button disabled={busy || aiBusy || ai.missingFacts?.length > 0 || item.event?.kind === 'review-placeholder'} onClick={() => feedback(true)} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">تأیید پیشنهاد و ثبت</button>
           <button disabled={busy || aiBusy} onClick={() => feedback(false)} className="tap rounded border border-expense px-2 py-1 text-expense disabled:opacity-40">رد پیشنهاد با دلیل</button>
         </div>
       </>}
       {ai?.state === 'rejected' && <p className="mt-1 text-muted">پیشنهاد رد شد: {ai.reason}</p>}
       {aiError && <p className="mt-1 text-expense">{aiError}</p>}
     </div>}
+
+    {item.event?.kind === 'review-placeholder' && <ReviewedCompositeEditor item={item} ai={ai} onSaved={onAnswered} notify={notify} />}
 
     {/* سؤال بالاتر از جزئیات می‌نشیند: تا جوابش نیامده، بقیه‌اش موضوعیت ندارد. */}
     {decision?.decision?.question && <QuestionCard question={decision.decision.question} busy={busy} onAnswer={answer} />}
