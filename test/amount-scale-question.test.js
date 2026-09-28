@@ -45,10 +45,10 @@ test('مبلغ صریح مبهم نیست', () => {
   assert.notEqual(item.amountScaleAmbiguous, true);
 });
 
-test('متن تایپ‌شده مبهم نیست', () => {
-  // این قاعده فقط برای گفتار است؛ کسی که تایپ می‌کند عدد را کامل می‌نویسد.
+test('متن محاوره‌ای تایپ‌شده نیز مقیاس مبهم دارد', () => {
+  // شیوه ورود، ابهام مقیاس را برطرف نمی‌کند.
   const [item] = parseFinancialText('یه سی تومن ریختم واسه چاپخونه', { source: 'text' }).transactions;
-  assert.notEqual(item.amountScaleAmbiguous, true);
+  assert.equal(item.amountScaleAmbiguous, true);
 });
 
 test('مبلغ مبهم، خودکار ثبت نمی‌شود و سؤال می‌سازد', () => {

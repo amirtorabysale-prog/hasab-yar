@@ -818,7 +818,7 @@ export default function App() {
     await finalizeOfflineAudio(offlineAudioId);
     // اصلاحِ ثبت قبلی تراکنش تازه نمی‌سازد؛ کاربر باید بداند کجا رفت.
     if (result.queuedForAccountant) notify(`ردیف نقدی ساخته نشد و به صف حسابدار رفت: ${result.queuedReasons?.[0] || 'این جمله تراکنش نقدی تازه نیست.'}`);
-    setUndoSave({ ids: result.ids || [], count: transactions.length });
+    setUndoSave(result.ids?.length ? { ids: result.ids, count: result.ids.length } : null);
     setRedoSave(null);
     setDuplicatePrompt(null);
     setParseResult(null);
@@ -1059,7 +1059,7 @@ export default function App() {
       {settleDraft && <SettleSheet draft={settleDraft} obligations={data.obligations || []} close={() => setSettleDraft(null)} confirm={applySettlement} />}
       {selectedDecision && <DecisionDetailsSheet item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
-      {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} ثبت ذخیره شد.` : 'تراکنش ثبت شد.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
+      {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.` : 'مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
       {redoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><RotateCcw size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{redoSave.count > 1 ? 'ثبت‌ها برگردانده شدند.' : 'ثبت برگردانده شد.'}</span><button disabled={undoing} onClick={redoLastUndo} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">دوباره انجام بده</button></div>}
       {toast && <div role="status" className="fixed bottom-28 left-1/2 z-[80] w-[calc(100%-32px)] max-w-[430px] -translate-x-1/2 rounded-lg bg-ink px-4 py-3 text-center text-sm text-white shadow-paper">{toast}</div>}
       {data.settings.onboardingDone === 'false' && <Onboarding initial={data.settings} onDone={async (values) => { const result = await api.settings({ ...values, onboardingDone: 'true' }); setData((current) => ({ ...current, settings: result.settings })); }} />}
