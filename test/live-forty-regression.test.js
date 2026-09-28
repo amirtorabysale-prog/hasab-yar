@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runVoice } from './helpers/voicePipeline.js';
 
+test('شبیه‌ساز گفتار، جمع و اجزا و اصلاح را مانند مسیر زنده به یک پروندهٔ بدون نقد تبدیل می‌کند', () => {
+  const composite = runVoice('امروز 22 میلیون تومان فروش داشتیم شامل 20 میلیون تومان کالا و 2 میلیون تومان مالیات ارزش افزوده');
+  assert.equal(composite.path, 'composite-review');
+  assert.equal(composite.items.length, 1);
+  assert.equal(composite.items[0].amountReferenceOnly, true);
+  assert.equal(composite.items[0].noCashRow, true);
+  const correction = runVoice('قبلا هزینه تعمیر را اشتباها 21 میلیون تومان ثبت کردم مبلغ درست 12 میلیون تومان است');
+  assert.equal(correction.items.length, 1);
+  assert.equal(correction.items[0].amount, 12_000_000);
+  assert.equal(correction.items[0].noCashRow, true);
+});
+
 // گفته‌های کامل بازیابی‌شده از صف واقعی آزمون ۴۰ موردی. چند ردیف صف، تکه‌های
 // یک گفته‌اند و هفت ورودی ناموفق در صف نیستند؛ این مجموعه را «۴۰/۴۰» نمی‌نامیم.
 const unsafeCash = [
