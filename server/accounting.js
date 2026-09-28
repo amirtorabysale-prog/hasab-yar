@@ -870,6 +870,7 @@ export function listLedgerAccounts(database) {
   migrateAccountingLedger(database);
   return database.prepare(`SELECT ledger_accounts.id,ledger_accounts.code,ledger_accounts.name,ledger_accounts.type,
     ledger_accounts.normal_side AS normalSide,ledger_accounts.active,
+    ledger_accounts.source_kind AS sourceKind,ledger_accounts.source_key AS sourceKey,
     ledger_accounts.chart_account_id AS chartAccountId,chart_accounts.code AS chartCode,chart_accounts.name AS chartName
     FROM ledger_accounts LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
     ORDER BY CAST(ledger_accounts.code AS INTEGER),ledger_accounts.name`).all();

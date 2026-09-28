@@ -322,6 +322,7 @@ export const api = {
   reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
   reviewAiProposal: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/ai-proposal`, { method: 'POST', body: '{}' }),
   reviewAiFeedback: (id, proposalId, accepted, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/ai-feedback`, { method: 'POST', body: JSON.stringify({ proposalId, accepted, reason }) }),
+  reviewedJournal: (id, payload) => request(`/api/financial-events/${encodeURIComponent(id)}/reviewed-journal`, { method: 'POST', body: JSON.stringify(payload) }),
   eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),
   eventDecision: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/decision`),
   answerEvent: (id, answer) => request(`/api/financial-events/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify(answer) }),
