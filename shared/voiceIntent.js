@@ -292,10 +292,11 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   // و «چک دادم» بدهی؛ خودِ واژهٔ چک جهت نمی‌سازد.
   // فعل معمولاً از «چک» فاصله دارد («چک پنج میلیون دادم»)، پس چسبیدگی شرط
   // نیست؛ وجود فعل جهت‌دار در همان جمله کافی است.
-  const receivable = matchesAny(text, RECEIVABLE_PATTERNS)
-    || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*دادن(?![آ-ی]))/.test(text));
-  const payable = matchesAny(text, PAYABLE_PATTERNS)
-    || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(text));
+  const directionText = isCheque ? text.replace(/تخفیف(?:\s+تجاری)?\s+داد(?:یم|م)/g, '') : text;
+  const receivable = matchesAny(directionText, RECEIVABLE_PATTERNS)
+    || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*(?:\d+\s*روزه\s*)?دادن(?![آ-ی]))/.test(text));
+  const payable = matchesAny(directionText, PAYABLE_PATTERNS)
+    || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(directionText));
   if (!receivable && !payable) return null;
   if (!amount && !obligationContext) return null;
 

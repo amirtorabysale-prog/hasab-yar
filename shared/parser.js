@@ -64,7 +64,8 @@ export const COMPOSITE_AMOUNT_MESSAGE = 'چند مبلغ برای یک روید�
 export function hasCompositeAmounts(input) {
   const normalized = normalizePersian(input);
   if (extractAmounts(normalized).spans.length < 2) return false;
-  return /شامل|از این مبلغ|جمع کل|مجموع|تفکیک|ناخالص|(?:اصل\s*(?:وام|قسط|تسهیلات)?\s*و\s*(?:سود|بهره))/.test(normalized)
+  return /سرمایه.*(?:افزایش|کاهش)|بدهکار.*(?:ببخش|می بخشم|می‌بخشم)/.test(normalized)
+    || /شامل|از این مبلغ|جمع کل|مجموع|تفکیک|ناخالص|(?:اصل\s*(?:وام|قسط|تسهیلات)?\s*و\s*(?:سود|بهره))/.test(normalized)
     || /(?:قسط|وام).*(?:اصل).*(?:سود|بهره)/.test(normalized)
     || /(?:اصل\s*(?:وام|قسط|تسهیلات)|سهم\s*کارمند|بهای\s*کالا).*(?:سود|بهره|مالیات|بیمه)/.test(normalized);
 }
@@ -547,8 +548,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     let amount = span.amount;
     // «پنجاه تومن» یعنی پنجاه هزار تومان. هیچ چیزی در ایران امروز پنجاه تومان
     // نیست، پس محدودکردن این قاعده به سه‌رقمی‌ها فقط مبلغ‌های کوچک را خراب می‌کرد.
-    const colloquialThousands = source === 'voice'
-      && amount > 0 && amount < 1_000
+    const colloquialThousands = amount > 0 && amount < 1_000
       && !/\d|هزار|میلیون|میلیارد/.test(span.raw)
       && /تومان|تومن/.test(context);
     if (colloquialThousands) amount *= 1_000;
@@ -568,7 +568,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     if (capitalWording === 'fixed-asset') reviewReasons.push('این جمله از دارایی ثابت می‌گوید؛ دارایی ثابت هزینهٔ این ماه نیست.');
     if (natureNeedsAccountant(eventNature)) reviewReasons.push('این جمله اصلاح یک ثبت قبلی است؛ تراکنش تازه ساخته نمی‌شود و برای اصلاح به حسابدار می‌رسد.');
     if (unusual) reviewReasons.push('مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.');
-    if (colloquialThousands) reviewReasons.push('واحد هزار از گفتار محاوره‌ای برداشت شده است.');
+    if (colloquialThousands) reviewReasons.push('مقیاس مبلغ مبهم است؛ مبلغ دقیق را با هزار، میلیون یا میلیارد مشخص کن.');
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
