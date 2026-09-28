@@ -1,4 +1,4 @@
-import { parseFinancialText } from '../../shared/parser.js';
+import { extractAmounts, hasCompositeAmounts, parseFinancialText } from '../../shared/parser.js';
 import { detectVoiceIntent, intentToFinancialEvent } from '../../shared/voiceIntent.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
@@ -30,6 +30,12 @@ export function runVoice(text, {
   openDocuments = undefined, counterpartyBalance = null,
 } = {}) {
   const now = new Date(today);
+  // routeIntent در برنامه پیش از تسویه و نیت‌های ساختاری همین کنترل را اجرا
+  // می‌کند. یک گفتهٔ جمع و اجزا، یک پرونده است و هیچ ردیف نقدی نمی‌سازد.
+  if (hasCompositeAmounts(text)) {
+    const amounts = extractAmounts(text).spans.map((span) => span.amount).filter((amount) => Number.isSafeInteger(amount) && amount > 0);
+    return { path: 'composite-review', items: [{ outcome: 'accountant', amount: Math.max(...amounts), amountReferenceOnly: true, noCashRow: true }] };
+  }
   const settle = detectSettleIntent(text, { now });
   if (settle) {
     // کارت تسویه سند را از کاربر می‌پرسد؛ هیچ سندی خودکار بسته نمی‌شود.
@@ -61,6 +67,10 @@ export function runVoice(text, {
   // ردیف نقدی نمی‌سازند و مستقیم به صف حسابدار می‌روند.
   const queued = natureNeedsAccountant(readEventNature(text)) ? 'correction' : readNonCashInstrument(text) ? 'non-cash-instrument' : readExplicitNonCash(text) ? 'explicit-non-cash' : null;
   if (queued) {
+    if (queued === 'correction' && items.length > 1) {
+      const corrected = /مبلغ\s+درست|صحیح|باید/.test(text) ? items.at(-1) : items[0];
+      return { path: 'queued', items: [{ outcome: 'accountant', amount: corrected.amount, kind: corrected.type, noCashRow: true, reason: queued, singleCase: true }] };
+    }
     return { path: 'queued', items: items.map((item) => ({ outcome: 'accountant', amount: item.amount, kind: item.type, noCashRow: true, reason: queued })) };
   }
   return {
