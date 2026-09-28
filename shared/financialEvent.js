@@ -36,6 +36,8 @@ export const EVENT_KINDS = Object.freeze({
   PURCHASE_INVOICE: 'purchase-invoice',
   INVOICE_PAYMENT: 'invoice-payment',
   DEPRECIATION: 'depreciation',
+  // شاهدِ یک گفتهٔ چندمبلغی؛ هنوز معلوم نیست کدام مبلغ و کدام حساب سند است.
+  REVIEW_PLACEHOLDER: 'review-placeholder',
 });
 
 const KIND_VALUES = new Set(Object.values(EVENT_KINDS));
@@ -112,6 +114,7 @@ export function normalizeFinancialEvent(raw = {}) {
     source: ['voice', 'text', 'import', 'system'].includes(raw.source) ? raw.source : 'text',
     // متن خام گفتهٔ کاربر؛ شاهدِ رویداد و ورودی یادگیری DNA.
     evidence: cleanText(raw.evidence, 500) || null,
+    amountReferenceOnly: raw.amountReferenceOnly === true,
     // کل گفته، وقتی شاهد فقط تکهٔ یک ردیف از جملهٔ چندمبلغی است. فقط برای
     // کنترل‌های محافظه‌کارانه به کار می‌رود — نشانه‌ای که ماهیت را «کمتر قطعی»
     // می‌کند، نه بیشتر — چون ممکن است مالِ ردیف دیگری از همان جمله باشد.

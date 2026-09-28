@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
 import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
-import { normalizeFinancialEvent } from '../shared/financialEvent.js';
+import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { DECISION_STATUS, decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { applyAnswer } from '../shared/questionAnswer.js';
@@ -337,9 +337,9 @@ export function recordFinancialEvent(database, event, {
   // تا اینجا مانع یک خطای ۴۰۹ بود، و مسیر تراکنش هر خطای این لایه را «لایهٔ
   // رویداد نتوانست» می‌خواند و سند را از مسیر قدیمی می‌زد. یعنی درست همان
   // موردی که نگهبان گفته بود نباید ثبت شود، بی‌صدا ثبت می‌شد.
-  const blocked = guards?.verdict === GUARD_VERDICTS.BLOCK;
+  const blocked = guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
   const routing = blocked
-    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), guards.reason])] }
+    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), guards?.reason || 'این گفته هنوز نقشهٔ سند قطعی ندارد.'])] }
     : decision;
   // تصمیم، شکل سند را تعیین می‌کند. بدون تصمیم، همان قاعدهٔ نوع رویداد.
   const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);

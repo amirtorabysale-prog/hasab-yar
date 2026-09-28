@@ -6,7 +6,7 @@ import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, da
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal } from '../accounting.js';
 import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
-import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
+import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
@@ -257,6 +257,28 @@ function queueCorrectionForAccountant(item, transcript, nature) {
   });
 }
 
+/** یک گفتهٔ «جمع و اجزا» یک پروندهٔ بررسی است، حتی اگر سه عدد گفته شده باشد. */
+export function queueCompositeUtterance(transcript, { clientId = '', source = 'text' } = {}) {
+  const text = String(transcript || '').trim().slice(0, 1000);
+  if (!hasCompositeAmounts(text)) throw invalidInput('این گفته چند مبلغ وابسته ندارد.');
+  const amounts = extractAmounts(text).spans.map((span) => span.amount).filter((amount) => Number.isSafeInteger(amount) && amount > 0);
+  const referenceAmount = Math.max(...amounts);
+  if (!Number.isSafeInteger(referenceAmount) || referenceAmount > 999_999_999_999) throw invalidInput('مبالغ گفته معتبر نیستند.');
+  const event = normalizeFinancialEvent({
+    kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: referenceAmount,
+    amountReferenceOnly: true, occurredAt: new Date().toISOString(),
+    source: source === 'voice' ? 'voice' : 'text', evidence: text, utterance: text,
+    description: 'چند مبلغ وابسته در یک رویداد؛ مبلغ و سطرهای سند قطعی نیست.',
+  });
+  return recordFinancialEvent(db, event, {
+    sourceEventId: `composite:${String(clientId || randomUUID()).slice(0, 100)}`,
+    decision: { route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true,
+      reasons: [COMPOSITE_AMOUNT_MESSAGE], summary: 'یک گفته با جمع و اجزای وابسته؛ تعیین سند با حسابدار' },
+    actor: currentWorkspace()?.userId || null, transcript: text, rawInput: text,
+    timeZone: currentTimeZone(),
+  });
+}
+
 // `fromUtterance` فقط از مسیر عمومی ثبت (گفته یا متن کاربر) روشن است. مسیرهای
 // داخلی — رسید، صورت‌حساب بانک، تسویهٔ تعهد، فاکتور، تکرار — متن خودشان را
 // می‌سازند («واریز چک»، «شماره چک» در رسید) و شناسهٔ ردیف ساخته‌شده را لازم
@@ -268,6 +290,15 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
   const ids = [];
   let queuedForAccountant = 0;
   const queuedReasons = [];
+  // «اشتباه ۲۱ میلیون ثبت شد، درست ۱۲ میلیون است» دو مبلغ است اما فقط یک
+  // درخواست اصلاح. چند ردیف صف با مبالغ متناقض می‌تواند دو اصلاح مستقل بسازد.
+  const correction = fromUtterance && transactions.length > 1 && correctionNature(transactions[0], transcript);
+  if (correction) {
+    const corrected = /مبلغ\s+درست|صحیح|باید/.test(String(transcript || ''))
+      ? transactions[transactions.length - 1] : transactions[0];
+    queueCorrectionForAccountant(corrected, transcript, correction);
+    return Object.assign(ids, { queuedForAccountant: 1, queuedReasons: [NATURE_EXPLANATIONS[correction] || 'اصلاح یک ثبت قبلی'] });
+  }
   for (const item of transactions) {
     const nature = fromUtterance
       ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null) || (readExplicitNonCash(transcript || item.rawText) ? 'explicit-non-cash' : null)

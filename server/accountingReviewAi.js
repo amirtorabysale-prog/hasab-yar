@@ -67,7 +67,7 @@ export async function proposeReview(database, eventId, { fetcher = fetch } = {})
 ماهِیت رویداد و حساب بدهکار/بستانکار را بر اساس شواهد پیشنهاد بده؛ از قوانین، نرخ یا دادهٔ ناموجود حدس نزن. اگر اطلاعات کافی نیست missingFacts بنویس. هر مبلغ عدد صحیح به تومان است.
 نقش‌های مجاز: ${[...roles].join(', ')}.
 ساختار: {"summary":"...","explanation":"...","missingFacts":[],"lines":[{"role":"...","key":null,"debit":0,"credit":0}]}.
-مبلغ: ${row.amount}. شواهد: ${JSON.stringify({ fullUtterance, evidence: event.evidence, kind: event.kind, category: event.category, counterparty: event.counterparty, period: [event.servicePeriodStart, event.servicePeriodEnd], decision: decision ? { family: decision.family, treatment: decision.treatment, explanation: decision.explanation } : null })}.
+${event.amountReferenceOnly ? `بزرگ‌ترین مبلغ گفته‌شده ${row.amount} فقط مرجع نمایش است، مبلغ قطعی سند نیست؛ جمع و اجزا را از متن کامل بررسی کن، و اگر تفکیک مطمئن نیست در missingFacts اعلام کن.` : `مبلغ قطعی رویداد: ${row.amount}.`} شواهد: ${JSON.stringify({ fullUtterance, evidence: event.evidence, kind: event.kind, category: event.category, counterparty: event.counterparty, period: [event.servicePeriodStart, event.servicePeriodEnd], decision: decision ? { family: decision.family, treatment: decision.treatment, explanation: decision.explanation } : null })}.
 بازخوردهای قبلی همین دفتر (فقط راهنما؛ هیچ‌یک قانون عمومی نیستند): ${JSON.stringify(feedback)}.`;
   let response;
   try {

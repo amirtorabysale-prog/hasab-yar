@@ -122,7 +122,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-bold">{confidence.summary || item.kind}</p>
         <p className="mt-0.5 text-[11px] text-muted">
-          {persianDate(item.occurredAt)} · <span className="numbers">{formatAmount(item.amount)}</span> تومان
+          {persianDate(item.occurredAt)} · <span className="numbers">{formatAmount(item.amount)}</span> تومان{item.event?.amountReferenceOnly ? ' (بزرگ‌ترین مبلغ گفته‌شده؛ مبلغ سند هنوز مشخص نیست)' : ''}
           {item.dueAt && <> · سررسید {persianDate(item.dueAt)}</>}
         </p>
       </div>

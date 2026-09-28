@@ -7,7 +7,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, insertTransactions, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
+  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, analyzeReviewEvent, reviewAiFeedback, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
@@ -350,6 +350,14 @@ app.post('/api/transactions', (request, response, next) => {
     }
     const ids = insertTransactions({ transcript: request.body.transcript, transactions, counterpartyResolution: request.body.counterpartyResolution });
     return response.status(201).json({ ids, queuedForAccountant: ids.queuedForAccountant || 0, queuedReasons: ids.queuedReasons || [], ...getToday() });
+  } catch (error) { return next(error); }
+});
+app.post('/api/transactions/composite-review', (request, response, next) => {
+  try {
+    const item = queueCompositeUtterance(request.body?.transcript, {
+      clientId: request.body?.clientId, source: request.body?.source,
+    });
+    return response.status(201).json({ item });
   } catch (error) { return next(error); }
 });
 app.get('/api/reports', (request, response) => response.json(report(['week', 'month', 'quarter'].includes(request.query.range) ? request.query.range : 'month')));
