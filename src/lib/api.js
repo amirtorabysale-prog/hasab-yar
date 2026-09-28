@@ -235,6 +235,7 @@ export const api = {
     method: 'POST', body: JSON.stringify(payload),
     headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined,
   }),
+  queueCompositeReview: (payload) => request('/api/transactions/composite-review', { method: 'POST', body: JSON.stringify(payload) }),
   transactions: (params = {}) => request(`/api/transactions?${new URLSearchParams(params)}`),
   latestTransaction: () => request('/api/transactions/latest'),
   updateTransaction: (id, payload) => request(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

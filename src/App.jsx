@@ -702,7 +702,7 @@ export default function App() {
       await openCorrection(text);
       return;
     }
-    if (routeIntent(text)) { setManualText(''); return; }
+    if (routeIntent(text, 'text')) { setManualText(''); return; }
     // همان کنترلی که سرور روی مسیر صدا می‌زند؛ ثبت متنی محلی پارس می‌شود و نباید
     // از الگوی خودِ پرونده بی‌خبر بماند.
     const result = applyDnaSignals(parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' }), data.dnaProfiles);
@@ -714,10 +714,13 @@ export default function App() {
    * گفته‌ای که طلب، بدهی، چک یا فاکتور است نباید به‌عنوان تراکنش ساده ثبت شود.
    * هیچ‌چیز خودکار ذخیره نمی‌شود؛ فقط کارت تأیید باز می‌شود.
    */
-  const routeIntent = (transcript) => {
+  const routeIntent = (transcript, source = 'voice') => {
     if (!canWrite) return false;
     if (hasCompositeAmounts(transcript)) {
-      setFailure({ transcript, message: COMPOSITE_AMOUNT_MESSAGE });
+      if (!online) { setFailure({ transcript, message: `${COMPOSITE_AMOUNT_MESSAGE} اتصال اینترنت لازم است تا این گفته در صف حسابدار ذخیره شود.` }); return true; }
+      void api.queueCompositeReview({ transcript, source, clientId: crypto.randomUUID() })
+        .then(() => notify('کل گفته با همهٔ مبلغ‌ها به‌صورت یک مورد به صف حسابدار رفت؛ سندی ثبت نشد.'))
+        .catch((error) => setFailure({ transcript, message: `${error.message} گفته را دوباره بررسی و ارسال کن.` }));
       return true;
     }
     // تسویه پیش از ساخت سنجیده می‌شود: «طلب رضایی وصول شد» هم واژهٔ «طلب» دارد

@@ -145,6 +145,10 @@ export function planJournal(event, decision = null) {
   if (fromTreatment) return fromTreatment(event, amount);
 
   switch (event.kind) {
+    // این «نقشه» عمداً سطری ندارد و با نگهبان صف مسدود است؛ حتی یک تأیید
+    // اشتباهی نباید برای گفتهٔ چندمبلغی سند نقدی بسازد.
+    case EVENT_KINDS.REVIEW_PLACEHOLDER:
+      return { kind: event.kind, lines: [], memoHint: 'گفتهٔ چندمبلغی نیازمند بازسازی سند' };
     // پول از صندوق بیرون رفت و هزینهٔ دوره شد.
     case EVENT_KINDS.CASH_EXPENSE:
       return plan(event.kind, { role: ROLES.EXPENSE_CATEGORY, key: category }, { role: ROLES.CASH, key: event.accountId }, amount, category);

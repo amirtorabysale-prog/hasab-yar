@@ -84,6 +84,61 @@ test('خرید نسیهٔ آزمون واقعی، نه ماندهٔ نقدی م�
   });
 });
 
+test('سه گفتهٔ جمع و اجزا هرکدام فقط یک پروندهٔ بررسی می‌سازند، بدون سند یا ردیف نقدی', () => {
+  inPrimary(() => {
+    const texts = [
+      'امروز 22 میلیون تومان فروش داشتیم شامل 20 میلیون تومان کالا و 2 میلیون تومان مالیات ارزش افزوده',
+      'امروز 15 میلیون تومان قسط وام پرداخت کردم که 12 میلیون تومان اصل و 3 میلیون تومان سود بود',
+      'امروز 30 میلیون تومان حقوق ناخالص شناسایی شد که 3 میلیون تومان بیمه و 2 میلیون تومان مالیات کسر میشود و هنوز پرداخت نکردیم',
+    ];
+    const cashBefore = db().prepare('SELECT COUNT(*) AS count FROM transactions').get().count;
+    const journalBefore = db().prepare('SELECT COUNT(*) AS count FROM journal_entries').get().count;
+    for (const [index, text] of texts.entries()) {
+      const created = database.queueCompositeUtterance(text, { clientId: `real-composite-${index}` });
+      assert.equal(created.status, 'pending');
+      const again = database.queueCompositeUtterance(text, { clientId: `real-composite-${index}` });
+      assert.equal(again.duplicate, true, 'ارسال تکراری همان شناسه پروندهٔ دوم نمی‌سازد');
+      const row = store.listReviewQueue(db(), { route: 'accountant-review' }).find((item) => item.id === created.id);
+      assert.equal(row.event.kind, 'review-placeholder');
+      assert.equal(row.event.utterance, text);
+      assert.equal(row.event.amountReferenceOnly, true);
+      assert.equal(db().prepare('SELECT posting_plan FROM financial_events WHERE id=?').get(created.id).posting_plan.includes('"lines":[]'), true);
+      assert.throws(() => database.approveEvent(created.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+    }
+    assert.equal(db().prepare('SELECT COUNT(*) AS count FROM transactions').get().count, cashBefore);
+    assert.equal(db().prepare('SELECT COUNT(*) AS count FROM journal_entries').get().count, journalBefore);
+  });
+});
+
+test('اصلاح مبلغ از ۲۱ به ۱۲ میلیون یک مورد در صف است، نه دو اصلاح جدا', () => {
+  inPrimary(() => {
+    const text = 'قبلا هزینه تعمیر را اشتباها 21 میلیون تومان ثبت کردم مبلغ درست 12 میلیون تومان است';
+    const transactions = parseFinancialText(text, { source: 'text' }).transactions;
+    assert.equal(transactions.length, 2);
+    const before = store.listReviewQueue(db(), { route: 'accountant-review' }).filter((item) => item.event.evidence === text).length;
+    const ids = database.insertTransactions({ transcript: text, transactions });
+    assert.equal(ids.length, 0);
+    assert.equal(ids.queuedForAccountant, 1);
+    const queued = store.listReviewQueue(db(), { route: 'accountant-review' }).filter((item) => item.event.evidence === text);
+    assert.equal(queued.length, before + 1);
+    assert.equal(queued[0].amount, 12_000_000, 'مبلغ درست فقط برای نمایش است؛ سند خودکار نمی‌خورد');
+    assert.throws(() => database.approveEvent(queued[0].id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+  });
+});
+
+test('نوع پروندهٔ بررسی حتی با مسیر خودکار تزریق‌شده سند نمی‌سازد', async () => {
+  const { normalizeFinancialEvent, EVENT_KINDS } = await import('../shared/financialEvent.js');
+  inPrimary(() => {
+    const created = store.recordFinancialEvent(db(), normalizeFinancialEvent({
+      kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: 22_000_000, occurredAt: new Date().toISOString(),
+      evidence: 'جمع و اجزا هنوز روشن نیست', amountReferenceOnly: true,
+    }), { sourceEventId: 'composite:forced-auto-test', decision: { route: 'auto', reasons: [] } });
+    assert.equal(created.status, 'pending');
+    assert.equal(created.route, 'accountant-review');
+    assert.throws(() => store.approveFinancialEvent(db(), created.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+  });
+});
+
 test('T010 — «نمی‌دانم» به صف حسابدار می‌رود و بدون دلیل تأیید نمی‌شود', () => {
   inPrimary(() => {
     const { ids, events } = say('T010');
