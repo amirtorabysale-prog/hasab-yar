@@ -114,7 +114,7 @@ test('اصلاح مبلغ از ۲۱ به ۱۲ میلیون یک مورد در ص
   inPrimary(() => {
     const text = 'قبلا هزینه تعمیر را اشتباها 21 میلیون تومان ثبت کردم مبلغ درست 12 میلیون تومان است';
     const transactions = parseFinancialText(text, { source: 'text' }).transactions;
-    assert.equal(transactions.length, 2);
+    assert.equal(transactions.length, 1);
     const before = store.listReviewQueue(db(), { route: 'accountant-review' }).filter((item) => item.event.evidence === text).length;
     const ids = database.insertTransactions({ transcript: text, transactions });
     assert.equal(ids.length, 0);

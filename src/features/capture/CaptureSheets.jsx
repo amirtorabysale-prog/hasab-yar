@@ -1,6 +1,6 @@
-import { transactionEventDecision } from '../../../shared/transactionEvent.js';
+import { api } from '../../lib/api.js';
 import { Check, ChevronLeft, CircleAlert, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CONFIDENCE_COMPONENT_LABELS } from '../../../shared/confidenceEngine.js';
 import { REVIEW_FIELD_LABELS, assessTransactionReview, reviewBatchSummary } from '../../../shared/review.js';
 import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
@@ -25,17 +25,29 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
   const [editAmount, setEditAmount] = useState(false);
   const initialSummary = reviewBatchSummary(result);
   const [detailsOpen, setDetailsOpen] = useState(() => initialSummary.review > 0 || initialSummary.unintelligible > 0);
+  const [preflight, setPreflight] = useState(null);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  const previewKey = JSON.stringify({ transcript: result.transcript, transactions: items });
+  useEffect(() => {
+    let active = true;
+    setPreflight(null);
+    const timer = setTimeout(() => {
+      api.previewTransactions(JSON.parse(previewKey)).then((response) => {
+        if (active) setPreflight({ key: previewKey, previews: response.previews });
+      }).catch(() => { if (active) setPreflight({ key: previewKey, error: true }); });
+    }, 200);
+    return () => { active = false; clearTimeout(timer); };
+  }, [previewKey, previewAttempt]);
+  const previewReady = preflight?.key === previewKey && !preflight.error && preflight.previews?.length === items.length;
   const item = items[index];
-  const previewFor = (entry) => {
-    let routed;
-    try { routed = transactionEventDecision({ ...entry, occurredAt: entry.occurredAt || new Date().toISOString() }, { transcript: result.transcript, sentence: items.length === 1 ? result.transcript : '', policy: { engineV2: true } }); } catch { return { ...entry, needsReview: true, reviewReasons: [...(entry.reviewReasons || []), 'اطلاعات برای تصمیم حسابداری کامل نیست؛ این مورد نیازمند بررسی است.'] }; }
-    const decision = routed?.accountingDecision;
-    const blocked = decision && decision.decisionStatus !== 'decided';
-    return { ...entry, needsReview: entry.needsReview || !entry.accountId || blocked,
-      reviewReasons: [...(entry.reviewReasons || []), ...(blocked ? [decision.question?.text || 'ماهیت این رویداد نیازمند بررسی حسابداری است؛ تأیید برداشت به معنی ثبت قطعی سند نیست.'] : [])] };
+  const checkedPreview = (entry, position) => {
+    const local = { ...entry, needsReview: entry.needsReview || !entry.accountId };
+    const server = previewReady ? preflight.previews?.[position] : null;
+    return { ...local, needsReview: local.needsReview || !server || server.route !== 'auto',
+      reviewReasons: [...(local.reviewReasons || []), ...(server?.reasons || []), ...(!server ? ['بررسی آنلاین تصمیم حسابداری هنوز کامل نشده است.'] : [])] };
   };
-  const assessment = assessTransactionReview(previewFor(item));
-  const summary = reviewBatchSummary({ transactions: items.map(previewFor) });
+  const assessment = assessTransactionReview(checkedPreview(item, index));
+  const summary = reviewBatchSummary({ transactions: items.map(checkedPreview) });
   const allowedCategories = categories.filter((category) => category.type === item.type);
   const settlement = settlementPreview(item, contacts);
   /**
@@ -100,6 +112,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
         {items.length > 1 && <div className="mb-3 flex items-center justify-between text-[13px] text-muted"><span>تراکنش {toPersianDigits(index + 1)} از {toPersianDigits(items.length)}</span><div className="flex gap-1">{items.map((_, dot) => <span key={dot} className={`h-1.5 w-6 rounded-full ${dot === index ? 'bg-accent' : 'bg-line'}`} />)}</div></div>}
         <div className="mb-3 grid grid-cols-3 gap-2" aria-label="وضعیت برداشت‌ها">{statusCards.map(([key, label, count, classes]) => <div key={key} className={`rounded-lg border px-2 py-2 text-center ${classes}`}><b className="numbers block text-base">{toPersianDigits(count)}</b><span className="mt-0.5 block text-[10px] font-bold">{label}</span></div>)}</div>
+        {!previewReady && <div role="status" className="my-3 text-sm text-accent">{preflight?.error ? 'بررسی سرور انجام نشد؛ اتصال را بررسی و دوباره تلاش کن.' : 'در حال بررسی با اطلاعات دفتر…'}{preflight?.error && <button type="button" onClick={() => setPreviewAttempt(value => value + 1)} className="tap px-3">تلاش دوباره</button>}</div>}
         <blockquote className="rounded-lg border border-line bg-surface/65 px-3 py-3 text-[14px] leading-7 text-muted">«{result.transcript}»</blockquote>
         {Number.isFinite(result.responseMs) && <p className="mt-2 text-center text-[12px] font-medium text-income">{result.engine === 'browser-live' ? 'تشخیص زنده' : 'تشخیص از صدای اصلی'}؛ نتیجه در {toPersianDigits((Math.max(1, result.responseMs) / 1000).toFixed(1))} ثانیه آماده شد</p>}
 
@@ -189,7 +202,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         {!!item.alternatives?.length && <div className="mt-4"><p className="mb-2 text-[13px] text-muted">شاید منظورت این بود:</p><div className="flex flex-wrap gap-2">{item.alternatives.map((amount) => <button key={amount} onClick={() => patchField('amount', { amount })} className="tap numbers rounded-lg border border-line bg-surface px-4 font-bold">{formatAmount(amount)}</button>)}</div></div>}
 
         <div className="mt-5 grid grid-cols-[minmax(0,7fr)_minmax(90px,3fr)] gap-2">
-          <button disabled={assessment.state === 'unintelligible' || !item.accountId} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ارسال'}</button>
+          <button disabled={assessment.state === 'unintelligible' || !item.accountId || !previewReady} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ارسال'}</button>
           <button onClick={onCancel} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
         </div>
         </>}
@@ -239,7 +252,13 @@ export function DecisionDetailsSheet({ item, close }) {
     return { ...entry, needsReview: entry.needsReview || !entry.accountId || blocked,
       reviewReasons: [...(entry.reviewReasons || []), ...(blocked ? [decision.question?.text || 'ماهیت این رویداد نیازمند بررسی حسابداری است؛ تأیید برداشت به معنی ثبت قطعی سند نیست.'] : [])] };
   };
-  const assessment = assessTransactionReview(previewFor(item));
+  const checkedPreview = (entry, position) => {
+    const local = { ...entry, needsReview: entry.needsReview || !entry.accountId };
+    const server = previewReady ? preflight.previews?.[position] : null;
+    return { ...local, needsReview: local.needsReview || !server || server.route !== 'auto',
+      reviewReasons: [...(local.reviewReasons || []), ...(server?.reasons || []), ...(!server ? ['بررسی آنلاین تصمیم حسابداری هنوز کامل نشده است.'] : [])] };
+  };
+  const assessment = assessTransactionReview(checkedPreview(item, index));
   const state = item.needsReview || item.reviewState === 'review' ? 'نیازمند بررسی' : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState) ? 'بررسی‌شده توسط کاربر' : 'آماده ارسال';
   return <div className="fixed inset-0 z-[75] flex items-end justify-center bg-ink/35 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section role="dialog" aria-modal="true" aria-label="دلیل تصمیم تراکنش" className="sheet-in max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-surface px-2 py-1 text-[10px] font-extrabold text-accent">{state}</span><h2 className={`numbers mt-3 text-2xl font-extrabold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)} تومان</h2><p className="mt-1 text-sm text-muted">{item.category} · {item.accountName || 'حساب پیش‌فرض'}</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div><blockquote className="mt-4 rounded-lg border border-line bg-surface px-3 py-3 text-sm leading-7 text-muted">«{item.rawText}»</blockquote><ConfidencePanel assessment={assessment} />{item.restoredFrom && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-muted">این ثبت در پاسخ به «دوباره انجام بده» به‌صورت یک سند تازه ساخته شده است.</p>}<button onClick={close} className="tap mt-4 w-full rounded-lg border border-line bg-surface font-bold">بستن</button></section></div>;
 }

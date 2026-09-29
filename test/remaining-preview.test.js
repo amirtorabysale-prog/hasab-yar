@@ -16,3 +16,11 @@ test('browser and server use the identical decision implementation', () => {
   const result = sharedDecision({ ...row, occurredAt: '2026-09-29T12:00:00Z' }, { policy: { engineV2: true } });
   assert.notEqual(result.accountingDecision.decisionStatus, 'decided');
 });
+
+ test('correction with old and correct amounts is one review item', () => {
+  const result = parseFinancialText('فاکتور خرید دوازده میلیون تومانی دیروز اشتباهاً بیست و یک میلیون ثبت شده بود، اصلاحش کن لطفا.');
+  assert.equal(result.transactions.length, 1);
+  assert.equal(result.transactions[0].amount, 12000000);
+  assert.equal(result.transactions[0].needsReview, true);
+  assert.match(result.transactions[0].rawText, /بیست و یک/);
+ });

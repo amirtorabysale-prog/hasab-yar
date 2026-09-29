@@ -1,3 +1,4 @@
+import { runGuards, GUARD_VERDICTS } from '../../shared/guards.js';
 import { randomUUID } from 'node:crypto';
 import { accountForBank, resolveAccountId } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
@@ -675,4 +676,41 @@ export function redoTransaction(id) {
     db.exec('COMMIT');
     return transactionRow(restoredId);
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+/** Read-only advisory preflight. Posting always recomputes against current state. */
+export function previewTransactions({ transcript = '', transactions } = {}) {
+  if (!Array.isArray(transactions) || !transactions.length || transactions.length > 20) throw invalidInput('حداقل یک تراکنش معتبر لازم است.');
+  const policy = automationPolicy();
+  return transactions.map((item) => {
+    const text = transcript || item.rawText || '';
+    if (hasCompositeAmounts(text) || correctionNature(item, text) || nonCashInstrument(item, text) || readExplicitNonCash(text)) {
+      return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: ['این رویداد ثبت نقدی ساده نیست؛ برای تعیین سند به بررسی حسابداری نیاز دارد.'] };
+    }
+    if (item.bankId && !item.accountId && !item.account && !accountForBank(item.bankId)) {
+      return { route: ROUTES.CONFIRM, reasons: ['حساب بانک گفته‌شده مشخص نیست؛ حساب را انتخاب کن.'] };
+    }
+    const accountId = resolveAccountId(item);
+    assertAccountingPeriodOpen(db, periodForDate(item.occurredAt || new Date().toISOString(), currentTimeZone()));
+    // No name matching that could create a contact as a side effect.
+    const contact = item.linkContact === false ? null : item.contactId
+      ? db.prepare('SELECT id,name FROM contacts WHERE id=?').get(item.contactId)
+      : item.contactName ? db.prepare('SELECT id,name FROM contacts WHERE name=?').get(item.contactName) : null;
+    const row = { ...item, accountId, contactId: contact?.id || null, occurredAt: item.occurredAt || new Date().toISOString() };
+    const settlement = settlementFor(row);
+    const draft = transactionEventDecision({ ...row, contactName: contact?.name || item.contactName || '' }, {
+      transcript, sentence: transactions.length === 1 ? transcript : '', policy, counterpartyBalance: settlement?.balance ?? null,
+    });
+    if (!draft) return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: ['ماهیت قابل تشخیص نیست.'] };
+    const decision = policy.shadowMode ? null : draft.accountingDecision;
+    const guards = decision ? runGuards(draft.event, factsFromEvent(draft.event), {
+      decision, openDocuments: contact ? openDocumentsFor(contact.id) : undefined, vat: vatGuardContext(db),
+    }) : null;
+    const blocked = guards?.verdict === GUARD_VERDICTS.BLOCK;
+    return { route: blocked ? ROUTES.ACCOUNTANT_REVIEW : draft.decision.route,
+      reasons: [...(draft.decision.reasons || []), ...(blocked ? [guards.reason] : [])],
+      question: decision?.question || null, eventKind: draft.event.kind,
+      decisionStatus: decision?.decisionStatus || null, accountId, contactId: contact?.id || null,
+    };
+  });
 }

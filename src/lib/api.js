@@ -231,6 +231,7 @@ export const api = {
     },
   }),
   recordVoiceMetric: (payload) => request('/api/voice/metrics', { method: 'POST', body: JSON.stringify(payload) }),
+  previewTransactions: (payload) => request('/api/transactions/preview', { method: 'POST', body: JSON.stringify(payload) }),
   saveTransactions: (payload, { workspaceId } = {}) => request('/api/transactions', {
     method: 'POST', body: JSON.stringify(payload),
     headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined,
