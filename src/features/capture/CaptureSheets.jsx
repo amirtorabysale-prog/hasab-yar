@@ -1,3 +1,4 @@
+import { transactionEventDecision } from '../../../shared/transactionEvent.js';
 import { Check, ChevronLeft, CircleAlert, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
 import { useState } from 'react';
 import { CONFIDENCE_COMPONENT_LABELS } from '../../../shared/confidenceEngine.js';
@@ -18,15 +19,23 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
    *
    * دو حساب از یک بانک یعنی جمله روشن نیست؛ همان قاعدهٔ سرور، اینجا هم.
    */
-  const accountFor = (item) => item.accountId || pickBankAccount(accounts, item.bankId)?.id || defaultAccountId;
+  const accountFor = (item) => item.accountId || pickBankAccount(accounts, item.bankId)?.id || (item.bankId ? '' : defaultAccountId);
   const [items, setItems] = useState(() => result.transactions.map((item) => ({ ...item, accountId: accountFor(item), originalCategory: item.category })));
   const [index, setIndex] = useState(0);
   const [editAmount, setEditAmount] = useState(false);
   const initialSummary = reviewBatchSummary(result);
   const [detailsOpen, setDetailsOpen] = useState(() => initialSummary.review > 0 || initialSummary.unintelligible > 0);
   const item = items[index];
-  const assessment = assessTransactionReview(item);
-  const summary = reviewBatchSummary({ transactions: items });
+  const previewFor = (entry) => {
+    let routed;
+    try { routed = transactionEventDecision({ ...entry, occurredAt: entry.occurredAt || new Date().toISOString() }, { transcript: result.transcript, sentence: items.length === 1 ? result.transcript : '', policy: { engineV2: true } }); } catch { return { ...entry, needsReview: true, reviewReasons: [...(entry.reviewReasons || []), 'اطلاعات برای تصمیم حسابداری کامل نیست؛ این مورد نیازمند بررسی است.'] }; }
+    const decision = routed?.accountingDecision;
+    const blocked = decision && decision.decisionStatus !== 'decided';
+    return { ...entry, needsReview: entry.needsReview || !entry.accountId || blocked,
+      reviewReasons: [...(entry.reviewReasons || []), ...(blocked ? [decision.question?.text || 'ماهیت این رویداد نیازمند بررسی حسابداری است؛ تأیید برداشت به معنی ثبت قطعی سند نیست.'] : [])] };
+  };
+  const assessment = assessTransactionReview(previewFor(item));
+  const summary = reviewBatchSummary({ transactions: items.map(previewFor) });
   const allowedCategories = categories.filter((category) => category.type === item.type);
   const settlement = settlementPreview(item, contacts);
   /**
@@ -80,7 +89,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
   });
   const finish = () => index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
   const statusCards = [
-    ['ready', 'آماده ثبت', summary.ready, 'border-income/30 bg-income/5 text-income'],
+    ['ready', 'آماده ارسال', summary.ready, 'border-income/30 bg-income/5 text-income'],
     ['review', 'نیازمند بررسی', summary.review, 'border-accent/35 bg-warn-bg text-accent'],
     ['unintelligible', 'نامفهوم', summary.unintelligible, 'border-expense/30 bg-expense/5 text-expense'],
   ];
@@ -97,8 +106,8 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         {quickConfirm ? <div className="mt-5"><div className="divide-y divide-line rounded-[10px] border border-line bg-surface px-3">{items.map((entry) => <div key={`${entry.amount}-${entry.rawText}`} className="flex items-center justify-between gap-3 py-3"><div><b className={`numbers text-lg ${entry.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(entry)}</b>{/* حساب و تاریخ باید پیش از تأیید دیده شوند، وگرنه «تأیید سریع» یعنی
                 تأیید چیزی که کاربر ندیده — و اگر حساب یا روز اشتباه باشد، بعداً
                 فقط در تراز پیدا می‌شود. */}
-              <p className="mt-1 text-xs text-muted">{entry.category} · {accounts.find((account) => account.id === entry.accountId)?.name || 'حساب پیش‌فرض'}{entry.occurredAtLabel ? ` · ${entry.occurredAtLabel}` : ''}</p></div><span className="rounded-full bg-income/10 px-2 py-1 text-[10px] font-bold text-income">آماده ثبت</span></div>)}</div><button onClick={() => onConfirm(confirmedItems())} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white"><Check size={19} />تأیید سریع همه</button><button onClick={() => setDetailsOpen(true)} className="tap mt-2 w-full text-sm font-bold text-muted">دیدن جزئیات و دلیل تصمیم</button></div> : <>
-        <div className={`mt-4 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-bold ${assessment.state === 'ready' ? 'border-income/30 bg-income/5 text-income' : assessment.state === 'review' ? 'border-accent/40 bg-warn-bg text-accent' : 'border-expense/30 bg-expense/5 text-expense'}`}><span>{assessment.state === 'ready' ? 'آماده ثبت' : assessment.state === 'review' ? 'این مورد را بررسی کن' : 'این مورد نامفهوم است'}</span><span className="numbers">اطمینان {toPersianDigits(assessment.percent)}٪</span></div>
+              <p className="mt-1 text-xs text-muted">{entry.category} · {accounts.find((account) => account.id === entry.accountId)?.name || 'حساب پیش‌فرض'}{entry.occurredAtLabel ? ` · ${entry.occurredAtLabel}` : ''}</p></div><span className="rounded-full bg-income/10 px-2 py-1 text-[10px] font-bold text-income">آماده ارسال</span></div>)}</div><button onClick={() => onConfirm(confirmedItems())} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white"><Check size={19} />تأیید سریع همه</button><button onClick={() => setDetailsOpen(true)} className="tap mt-2 w-full text-sm font-bold text-muted">دیدن جزئیات و دلیل تصمیم</button></div> : <>
+        <div className={`mt-4 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-bold ${assessment.state === 'ready' ? 'border-income/30 bg-income/5 text-income' : assessment.state === 'review' ? 'border-accent/40 bg-warn-bg text-accent' : 'border-expense/30 bg-expense/5 text-expense'}`}><span>{assessment.state === 'ready' ? 'آماده ارسال' : assessment.state === 'review' ? 'این مورد را بررسی کن' : 'این مورد نامفهوم است'}</span><span className="numbers">اطمینان {toPersianDigits(assessment.percent)}٪</span></div>
         <button onClick={() => setEditAmount(true)} className="my-4 w-full rounded-[10px] border border-transparent py-3 text-center hover:border-line">
           {editAmount ? (
             <input autoFocus inputMode="numeric" value={item.amount} onChange={(event) => patchField('amount', { amount: Number(event.target.value.replace(/\D/g, '')) })} onBlur={() => setEditAmount(false)} onKeyDown={(event) => { if (event.key === 'Enter') setEditAmount(false); }} className="numbers mx-auto block w-full bg-transparent text-center text-4xl font-extrabold tracking-[-.02em] outline-none" />
@@ -180,7 +189,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         {!!item.alternatives?.length && <div className="mt-4"><p className="mb-2 text-[13px] text-muted">شاید منظورت این بود:</p><div className="flex flex-wrap gap-2">{item.alternatives.map((amount) => <button key={amount} onClick={() => patchField('amount', { amount })} className="tap numbers rounded-lg border border-line bg-surface px-4 font-bold">{formatAmount(amount)}</button>)}</div></div>}
 
         <div className="mt-5 grid grid-cols-[minmax(0,7fr)_minmax(90px,3fr)] gap-2">
-          <button disabled={assessment.state === 'unintelligible'} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ثبت'}</button>
+          <button disabled={assessment.state === 'unintelligible' || !item.accountId} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ارسال'}</button>
           <button onClick={onCancel} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
         </div>
         </>}
@@ -222,8 +231,16 @@ export function LearningSuggestionSheet({ suggestion, close, confirm }) {
 }
 
 export function DecisionDetailsSheet({ item, close }) {
-  const assessment = assessTransactionReview(item);
-  const state = item.needsReview || item.reviewState === 'review' ? 'نیازمند بررسی' : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState) ? 'بررسی‌شده توسط کاربر' : 'آماده ثبت';
+  const previewFor = (entry) => {
+    let routed;
+    try { routed = transactionEventDecision({ ...entry, occurredAt: entry.occurredAt || new Date().toISOString() }, { transcript: result.transcript, sentence: items.length === 1 ? result.transcript : '', policy: { engineV2: true } }); } catch { return { ...entry, needsReview: true, reviewReasons: [...(entry.reviewReasons || []), 'اطلاعات برای تصمیم حسابداری کامل نیست؛ این مورد نیازمند بررسی است.'] }; }
+    const decision = routed?.accountingDecision;
+    const blocked = decision && decision.decisionStatus !== 'decided';
+    return { ...entry, needsReview: entry.needsReview || !entry.accountId || blocked,
+      reviewReasons: [...(entry.reviewReasons || []), ...(blocked ? [decision.question?.text || 'ماهیت این رویداد نیازمند بررسی حسابداری است؛ تأیید برداشت به معنی ثبت قطعی سند نیست.'] : [])] };
+  };
+  const assessment = assessTransactionReview(previewFor(item));
+  const state = item.needsReview || item.reviewState === 'review' ? 'نیازمند بررسی' : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState) ? 'بررسی‌شده توسط کاربر' : 'آماده ارسال';
   return <div className="fixed inset-0 z-[75] flex items-end justify-center bg-ink/35 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section role="dialog" aria-modal="true" aria-label="دلیل تصمیم تراکنش" className="sheet-in max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-surface px-2 py-1 text-[10px] font-extrabold text-accent">{state}</span><h2 className={`numbers mt-3 text-2xl font-extrabold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)} تومان</h2><p className="mt-1 text-sm text-muted">{item.category} · {item.accountName || 'حساب پیش‌فرض'}</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div><blockquote className="mt-4 rounded-lg border border-line bg-surface px-3 py-3 text-sm leading-7 text-muted">«{item.rawText}»</blockquote><ConfidencePanel assessment={assessment} />{item.restoredFrom && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-muted">این ثبت در پاسخ به «دوباره انجام بده» به‌صورت یک سند تازه ساخته شده است.</p>}<button onClick={close} className="tap mt-4 w-full rounded-lg border border-line bg-surface font-bold">بستن</button></section></div>;
 }
 
