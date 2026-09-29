@@ -179,13 +179,13 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
           </div>}
           {/* وقتی پول به حساب خودِ طرف حساب می‌نشیند، دسته معنایی ندارد. */}
           {!(choice.link && choice.settlement && choice.settlement !== 'none') && <label className="flex min-h-14 items-center gap-3 border-y border-line py-2"><span className="w-12 text-[13px] text-muted">دسته</span><select value={item.category} onChange={(event) => patchField('category', { category: event.target.value })} className="tap flex-1 appearance-none rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{allowedCategories.map((category) => <option key={category.id}>{category.name}</option>)}</select><Pencil size={16} className="text-muted" /></label>}
-          <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || defaultAccountId} onChange={(event) => patchField('account', { accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none">{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+          <label className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">حساب</span><select value={item.accountId || ''} onChange={(event) => patchField('account', { accountId: event.target.value })} className="tap flex-1 rounded-lg border border-line bg-surface px-3 text-[15px] font-bold outline-none"><option value="" disabled>حساب را انتخاب کن</option>{accounts.filter((account) => account.active).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
           {bankGap && <div className="mt-2 rounded-lg border border-accent/50 bg-warn-bg px-3 py-3">
-            <p className="text-[13px] font-extrabold text-accent">«{bankGap.bankName}» را گفتی، ولی حسابش در دفتر نیست</p>
+            <p className="text-[13px] font-extrabold text-accent">{bankGap.many ? `برای «${bankGap.bankName}» چند حساب وجود دارد` : `حساب «${bankGap.bankName}» در دفتر تعریف نشده است`}</p>
             <p className="mt-1 text-[12px] leading-6 text-muted">
               {bankGap.many
                 ? 'بیش از یک حساب برای این بانک هست، پس معلوم نیست کدام. خودت از فهرست بالا انتخاب کن.'
-                : 'این ثبت فعلاً روی حساب پیش‌فرض می‌نشیند. اگر همین حالا حسابش را بسازی، این مبلغ و ثبت‌های بعدی از موجودی همان بانک کم می‌شوند.'}
+                : 'تا وقتی حساب را انتخاب یا ایجاد نکنی، ارسال این مورد متوقف می‌ماند. هیچ حسابی خودکار جایگزین بانک گفته‌شده نمی‌شود.'}
             </p>
             {!bankGap.many && onCreateBankAccount && <button
               disabled={creatingBank}
@@ -244,21 +244,7 @@ export function LearningSuggestionSheet({ suggestion, close, confirm }) {
 }
 
 export function DecisionDetailsSheet({ item, close }) {
-  const previewFor = (entry) => {
-    let routed;
-    try { routed = transactionEventDecision({ ...entry, occurredAt: entry.occurredAt || new Date().toISOString() }, { transcript: result.transcript, sentence: items.length === 1 ? result.transcript : '', policy: { engineV2: true } }); } catch { return { ...entry, needsReview: true, reviewReasons: [...(entry.reviewReasons || []), 'اطلاعات برای تصمیم حسابداری کامل نیست؛ این مورد نیازمند بررسی است.'] }; }
-    const decision = routed?.accountingDecision;
-    const blocked = decision && decision.decisionStatus !== 'decided';
-    return { ...entry, needsReview: entry.needsReview || !entry.accountId || blocked,
-      reviewReasons: [...(entry.reviewReasons || []), ...(blocked ? [decision.question?.text || 'ماهیت این رویداد نیازمند بررسی حسابداری است؛ تأیید برداشت به معنی ثبت قطعی سند نیست.'] : [])] };
-  };
-  const checkedPreview = (entry, position) => {
-    const local = { ...entry, needsReview: entry.needsReview || !entry.accountId };
-    const server = previewReady ? preflight.previews?.[position] : null;
-    return { ...local, needsReview: local.needsReview || !server || server.route !== 'auto',
-      reviewReasons: [...(local.reviewReasons || []), ...(server?.reasons || []), ...(!server ? ['بررسی آنلاین تصمیم حسابداری هنوز کامل نشده است.'] : [])] };
-  };
-  const assessment = assessTransactionReview(checkedPreview(item, index));
+  const assessment = assessTransactionReview(item);
   const state = item.needsReview || item.reviewState === 'review' ? 'نیازمند بررسی' : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState) ? 'بررسی‌شده توسط کاربر' : 'آماده ارسال';
   return <div className="fixed inset-0 z-[75] flex items-end justify-center bg-ink/35 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section role="dialog" aria-modal="true" aria-label="دلیل تصمیم تراکنش" className="sheet-in max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl"><div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" /><div className="flex items-start justify-between gap-3"><div><span className="rounded-full bg-surface px-2 py-1 text-[10px] font-extrabold text-accent">{state}</span><h2 className={`numbers mt-3 text-2xl font-extrabold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)} تومان</h2><p className="mt-1 text-sm text-muted">{item.category} · {item.accountName || 'حساب پیش‌فرض'}</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div><blockquote className="mt-4 rounded-lg border border-line bg-surface px-3 py-3 text-sm leading-7 text-muted">«{item.rawText}»</blockquote><ConfidencePanel assessment={assessment} />{item.restoredFrom && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-muted">این ثبت در پاسخ به «دوباره انجام بده» به‌صورت یک سند تازه ساخته شده است.</p>}<button onClick={close} className="tap mt-4 w-full rounded-lg border border-line bg-surface font-bold">بستن</button></section></div>;
 }
