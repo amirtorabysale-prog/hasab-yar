@@ -625,6 +625,11 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     };
     return withReviewAssessment(transaction);
   });
+  if (natureNeedsAccountant(eventNature) && transactions.length > 1) {
+    const representative = /مبلغ\s+درست|صحیح|باید/.test(normalizePersian(input)) ? transactions.at(-1) : transactions[0];
+    return { transcript: text, transactions: [{ ...representative, rawText: normalizePersian(input), needsReview: true,
+      reviewReasons: [...representative.reviewReasons, 'این یک درخواست اصلاح است؛ مبلغ نمایش‌داده‌شده پیشنهادی است و سند قبلی باید توسط حسابدار بررسی شود.'] }] };
+  }
   return { transcript: text, transactions: collapseRepeatedTransactions(transactions) };
 }
 

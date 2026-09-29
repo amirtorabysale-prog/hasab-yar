@@ -7,7 +7,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
+  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, analyzeReviewEvent, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
@@ -339,6 +339,9 @@ app.post('/api/voice/realtime/session', express.text({ type: ['application/sdp',
     if (usageId) finishProviderUsage(usageId, { provider: 'openai', succeeded: false, errorCode: error.code });
     return next(error);
   }
+});
+app.post('/api/transactions/preview', (request, response, next) => {
+  try { return response.json({ previews: previewTransactions(request.body) }); } catch (error) { return next(error); }
 });
 app.post('/api/transactions', (request, response, next) => {
   try {
