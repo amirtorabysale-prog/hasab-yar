@@ -467,7 +467,9 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   const dateSource = duration
     ? normalizePersian(input).replace(/(?:برای\s*)?(?:\d+|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|دوازده)\s*ماه\s*(?:آینده|جلوتر|بعد|پیش\s*رو|آتی)/g, ' ')
     : input;
-  const mentionedDate = extractDateMention(dateSource, { now, preferPast: true });
+  // A due-date clause is not the occurrence date of an unpaid bill.
+  const occurrenceSource = normalizePersian(dateSource).replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
+  const mentionedDate = extractDateMention(occurrenceSource, { now, preferPast: true });
   const occurredAt = mentionedDate?.iso || null;
   // بانک روی متن اصلی خوانده می‌شود، پیش از هر ماسکی، تا جای تطبیق جابه‌جا نشود.
   const bank = detectBank(input);
