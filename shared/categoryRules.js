@@ -154,6 +154,7 @@ export function scoreCategories(text, type) {
     const matched = [];
     for (const { word, weight } of definition.keywords) {
       if (!normalized.includes(word)) continue;
+      if (word === 'سنوات' && !/(?:^|[\s،,])سنوات(?:$|[\s،,.])/.test(normalized)) continue;
       score += weight;
       matched.push(word);
     }

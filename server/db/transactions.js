@@ -11,11 +11,11 @@ import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normaliz
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
-import { recordFinancialEvent, recordShadowRun } from '../financialEventStore.js';
+import { approveFinancialEvent, recordFinancialEvent, recordShadowRun } from '../financialEventStore.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { transactionEventDecision } from '../transactionEvent.js';
 import { vatGuardContext } from '../tax.js';
-import { NATURE_EXPLANATIONS, natureNeedsAccountant, readEventNature, readNonCashInstrument, readExplicitNonCash } from '../../shared/eventNature.js';
+import { NATURE_EXPLANATIONS, natureNeedsAccountant, readEventNature, readNonCashInstrument, readExplicitNonCash, readMixedSettlement, MIXED_SETTLEMENT_REASON } from '../../shared/eventNature.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { decide } from '../../shared/accountingDecision.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
@@ -139,7 +139,7 @@ function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
         });
       } catch { /* ضبط شادو نباید ثبت کاربر را از بین ببرد. */ }
     }
-    const result = recordFinancialEvent(db, draft.event, {
+    let result = recordFinancialEvent(db, draft.event, {
       sourceEventId: `transaction:${row.id}`,
       decision: draft.decision,
       actor: currentWorkspace()?.userId || null,
@@ -162,6 +162,16 @@ function routeTransactionThroughEvents(row, item, transcript, sentence = '') {
       // فقط وقتی موتور روشن است خوانده می‌شود؛ بدون تصمیم، نگهبانی اجرا نمی‌شود.
       vat: draft.accountingDecision ? vatGuardContext(db) : undefined,
     });
+    // Confirmation of the displayed draft is distinct from model confidence.
+    // Recompute and persist guards first; never approve a structural blocker.
+    if (item.userConfirmed === true && result.status === 'pending'
+      && result.route === ROUTES.CONFIRM && !draft.decision.reasons.length
+      && (!draft.accountingDecision || draft.accountingDecision.decisionStatus === 'decided')) {
+      result = approveFinancialEvent(db, result.id, {
+        actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+        postJournal: transactionJournalPoster(row, settlement), withinTransaction: true,
+      });
+    }
     // مسیر غیرخودکار یعنی سند منتظر می‌ماند. ردیف تراکنش سر جایش است — کاربر
     // ثبتش را می‌بیند و ماندهٔ صندوقش درست است — ولی دفتر تا تأیید تکان نمی‌خورد.
     if (result.status !== 'posted') {
@@ -241,11 +251,11 @@ function queueCorrectionForAccountant(item, transcript, nature) {
     kind: item.type === 'income' ? EVENT_KINDS.CASH_INCOME : EVENT_KINDS.CASH_EXPENSE,
     amount, occurredAt: item.occurredAt || new Date().toISOString(),
     category: item.category, description: item.category, accountId: resolveAccountId(item),
-    source: item.source === 'voice' ? 'voice' : 'text', eventNature: ['non-cash-instrument', 'explicit-non-cash'].includes(nature) ? 'new' : nature,
+    source: item.source === 'voice' ? 'voice' : 'text', eventNature: ['non-cash-instrument', 'explicit-non-cash', 'mixed-settlement'].includes(nature) ? 'new' : nature,
     evidence: String(transcript || item.rawText || '').slice(0, 1000),
   });
   const accountingDecision = decide(factsFromEvent(event), { today: event.occurredAt });
-  const reason = nature === 'explicit-non-cash' ? 'طبق گفتهٔ کاربر هنوز وجهی جابه‌جا نشده است؛ ثبت نقدی ساخته نشد و ماهیت تعهد یا موجودی باید بررسی شود.'
+  const reason = nature === 'mixed-settlement' ? MIXED_SETTLEMENT_REASON : nature === 'explicit-non-cash' ? 'طبق گفتهٔ کاربر هنوز وجهی جابه‌جا نشده است؛ ثبت نقدی ساخته نشد و ماهیت تعهد یا موجودی باید بررسی شود.'
     : nature === 'non-cash-instrument' ? NON_CASH_REASON
     : NATURE_EXPLANATIONS[nature] || 'این جمله اصلاح یک ثبت قبلی است، نه تراکنش تازه.';
   return recordFinancialEvent(db, event, {
@@ -302,14 +312,14 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
   }
   for (const item of transactions) {
     const nature = fromUtterance
-      ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null) || (readExplicitNonCash(transcript || item.rawText) ? 'explicit-non-cash' : null)
+      ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null) || (readMixedSettlement(transcript || item.rawText) ? 'mixed-settlement' : null) || (readExplicitNonCash(transcript || item.rawText) ? 'explicit-non-cash' : null)
       : null;
     if (nature) {
       const amount = Math.round(Number(item.amount));
       if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
       queueCorrectionForAccountant(item, transcript, nature);
       queuedForAccountant += 1;
-      queuedReasons.push(nature === 'non-cash-instrument' ? NON_CASH_REASON : nature === 'explicit-non-cash' ? 'وجهی جابه‌جا نشده؛ ثبت نقدی ساخته نشد.' : (NATURE_EXPLANATIONS[nature] || ''));
+      queuedReasons.push(nature === 'mixed-settlement' ? MIXED_SETTLEMENT_REASON : nature === 'non-cash-instrument' ? NON_CASH_REASON : nature === 'explicit-non-cash' ? 'وجهی جابه‌جا نشده؛ ثبت نقدی ساخته نشد.' : (NATURE_EXPLANATIONS[nature] || ''));
       continue;
     }
     const id = randomUUID();
@@ -684,6 +694,7 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
   const policy = automationPolicy();
   return transactions.map((item) => {
     const text = transcript || item.rawText || '';
+    if (readMixedSettlement(text)) return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [MIXED_SETTLEMENT_REASON] };
     if (hasCompositeAmounts(text) || correctionNature(item, text) || nonCashInstrument(item, text) || readExplicitNonCash(text)) {
       return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: ['این رویداد ثبت نقدی ساده نیست؛ برای تعیین سند به بررسی حسابداری نیاز دارد.'] };
     }

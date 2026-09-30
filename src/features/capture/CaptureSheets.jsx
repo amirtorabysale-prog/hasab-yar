@@ -94,9 +94,9 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
     const { _changed, ...clean } = entry;
     const reviewed = Boolean(_changed) || nextAssessment.state !== 'ready';
     return {
-      ...clean, needsReview: false, confidence: nextAssessment.overallScore, confidenceDetails: nextAssessment.fields,
+      ...clean, userConfirmed: true, needsReview: false, confidence: nextAssessment.overallScore, confidenceDetails: nextAssessment.fields,
       reviewState: reviewed ? 'reviewed' : 'ready',
-      reviewReasons: reviewed ? [...(entry.reviewReasons || []), 'کاربر جزئیات این برداشت را پیش از ثبت تأیید کرد.'] : (entry.reviewReasons || []),
+      reviewReasons: entry.reviewReasons || [],
     };
   });
   const finish = () => index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());

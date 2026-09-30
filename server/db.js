@@ -41,3 +41,5 @@ export * from './db/financialEvents.js';
 import { seedDemo } from './db/backup.js';
 
 if (String(process.env.SEED_DEMO).toLowerCase() === 'true') seedDemo();
+
+export * from './db/reviewIntakes.js';

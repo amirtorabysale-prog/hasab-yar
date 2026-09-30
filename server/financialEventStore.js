@@ -1,3 +1,4 @@
+import { ensureReviewIntakeSchema } from './reviewIntakeSchema.js';
 import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
@@ -35,6 +36,7 @@ function storeError(message, code = 'EVENT_STORE_INVALID', status = 400) {
 
 export function ensureFinancialEventSchema(database) {
   ensureAccountingSchema(database);
+  ensureReviewIntakeSchema(database);
   database.exec(`
     CREATE TABLE IF NOT EXISTS financial_events (
       id TEXT PRIMARY KEY,
@@ -491,7 +493,7 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
 }
 
 /** تأیید کاربر یا حسابدار روی رویدادی که منتظر مانده بود. */
-export function approveFinancialEvent(database, eventId, { actor = null, timeZone = 'Asia/Tehran', postJournal = null, overrideReason = '' } = {}) {
+export function approveFinancialEvent(database, eventId, { actor = null, timeZone = 'Asia/Tehran', postJournal = null, overrideReason = '', withinTransaction = false } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
@@ -529,7 +531,7 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   const plan = lockedPlan || planJournal(event);
   // همان لنگری که در لحظهٔ ثبت تصمیم گرفته شد، نه لنگر تازه.
   const journalSource = row.journal_source ? JSON.parse(row.journal_source) : null;
-  database.exec('BEGIN IMMEDIATE');
+  if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     // سندِ رویدادی که روی تراکنش نشسته باید همان شکلی را داشته باشد که اگر
     // خودکار ثبت می‌شد داشت. تأیید حسابدار زمانِ ثبت را عوض می‌کند، نه سند را.
@@ -538,8 +540,8 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
       by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy',
       ...(reviewedGuardPlan ? { override: true, reason: reason.slice(0, 500), guard: lockedPlan.guard } : {}),
     }, actor);
-    database.exec('COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
+    if (!withinTransaction) database.exec('COMMIT');
+  } catch (error) { if (!withinTransaction) database.exec('ROLLBACK'); throw error; }
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
 

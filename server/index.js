@@ -1,3 +1,4 @@
+import { queueUnquantifiedReview, resolveUnquantifiedReview } from './db/reviewIntakes.js';
 import 'node:process';
 import express from 'express';
 import multer from 'multer';
@@ -354,6 +355,14 @@ app.post('/api/transactions', (request, response, next) => {
     const ids = insertTransactions({ transcript: request.body.transcript, transactions, counterpartyResolution: request.body.counterpartyResolution });
     return response.status(201).json({ ids, queuedForAccountant: ids.queuedForAccountant || 0, queuedReasons: ids.queuedReasons || [], ...getToday() });
   } catch (error) { return next(error); }
+});
+app.post('/api/transactions/unquantified-review', (request, response, next) => {
+  try { return response.status(201).json({ item: queueUnquantifiedReview(request.body?.transcript, request.body || {}) }); }
+  catch (error) { return next(error); }
+});
+app.post('/api/financial-events/intakes/:id/resolve', (request, response, next) => {
+  try { return response.json({ item: resolveUnquantifiedReview(request.params.id, request.body || {}) }); }
+  catch (error) { return next(error); }
 });
 app.post('/api/transactions/composite-review', (request, response, next) => {
   try {

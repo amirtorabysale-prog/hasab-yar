@@ -134,5 +134,15 @@ export function readNonCashInstrument(input) {
 /** تصریح «هنوز پولی جابه‌جا نشده» نباید حتی ردیف نقدیِ در انتظار بسازد. */
 export function readExplicitNonCash(input) {
   const text = String(input || '').replace(/\u200c/g, ' ');
+  if (/سود|بهره/.test(text) && /تسهیلات|وام/.test(text) && /سررسید\s+نشده/.test(text) && /تحقق|تعلق/.test(text)) return true;
   return /(?:بدون\s+(?:پرداخت|دریافت)\s+(?:وجه|پول)|پولی\s+(?:ندادیم|نگرفتیم|پرداخت\s+نشد|دریافت\s+نشد)|هنوز\s+(?:پرداخت|دریافت)\s+(?:نکردیم|نکردم|نشده)|نسیه)/.test(text);
 }
+
+
+export function readMixedSettlement(input) {
+  const text = String(input || '').replace(/\u200c/g, ' ');
+  return /نسیه|بقیه.*(?:بدهی|بعد|مانده)/.test(text)
+    && /نصف|بخشی|قسمتی|درصد|بقیه/.test(text)
+    && /کارت\s*کش|پرداخت\s*(?:شد|کرد)|نقدی|واریز\s*(?:شد|کرد)/.test(text);
+}
+export const MIXED_SETTLEMENT_REASON = 'بخشی از وجه پرداخت شده و بخشی نسیه است؛ مبلغ هر بخش، مالیات و حساب تسویه باید مشخص شود. ثبت نقدی یک‌جای کل مبلغ ساخته نشد.';

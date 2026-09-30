@@ -236,6 +236,8 @@ export const api = {
     method: 'POST', body: JSON.stringify(payload),
     headers: workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined,
   }),
+  queueUnquantifiedReview: (payload) => request('/api/transactions/unquantified-review', { method: 'POST', body: JSON.stringify(payload) }),
+  resolveUnquantifiedReview: (id, payload) => request(`/api/financial-events/intakes/${id}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
   queueCompositeReview: (payload) => request('/api/transactions/composite-review', { method: 'POST', body: JSON.stringify(payload) }),
   transactions: (params = {}) => request(`/api/transactions?${new URLSearchParams(params)}`),
   latestTransaction: () => request('/api/transactions/latest'),

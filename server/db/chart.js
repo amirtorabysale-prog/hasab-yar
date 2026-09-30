@@ -30,6 +30,10 @@ export function importChart(csvText, { replace = false } = {}) {
 
 export function installChartTemplate() {
   const result = installDefaultChartTemplate(activeWorkspaceDatabase());
+  const database = activeWorkspaceDatabase();
+  for (const chart of listChartAccounts(database).filter(item => item.active && item.postable)) {
+    ledgerAccountForChart(database, chart, type => nextLedgerCode(database, type));
+  }
   audit('install-template', 'chart_of_accounts', 'chart', result);
   return { ...result, ...chartOverview() };
 }

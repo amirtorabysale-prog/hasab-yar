@@ -1,7 +1,7 @@
 import { withReviewAssessment } from './review.js';
 import { normalizePersian } from './normalize.js';
 import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
-import { PERSIAN_MONTHS, extractDateMention } from './persianDate.js';
+import { PERSIAN_MONTHS, extractOccurrenceDate } from './persianDate.js';
 import { detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
@@ -469,7 +469,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     : input;
   // A due-date clause is not the occurrence date of an unpaid bill.
   const occurrenceSource = normalizePersian(dateSource).replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
-  const mentionedDate = extractDateMention(occurrenceSource, { now, preferPast: true });
+  const mentionedDate = extractOccurrenceDate(occurrenceSource, { now, preferPast: true });
   const occurredAt = mentionedDate?.iso || null;
   // بانک روی متن اصلی خوانده می‌شود، پیش از هر ماسکی، تا جای تطبیق جابه‌جا نشود.
   const bank = detectBank(input);

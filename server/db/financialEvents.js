@@ -1,3 +1,4 @@
+import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
 import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
@@ -37,7 +38,7 @@ export function submitFinancialEvent(event, options = {}) {
 
 export function reviewQueue(options = {}) {
   const database = activeWorkspaceDatabase();
-  return { items: listReviewQueue(database, options).map((item) => ({ ...item, aiProposal: item.route === 'accountant-review' ? latestReviewProposal(database, item.id) : null })) };
+  return { items: [...listUnquantifiedReviews(options), ...listReviewQueue(database, options).map((item) => ({ ...item, aiProposal: item.route === 'accountant-review' ? latestReviewProposal(database, item.id) : null }))] };
 }
 
 export async function analyzeReviewEvent(eventId) {

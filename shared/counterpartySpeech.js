@@ -16,6 +16,7 @@ import { normalizePersian } from './normalize.js';
 
 export const CONTACT_STOP_WORDS = new Set([
   'آقای', 'اقای', 'خانم', 'جناب', 'شرکت', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار',
+  'مبلغ', 'عودت', 'داد', 'دادند', 'رسیده', 'شریک', 'سهامدار', 'عمده', 'کل', 'سالانه', 'سررسید',
   'از', 'به', 'برای', 'بابت', 'با', 'رو', 'را', 'که', 'و', 'در', 'تا', 'یک', 'یه',
   'بدهکاره', 'بدهکارم', 'طلبکاره', 'طلبکارم', 'چک', 'فاکتور', 'فروش', 'خرید', 'تومان', 'تومن', 'ریال',
   'سررسید', 'سر', 'رسید', 'دادم', 'گرفتم', 'دارم', 'داره', 'هست', 'است', 'شد', 'میشه', 'بشه',
@@ -55,9 +56,9 @@ const FILLER_WORDS = new Set(['شد', 'شده', 'شدم', 'شدیم', 'شدند'
   'به', 'از', 'برای', 'با', 'رو', 'را']);
 
 function bareContactName(text) {
-  const words = text.split(' ').filter(Boolean);
+  const words = text.replace(/([،,؛.!؟])/g, ' $1 ').split(' ').filter(Boolean);
   const usable = (word) => word
-    && !CONTACT_STOP_WORDS.has(word) && !NUMBER_WORDS.has(word)
+    && !/^[،,؛.!؟]$/.test(word) && !CONTACT_STOP_WORDS.has(word) && !NUMBER_WORDS.has(word)
     && !DIRECTION_WORDS.has(word) && !/\d/.test(word) && word.length > 1;
   // «از رضا دو میلیون طلب دارم»: نام به حرف اضافه چسبیده، نه به فعل جهت.
   for (let index = 0; index < words.length - 1; index += 1) {
@@ -103,7 +104,7 @@ function bareContactName(text) {
  * تکیه می‌شود. نامِ بدون عنوان فقط با `allowBare` برداشته می‌شود.
  */
 export function extractContactName(input, { allowBare = false } = {}) {
-  const words = normalizePersian(input).split(' ').filter(Boolean);
+  const words = normalizePersian(input).replace(/([،,؛.!؟])/g, ' $1 ').split(' ').filter(Boolean);
   for (let index = 0; index < words.length; index += 1) {
     const prefix = TITLE_PREFIXES.find((title) => {
       const parts = title.split(' ');
@@ -119,7 +120,7 @@ export function extractContactName(input, { allowBare = false } = {}) {
       // واژهٔ جهت هرگز بخشی از نام نیست: «به شرکت آزاد بدهکار شدیم» نام را
       // «شرکت آزاد بدهکار» می‌ساخت و همان نام، یک طرف حساب جعلی در دفتر
       // می‌ساخت که با طرف حساب واقعی یکی نمی‌شد.
-      if (CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || DIRECTION_WORDS.has(word) || /\d/.test(word)) break;
+      if (/^[،,؛.!؟]$/.test(word) || CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || DIRECTION_WORDS.has(word) || /\d/.test(word)) break;
       picked.push(word);
     }
     if (picked.length) return `${prefix === 'شرکت' ? 'شرکت ' : ''}${picked.join(' ')}`.trim();
