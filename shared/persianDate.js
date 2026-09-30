@@ -248,6 +248,15 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
   const text = replaceSpokenCounts(normalizePersian(input));
   if (!text) return null;
 
+  // Explicit day of next month must precede the generic same-day fallback.
+  const nextDay = text.match(new RegExp(`(?:^|\\s)(${DAY_WORD_PATTERN})\\s+ماه\\s*(?:بعدی|بعد|آینده|دیگه|دیگر)`));
+  if (nextDay) {
+    const today = persianParts(now, timeZone);
+    const day = DAY_WORDS.get(nextDay[1]) || Number(nextDay[1]);
+    const iso = persianToISO(today.month === 12 ? today.year + 1 : today.year, today.month === 12 ? 1 : today.month + 1, day, timeZone);
+    return iso ? { iso, label: nextDay[0].trim(), match: nextDay[0].trim(), kind: 'relative' } : null;
+  }
+
   // ۱) تاریخ کامل عددی.
   //
   // موتور گفتار تاریخِ گفته‌شده را با **فاصله** می‌نویسد، نه با اسلش: «پانزده
@@ -371,4 +380,20 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
     if (iso) return { iso, label, kind: 'relative' };
   }
   return null;
+}
+
+
+/** Dates belonging to coverage, an old invoice, or future cheque cashing are
+ * not occurrence dates. Keep raw text intact for evidence and service parsing. */
+export function extractOccurrenceDate(input, options = {}) {
+  let text = normalizePersian(input);
+  const months = PERSIAN_MONTHS.map(([name]) => name).join('|');
+  if (/بیمه|اجاره|پوشش|شارژ|اشتراک/.test(text)) {
+    text = text.replace(new RegExp(`از\\s+(?:${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})\\s+تا\\s+(?:آخر|پایان|${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})(?:\\s+همین\\s+امسال)?`, 'g'), ' ');
+    text = text.replace(/(?:شروع|آغاز)\s*(?:پوشش|بیمه|قرارداد)\s*[^،,؛.]+/g, ' ');
+  }
+  text = text.replace(/(?:خرید|فروش|فاکتور|بدهی|اجاره)\s*(?:ماه\s*(?:قبل|پیش|گذشته)|سال\s*(?:قبل|گذشته))/g, ' ');
+  text = text.replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
+  text = text.replace(/(?:فردا|پس\s*فردا|هفته\s*بعد)\s*(?:نقدش|نقد|وصولش|وصول|پاسش|پاس)\s*(?:می\s*)?(?:کنه|کند|کنند|کنن|شه|شود)/g, ' ');
+  return extractDateMention(text, { ...options, preferPast: true });
 }

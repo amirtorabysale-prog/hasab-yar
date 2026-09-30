@@ -1,7 +1,7 @@
 import { normalizePersian } from './normalize.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { isChequeEndorsement } from './voiceIntent.js';
-import { extractDateMention } from './persianDate.js';
+import { extractOccurrenceDate } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
 import { priorSettlementDirection } from './priorSettlement.js';
 
@@ -146,7 +146,7 @@ export function detectSettleIntent(input, { now = new Date() } = {}) {
     contactName: extractName(text),
     number,
     amount,
-    occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
+    occurredAt: extractOccurrenceDate(input, { now, preferPast: true })?.iso || null,
     transcript: text,
   };
 }

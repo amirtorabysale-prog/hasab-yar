@@ -385,6 +385,26 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
   </section>;
 }
 
+function UnquantifiedReviewCard({ item, notify, onSaved }) {
+  const [reason, setReason] = useState('');
+  const [journalEntryId, setJournalEntryId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const resolve = async () => {
+    setBusy(true);
+    try { await api.resolveUnquantifiedReview(item.id, { reason, journalEntryId }); await onSaved(); }
+    catch (error) { notify(error.message); }
+    finally { setBusy(false); }
+  };
+  return <article className="space-y-2 py-3 text-sm">
+    <p className="font-bold">درخواست پیگیری حسابدار — مبلغ مشخص نشده</p>
+    <p>{item.transcript}</p>
+    <p className="text-muted">شناسه پیگیری: {item.id} — هیچ سند یا مبلغ فرضی ثبت نشده است. ابتدا مبلغ، تاریخ و سند مبنا را بررسی کن.</p>
+    <input className="w-full rounded border border-line p-2" value={journalEntryId} onChange={e => setJournalEntryId(e.target.value)} placeholder="شناسه سند مرتبط در صورت ثبت اصلاح توسط حسابدار (اختیاری)" />
+    <textarea className="w-full rounded border border-line p-2" value={reason} onChange={e => setReason(e.target.value)} placeholder="نتیجه بررسی و دلیل بستن پرونده" />
+    <button disabled={busy || reason.trim().length < 8} onClick={resolve} className="tap rounded bg-accent px-3 text-white disabled:opacity-40">ثبت نتیجه بررسی و بستن پرونده</button>
+  </article>;
+}
+
 export function ReviewQueuePage({ notify, access }) {
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
@@ -401,7 +421,7 @@ export function ReviewQueuePage({ notify, access }) {
   // صف در پس‌زمینه و با دو کارگر تحلیل می‌شود؛ باز شدن صفحه منتظر سرویس AI نمی‌ماند.
   useEffect(() => {
     if (!items) return undefined;
-    const pending = items.filter((item) => item.route === 'accountant-review' && !item.aiProposal && !aiAttempted.current.has(item.id));
+    const pending = items.filter((item) => !item.intake && item.route === 'accountant-review' && !item.aiProposal && !aiAttempted.current.has(item.id));
     if (!pending.length) return undefined;
     pending.forEach((item) => aiAttempted.current.add(item.id));
     let cancelled = false;
@@ -461,7 +481,7 @@ export function ReviewQueuePage({ notify, access }) {
 
     <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
       این‌ها مواردی‌اند که سیستم به‌جای حدس زدن، ثبتشان را متوقف کرده است. سند هیچ‌کدام هنوز زده نشده
-      و تأیید تو همان لحظه سند را می‌زند.
+      ثبت سند تنها پس از تکمیل اطلاعات و کنترل‌های حسابداری انجام می‌شود.
     </p>
 
     <AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} />
@@ -470,7 +490,7 @@ export function ReviewQueuePage({ notify, access }) {
     {items?.length === 0 && <p className="mt-3 text-[13px] text-income">چیزی در صف بررسی نمانده است.</p>}
 
     {items?.length > 0 && <div className="mt-1 divide-y divide-line">
-      {items.map((item) => <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
+      {items.map((item) => item.intake ? <UnquantifiedReviewCard key={item.id} item={item} notify={notify} onSaved={load} /> : <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
         onApprove={approve} onReject={reject} onAnswered={load} notify={notify} />)}
     </div>}
   </section>;

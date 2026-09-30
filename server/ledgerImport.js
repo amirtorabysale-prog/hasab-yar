@@ -268,7 +268,7 @@ export function ledgerAccountForChart(database, chart, nextCode) {
   const mapped = database.prepare('SELECT id FROM ledger_accounts WHERE chart_account_id=? AND active=1 ORDER BY rowid LIMIT 1').get(chart.id);
   if (mapped) return mapped.id;
   const id = randomUUID();
-  const normalSide = ['asset', 'expense'].includes(chart.type) ? 'debit' : 'credit';
+  const normalSide = chart.normalSide || (['asset', 'expense'].includes(chart.type) ? 'debit' : 'credit');
   database.prepare(`INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key,chart_account_id)
     VALUES (?,?,?,?,?,?,?,?)`).run(id, nextCode(chart.type), chart.name, chart.type, normalSide, 'chart-account', chart.code, chart.id);
   return id;

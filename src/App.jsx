@@ -1,3 +1,4 @@
+import { needsUnquantifiedReview, UNQUANTIFIED_REVIEW_REASON } from '../shared/reviewIntake.js';
 import { Check, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { BottomNav, DesktopNav, Drawer, InsightRail, allowedScreens } from './app/navigation.jsx';
@@ -716,6 +717,13 @@ export default function App() {
    */
   const routeIntent = (transcript, source = 'voice') => {
     if (!canWrite) return false;
+    if (needsUnquantifiedReview(transcript)) {
+      if (!online) { setFailure({ transcript, message: 'برای ذخیره درخواست بررسی حسابدار اتصال اینترنت لازم است.' }); return true; }
+      void api.queueUnquantifiedReview({ transcript, source, clientId: crypto.randomUUID() })
+        .then(() => notify(UNQUANTIFIED_REVIEW_REASON))
+        .catch(error => setFailure({ transcript, message: error.message }));
+      return true;
+    }
     if (hasCompositeAmounts(transcript)) {
       if (!online) { setFailure({ transcript, message: `${COMPOSITE_AMOUNT_MESSAGE} اتصال اینترنت لازم است تا این گفته در صف حسابدار ذخیره شود.` }); return true; }
       void api.queueCompositeReview({ transcript, source, clientId: crypto.randomUUID() })
