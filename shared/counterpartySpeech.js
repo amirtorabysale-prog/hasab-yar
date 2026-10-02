@@ -60,6 +60,7 @@ function bareContactName(text) {
   const words = text.replace(/([،,؛.!؟])/g, ' $1 ').split(' ').filter(Boolean);
   const usable = (word) => word
     && !/^[،,؛.!؟]$/.test(word) && !CONTACT_STOP_WORDS.has(word) && !NUMBER_WORDS.has(word)
+    && !['سود', 'زیان', 'سال', 'سنوات', 'دوره'].includes(word)
     && !DIRECTION_WORDS.has(word) && !/\d/.test(word) && word.length > 1;
   // «از رضا دو میلیون طلب دارم»: نام به حرف اضافه چسبیده، نه به فعل جهت.
   for (let index = 0; index < words.length - 1; index += 1) {
