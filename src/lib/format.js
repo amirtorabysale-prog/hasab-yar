@@ -3,9 +3,9 @@ const fa = new Intl.NumberFormat('fa-IR');
 export const formatAmount = (value) => fa.format(Math.round(Number(value) || 0));
 export const formatSignedAmount = (item) => `${item.type === 'income' ? '+' : '−'} ${formatAmount(item.amount)}`;
 export const toPersianDigits = (value) => String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[digit]);
-export const todayKey = () => new Date().toISOString().slice(0, 10);
-const persianDateFormat = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { weekday: 'long', day: 'numeric', month: 'long' });
-const clockFormat = new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' });
+export const todayKey = (date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+const persianDateFormat = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone: 'Asia/Tehran', weekday: 'long', day: 'numeric', month: 'long' });
+const clockFormat = new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit' });
 
 // Intl.format روی رشته خطای «Invalid time value» می‌دهد و چون این تابع داخل
 // رندر صدا زده می‌شود، همان خطا کل صفحه را سفید می‌کرد. تاریخ‌ها از API
