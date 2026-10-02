@@ -8,6 +8,7 @@ const cases = new Map(JSON.parse(fs.readFileSync(new URL('./fixtures/stress-scen
 test('names stop at verbs and fiscal phrases are not counterparties', () => {
   assert.equal(extractContactName('به آقای کاظمی زدیم ولی نمیدونم'), 'کاظمی');
   for (const phrase of ['به مبلغ ده میلیون', 'به عنوان تخفیفات', 'به شرکت عودت داد', 'به مالیات ارزش افزوده', 'از موقع اظهارنامه']) assert.equal(extractContactName(phrase, { allowBare: true }), '');
+  for (const id of ['T071', 'T073', 'T076', 'T090', 'T102', 'T108']) assert.ok(!parseFinancialText(cases.get(id)).transactions[0].contactName, id);
   assert.equal(extractContactName('به شرکت آراد گستر آسیا پرداخت شد'), 'شرکت آراد گستر آسیا');
 });
 test('service dates without payment date remain explicit missing facts', () => {
