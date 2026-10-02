@@ -559,6 +559,7 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
     const reviewReasons = [];
+    if (servicePeriod && !occurredAt) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
     // آوردهٔ مالک درآمد نیست و دارایی ثابت هزینه نیست.
     //
     // برای این جمله‌ها برگهٔ مخصوص باز می‌شود، ولی اگر کاربر آن را ببندد و
