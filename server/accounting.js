@@ -138,6 +138,20 @@ function operationalLedgerAccount(database, accountId) {
 
 function categoryLedgerAccount(database, type, category) {
   const clean = String(category || (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها')).trim().slice(0, 80);
+  ensureAccountingSchema(database);
+  const accountType = type === 'income' ? 'income' : 'expense';
+  const existing = database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(accountType + '-category', clean);
+  if (existing) return existing.id;
+  const suggestion = suggestChartAccount({ name: clean, type: accountType, sourceKind: accountType + '-category', sourceKey: clean }, listChartAccounts(database), { confidentOnly: true });
+  if (suggestion) {
+    const seeded = database.prepare(`SELECT id FROM ledger_accounts WHERE chart_account_id=? AND source_kind='chart-account' AND active=1 AND type=? AND normal_side=? ORDER BY code LIMIT 1`).get(suggestion.id, accountType, accountType === 'expense' ? 'debit' : 'credit');
+    if (seeded) {
+      // Bind the unused template account to its operational category, preserving
+      // its identity, chart mapping and existing journal references.
+      database.prepare('UPDATE ledger_accounts SET source_kind=?,source_key=?,name=? WHERE id=?').run(accountType + '-category', clean, clean, seeded.id);
+      return seeded.id;
+    }
+  }
   return linkedLedgerAccount(database, type === 'income' ? 'income-category' : 'expense-category', clean, clean, type === 'income' ? 'income' : 'expense');
 }
 
@@ -901,14 +915,20 @@ export function trialBalance(database, through = '') {
   return { unit: 'IRT', basis: 'double-entry-operational', balanced: totals.debit === totals.credit && totals.debitBalance === totals.creditBalance, rows, totals, generatedAt: new Date().toISOString() };
 }
 
-export function listJournal(database, { page = 1, limit = 30, entryId = '', approvalState = '' } = {}) {
+export function listJournal(database, { page = 1, limit = 30, entryId = '', approvalState = '', search = '' } = {}) {
   migrateAccountingLedger(database);
-  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 30));
-  const safePage = Math.max(1, Number(page) || 1);
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit)) || 30));
+  const safePage = Math.max(1, Math.floor(Number(page)) || 1);
   const single = String(entryId || '').trim();
   const state = Object.hasOwn(APPROVAL_STATES, approvalState) ? approvalState : '';
-  const filter = state ? 'WHERE approval_state=?' : '';
+  const clauses = state ? ['approval_state=?'] : [];
   const filterParams = state ? [state] : [];
+  const query = String(search || '').trim().slice(0, 160).replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)));
+  if (query) {
+    clauses.push("(instr(memo,?)>0 OR CAST(document_number AS TEXT)=? OR source_id=?)");
+    filterParams.push(query, query, query);
+  }
+  const filter = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
   const total = single
     ? Number(database.prepare('SELECT COUNT(*) AS count FROM journal_entries WHERE id=?').get(single).count)
     : Number(database.prepare(`SELECT COUNT(*) AS count FROM journal_entries ${filter}`).get(...filterParams).count);
@@ -919,7 +939,7 @@ export function listJournal(database, { page = 1, limit = 30, entryId = '', appr
     return_reason AS returnReason FROM journal_entries`;
   const entries = single
     ? database.prepare(`${select} WHERE id=?`).all(single)
-    : database.prepare(`${select} ${filter} ORDER BY occurred_at DESC,created_at DESC LIMIT ? OFFSET ?`).all(...filterParams, safeLimit, (safePage - 1) * safeLimit);
+    : database.prepare(`${select} ${filter} ORDER BY occurred_at DESC,created_at DESC,id DESC LIMIT ? OFFSET ?`).all(...filterParams, safeLimit, (safePage - 1) * safeLimit);
   const lines = database.prepare(`SELECT journal_lines.account_id AS accountId,ledger_accounts.code,ledger_accounts.name,
     journal_lines.debit,journal_lines.credit,journal_lines.description,
     chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
