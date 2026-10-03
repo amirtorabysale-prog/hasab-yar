@@ -158,7 +158,7 @@ export function resolveEventRole(database, role, key, event = {}) {
  * صندوق یا حساب هزینه، داده‌ای می‌سازد که هیچ معنایی ندارد.
  */
 const COUNTERPARTY_ROLES = new Set([
-  ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE,
+  ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE, ROLES.CUSTOMER_ADVANCE, ROLES.DEFERRED_REVENUE,
 ]);
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {
