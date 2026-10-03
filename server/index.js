@@ -11,7 +11,7 @@ import {
   correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, analyzeReviewEvent, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, analyzeReviewEvent, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -567,8 +567,11 @@ app.put('/api/automation-policy', (request, response, next) => {
 app.get('/api/financial-events/review-queue', (request, response, next) => {
   try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }
 });
+app.get('/api/financial-events/:id/ai-conversation', (request,response,next) => {
+  try { return response.json(reviewAssistantHistory(request.params.id)); } catch(error) {return next(error);}
+});
 app.post('/api/financial-events/:id/ai-proposal', async (request, response, next) => {
-  try { return response.json(await analyzeReviewEvent(request.params.id)); } catch (error) { return next(error); }
+  try { return response.json(await analyzeReviewEvent(request.params.id,{message:request.body?.message,facts:request.body?.facts || {}})); } catch (error) { return next(error); }
 });
 app.post('/api/financial-events/:id/ai-feedback', (request, response, next) => {
   try { return response.json(reviewAiFeedback(request.params.id, String(request.body?.proposalId || ''), { accepted: request.body?.accepted === true, reason: String(request.body?.reason || '').slice(0, 1000) })); } catch (error) { return next(error); }
