@@ -94,7 +94,7 @@ test('پس از رد و برگشت، دفتر کل و ماندهٔ برنامه 
   assert.ok(kept);
 
   const [rejected] = database.insertTransactions({ transcript: 'مشکوک', transactions: [doubtful(400_000)] });
-  database.rejectEvent(queuedFor(rejected).id, 'نبوده');
+  database.rejectEvent(queuedFor(rejected).id, 'این رویداد مالی رخ نداده است');
 
   const balance = accounting.trialBalance(db);
   assert.equal(balance.balanced, true);
