@@ -38,3 +38,40 @@ test('پیشنهاد متفاوت یا با واقعیت گمشده اجازهٔ
   assert.equal(proposalMatchesPlan({ lines: plan.lines, missingFacts: ['دوره'] }, plan), false);
   assert.equal(proposalMatchesPlan({ lines: [{ role: 'expense-category', debit: 12, credit: 0 }, plan.lines[1]], missingFacts: [] }, plan), false);
 });
+
+test('OpenAI review is explicitly requested, cached and never posts', async () => {
+  const database = fixture();
+  const before = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-openai';
+  let calls = 0;
+  const fetcher = async (url, options) => {
+    calls++;
+    assert.equal(url, 'https://api.openai.com/v1/responses');
+    assert.equal(options.headers.Authorization, 'Bearer test-openai');
+    assert.equal(JSON.parse(options.body).store, false);
+    return { ok: true, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({
+      summary: 'بررسی', explanation: 'پیشنهاد حسابدار', missingFacts: [],
+      lines: [{ role: 'expense-category', debit: 3000000, credit: 0 }, { role: 'cash', debit: 0, credit: 3000000 }],
+    }) }] }] }) };
+  };
+  try {
+    assert.equal(calls, 0);
+    await proposeReview(database, 'one', { fetcher });
+    await proposeReview(database, 'one', { fetcher });
+    assert.equal(calls, 1);
+    assert.equal(database.prepare("SELECT status FROM financial_events WHERE id='one'").get().status, 'pending');
+  } finally { if (before === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = before; database.close(); }
+});
+
+test('OpenAI provider failures are actionable and leave the queue untouched', async () => {
+  const before = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-openai';
+  try {
+    for (const [status, code] of [[401, 'AI_AUTH'], [403, 'AI_AUTH'], [429, 'AI_QUOTA'], [404, 'AI_MODEL']]) {
+      const database = fixture();
+      await assert.rejects(proposeReview(database, 'one', { fetcher: async () => ({ ok: false, status }) }), { code });
+      assert.equal(database.prepare('SELECT COUNT(*) n FROM accounting_review_ai').get().n, 0);
+      database.close();
+    }
+  } finally { if (before === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = before; }
+});
