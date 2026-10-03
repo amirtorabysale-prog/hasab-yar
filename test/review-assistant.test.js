@@ -195,3 +195,17 @@ test('unchanged retries and concurrent clicks use one API request, chart changes
   assert.equal(prepared.canPost,false);assert.ok(prepared.postingBlockers.some(b=>b.includes('کدینگ')));
   const fresh=await ai.proposeReview(database(),item.id,opts);assert.notEqual(fresh.id,p.id);assert.equal(calls,2);
 }));
+
+test('queue exposes the original captured voice text including line breaks and text beyond the old 1000-character limit',()=>run(()=>{
+  const transcript='من گفتم: پیش‌پرداخت بیمه، نه هزینه.\n' + 'این توضیح اصلی کاربر هنگام ضبط است؛ '.repeat(45) + '\nپایان متن اصلی.';
+  const item=store.recordFinancialEvent(database(),{kind:'cash-expense',amount:40000000,occurredAt:'2026-10-03',evidence:'خلاصه موتور',category:'بیمه'},
+    {sourceEventId:crypto.randomUUID(),transcript,decision:{route:'accountant-review',guardBlocked:true,reasons:['بررسی لازم است']}});
+  assert.ok(transcript.length>1000);
+  const row=database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id);
+  assert.equal(assistant.originalReviewTranscript(database(),row),transcript);
+  const queue=db.reviewQueue({limit:200}).items.find(i=>i.id===item.id);
+  assert.equal(queue.originalTranscript,transcript);
+  const payload={...JSON.parse(row.payload),evidence:'تفسیر اصلاح‌شدهٔ موتور'};
+  database().prepare('UPDATE financial_events SET payload=? WHERE id=?').run(JSON.stringify(payload),item.id);
+  assert.equal(db.reviewQueue({limit:200}).items.find(i=>i.id===item.id).originalTranscript,transcript);
+}));
