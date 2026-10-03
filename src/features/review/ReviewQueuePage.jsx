@@ -1,3 +1,4 @@
+import { ReviewAssistant } from './ReviewAssistant.jsx';
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
@@ -143,8 +144,6 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
   const [trail, setTrail] = useState(null);
   const [decision, setDecision] = useState(null);
   const [ai, setAi] = useState(item.aiProposal || null);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiError, setAiError] = useState('');
   const confidence = item.confidence || {};
 
   // تصمیم فقط برای ردیف‌هایی خوانده می‌شود که واقعاً تصمیمی دارند. صف ممکن است
@@ -155,25 +154,6 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
   }, [item.id, item.decisionId]);
 
   useEffect(() => { setAi(item.aiProposal || null); }, [item.id, item.aiProposal?.id]);
-
-  const analyze = async () => {
-    setAiBusy(true); setAiError('');
-    try { setAi((await api.reviewAiProposal(item.id)).proposal); }
-    catch (error) { setAiError(error.message); }
-    setAiBusy(false);
-  };
-
-  const feedback = async (accepted) => {
-    const reason = accepted ? '' : window.prompt('چرا پیشنهاد AI درست نیست؟ دلیل مشخص بنویس:');
-    if (!accepted && !reason?.trim()) return;
-    setAiBusy(true);
-    try {
-      const result = await api.reviewAiFeedback(item.id, ai.id, accepted, reason || '');
-      if (accepted) { notify?.('پیشنهاد مطابق نقشهٔ قطعی تأیید و سند ثبت شد.'); await onAnswered?.(); }
-      else { setAi(result.proposal); notify?.('دلیل رد در سابقهٔ حسابداری این دفتر ثبت شد.'); }
-    } catch (error) { setAiError(error.message); }
-    setAiBusy(false);
-  };
 
   const answer = async (payload) => {
     try {
@@ -215,33 +195,11 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
 
     {item.approvalBlocked && <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-xs leading-6">
       <p>{item.approvalNextStep === 'answer-question' ? 'ابتدا به سؤال پایین کارت پاسخ بده؛ بعد از تکمیل، امکان ثبت دوباره بررسی می‌شود.' : 'سطرهای این سند هنوز قطعی نیست. پیشنهاد AI را با «تحلیل کن» بگیر و حساب‌ها را بررسی کن.'}</p>
-      {open && item.approvalNextStep === 'manual-review' && item.event?.kind !== 'review-placeholder' && <>
-        <p>برای اصلاح ثبت به بخش حسابداری برو. ثبت دستی به‌تنهایی این مورد صف را نمی‌بندد؛ پس از تطبیق و ثبت سند، همین مورد را با ذکر شماره سند و دلیل رد کن تا دوباره ثبت نشود.</p>
-        <button onClick={() => navigate?.('accounting')} className="tap mt-2 rounded border border-accent px-3 font-bold text-accent">رفتن به حسابداری و ثبت دستی</button>
-      </>}
     </div>}
     {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
     {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-[11px] leading-5 text-muted">• {confidence.reasons[0]}</p>}
 
-    {item.route === 'accountant-review' && <div className="mt-2 rounded-lg border border-line bg-paper p-3 text-[12px] leading-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <b>پیشنهاد AI برای بررسی حسابدار</b>
-        {(!ai || ai.state === 'rejected') && <button disabled={busy || aiBusy} onClick={analyze} className="tap rounded-lg border border-accent px-2 py-1 font-bold text-accent disabled:opacity-40">{aiBusy ? 'در حال تحلیل…' : ai ? 'تحلیل دوباره' : 'تحلیل کن'}</button>}
-      </div>
-      {ai?.state === 'proposed' && <>
-        <p className="mt-1 font-bold">{ai.summary}</p>
-        <p className="text-muted">{ai.explanation}</p>
-        <div className="mt-1 rounded border border-line p-2 numbers" dir="ltr">{ai.lines.map((line, index) => <p key={index}>{line.debit ? 'Dr' : 'Cr'} {line.role}{line.key ? ` (${line.key})` : ''}: {formatAmount(line.debit || line.credit)}</p>)}</div>
-        {ai.missingFacts?.length > 0 && <p className="mt-1 text-expense">اطلاعات لازم: {ai.missingFacts.join('، ')}</p>}
-        <p className="mt-1 text-muted">این پیشنهاد سند نیست؛ فقط در صورت تطبیق با نقشهٔ قطعی سیستم با تأیید ثبت می‌شود.</p>
-        <div className="mt-2 flex gap-2">
-          <button disabled={busy || aiBusy || ai.missingFacts?.length > 0 || item.approvalBlocked || item.event?.kind === 'review-placeholder'} onClick={() => feedback(true)} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">تأیید پیشنهاد و ثبت</button>
-          <button disabled={busy || aiBusy} onClick={() => feedback(false)} className="tap rounded border border-expense px-2 py-1 text-expense disabled:opacity-40">رد پیشنهاد با دلیل</button>
-        </div>
-      </>}
-      {ai?.state === 'rejected' && <p className="mt-1 text-muted">پیشنهاد رد شد: {ai.reason}</p>}
-      {aiError && <p className="mt-1 text-expense">{aiError}</p>}
-    </div>}
+    {item.route === 'accountant-review' && <ReviewAssistant item={item} ai={ai} setAi={setAi} onSaved={onAnswered} notify={notify} busy={busy} />}
 
     {item.event?.kind === 'review-placeholder' && <ReviewedCompositeEditor item={item} ai={ai} onSaved={onAnswered} notify={notify} />}
 
@@ -414,10 +372,11 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
 
 export function ReviewQueuePage({ notify, access, navigate }) {
   const [items, setItems] = useState(null);
+  const [dnaSummary,setDnaSummary] = useState(null);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
-    try { setItems((await api.reviewQueue()).items); }
+    try { const result=await api.reviewQueue();setItems(result.items);setDnaSummary(result.dnaSummary); }
     catch (error) { notify(error.message); setItems([]); }
   }, [notify]);
 
@@ -464,6 +423,8 @@ export function ReviewQueuePage({ notify, access, navigate }) {
       این‌ها مواردی‌اند که سیستم به‌جای حدس زدن، ثبتشان را متوقف کرده است. سند هیچ‌کدام هنوز زده نشده
       ثبت سند تنها پس از تکمیل اطلاعات و کنترل‌های حسابداری انجام می‌شود.
     </p>
+
+    {dnaSummary && <p className="mt-3 rounded border border-accent/30 bg-accent/5 p-3 text-xs leading-6"><b>DNA حسابداری همین شرکت</b> · {toPersianDigits(dnaSummary.accepted)} پیشنهاد تأییدشده · {toPersianDigits(dnaSummary.rejected)} اصلاح با دلیل · {toPersianDigits(dnaSummary.messages)} پیام حسابدار. تصمیم‌های شما در پیشنهادهای مرتبط بعدی استفاده می‌شوند.</p>}
 
     <AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} />
 

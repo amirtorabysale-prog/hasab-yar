@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { prepareReviewProposal, reviewConversation, reviewedEvent, relevantDna, proposalRevision, addReviewMessage } from '../reviewAssistant.js';
+import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
-import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
+import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
 import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { contactIdForName } from './contacts.js';
@@ -7,7 +10,7 @@ import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEv
 import { settlementFor, transactionJournalPoster } from './transactions.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { vatGuardContext } from '../tax.js';
-import { latestReviewProposal, proposeReview, proposalIsCurrent, proposalMatchesPlan, recordReviewFeedback } from '../accountingReviewAi.js';
+import { ensureReviewAiSchema, latestReviewProposal, proposeReview, proposalIsCurrent, recordReviewFeedback } from '../accountingReviewAi.js';
 
 // ---------------------------------------------------------------------------
 // رویدادهای مالی و صف بررسی
@@ -38,33 +41,63 @@ export function submitFinancialEvent(event, options = {}) {
 
 export function reviewQueue(options = {}) {
   const database = activeWorkspaceDatabase();
-  return { items: [...listUnquantifiedReviews(options), ...listReviewQueue(database, options).map((item) => ({ ...item, aiProposal: item.route === 'accountant-review' ? latestReviewProposal(database, item.id) : null }))] };
+  ensureReviewAiSchema(database);
+  const items = [...listUnquantifiedReviews(options), ...listReviewQueue(database, options).map(item=>{
+    const row=database.prepare('SELECT * FROM financial_events WHERE id=?').get(item.id);
+    return {...item,aiProposal:item.route==='accountant-review'?preparedProposal(database,item.id):null,dnaMatches:item.route==='accountant-review'?relevantDna(database,row).map(d=>({...d,actorName:actorName(d.actor)})):[]};
+  })];
+  const counts=database.prepare("SELECT state,COUNT(*) count FROM accounting_review_ai WHERE state!='proposed' GROUP BY state").all();
+  return {items,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
 }
 
-export async function analyzeReviewEvent(eventId) {
-  return { proposal: await proposeReview(activeWorkspaceDatabase(), eventId) };
+function actorName(id) {return id ? controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id)?.display_name || controlDb.prepare('SELECT username FROM users WHERE id=?').get(id)?.username || id : null;}
+function labelHistory(proposal) {return proposal ? {...proposal,conversation:proposal.conversation?.map(m=>({...m,actorName:actorName(m.actor)})),dnaEvidence:proposal.dnaEvidence?.map(d=>({...d,actorName:actorName(d.actor)}))} : null;}
+function preparedProposal(database,eventId,proposal = latestReviewProposal(database,eventId)) {
+  const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
+  return proposal && row ? labelHistory(prepareReviewProposal(database,row,proposal)) : null;
 }
+export function reviewAssistantHistory(eventId) {
+  const database = activeWorkspaceDatabase();
+  if (!database.prepare('SELECT id FROM financial_events WHERE id=?').get(eventId)) throw Object.assign(new Error('پرونده پیدا نشد.'),{status:404});
+  return { messages:reviewConversation(database,eventId).map(m=>({...m,actorName:actorName(m.actor)})),proposal:preparedProposal(database,eventId) };
+}
+export function reviewAssistantForJournal(journalEntryId) {
+  const database=activeWorkspaceDatabase();
+  const row=database.prepare(`SELECT id FROM financial_events WHERE journal_entry_id=? OR journal_entry_id=(SELECT reverses_entry_id FROM journal_entries WHERE id=?) LIMIT 1`).get(journalEntryId,journalEntryId);
+  return row ? {...reviewAssistantHistory(row.id),eventId:row.id} : {eventId:null,messages:[],proposal:null};
+}
+export async function analyzeReviewEvent(eventId, {message = '',facts = {}} = {}) {
+  const database = activeWorkspaceDatabase();
+  const proposal = await proposeReview(database,eventId,{message,facts,actor:currentWorkspace()?.userId || null});
+  return { proposal:preparedProposal(database,eventId,proposal) };
+}
+
 
 export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason = '' } = {}) {
   const database = activeWorkspaceDatabase();
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
   if (!row || row.status !== 'pending' || row.route !== 'accountant-review') throw Object.assign(new Error('این مورد دیگر در صف حسابدار نیست.'), { code: 'EVENT_NOT_REVIEWABLE', status: 409 });
   const proposal = latestReviewProposal(database, eventId);
-  if (!proposal || proposal.id !== proposalId || proposal.state !== 'proposed' || !proposalIsCurrent(proposal, row)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صفحه را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
+  if (!proposal || proposal.id !== proposalId || proposal.state !== 'proposed' || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صفحه را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
   const actor = currentWorkspace()?.userId || null;
   if (accepted) {
-    const locked = row.posting_plan ? JSON.parse(row.posting_plan) : null;
-    const source = row.journal_source ? JSON.parse(row.journal_source) : null;
-    const decision = decisionForEvent(database, eventId);
-    if (!proposalMatchesPlan(proposal, locked) || (source?.type === 'transaction' && !treatmentHasPlan(decision?.treatment))) {
-      throw Object.assign(new Error('پیشنهاد با نقشهٔ قطعی دفتر برابر نیست؛ برای ثبت متفاوت ابتدا حساب‌ها را در مسیر سند دستی تعیین کن. بازخورد رد و دلیل را در همین کارت ثبت کن.'), { code: 'AI_PLAN_REVISION_REQUIRED', status: 409 });
+    const prepared=prepareReviewProposal(database,row,proposal);
+    if (prepared.canPost && prepared.useLockedPlan) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const fresh=database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
+        if (fresh.status!=='pending' || !proposalIsCurrent(proposal,fresh) || (proposal.contextRevision || 0)!==proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد هم‌زمان تغییر کرده است.'),{code:'AI_PROPOSAL_STALE',status:409});
+        const item=approveEvent(eventId,{reason:'تأیید حسابدار پس از تطبیق پیشنهاد با نقشه قطعی',withinTransaction:true});
+        recordReviewFeedback(database,eventId,proposal.id,{state:'accepted',reason:proposal.explanation,actor});
+        addReviewMessage(database,eventId,'accepted',`تأیید سند ${item.journalEntryId}`,actor);
+        database.exec('COMMIT');
+        return {item};
+      } catch(error) {database.exec('ROLLBACK');throw error;}
     }
-    const item = approveEvent(eventId, { reason: reason || 'بررسی پیشنهاد AI و تطبیق سطرها با نقشهٔ قفل‌شده' });
-    recordReviewFeedback(database, eventId, proposalId, { state: 'accepted', reason, actor });
-    audit('accept-ai-proposal', 'financial-event', eventId, { proposalId, journalEntryId: item.journalEntryId });
-    return { item };
+    return acceptPreparedProposal(database,row,proposal,actor);
   }
   const updated = recordReviewFeedback(database, eventId, proposalId, { state: 'rejected', reason, actor });
+  addReviewMessage(database,eventId,'rejected',reason,actor);
   audit('reject-ai-proposal', 'financial-event', eventId, { proposalId, reason: String(reason).slice(0, 200) });
   return { proposal: updated };
 }
@@ -76,7 +109,7 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   if (!row || row.status !== 'pending') throw Object.assign(new Error('این مورد دیگر در انتظار نیست.'), { code: 'EVENT_NOT_PENDING', status: 409 });
   const proposal = latestReviewProposal(database, eventId);
   if (proposal?.state === 'proposed') {
-    if (!proposalId || proposal.id !== proposalId || !proposalIsCurrent(proposal, row)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صف را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
+    if (!proposalId || proposal.id !== proposalId || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صف را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
     if (aiAccepted && (proposal.missingFacts.length || !proposal.lines || proposal.lines.length !== lines?.length || proposal.lines.some((line, index) => line.debit !== lines[index].debit || line.credit !== lines[index].credit))) {
       throw Object.assign(new Error('مبالغ سند با پیشنهاد AI برابر نیست؛ اصلاح را با دلیل ثبت کن.'), { code: 'AI_PLAN_REVISION_REQUIRED', status: 409 });
     }
@@ -158,7 +191,7 @@ export function handOverPending(eventId) {
   return item;
 }
 
-export function approveEvent(eventId, { reason = '' } = {}) {
+export function approveEvent(eventId, { reason = '', withinTransaction = false } = {}) {
   const database = activeWorkspaceDatabase();
   // رویدادی که روی یک تراکنش نشسته، سندش را از همان مسیر تراکنش می‌گیرد. اگر
   // اینجا نقشهٔ نقش‌محور اجرا شود، دو تراکنش هم‌شکل بسته به اینکه خودکار ثبت
@@ -182,7 +215,7 @@ export function approveEvent(eventId, { reason = '' } = {}) {
     if (transaction) postJournal = transactionJournalPoster(transaction, settlementFor(transaction));
   }
   const item = approveFinancialEvent(database, eventId, {
-    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal, overrideReason: reason,
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal, overrideReason: reason, withinTransaction,
   });
   if (source?.type === 'transaction') database.prepare('UPDATE transactions SET journal_deferred=0 WHERE id=?').run(source.id);
   audit('approve', 'financial-event', eventId, { status: item.status });
@@ -190,21 +223,35 @@ export function approveEvent(eventId, { reason = '' } = {}) {
 }
 
 export function reverseEvent(eventId, reason = '') {
-  const item = reverseFinancialEvent(activeWorkspaceDatabase(), eventId, {
-    actor: currentWorkspace()?.userId || null, reason, timeZone: currentTimeZone(),
-  });
-  retireTransactionBehind(eventId, 'reverse');
-  audit('reverse', 'financial-event', eventId, { reason: String(reason || '').slice(0, 200) });
-  return item;
+  const database=activeWorkspaceDatabase();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const hasCheques=database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cheques'").get();
+    const cheque=hasCheques ? database.prepare('SELECT id,status FROM cheques WHERE id=?').get(`review:${eventId}`) : null;
+    if (cheque && cheque.status!=='open') throw Object.assign(new Error('این چک پیش‌تر وصول یا تعیین تکلیف شده؛ ابتدا اسناد وابسته را اصلاح کن.'),{code:'REVIEW_CHEQUE_DEPENDENCY',status:409});
+    const item=reverseFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason,timeZone:currentTimeZone(),withinTransaction:true});
+    if(cheque) database.prepare("UPDATE cheques SET status='cancelled' WHERE id=?").run(cheque.id);
+    retireTransactionBehind(eventId,'reverse');
+    database.exec('COMMIT');
+    audit('reverse','financial-event',eventId,{reason:String(reason).slice(0,200)});
+    return item;
+  } catch(error) {database.exec('ROLLBACK');throw error;}
 }
 
 export function rejectEvent(eventId, reason = '') {
-  const item = rejectFinancialEvent(activeWorkspaceDatabase(), eventId, {
-    actor: currentWorkspace()?.userId || null, reason,
-  });
-  retireTransactionBehind(eventId, 'reject');
-  audit('reject', 'financial-event', eventId, { reason: String(reason || '').slice(0, 200) });
-  return item;
+  if (String(reason).trim().length < 8) throw Object.assign(new Error('دلیل رد را با حداقل هشت نویسه بنویس.'),{code:'REVIEW_REASON_REQUIRED',status:400});
+  const database = activeWorkspaceDatabase();
+  const proposal = latestReviewProposal(database,eventId);
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const item = rejectFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason});
+    if (proposal?.state==='proposed') recordReviewFeedback(database,eventId,proposal.id,{state:'rejected',reason,actor:currentWorkspace()?.userId || null});
+    addReviewMessage(database,eventId,'rejected',reason,currentWorkspace()?.userId || null);
+    retireTransactionBehind(eventId,'reject');
+    database.exec('COMMIT');
+    audit('reject','financial-event',eventId,{reason:String(reason).slice(0,200)});
+    return item;
+  } catch(error) {database.exec('ROLLBACK');throw error;}
 }
 
 export function eventAudit(eventId) {
@@ -250,4 +297,47 @@ export function runRecognition() {
 export function eventDecision(eventId) {
   const database = activeWorkspaceDatabase();
   return { decision: decisionForEvent(database, eventId), schedule: scheduleForEvent(database, eventId) };
+}
+
+/** تمام اثرهای دفتر، ردیف نقدی و چک در یک تراکنش؛ پیشنهاد، مجوزِ دور زدن اعتبار حساب/دوره نیست. */
+function acceptPreparedProposal(database,row,proposal,actor) {
+  const prepared = prepareReviewProposal(database,row,proposal);
+  if (!prepared.canPost) throw Object.assign(new Error(prepared.postingBlockers.join(' — ') || 'پیشنهاد هنوز قطعی نیست.'), {code:'REVIEW_DETAILS_REQUIRED',status:409});
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const fresh = database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id);
+    if (fresh.status !== 'pending' || !proposalIsCurrent(proposal,fresh) || (proposal.contextRevision || 0) !== proposalRevision(database,row.id)) throw Object.assign(new Error('این پرونده هم‌زمان تغییر کرده است؛ دوباره بررسی کن.'),{code:'AI_PROPOSAL_STALE',status:409});
+    const final = prepareReviewProposal(database,fresh,proposal,{resolve:true});
+    if (!final.canPost) throw Object.assign(new Error(final.postingBlockers.join(' — ')),{code:'REVIEW_DETAILS_REQUIRED',status:409});
+    const event = reviewedEvent(database,fresh);
+    const cash = final.lines.find(l=>l.role==='cash');
+    const counterpart = final.lines.find(l=>l.role!=='cash');
+    const source = fresh.journal_source ? JSON.parse(fresh.journal_source) : null;
+    if (cash) {
+      const ledger = database.prepare('SELECT source_kind,source_key FROM ledger_accounts WHERE id=?').get(cash.accountId);
+      if (ledger?.source_kind!=='operational-account' || ledger.source_key!==event.accountId) throw Object.assign(new Error('حساب نقدی پیشنهاد با بانک انتخاب‌شده برابر نیست.'),{code:'REVIEW_ACCOUNT_MISMATCH',status:409});
+      const amount = cash.debit || cash.credit, type = cash.debit ? 'income' : 'expense';
+      const capitalFlow = counterpart.role==='fixed-asset' ? 'fixed-asset' : counterpart.role==='owner-capital' ? 'capital-in' : '';
+      const transactionId = source?.type==='transaction' ? source.id : randomUUID();
+      if (source?.type==='transaction') {
+        const changed = database.prepare(`UPDATE transactions SET amount=?,type=?,category=?,account_id=?,account=?,contact_id=?,occurred_at=?,capital_flow=?,journal_deferred=0,review_state='ready',needs_review=0,updated_at=? WHERE id=? AND status!='deleted'`).run(amount,type,counterpart.key || counterpart.accountName,event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,new Date().toISOString(),transactionId).changes;
+        if (!changed) throw Object.assign(new Error('تراکنش مبنا دیگر فعال نیست.'),{code:'EVENT_NOT_REVIEWABLE',status:409});
+      } else {
+        database.prepare(`INSERT INTO transactions(id,client_id,amount,type,category,raw_text,source,account_id,account,contact_id,occurred_at,capital_flow,status,journal_deferred)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)`).run(transactionId,`review:${row.id}`,amount,type,counterpart.key || counterpart.accountName,event.evidence || event.utterance || 'بررسی حسابدار','text',event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,'confirmed');
+        database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
+      }
+    } else if (source?.type==='transaction') {
+      database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
+    }
+    const item = postReviewedComposite(database,row.id,{lines:final.lines,reason:`تأیید حسابدار: ${proposal.summary}`,actor,timeZone:currentTimeZone(),accountantProposal:true,eventOverride:event});
+    const cheque = final.lines.find(l=>['cheque-receivable','cheque-payable'].includes(l.role));
+    if (cheque) attachReviewedCheque({eventId:row.id,event,line:cheque,journalEntryId:item.journalEntryId,against:final.lines.some(l=>['receivable','payable'].includes(l.role))?'receivable':'income'});
+    database.prepare('UPDATE accounting_review_ai SET proposal=? WHERE id=?').run(JSON.stringify({...proposal,lines:final.lines,finalJournalEntryId:item.journalEntryId}),proposal.id);
+    recordReviewFeedback(database,row.id,proposal.id,{state:'accepted',reason:proposal.explanation,actor});
+    addReviewMessage(database,row.id,'accepted',`سند ${item.journalEntryId} — ${proposal.summary}`,actor);
+    database.exec('COMMIT');
+    audit('accept-ai-proposal','financial-event',row.id,{proposalId:proposal.id,journalEntryId:item.journalEntryId,dnaEvidence:proposal.dnaEvidence?.map(d=>d.id) || []});
+    return {item};
+  } catch(error) {database.exec('ROLLBACK');throw error;}
 }
