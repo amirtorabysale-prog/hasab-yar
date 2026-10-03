@@ -19,7 +19,7 @@ export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
 });
 
-function ensureChequeSchema(database) {
+export function ensureChequeSchema(database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS cheques (
       id TEXT PRIMARY KEY,
@@ -194,3 +194,13 @@ export function chequeSummary() {
 }
 
 void db;
+
+/** سندِ بررسی‌شده از قبل ثبت شده؛ فقط دفتر چک به همان سند متصل می‌شود. */
+export function attachReviewedCheque({ eventId, event, line, journalEntryId, against = 'income' }) {
+  const database = ensureChequeSchema(activeWorkspaceDatabase());
+  const direction = line.role === 'cheque-payable' ? 'payable' : 'receivable';
+  const id = `review:${eventId}`;
+  database.prepare(`INSERT INTO cheques(id,direction,contact_id,counterparty_name,amount,due_at,occurred_at,against,analytic_id,note,journal_entry_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id,direction,event.counterpartyId,event.counterparty,line.debit || line.credit,event.dueAt,event.occurredAt,against,line.analyticId,`بررسی حسابدار: ${eventId}`,journalEntryId);
+  return id;
+}
