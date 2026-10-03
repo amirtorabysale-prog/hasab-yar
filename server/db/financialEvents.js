@@ -1,3 +1,4 @@
+import { prepareReviewResources, applyReviewInventory, reverseReviewInventory } from '../reviewResources.js';
 import { randomUUID } from 'node:crypto';
 import { prepareReviewProposal, reviewConversation, reviewedEvent, originalReviewTranscript, relevantDna, proposalRevision, addReviewMessage } from '../reviewAssistant.js';
 import { attachReviewedCheque } from './cheques.js';
@@ -231,6 +232,7 @@ export function reverseEvent(eventId, reason = '') {
     const hasCheques=database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cheques'").get();
     const cheque=hasCheques ? database.prepare('SELECT id,status FROM cheques WHERE id=?').get(`review:${eventId}`) : null;
     if (cheque && cheque.status!=='open') throw Object.assign(new Error('این چک پیش‌تر وصول یا تعیین تکلیف شده؛ ابتدا اسناد وابسته را اصلاح کن.'),{code:'REVIEW_CHEQUE_DEPENDENCY',status:409});
+    reverseReviewInventory(database,eventId,{actor:currentWorkspace()?.userId,timeZone:currentTimeZone()});
     const item=reverseFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason,timeZone:currentTimeZone(),withinTransaction:true});
     if(cheque) database.prepare("UPDATE cheques SET status='cancelled' WHERE id=?").run(cheque.id);
     retireTransactionBehind(eventId,'reverse');
@@ -309,9 +311,13 @@ function acceptPreparedProposal(database,row,proposal,actor) {
   try {
     const fresh = database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id);
     if (fresh.status !== 'pending' || !proposalIsCurrent(proposal,fresh) || (proposal.contextRevision || 0) !== proposalRevision(database,row.id)) throw Object.assign(new Error('این پرونده هم‌زمان تغییر کرده است؛ دوباره بررسی کن.'),{code:'AI_PROPOSAL_STALE',status:409});
-    const final = prepareReviewProposal(database,fresh,proposal,{resolve:true});
+    const initial=reviewedEvent(database,fresh);
+    const resources=prepareReviewResources(database,initial,proposal,{evidence:originalReviewTranscript(database,fresh),facts:prepared.context,messages:reviewConversation(database,row.id),apply:true});
+    if(resources.blockers.length) throw Object.assign(new Error(resources.blockers.join(' — ')),{code:'REVIEW_DETAILS_REQUIRED',status:409});
+    const resolvedEvent={...resources.event,reviewInventoryItems:resources.inventoryItems};
+    const final = prepareReviewProposal(database,fresh,proposal,{resolve:true,eventOverride:resolvedEvent});
     if (!final.canPost) throw Object.assign(new Error(final.postingBlockers.join(' — ')),{code:'REVIEW_DETAILS_REQUIRED',status:409});
-    const event = reviewedEvent(database,fresh);
+    const event = resolvedEvent;
     const cash = final.lines.find(l=>l.role==='cash');
     const counterpart = final.lines.find(l=>l.role!=='cash');
     const source = fresh.journal_source ? JSON.parse(fresh.journal_source) : null;
@@ -333,6 +339,7 @@ function acceptPreparedProposal(database,row,proposal,actor) {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }
     const item = postReviewedComposite(database,row.id,{lines:final.lines,reason:`تأیید حسابدار: ${proposal.summary}`,actor,timeZone:currentTimeZone(),accountantProposal:true,eventOverride:event});
+    applyReviewInventory(database,row.id,event,resources.inventoryItems,{actor,timeZone:currentTimeZone()});
     const cheque = final.lines.find(l=>['cheque-receivable','cheque-payable'].includes(l.role));
     if (cheque) attachReviewedCheque({eventId:row.id,event,line:cheque,journalEntryId:item.journalEntryId,against:final.lines.some(l=>['receivable','payable'].includes(l.role))?'receivable':'income'});
     database.prepare('UPDATE accounting_review_ai SET proposal=? WHERE id=?').run(JSON.stringify({...proposal,lines:final.lines,finalJournalEntryId:item.journalEntryId}),proposal.id);
