@@ -291,3 +291,74 @@ test('inventory approval rejects a model total differing from the fixed event am
   const bp=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(backdated.id),b);
   assert.equal(bp.canPost,false);assert.ok(bp.postingBlockers.some(q=>q.includes('ارزش‌گذاری')));
 }));
+
+test('question answers persist per event, bind real date fields, enter history and change the proposal revision',()=>run(async()=>{
+  const item=event();
+  const question={summary:'تکمیل خرید',questions:[{id:'inventory.quantity',text:'چند واحد تحویل شد؟'},{id:'cheque.due_at',text:'تاریخ سررسید چک چیست؟',field:'dueAt'}],lines:[]};
+  const first=await ai.proposeReview(database(),item.id,{fetcher:fake(question)});
+  assert.equal(first.questions.length,2);assert.equal(first.missingFacts.length,2);
+  let prompt='';
+  const fetcher=async(url,options)=>{prompt=JSON.parse(options.body).input[0].content[0].text;return fake({...question,questions:[question.questions[0]]})();};
+  const second=await ai.proposeReview(database(),item.id,{actor:owner.id,facts:{questionAnswers:{'cheque.due_at':{value:'2026-11-08'}}},fetcher});
+  assert.ok(second.contextRevision>first.contextRevision);
+  assert.equal(assistant.reviewContext(database(),item.id).facts.dueAt,'2026-11-08');
+  assert.match(prompt,/2026-11-08/);assert.match(prompt,/سؤال پاسخ‌داده‌شده را تکرار نکن/);
+  const history=db.reviewAssistantHistory(item.id);
+  assert.equal(history.context.questionAnswers['cheque.due_at'].value,'2026-11-08');
+  assert.ok(history.messages.some(m=>m.speaker==='accountant' && m.actor===owner.id && m.body.includes('سررسید')));
+  assert.throws(()=>db.reviewAiFeedback(item.id,first.id,{accepted:true}),{code:'AI_PROPOSAL_STALE'});
+  const snapshot=db.financialBackupSnapshot();assert.ok(snapshot.tables.accounting_review_context.some(c=>JSON.parse(c.facts).questionAnswers?.['cheque.due_at']));
+  const other=event();assert.equal(db.reviewAssistantHistory(other.id).context.questionAnswers,undefined);
+  // Editing an answer remains possible after its question disappeared from the next proposal.
+  const revised=await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'cheque.due_at':{value:'2026-11-09'}}},fetcher:fake(question)});
+  assert.equal(assistant.reviewContext(database(),item.id).facts.dueAt,'2026-11-09');
+  assert.ok(revised.contextRevision>second.contextRevision);
+}));
+
+test('repeated answered question is retained as a blocker, retryable explicitly and never authorizes posting',()=>run(async()=>{
+  const item=event();const q={...chequePlan,questions:[{id:'inventory.use',text:'مصرف شرکت است یا فروش؟'}]};
+  await ai.proposeReview(database(),item.id,{fetcher:fake(q)});
+  const answered=await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'inventory.use':{value:'مصرف شرکت'}}},fetcher:fake({...q,questions:[{id:'inventory.use',text:'برای مصرف است؟'}]})});
+  const p=db.reviewAssistantHistory(item.id).proposal;
+  assert.equal(p.questions[0].id,'inventory.use');assert.equal(p.context.questionAnswers['inventory.use'].value,'مصرف شرکت');
+  assert.equal(p.canPost,false);assert.ok(p.postingBlockers.length);
+  assert.throws(()=>db.reviewAiFeedback(item.id,answered.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+  let calls=0;
+  const next=await ai.proposeReview(database(),item.id,{fetcher:async()=>{calls++;return fake(chequePlan)();}});
+  assert.equal(calls,1);assert.equal(next.questions.length,0);
+  assert.equal(database().prepare('SELECT status FROM financial_events WHERE id=?').get(item.id).status,'pending');
+}));
+
+test('answers validate ownership, size, real dates and conflicting fields without partially saving facts',()=>run(async()=>{
+  const item=event();await ai.proposeReview(database(),item.id,{fetcher:fake({summary:'سررسید',questions:[{id:'cheque.due_at',text:'سررسید چه تاریخی است؟',field:'dueAt'}],lines:[]})});
+  const before=assistant.reviewContext(database(),item.id);
+  for(const facts of [
+    {counterpartyName:'نام نباید ذخیره شود',questionAnswers:{other:{value:'جواب جعلی'}}},
+    {questionAnswers:{'cheque.due_at':{value:'2026-02-31'}}},
+    {questionAnswers:{'cheque.due_at':{value:''}}},
+    {questionAnswers:{'cheque.due_at':{value:'x'.repeat(1001)}}},
+    {dueAt:'2026-11-10',questionAnswers:{'cheque.due_at':{value:'2026-11-11'}}},
+  ]) {assert.throws(()=>assistant.saveReviewFacts(database(),item.id,facts));assert.deepEqual(assistant.reviewContext(database(),item.id),before);}
+}));
+
+test('failed AI call preserves answers and retries do not duplicate accountant history',()=>run(async()=>{
+  const item=event();const q={summary:'مقدار',questions:[{id:'inventory.quantity',text:'چند عدد؟'}],lines:[]};
+  await ai.proposeReview(database(),item.id,{fetcher:fake(q)});
+  const options={actor:owner.id,facts:{questionAnswers:{'inventory.quantity':{value:'۲۰ عدد'}}}};
+  await assert.rejects(ai.proposeReview(database(),item.id,{...options,fetcher:async()=>{throw Error('network');}}),{code:'AI_UNAVAILABLE'});
+  assert.equal(db.reviewAssistantHistory(item.id).context.questionAnswers['inventory.quantity'].value,'۲۰ عدد');
+  const rev=assistant.reviewContext(database(),item.id).revision;
+  await ai.proposeReview(database(),item.id,{...options,fetcher:fake(q)});
+  assert.equal(assistant.reviewContext(database(),item.id).revision,rev);
+  assert.equal(assistant.reviewConversation(database(),item.id).filter(m=>m.speaker==='accountant').length,1);
+}));
+
+test('editing an ordinary field updates its saved answer so prompt never retains a contradictory date',()=>run(async()=>{
+  const item=event();const question={summary:'تاریخ چک',questions:[{id:'cheque.due_at',text:'سررسید چیست؟',field:'dueAt'}],lines:[]};
+  await ai.proposeReview(database(),item.id,{fetcher:fake(question)});
+  await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'cheque.due_at':{value:'2026-11-08'}}},fetcher:fake(chequePlan)});
+  const changed=assistant.saveReviewFacts(database(),item.id,{dueAt:'2026-11-12'});
+  assert.equal(changed.facts.questionAnswers['cheque.due_at'].value,'2026-11-12');
+  const cleared=assistant.saveReviewFacts(database(),item.id,{dueAt:''});
+  assert.equal(cleared.facts.dueAt,null);assert.equal(cleared.facts.questionAnswers['cheque.due_at'],undefined);
+}));
