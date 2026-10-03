@@ -121,6 +121,8 @@ test('اصلاح مبلغ از ۲۱ به ۱۲ میلیون یک مورد در ص
     assert.equal(ids.queuedForAccountant, 1);
     const queued = store.listReviewQueue(db(), { route: 'accountant-review' }).filter((item) => item.event.evidence === text);
     assert.equal(queued.length, before + 1);
+    assert.equal(queued[0].approvalBlocked, true);
+    assert.equal(queued[0].approvalNextStep, 'manual-review');
     assert.equal(queued[0].amount, 12_000_000, 'مبلغ درست فقط برای نمایش است؛ سند خودکار نمی‌خورد');
     assert.throws(() => database.approveEvent(queued[0].id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
   });
