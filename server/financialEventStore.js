@@ -546,10 +546,10 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
 }
 
 /** ثبتِ بررسی‌شدهٔ گفتهٔ چندمبلغی؛ حسابدار حساب‌ها و همهٔ مبالغ را صریح انتخاب می‌کند. */
-export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran' } = {}) {
+export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran', accountantProposal = false, eventOverride = null } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
-  if (!row || row.status !== 'pending' || row.route !== ROUTES.ACCOUNTANT_REVIEW || row.kind !== EVENT_KINDS.REVIEW_PLACEHOLDER || row.journal_source) {
+  if (!row || row.status !== 'pending' || row.route !== ROUTES.ACCOUNTANT_REVIEW || (!accountantProposal && (row.kind !== EVENT_KINDS.REVIEW_PLACEHOLDER || row.journal_source))) {
     throw storeError('فقط گفتهٔ چندمبلغیِ در انتظار را می‌توان از این مسیر ثبت کرد.', 'EVENT_NOT_REVIEWABLE', 409);
   }
   const explanation = String(reason || '').trim().slice(0, 500);
@@ -573,14 +573,16 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
     description: String(line.description || '').slice(0, 300),
     analyticId: line.analyticId || null, costCenterId: line.costCenterId || null,
   }));
-  const event = JSON.parse(row.payload);
+  const event = eventOverride || JSON.parse(row.payload);
+  const source = row.journal_source ? JSON.parse(row.journal_source) : null;
   const posted = postJournalEntry(database, {
-    sourceType: 'financial-event', sourceId: row.id, occurredAt: event.occurredAt,
+    sourceType: source?.type || 'financial-event', sourceId: source?.id || row.id, occurredAt: event.occurredAt,
     memo: `ثبت بررسی‌شده: ${explanation}`.slice(0, 500), lines: safeLines,
   }, { createdBy: actor, timeZone });
   database.prepare('UPDATE financial_events SET posting_plan=? WHERE id=?').run(JSON.stringify({
     kind: 'accountant-reviewed', lines: safeLines, memoHint: explanation,
   }), row.id);
+  if (eventOverride) database.prepare('UPDATE financial_events SET payload=?,occurred_at=?,due_at=? WHERE id=?').run(JSON.stringify(event),event.occurredAt,event.dueAt || null,row.id);
   markEventPosted(database, row.id, posted, safeLines, actor);
   writeAudit(database, row.id, 'accountant-reviewed', { reason: explanation, journalEntryId: posted.id }, actor);
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
@@ -592,7 +594,7 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
  * سند حذف نمی‌شود؛ سند معکوس می‌خورد و هر دو در تاریخچه می‌مانند. حذف، زنجیرهٔ
  * حسابرسی را پاک می‌کند و هیچ راهی برای بازسازی‌اش نمی‌ماند.
  */
-export function reverseFinancialEvent(database, eventId, { actor = null, reason = '', timeZone = 'Asia/Tehran' } = {}) {
+export function reverseFinancialEvent(database, eventId, { actor = null, reason = '', timeZone = 'Asia/Tehran', withinTransaction = false } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
@@ -603,7 +605,7 @@ export function reverseFinancialEvent(database, eventId, { actor = null, reason 
   // `null` برمی‌گرداند — رویداد «معکوس‌شده» علامت می‌خورد ولی سندش سر جایش
   // می‌ماند. بدترین نوع خطا: دفتر غلط است و هیچ نشانه‌ای ندارد.
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
-  database.exec('BEGIN IMMEDIATE');
+  if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
     const reversal = reverseJournalEntry(database, {
       sourceType: anchor?.type || 'financial-event', sourceId: anchor?.id || row.id,
@@ -615,8 +617,8 @@ export function reverseFinancialEvent(database, eventId, { actor = null, reason 
     if (!reversal) throw storeError('سند این رویداد پیدا نشد؛ برگشت انجام نشد.', 'EVENT_JOURNAL_MISSING', 409);
     database.prepare("UPDATE financial_events SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
     writeAudit(database, row.id, 'reversed', { reason: String(reason || '').slice(0, 300), reversalEntryId: reversal.id }, actor);
-    database.exec('COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
+    if (!withinTransaction) database.exec('COMMIT');
+  } catch (error) { if (!withinTransaction) database.exec('ROLLBACK'); throw error; }
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
 
