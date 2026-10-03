@@ -1,0 +1,135 @@
+import { randomUUID, createHash } from 'node:crypto';
+import { ensureFinancialEventSchema } from './financialEventStore.js';
+import { resolveEventRole, resolveEventAnalytic } from './roleResolver.js';
+
+const fail = (message, code = 'REVIEW_DETAILS_REQUIRED') => Object.assign(new Error(message), { code, status: 409 });
+export function ensureAssistantSchema(database) {
+  ensureFinancialEventSchema(database);
+  database.exec(`CREATE TABLE IF NOT EXISTS accounting_review_messages (
+    id TEXT PRIMARY KEY,event_id TEXT NOT NULL REFERENCES financial_events(id),speaker TEXT NOT NULL,
+    actor TEXT,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_review_messages_event ON accounting_review_messages(event_id);
+    CREATE TABLE IF NOT EXISTS accounting_review_context (
+    event_id TEXT PRIMARY KEY REFERENCES financial_events(id),facts TEXT NOT NULL DEFAULT '{}',revision INTEGER NOT NULL DEFAULT 0);`);
+}
+export function reviewConversation(database, eventId) {
+  ensureAssistantSchema(database);
+  return database.prepare('SELECT id,speaker,actor,body,created_at AS createdAt FROM accounting_review_messages WHERE event_id=? ORDER BY rowid').all(eventId);
+}
+export function reviewContext(database, eventId) {
+  ensureAssistantSchema(database);
+  const row = database.prepare('SELECT facts,revision FROM accounting_review_context WHERE event_id=?').get(eventId);
+  return { facts: row ? JSON.parse(row.facts) : {}, revision: row?.revision || 0 };
+}
+export function addReviewMessage(database, eventId, speaker, body, actor = null) {
+  ensureAssistantSchema(database);
+  database.prepare('INSERT INTO accounting_review_messages(id,event_id,speaker,actor,body) VALUES(?,?,?,?,?)').run(randomUUID(), eventId, speaker, actor, String(body).slice(0, 4000));
+}
+export function saveReviewFacts(database, eventId, facts = {}) {
+  if (!facts || typeof facts!=='object' || Array.isArray(facts)) throw fail('اطلاعات تکمیلی معتبر نیست.');
+  const old = reviewContext(database, eventId);
+  database.prepare('INSERT OR IGNORE INTO accounting_review_context(event_id) VALUES(?)').run(eventId);
+  const next = { ...old.facts };
+  for (const key of ['occurredAt', 'dueAt', 'counterpartyId', 'accountId']) {
+    if (!Object.hasOwn(facts, key)) continue;
+    const value = String(facts[key] || '').trim();
+    if (['occurredAt', 'dueAt'].includes(key) && value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0,10) !== value)) throw fail('تاریخ معتبر میلادی را از انتخابگر تاریخ تعیین کن.');
+    if (key === 'counterpartyId' && value && !database.prepare('SELECT id FROM contacts WHERE id=?').get(value)) throw fail('طرف حساب انتخاب‌شده معتبر نیست.');
+    if (key === 'accountId' && value && !database.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(value)) throw fail('حساب بانک یا صندوق معتبر نیست.');
+    next[key] = value || null;
+  }
+  if (JSON.stringify(next) !== JSON.stringify(old.facts)) database.prepare(`INSERT INTO accounting_review_context(event_id,facts,revision) VALUES(?,?,1)
+    ON CONFLICT(event_id) DO UPDATE SET facts=excluded.facts,revision=revision+1`).run(eventId, JSON.stringify(next));
+  return reviewContext(database, eventId);
+}
+export function reviewedEvent(database, row) {
+  const event = { ...JSON.parse(row.payload), ...reviewContext(database, row.id).facts };
+  if (event.counterpartyId) event.counterparty = database.prepare('SELECT name FROM contacts WHERE id=?').get(event.counterpartyId)?.name || '';
+  return event;
+}
+const words = (text) => new Set(String(text).replace(/[يى]/g,'ی').replace(/ك/g,'ک').replace(/[\d۰-۹٠-٩]+/g,' ').split(/[^\p{L}]+/u).filter(w => w.length > 2 && !['تومان','میلیون','امروز','مبلغ','هزار','پرداخت'].includes(w)));
+/** بازیابی تجربه، نه قانون یا اجازهٔ ثبت خودکار. مقدار و حساب‌های رویداد تازه مستقل کنترل می‌شوند. */
+export function relevantDna(database, row) {
+  const event = reviewedEvent(database, row), tokens = words(event.evidence || event.utterance || event.category);
+  const records = database.prepare(`SELECT a.id,a.event_id,a.state,a.proposal,a.feedback_reason,a.reviewed_by,a.reviewed_at,e.payload,e.status,e.journal_entry_id
+    FROM accounting_review_ai a JOIN financial_events e ON e.id=a.event_id
+    WHERE a.state IN ('accepted','rejected') AND a.event_id!=? ORDER BY a.reviewed_at DESC,a.rowid DESC LIMIT 200`).all(row.id);
+  const human = database.prepare(`SELECT e.*,a.actor,a.detail,a.created_at AS reviewedAt,a.stage FROM financial_events e JOIN financial_event_audit a ON a.event_id=e.id
+    WHERE e.id!=? AND a.stage IN ('approved','accountant-reviewed','rejected') AND e.status IN ('posted','rejected')
+    AND NOT EXISTS(SELECT 1 FROM accounting_review_ai p WHERE p.event_id=e.id AND p.state IN ('accepted','rejected'))
+    ORDER BY a.created_at DESC LIMIT 100`).all(row.id);
+  for (const r of human) {
+    const event=JSON.parse(r.payload),detail=JSON.parse(r.detail);
+    records.push({id:`event:${r.id}`,event_id:r.id,state:r.status==='posted'?'accepted':'rejected',proposal:JSON.stringify({summary:event.description || event.category || event.kind}),feedback_reason:detail.reason || 'تأیید مستقیم حسابدار',reviewed_by:r.actor,reviewed_at:r.reviewedAt,payload:r.payload,status:r.status,journal_entry_id:r.journal_entry_id});
+  }
+
+  return records.map(r => {
+    const source = JSON.parse(r.payload), other = words(source.evidence || source.utterance || source.category);
+    const common = [...tokens].filter(w => other.has(w)).length;
+    return { id:r.id,eventId:r.event_id,state:r.state,summary:JSON.parse(r.proposal).summary,reason:r.feedback_reason,actor:r.reviewed_by,date:r.reviewed_at,journalEntryId:r.journal_entry_id,
+      similarity: common / Math.max(1,new Set([...tokens,...other]).size), valid:r.state==='rejected' || r.status==='posted' };
+  }).filter(r => r.valid && r.similarity >= .25).sort((a,b)=>b.similarity-a.similarity).slice(0,5).map(({valid,...r})=>({...r,finalLines:r.journalEntryId ? database.prepare('SELECT a.code,a.name,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? ORDER BY l.rowid').all(r.journalEntryId) : []}));
+}
+export function proposalRevision(database, eventId) { return reviewContext(database,eventId).revision; }
+export function conversationFingerprint(database,eventId) {
+  return createHash('sha256').update(JSON.stringify([reviewContext(database,eventId),reviewConversation(database,eventId)])).digest('hex');
+}
+const partyRoles = new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue']);
+const roleNames = {cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
+const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
+const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
+/** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
+export function prepareReviewProposal(database, row, proposal, { resolve = false } = {}) {
+  const event = reviewedEvent(database,row);
+  const blockers = [...(proposal.missingFacts || [])];
+  const named = key => database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
+  const lines = proposal.lines.map(line => {
+    let key = line.key, role = line.role;
+    if (partyRoles.has(role)) {
+      if (!event.counterpartyId) blockers.push('طرف حساب را از فهرست اشخاص همین شرکت انتخاب کن.');
+      key = event.counterparty || key;
+    }
+    if (role === 'cash') {
+      key = event.accountId;
+      if (!key || !database.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(key)) blockers.push('بانک یا صندوق واقعی را انتخاب کن.');
+    }
+    if (['expense-category','income-category','prepaid-asset','fixed-asset','accumulated-depreciation'].includes(role) && !String(key || '').trim() && !line.accountId) blockers.push('نام سرفصل هر سطر را در گفت‌وگو مشخص کن.');
+    let account = line.accountId ? database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(line.accountId) : null;
+    if (line.accountId && (!account || !account.active)) blockers.push('سرفصل پیشنهادی حذف یا غیرفعال شده است.');
+    if (!account && !line.accountId) {
+      const source = sources[role] || role;
+      account = named([systemKeys[role] ? 'system' : source, systemKeys[role] || (partyRoles.has(role) ? event.counterpartyId : key)]);
+    }
+    if (account && !account.active) blockers.push('حساب پیشنهادی غیرفعال است.');
+    if (account && partyRoles.has(role) && (account.sourceKind !== (sources[role] || role) || account.sourceKey !== event.counterpartyId)) blockers.push('حساب طرف‌حساب باید به شخص انتخاب‌شده متصل باشد.');
+    if (account && account.sourceKind !== (systemKeys[role] ? 'system' : sources[role] || role) && role === 'cash') blockers.push('سطر نقدی باید به بانک یا صندوق عملیاتی متصل باشد.');
+    if (resolve && !blockers.length) {
+      const accountId = account?.id || resolveEventRole(database,role,key,event);
+      account = database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(accountId);
+    }
+    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
+  });
+  const cheque = lines.filter(l => ['cheque-payable','cheque-receivable'].includes(l.role));
+  if (cheque.length && (cheque.length !== 1 || !event.dueAt || !event.counterpartyId)) blockers.push('برای ثبت چک، یک سطر چک، طرف حساب و تاریخ سررسید مشخص لازم است.');
+  if (cheque.some(l => l.role==='cheque-payable' ? l.debit>0 : l.credit>0)) blockers.push('وصول، برگشت یا تسویهٔ چک را در دفتر چک و با ارجاع به چک قبلی انجام بده.');
+  const cash = lines.filter(l => l.role==='cash');
+  const other = lines.filter(l=>l.role!=='cash');
+  // گزارش عملیاتی فعلی فقط ورود/خروج ساده و سرمایه را می‌شناسد؛ ثبت پیچیده نباید فقط دفتر کل را تغییر دهد.
+  if (cash.length && (cash.length !== 1 || other.length !== 1 || !['expense-category','income-category','fixed-asset','owner-capital'].includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
+  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
+  if (anchor && anchor.type!=='transaction') blockers.push('منبع این رویداد مسیر تخصصی دارد؛ همان منبع را اصلاح کن.');
+  if (event.eventNature && event.eventNature!=='new') blockers.push('برای سند اصلاحی، سند قبلی و مسیر اصلاح باید مشخص شود.');
+  if ((proposal.contextRevision || 0) !== reviewContext(database,row.id).revision || proposal.sourceFingerprint !== createHash('sha256').update(`${row.payload}|${row.posting_plan}|${row.decision_id}`).digest('hex')) blockers.push('اطلاعات یا گفت‌وگو تغییر کرده؛ پیشنهاد را دوباره بررسی کن.');
+  if (cash.length===1 && other.length===1 && ['expense-category','fixed-asset','income-category','owner-capital'].includes(other[0].role)) {
+    const creditCash=cash[0].credit>0;
+    if (['expense-category','fixed-asset'].includes(other[0].role) ? !creditCash || other[0].debit<=0 : !['income-category','owner-capital'].includes(other[0].role) || creditCash || other[0].credit<=0) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+  }
+  const locked = row.posting_plan ? JSON.parse(row.posting_plan) : null;
+  const shape = list => (list || []).map(l=>[l.role,l.key || '',l.debit,l.credit].join(':')).sort().join('|');
+  const decided = row.decision_id ? database.prepare('SELECT decision_status FROM accounting_decisions WHERE id=?').get(row.decision_id)?.decision_status==='decided' : true;
+  const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
+  const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
+  return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
+    context:reviewContext(database,row.id).facts,conversation:reviewConversation(database,row.id) };
+}
