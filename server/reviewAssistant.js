@@ -1,3 +1,4 @@
+import { reviewQuestions } from '../shared/reviewQuestions.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { ensureFinancialEventSchema } from './financialEventStore.js';
 import { resolveEventAnalytic } from './roleResolver.js';
@@ -35,18 +36,48 @@ export function addReviewMessage(database, eventId, speaker, body, actor = null)
 export function saveReviewFacts(database, eventId, facts = {}) {
   if (!facts || typeof facts!=='object' || Array.isArray(facts)) throw fail('اطلاعات تکمیلی معتبر نیست.');
   const old = reviewContext(database, eventId);
-  database.prepare('INSERT OR IGNORE INTO accounting_review_context(event_id) VALUES(?)').run(eventId);
   const next = { ...old.facts };
+  const supplied={...facts};
+  if (Object.hasOwn(facts,'questionAnswers')) {
+    const submitted=facts.questionAnswers;
+    if(!submitted || typeof submitted!=='object' || Array.isArray(submitted) || Object.keys(submitted).length>40) throw fail('پاسخ سؤال‌ها معتبر نیست.');
+    const latest=database.prepare('SELECT proposal FROM accounting_review_ai WHERE event_id=? ORDER BY rowid DESC LIMIT 1').get(eventId);
+    const allowed=new Map(reviewQuestions(latest?JSON.parse(latest.proposal):{}).map(q=>[q.id,q]));
+    const answers={...(old.facts.questionAnswers || {})};
+    for(const [id,answer] of Object.entries(submitted)) {
+      if(!allowed.has(id) && !Object.hasOwn(answers,id)) throw fail('این سؤال مربوط به پیشنهاد فعلی این پرونده نیست.');
+      if(!answer || typeof answer.value!=='string' || !answer.value.trim() || answer.value.trim().length>1000) throw fail('پاسخ هر سؤال باید بین ۱ تا ۱۰۰۰ نویسه باشد.');
+      const previous=answers[id];
+      const value=answer.value.trim();
+      const question=allowed.get(id);
+      const field=previous?.field || question?.field;
+      if(field && previous?.value!==value) {
+        if(Object.hasOwn(supplied,field) && String(supplied[field] || '').trim()!==value) throw fail('پاسخ سؤال و فیلد انتخاب‌شده یکسان نیستند.');
+        supplied[field]=value;
+      }
+      answers[id]=previous?.value===value ? previous : {question:previous?.question || question?.text,value,...(field?{field}:{})};
+    }
+    if(Object.keys(answers).length>40) throw fail('تعداد پاسخ‌های این پرونده بیش از حد مجاز است.');
+    next.questionAnswers=answers;
+  }
   for (const key of ['occurredAt', 'dueAt', 'counterpartyId', 'counterpartyName', 'accountId']) {
-    if (!Object.hasOwn(facts, key)) continue;
-    const value = String(facts[key] || '').trim();
+    if (!Object.hasOwn(supplied, key)) continue;
+    const value = String(supplied[key] || '').trim();
     if(key==='counterpartyName' && value && (value.length<2 || value.length>100)) throw fail('نام واقعی طرف‌حساب را کامل و کوتاه‌تر از ۱۰۰ نویسه بنویس.');
     if (key==='occurredAt' && !value) throw fail('تاریخ رویداد را خالی نگذار.');
     if (['occurredAt', 'dueAt'].includes(key) && value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0,10) !== value)) throw fail('تاریخ معتبر میلادی را از انتخابگر تاریخ تعیین کن.');
     if (key === 'counterpartyId' && value && !database.prepare('SELECT id FROM contacts WHERE id=?').get(value)) throw fail('طرف حساب انتخاب‌شده معتبر نیست.');
     if (key === 'accountId' && value && !database.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(value)) throw fail('حساب بانک یا صندوق معتبر نیست.');
     next[key] = value || null;
+    // Editing the ordinary date/person/bank controls also updates the saved answer.
+    for(const [id,answer] of Object.entries(next.questionAnswers || {})) {
+      if(answer.field!==key || answer.value===value) continue;
+      next.questionAnswers={...next.questionAnswers};
+      if(value) next.questionAnswers[id]={...answer,value};
+      else delete next.questionAnswers[id];
+    }
   }
+  database.prepare('INSERT OR IGNORE INTO accounting_review_context(event_id) VALUES(?)').run(eventId);
   if (JSON.stringify(next) !== JSON.stringify(old.facts)) database.prepare(`INSERT INTO accounting_review_context(event_id,facts,revision) VALUES(?,?,1)
     ON CONFLICT(event_id) DO UPDATE SET facts=excluded.facts,revision=revision+1`).run(eventId, JSON.stringify(next));
   return reviewContext(database, eventId);
@@ -187,6 +218,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,
+    newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions(proposal),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }
