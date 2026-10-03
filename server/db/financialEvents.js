@@ -61,6 +61,11 @@ export function reviewAssistantHistory(eventId) {
   if (!database.prepare('SELECT id FROM financial_events WHERE id=?').get(eventId)) throw Object.assign(new Error('پرونده پیدا نشد.'),{status:404});
   return { messages:reviewConversation(database,eventId).map(m=>({...m,actorName:actorName(m.actor)})),proposal:preparedProposal(database,eventId) };
 }
+export function reviewAssistantForJournal(journalEntryId) {
+  const database=activeWorkspaceDatabase();
+  const row=database.prepare(`SELECT id FROM financial_events WHERE journal_entry_id=? OR journal_entry_id=(SELECT reverses_entry_id FROM journal_entries WHERE id=?) LIMIT 1`).get(journalEntryId,journalEntryId);
+  return row ? {...reviewAssistantHistory(row.id),eventId:row.id} : {eventId:null,messages:[],proposal:null};
+}
 export async function analyzeReviewEvent(eventId, {message = '',facts = {}} = {}) {
   const database = activeWorkspaceDatabase();
   const proposal = await proposeReview(database,eventId,{message,facts,actor:currentWorkspace()?.userId || null});
