@@ -33,6 +33,7 @@ export function saveReviewFacts(database, eventId, facts = {}) {
   for (const key of ['occurredAt', 'dueAt', 'counterpartyId', 'accountId']) {
     if (!Object.hasOwn(facts, key)) continue;
     const value = String(facts[key] || '').trim();
+    if (key==='occurredAt' && !value) throw fail('تاریخ رویداد را خالی نگذار.');
     if (['occurredAt', 'dueAt'].includes(key) && value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0,10) !== value)) throw fail('تاریخ معتبر میلادی را از انتخابگر تاریخ تعیین کن.');
     if (key === 'counterpartyId' && value && !database.prepare('SELECT id FROM contacts WHERE id=?').get(value)) throw fail('طرف حساب انتخاب‌شده معتبر نیست.');
     if (key === 'accountId' && value && !database.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(value)) throw fail('حساب بانک یا صندوق معتبر نیست.');
@@ -82,6 +83,7 @@ const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'de
 export function prepareReviewProposal(database, row, proposal, { resolve = false } = {}) {
   const event = reviewedEvent(database,row);
   const blockers = [...(proposal.missingFacts || [])];
+  if (!event.occurredAt || !Number.isFinite(Date.parse(event.occurredAt))) blockers.push('تاریخ واقعی رویداد لازم است.');
   const named = key => database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
   const lines = proposal.lines.map(line => {
     let key = line.key, role = line.role;
@@ -100,6 +102,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
       const source = sources[role] || role;
       account = named([systemKeys[role] ? 'system' : source, systemKeys[role] || (partyRoles.has(role) ? event.counterpartyId : key)]);
     }
+    if (account && role==='cash' && account.sourceKey!==event.accountId) blockers.push('بانک سطر پیشنهادی با بانک انتخاب‌شده یکسان نیست.');
     if (account && !account.active) blockers.push('حساب پیشنهادی غیرفعال است.');
     if (account && partyRoles.has(role) && (account.sourceKind !== (sources[role] || role) || account.sourceKey !== event.counterpartyId)) blockers.push('حساب طرف‌حساب باید به شخص انتخاب‌شده متصل باشد.');
     if (account && account.sourceKind !== (systemKeys[role] ? 'system' : sources[role] || role) && role === 'cash') blockers.push('سطر نقدی باید به بانک یا صندوق عملیاتی متصل باشد.');
@@ -118,6 +121,10 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !['expense-category','income-category','fixed-asset','owner-capital'].includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
   if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
+  if (anchor?.type==='transaction') {
+    const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
+    if (!transaction || transaction.status==='deleted' || transaction.amount!==row.amount) blockers.push('تراکنش مبنا تغییر کرده؛ پرونده را دوباره بررسی کن.');
+  }
   if (anchor && anchor.type!=='transaction') blockers.push('منبع این رویداد مسیر تخصصی دارد؛ همان منبع را اصلاح کن.');
   if (event.eventNature && event.eventNature!=='new') blockers.push('برای سند اصلاحی، سند قبلی و مسیر اصلاح باید مشخص شود.');
   if ((proposal.contextRevision || 0) !== reviewContext(database,row.id).revision || proposal.sourceFingerprint !== createHash('sha256').update(`${row.payload}|${row.posting_plan}|${row.decision_id}`).digest('hex')) blockers.push('اطلاعات یا گفت‌وگو تغییر کرده؛ پیشنهاد را دوباره بررسی کن.');
