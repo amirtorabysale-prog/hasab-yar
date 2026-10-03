@@ -323,7 +323,8 @@ export const api = {
   handOverPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/handover`, { method: 'POST', body: JSON.stringify({}) }),
   // صف بررسی حسابدار: رویدادهایی که موتور اطمینان ثبتشان را متوقف کرده است.
   reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
-  reviewAiProposal: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/ai-proposal`, { method: 'POST', body: '{}' }),
+  reviewAiConversation: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/ai-conversation`),
+  reviewAiProposal: (id, payload = {}) => request(`/api/financial-events/${encodeURIComponent(id)}/ai-proposal`, { method: 'POST', body: JSON.stringify(payload) }),
   reviewAiFeedback: (id, proposalId, accepted, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/ai-feedback`, { method: 'POST', body: JSON.stringify({ proposalId, accepted, reason }) }),
   reviewedJournal: (id, payload) => request(`/api/financial-events/${encodeURIComponent(id)}/reviewed-journal`, { method: 'POST', body: JSON.stringify(payload) }),
   eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),
