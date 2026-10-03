@@ -184,7 +184,7 @@ export function counterpartyLedgerAccount(database, contactId, name, documentTyp
   );
 }
 
-function inventoryLedgerAccount(database, product) {
+export function inventoryLedgerAccount(database, product) {
   return linkedLedgerAccount(database, 'inventory-product', product.id, `موجودی کالا — ${String(product.name).slice(0, 100)}`, 'asset');
 }
 
