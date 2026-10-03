@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
 import { ROUTE_LABELS } from '../../../shared/confidenceEngine.js';
 import { api } from '../../lib/api.js';
@@ -138,7 +138,7 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
   </div>;
 }
 
-function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify }) {
+function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, navigate }) {
   const [open, setOpen] = useState(false);
   const [trail, setTrail] = useState(null);
   const [decision, setDecision] = useState(null);
@@ -207,12 +207,19 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
         {toPersianDigits(confidence.percent ?? 0)}٪
       </span>
       <div className="flex gap-1.5">
-        <button disabled={busy} onClick={() => onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40"><Check size={15} />تأیید و ثبت سند</button>
+        <button disabled={busy} onClick={() => item.approvalBlocked ? setOpen(true) : onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40"><Check size={15} />{item.approvalBlocked ? 'تکمیل و اصلاح سند' : 'تأیید و ثبت سند'}</button>
         <button disabled={busy} onClick={() => onReject(item)} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense disabled:opacity-40">رد</button>
         <button onClick={toggle} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">{open ? 'بستن' : 'چرا؟'}</button>
       </div>
     </div>
 
+    {item.approvalBlocked && <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-xs leading-6">
+      <p>{item.approvalNextStep === 'answer-question' ? 'ابتدا به سؤال پایین کارت پاسخ بده؛ بعد از تکمیل، امکان ثبت دوباره بررسی می‌شود.' : 'سطرهای این سند هنوز قطعی نیست. پیشنهاد AI را با «تحلیل کن» بگیر و حساب‌ها را بررسی کن.'}</p>
+      {open && item.approvalNextStep === 'manual-review' && item.event?.kind !== 'review-placeholder' && <>
+        <p>برای اصلاح ثبت به بخش حسابداری برو. ثبت دستی به‌تنهایی این مورد صف را نمی‌بندد؛ پس از تطبیق و ثبت سند، همین مورد را با ذکر شماره سند و دلیل رد کن تا دوباره ثبت نشود.</p>
+        <button onClick={() => navigate?.('accounting')} className="tap mt-2 rounded border border-accent px-3 font-bold text-accent">رفتن به حسابداری و ثبت دستی</button>
+      </>}
+    </div>}
     {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
     {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-[11px] leading-5 text-muted">• {confidence.reasons[0]}</p>}
 
@@ -228,7 +235,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify })
         {ai.missingFacts?.length > 0 && <p className="mt-1 text-expense">اطلاعات لازم: {ai.missingFacts.join('، ')}</p>}
         <p className="mt-1 text-muted">این پیشنهاد سند نیست؛ فقط در صورت تطبیق با نقشهٔ قطعی سیستم با تأیید ثبت می‌شود.</p>
         <div className="mt-2 flex gap-2">
-          <button disabled={busy || aiBusy || ai.missingFacts?.length > 0 || item.event?.kind === 'review-placeholder'} onClick={() => feedback(true)} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">تأیید پیشنهاد و ثبت</button>
+          <button disabled={busy || aiBusy || ai.missingFacts?.length > 0 || item.approvalBlocked || item.event?.kind === 'review-placeholder'} onClick={() => feedback(true)} className="tap rounded border border-accent px-2 py-1 text-accent disabled:opacity-40">تأیید پیشنهاد و ثبت</button>
           <button disabled={busy || aiBusy} onClick={() => feedback(false)} className="tap rounded border border-expense px-2 py-1 text-expense disabled:opacity-40">رد پیشنهاد با دلیل</button>
         </div>
       </>}
@@ -405,11 +412,9 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
   </article>;
 }
 
-export function ReviewQueuePage({ notify, access }) {
+export function ReviewQueuePage({ notify, access, navigate }) {
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
-  const aiAttempted = useRef(new Set());
-  const queueKeys = items?.map((item) => item.id).join('|') || '';
 
   const load = useCallback(async () => {
     try { setItems((await api.reviewQueue()).items); }
@@ -417,30 +422,6 @@ export function ReviewQueuePage({ notify, access }) {
   }, [notify]);
 
   useEffect(() => { load(); }, [load]);
-
-  // صف در پس‌زمینه و با دو کارگر تحلیل می‌شود؛ باز شدن صفحه منتظر سرویس AI نمی‌ماند.
-  useEffect(() => {
-    if (!items) return undefined;
-    const pending = items.filter((item) => !item.intake && item.route === 'accountant-review' && !item.aiProposal && !aiAttempted.current.has(item.id));
-    if (!pending.length) return undefined;
-    pending.forEach((item) => aiAttempted.current.add(item.id));
-    let cancelled = false;
-    let cursor = 0;
-    const worker = async () => {
-      while (!cancelled && cursor < pending.length) {
-        const item = pending[cursor++];
-        try {
-          const { proposal } = await api.reviewAiProposal(item.id);
-          if (!cancelled) setItems((current) => current?.map((entry) => entry.id === item.id ? { ...entry, aiProposal: proposal } : entry));
-        } catch (error) {
-          // پیکربندی‌نشدن سرویس یا قطعی آن نباید درخواست‌های بقیهٔ صف را تکرار کند.
-          if (['AI_NOT_CONFIGURED', 'AI_UNAVAILABLE'].includes(error.code)) { cancelled = true; break; }
-        }
-      }
-    };
-    void Promise.all([worker(), worker()]);
-    return () => { cancelled = true; };
-  }, [queueKeys]);
 
   const approve = async (item) => {
     setBusy(item.id);
@@ -491,7 +472,7 @@ export function ReviewQueuePage({ notify, access }) {
 
     {items?.length > 0 && <div className="mt-1 divide-y divide-line">
       {items.map((item) => item.intake ? <UnquantifiedReviewCard key={item.id} item={item} notify={notify} onSaved={load} /> : <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
-        onApprove={approve} onReject={reject} onAnswered={load} notify={notify} />)}
+        onApprove={approve} onReject={reject} onAnswered={load} notify={notify} navigate={navigate} />)}
     </div>}
   </section>;
 }
