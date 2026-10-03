@@ -1,6 +1,6 @@
 import { prepareReviewResources, applyReviewInventory, reverseReviewInventory } from '../reviewResources.js';
 import { randomUUID } from 'node:crypto';
-import { prepareReviewProposal, reviewConversation, reviewedEvent, originalReviewTranscript, relevantDna, proposalRevision, addReviewMessage } from '../reviewAssistant.js';
+import { prepareReviewProposal, reviewConversation, reviewedEvent, originalReviewTranscript, relevantDna, proposalRevision, addReviewMessage, reviewContext } from '../reviewAssistant.js';
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
@@ -62,7 +62,7 @@ export function reviewAssistantHistory(eventId) {
   if (!database.prepare('SELECT id FROM financial_events WHERE id=?').get(eventId)) throw Object.assign(new Error('پرونده پیدا نشد.'),{status:404});
   const row=database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
   const known=reviewedEvent(database,row);
-  return { messages:reviewConversation(database,eventId).map(m=>({...m,actorName:actorName(m.actor)})),proposal:preparedProposal(database,eventId),context:{occurredAt:known.occurredAt?.slice(0,10),dueAt:known.dueAt?.slice(0,10),counterpartyId:known.counterpartyId,accountId:known.accountId} };
+  return { messages:reviewConversation(database,eventId).map(m=>({...m,actorName:actorName(m.actor)})),proposal:preparedProposal(database,eventId),context:{...reviewContext(database,eventId).facts,occurredAt:known.occurredAt?.slice(0,10),dueAt:known.dueAt?.slice(0,10),counterpartyId:known.counterpartyId,accountId:known.accountId} };
 }
 export function reviewAssistantForJournal(journalEntryId) {
   const database=activeWorkspaceDatabase();
