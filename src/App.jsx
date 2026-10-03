@@ -1037,7 +1037,7 @@ export default function App() {
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={ledgerTab} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
-          {screen === 'review' && <ReviewQueuePage notify={notify} access={access} />}
+          {screen === 'review' && <ReviewQueuePage notify={notify} access={access} navigate={navigate} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} />}

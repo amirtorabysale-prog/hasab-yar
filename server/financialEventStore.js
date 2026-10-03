@@ -632,6 +632,12 @@ export function rejectFinancialEvent(database, eventId, { actor = null, reason =
 }
 
 function describeStored(database, row) {
+  const decision = decisionForEvent(database, row.id);
+  const held = row.route === ROUTES.ACCOUNTANT_REVIEW && JSON.parse(row.confidence || '{}').guardBlocked === true;
+  const undecided = decision && decision.decisionStatus !== DECISION_STATUS.DECIDED;
+  const guardPlan = !held && isGuardPlan(row.posting_plan ? JSON.parse(row.posting_plan) : null);
+  const approvalBlocked = Boolean(held || (undecided && !guardPlan));
+
   return {
     id: row.id,
     sourceEventId: row.source_event_id,
@@ -642,6 +648,8 @@ function describeStored(database, row) {
     route: row.route,
     status: row.status,
     journalEntryId: row.journal_entry_id,
+    approvalBlocked,
+    approvalNextStep: approvalBlocked ? (decision?.decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT ? 'answer-question' : 'manual-review') : 'approve',
     decisionId: row.decision_id || null,
     event: JSON.parse(row.payload),
     confidence: JSON.parse(row.confidence),
