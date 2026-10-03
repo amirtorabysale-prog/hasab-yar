@@ -123,6 +123,7 @@ test('concurrent chat change rejects a slow model answer and keeps prior proposa
   assert.equal(prepared.canPost,false);
   assert.throws(()=>db.reviewAiFeedback(item.id,first.id,{accepted:true}),{code:'AI_PROPOSAL_STALE'});
   assert.throws(()=>assistant.saveReviewFacts(database(),item.id,{occurredAt:'2026-99-30'}),{code:'REVIEW_DETAILS_REQUIRED'});
+  assert.throws(()=>assistant.saveReviewFacts(database(),item.id,{occurredAt:''}),{code:'REVIEW_DETAILS_REQUIRED'});
 }));
 
 test('a rejected event without AI still teaches company DNA with accountant reason',()=>run(()=>{
