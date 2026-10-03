@@ -132,3 +132,12 @@ test('a rejected event without AI still teaches company DNA with accountant reas
   const next=event('پرداخت بیمه مسئولیت قبل از شروع پوشش',7000000);
   assert.ok(assistant.relevantDna(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(next.id)).some(d=>d.eventId===item.id && d.reason.includes('تکراری')));
 }));
+
+test('posted and reversed documents expose the same persistent accountant conversation',()=>run(()=>{
+  const row=database().prepare("SELECT id,journal_entry_id FROM financial_events WHERE status='reversed' AND id IN(SELECT event_id FROM accounting_review_ai) LIMIT 1").get();
+  const original=db.reviewAssistantForJournal(row.journal_entry_id);
+  assert.equal(original.eventId,row.id);assert.ok(original.messages.some(m=>m.speaker==='accepted'));
+  assert.ok(original.messages.find(m=>m.speaker==='accepted').actorName);
+  const reversal=database().prepare('SELECT id FROM journal_entries WHERE reverses_entry_id=?').get(row.journal_entry_id);
+  assert.equal(db.reviewAssistantForJournal(reversal.id).eventId,row.id);
+}));
