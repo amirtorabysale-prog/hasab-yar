@@ -367,8 +367,8 @@ export function recordFinancialEvent(database, event, {
     storeSchedule(database, id, accountingDecision, event);
 
     writeAudit(database, id, 'captured', {
-      rawInput: String(rawInput || '').slice(0, 1000),
-      transcript: String(transcript || event.evidence || '').slice(0, 1000),
+      rawInput: String(rawInput || '').slice(0, 10000),
+      transcript: String(transcript || event.utterance || event.evidence || '').slice(0, 10000),
       event,
       confidence: routing,
       rule: plan.kind,
