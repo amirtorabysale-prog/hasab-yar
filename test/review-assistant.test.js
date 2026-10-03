@@ -209,3 +209,85 @@ test('queue exposes the original captured voice text including line breaks and t
   database().prepare('UPDATE financial_events SET payload=? WHERE id=?').run(JSON.stringify(payload),item.id);
   assert.equal(db.reviewQueue({limit:200}).items.find(i=>i.id===item.id).originalTranscript,transcript);
 }));
+
+const inventoryPlan={summary:'خرید انباری با چک',explanation:'کالا تحویل انبار شده؛ وجه نقد جابه‌جا نشده',counterpartyName:'شرکت سپهر فیلتر',missingFacts:[],inventoryItems:[{name:'فیلتر روغن تست',unit:'عدد',quantity:20,total:40000000}],lines:[{role:'inventory-asset',key:'فیلتر روغن تست',debit:40000000,credit:0},{role:'cheque-payable',debit:0,credit:40000000}]};
+const inventoryText='۲۰ عدد فیلتر روغن تست برای انبار از شرکت سپهر فیلتر به مبلغ چهل میلیون تومان خریدیم و چک سررسید پانزدهم آبان ۱۴۰۵ دادیم';
+
+test('one approval creates missing party, product, inventory ledger, real receipt and cheque with one balanced journal',()=>run(async()=>{
+  const item=event(inventoryText),cash=db.listAccounts().find(a=>a.id==='cash').balance;
+  const beforeContacts=database().prepare('SELECT count(*) n FROM contacts').get().n;
+  const beforeProducts=database().prepare('SELECT count(*) n FROM products').get().n;
+  const p=await ai.proposeReview(database(),item.id,{fetcher:fake(inventoryPlan)});
+  const prepared=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(prepared.canPost,true);assert.equal(prepared.newCounterparty.name,'شرکت سپهر فیلتر');assert.equal(prepared.inventoryItems[0].newProduct,true);
+  assert.equal(database().prepare('SELECT count(*) n FROM contacts').get().n,beforeContacts);assert.equal(database().prepare('SELECT count(*) n FROM products').get().n,beforeProducts);
+  const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+  const product=database().prepare('SELECT * FROM products WHERE name=?').get('فیلتر روغن تست');assert.equal(product.stock,20);assert.equal(product.inventory_value,40000000);assert.equal(product.average_cost,2000000);
+  assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,cash);
+  const receipt=database().prepare("SELECT * FROM stock_movements WHERE source_type='accountant-review' AND source_id=?").get(item.id);assert.equal(receipt.value_delta,40000000);
+  const cheque=db.listCheques().find(c=>c.id===`review:${item.id}`);assert.equal(cheque.journalEntryId,posted.journalEntryId);assert.ok(cheque.contactId);
+  const lines=database().prepare('SELECT a.source_kind,a.source_key,l.debit,l.credit,l.analytic_id FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(posted.journalEntryId);
+  assert.ok(lines.some(l=>l.source_kind==='inventory-product' && l.source_key===product.id && l.debit===40000000));assert.ok(lines.find(l=>l.credit).analytic_id);
+  assert.equal(database().prepare("SELECT count(*) n FROM journal_entries WHERE source_id=?").get(item.id).n,1);
+  assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'EVENT_NOT_REVIEWABLE'});
+  db.reverseEvent(item.id,'برگشت کامل خرید آزمایشی');assert.equal(database().prepare('SELECT stock,inventory_value FROM products WHERE id=?').get(product.id).stock,0);
+  assert.equal(database().prepare('SELECT inventory_value FROM products WHERE id=?').get(product.id).inventory_value,0);assert.equal(database().prepare('SELECT status FROM cheques WHERE id=?').get(cheque.id).status,'cancelled');
+}));
+
+test('inventory purchase asks for actual quantity and unit; never inserts a fictitious unit',()=>run(async()=>{
+  const item=event(inventoryText);
+  const p=await ai.proposeReview(database(),item.id,{fetcher:fake({...inventoryPlan,inventoryItems:[{name:'فیلتر روغن تست',total:40000000}]})});
+  const prepared=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(prepared.canPost,false);assert.ok(prepared.postingBlockers.some(b=>b.includes('مقدار')));
+  assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+}));
+
+test('closed period rolls back new contact, product, accounts, journal, cheque and stock receipt together',()=>run(async()=>{
+  const text='۲۰ عدد فیلتر ویژه تازه برای انبار از شرکت خرید اتمیک به مبلغ چهل میلیون تومان خریدیم';
+  const item=event(text);
+  const plan={...inventoryPlan,counterpartyName:'شرکت خرید اتمیک',inventoryItems:[{name:'فیلتر ویژه تازه',unit:'عدد',quantity:20,total:40000000}],lines:[{...inventoryPlan.lines[0],key:'فیلتر ویژه تازه'},inventoryPlan.lines[1]]};
+  const p=await ai.proposeReview(database(),item.id,{facts:{dueAt:'2026-11-06'},fetcher:fake(plan)});
+  const period=(await import('../server/accounting.js')).periodForDate('2026-10-03','Asia/Tehran');
+  database().prepare("INSERT INTO accounting_periods(period,status) VALUES(?,'locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run(period);
+  const counts=()=>['contacts','products','ledger_accounts','journal_entries','stock_movements','cheques'].map(t=>database().prepare(`SELECT count(*) n FROM ${t}`).get().n);
+  const before=counts();assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'ACCOUNTING_PERIOD_LOCKED'});assert.deepEqual(counts(),before);assert.equal(ai.latestReviewProposal(database(),item.id).state,'proposed');
+  database().prepare("UPDATE accounting_periods SET status='open' WHERE period=?").run(period);
+}));
+
+test('similar party names require identity resolution instead of merging silently, and fake model names cannot be created',()=>run(async()=>{
+  db.saveContact({name:'شرکت تشابه کنترل'});
+  const item=event('مواد مصرفی از تشابه کنترل خریدم با چک');
+  const p=await ai.proposeReview(database(),item.id,{facts:{dueAt:'2026-11-06'},fetcher:fake({...chequePlan,counterpartyName:'تشابه کنترل'})});
+  const preview=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);assert.equal(preview.canPost,false);assert.ok(preview.postingBlockers.some(b=>b.includes('شبیه')));
+  const other=event('مواد مصرفی برای دفتر با چک خریدیم');
+  const fakeName=await ai.proposeReview(database(),other.id,{facts:{dueAt:'2026-11-06'},fetcher:fake({...chequePlan,counterpartyName:'شرکت خیالی ناشناس'})});
+  assert.equal(assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(other.id),fakeName).canPost,false);
+}));
+
+test('purchase reversal is blocked after later inventory use and leaves stock, cheque and journal unchanged',()=>run(async()=>{
+  const item=event(inventoryText);
+  const p=await ai.proposeReview(database(),item.id,{fetcher:fake(inventoryPlan)});
+  const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+  const product=database().prepare('SELECT id FROM products WHERE name=?').get('فیلتر روغن تست');
+  const {recordInventoryMovement}=await import('../server/inventory.js');
+  recordInventoryMovement(database(),product.id,{quantity:-2,movementType:'adjustment',sourceType:'manual',sourceId:crypto.randomUUID(),occurredAt:'2026-10-03'},{journal:false});
+  const before=database().prepare('SELECT stock,inventory_value FROM products WHERE id=?').get(product.id);
+  assert.throws(()=>db.reverseEvent(item.id,'برگشت خرید پس از مصرف'),{code:'REVIEW_DETAILS_REQUIRED'});
+  assert.deepEqual(database().prepare('SELECT stock,inventory_value FROM products WHERE id=?').get(product.id),before);
+  assert.equal(database().prepare('SELECT status FROM financial_events WHERE id=?').get(item.id).status,'posted');
+  assert.equal(database().prepare('SELECT status FROM cheques WHERE id=?').get(`review:${item.id}`).status,'open');
+  assert.equal(database().prepare('SELECT COUNT(*) n FROM journal_entries WHERE reverses_entry_id=?').get(posted.journalEntryId).n,0);
+}));
+
+test('inventory approval rejects a model total differing from the fixed event amount and backdated receipts needing valuation',()=>run(async()=>{
+  const item=event(inventoryText);
+  const doubled={...inventoryPlan,inventoryItems:[{...inventoryPlan.inventoryItems[0],total:80000000}],lines:[{...inventoryPlan.lines[0],debit:80000000},{...inventoryPlan.lines[1],credit:80000000}]};
+  const p=await ai.proposeReview(database(),item.id,{fetcher:fake(doubled)});
+  const preview=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(preview.canPost,false);assert.ok(preview.postingBlockers.some(b=>b.includes('مبلغ قطعی')));
+  const backdated=store.recordFinancialEvent(database(),{kind:'cash-expense',amount:40000000,occurredAt:'2026-10-02',evidence:inventoryText,eventNature:'new'},
+    {sourceEventId:crypto.randomUUID(),decision:{route:'accountant-review',guardBlocked:true,reasons:['بررسی لازم است']}});
+  const b=await ai.proposeReview(database(),backdated.id,{facts:{dueAt:'2026-11-06'},fetcher:fake(inventoryPlan)});
+  const bp=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(backdated.id),b);
+  assert.equal(bp.canPost,false);assert.ok(bp.postingBlockers.some(q=>q.includes('ارزش‌گذاری')));
+}));
