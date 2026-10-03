@@ -1,10 +1,11 @@
+import { inventoryLedgerAccount } from './accounting.js';
 import { createHash } from 'node:crypto';
 import { listChartAccounts, mapLedgerAccountToChart, suggestChartAccount } from './chartOfAccounts.js';
 import { resolveEventRole } from './roleResolver.js';
 import { normalizePersian } from '../shared/normalize.js';
 
 export const REVIEW_ACCOUNT_TYPES = Object.freeze({
-  cash:'asset',receivable:'asset',payable:'liability','cheque-receivable':'asset','cheque-payable':'liability',
+  'inventory-asset':'asset',cash:'asset',receivable:'asset',payable:'liability','cheque-receivable':'asset','cheque-payable':'liability',
   'expense-category':'expense','income-category':'income','prepaid-asset':'asset','fixed-asset':'asset',
   'owner-capital':'equity','customer-advance':'liability','deferred-revenue':'liability',
   'accumulated-depreciation':'asset','depreciation-expense':'expense','vat-input':'asset','vat-output':'liability',
@@ -19,6 +20,19 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const blockers=[], role=line.role, key=String(line.key || '').trim();
   const chart=listChartAccounts(database);
   let account=line.accountId ? database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE id=? AND active=1').get(line.accountId) : null;
+  if(role==='inventory-asset') {
+    const item=(event.reviewInventoryItems || []).find(i=>normalize(i.name)===normalize(key));
+    if(item?.productId) {
+      const linked=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE source_kind='inventory-product' AND source_key=? AND active=1").get(item.productId);
+      if(account && (account.source_kind!=='inventory-product' || account.source_key!==item.productId)) blockers.push('حساب موجودی باید به همان کالای ورود انبار متصل باشد.');
+      account=account || linked;
+    }
+    if(resolve && item?.productId && !account) {const id=inventoryLedgerAccount(database,{id:item.productId,name:item.name});account=database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE id=?').get(id);}
+    if(line.chartAccountId) {const selected=chart.find(c=>c.id===line.chartAccountId);if(!selected || !selected.active || !selected.postable || selected.type!=='asset' || selected.normalSide!=='debit' || selected.role!=='inventory') blockers.push('معین موجودی پیشنهادی باید معین فعال موجودی کالا باشد.');else if(resolve && account) mapLedgerAccountToChart(database,account.id,selected.id);}
+    if(account && (!account.active || !typed(account,role))) blockers.push('حساب موجودی فعال یا هم‌ماهیت نیست.');
+    if(!item) blockers.push('اطلاعات کالای این سطر برای ورود انبار کامل نیست.');
+    return {account,creation:account?null:{name:`موجودی کالا — ${key}`,type:'asset',normalSide:'debit',reason:'حساب مرتبط با کالا همراه سند ساخته می‌شود.'},blockers};
+  }
   if(line.accountId && !account) blockers.push('حساب پیشنهادی دیگر فعال نیست؛ بازبینی لازم است.');
   if(account && !typed(account,role)) blockers.push('ماهیت حساب واقعی با نقش پیشنهادی سازگار نیست؛ پیشنهاد باید اصلاح شود.');
   const mapping=line.chartAccountId ? chart.find(c=>c.id===line.chartAccountId && c.postable && typed(c,role)) : null;
@@ -60,13 +74,14 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify([
+  return createHash('sha256').update(JSON.stringify(['review-resources-v1',
     reviewAccountCatalog(database),
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_entries').get(),
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_lines').get(),
     identity('accounting_review_ai') ? database.prepare("SELECT id,state,feedback_reason,reviewed_at FROM accounting_review_ai WHERE state!='proposed' ORDER BY id").all() : [],
+    identity('products') ? database.prepare('SELECT id,name,unit,stock,average_cost,inventory_value,track_inventory FROM products ORDER BY id').all() : [],
     database.prepare("SELECT count(*) n,MAX(rowid) last FROM financial_event_audit WHERE stage IN ('approved','accountant-reviewed','rejected')").get(),
   ])).digest('hex');
 }
