@@ -1,3 +1,4 @@
+import { PersianDateInput } from '../../components/common.jsx';
 import { api } from '../../lib/api.js';
 import { Check, ChevronLeft, CircleAlert, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -99,13 +100,14 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
       reviewReasons: entry.reviewReasons || [],
     };
   });
-  const finish = () => index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
+  const missingPaymentDate = (entry) => Boolean(entry.servicePeriodStart && !entry.occurredAt);
+  const finish = () => missingPaymentDate(item) ? undefined : index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
   const statusCards = [
     ['ready', 'آماده ارسال', summary.ready, 'border-income/30 bg-income/5 text-income'],
     ['review', 'نیازمند بررسی', summary.review, 'border-accent/35 bg-warn-bg text-accent'],
     ['unintelligible', 'نامفهوم', summary.unintelligible, 'border-expense/30 bg-expense/5 text-expense'],
   ];
-  const quickConfirm = summary.ready === summary.total && summary.total > 0 && !detailsOpen;
+  const quickConfirm = summary.ready === summary.total && summary.total > 0 && !detailsOpen && !items.some(missingPaymentDate);
   return (
     <div className="fixed inset-0 z-[70] flex items-end justify-center bg-ink/35 px-0 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <section role="dialog" aria-modal="true" aria-label="تأیید تراکنش" className="sheet-in max-h-[94vh] w-full max-w-[640px] overflow-y-auto rounded-t-2xl bg-paper px-4 pb-[calc(env(safe-area-inset-bottom)+20px)] pt-3 shadow-2xl">
@@ -193,6 +195,10 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
               className="tap mt-2 rounded-lg bg-accent px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-45"
             >{creatingBank ? 'در حال ساخت…' : `ساخت حساب «${bankGap.bankName}»`}</button>}
           </div>}
+          {item.servicePeriodStart && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
+            <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>
+            <PersianDateInput value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
+          </label>}
           {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-warn-bg px-2 py-1 text-[11px] font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
         </div>
 
@@ -202,7 +208,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         {!!item.alternatives?.length && <div className="mt-4"><p className="mb-2 text-[13px] text-muted">شاید منظورت این بود:</p><div className="flex flex-wrap gap-2">{item.alternatives.map((amount) => <button key={amount} onClick={() => patchField('amount', { amount })} className="tap numbers rounded-lg border border-line bg-surface px-4 font-bold">{formatAmount(amount)}</button>)}</div></div>}
 
         <div className="mt-5 grid grid-cols-[minmax(0,7fr)_minmax(90px,3fr)] gap-2">
-          <button disabled={assessment.state === 'unintelligible' || !item.accountId || !previewReady} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ارسال'}</button>
+          <button disabled={missingPaymentDate(item) || assessment.state === 'unintelligible' || !item.accountId || !previewReady} onClick={finish} className="tap flex items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-white disabled:opacity-40"><Check size={19} />{index < items.length - 1 ? 'تأیید و بعدی' : 'تأیید و ارسال'}</button>
           <button onClick={onCancel} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
         </div>
         </>}
