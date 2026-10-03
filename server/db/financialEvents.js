@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { prepareReviewProposal, reviewConversation, reviewedEvent, relevantDna, proposalRevision, addReviewMessage } from '../reviewAssistant.js';
+import { prepareReviewProposal, reviewConversation, reviewedEvent, originalReviewTranscript, relevantDna, proposalRevision, addReviewMessage } from '../reviewAssistant.js';
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
@@ -44,7 +44,7 @@ export function reviewQueue(options = {}) {
   ensureReviewAiSchema(database);
   const items = [...listUnquantifiedReviews(options), ...listReviewQueue(database, options).map(item=>{
     const row=database.prepare('SELECT * FROM financial_events WHERE id=?').get(item.id);
-    return {...item,aiProposal:item.route==='accountant-review'?preparedProposal(database,item.id):null,dnaMatches:item.route==='accountant-review'?relevantDna(database,row).map(d=>({...d,actorName:actorName(d.actor)})):[]};
+    return {...item,originalTranscript:originalReviewTranscript(database,row),aiProposal:item.route==='accountant-review'?preparedProposal(database,item.id):null,dnaMatches:item.route==='accountant-review'?relevantDna(database,row).map(d=>({...d,actorName:actorName(d.actor)})):[]};
   })];
   const counts=database.prepare("SELECT state,COUNT(*) count FROM accounting_review_ai WHERE state!='proposed' GROUP BY state").all();
   return {items,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};

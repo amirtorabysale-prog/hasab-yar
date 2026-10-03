@@ -49,11 +49,21 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     ON CONFLICT(event_id) DO UPDATE SET facts=excluded.facts,revision=revision+1`).run(eventId, JSON.stringify(next));
   return reviewContext(database, eventId);
 }
-export function reviewEvidence(database,row) {
+/** Original captured speech-to-text; never replace it with the engine summary. */
+export function originalReviewTranscript(database,row) {
   const event=JSON.parse(row.payload);
-  const capture=database.prepare("SELECT detail FROM financial_event_audit WHERE event_id=? AND stage='captured' ORDER BY rowid DESC LIMIT 1").get(row.id);
-  return (capture ? JSON.parse(capture.detail).transcript : '') || event.evidence || event.utterance || '';
+  const capture=database.prepare("SELECT detail FROM financial_event_audit WHERE event_id=? AND stage='captured' ORDER BY rowid LIMIT 1").get(row.id);
+  const detail=capture ? JSON.parse(capture.detail) : {};
+  const captured=detail.transcript || detail.rawInput || '';
+  const anchor=row.journal_source ? JSON.parse(row.journal_source) : null;
+  const hasTransactions=database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'").get();
+  const raw=anchor?.type==='transaction' && hasTransactions ? database.prepare('SELECT raw_text FROM transactions WHERE id=?').get(anchor.id)?.raw_text || '' : '';
+  // Older audit entries were truncated: recover a longer identical original when retained.
+  if(raw && (!captured || raw.startsWith(captured))) return raw;
+  return captured || event.utterance || event.evidence || '';
 }
+export const reviewEvidence=originalReviewTranscript;
+
 export function reviewedEvent(database, row) {
   const facts=reviewContext(database,row.id).facts;
   const event = { ...JSON.parse(row.payload), ...facts };

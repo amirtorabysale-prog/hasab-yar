@@ -29,6 +29,15 @@ const ROUTE_STYLE = {
  * هر بار فقط یک سؤال. فرم یعنی کاربر باید همه را با هم بداند، و کسی که یکی را
  * نمی‌داند کل کار را رها می‌کند.
  */
+function OriginalTranscript({text}) {
+  return <section aria-label="متن اصلی گفتهٔ کاربر" className="mt-3 rounded-lg border border-line bg-paper p-3">
+    <p className="text-xs font-extrabold text-ink">متن اصلی گفتهٔ کاربر</p>
+    <p className="mt-1 text-[11px] text-muted">متن ذخیره‌شده هنگام دریافت؛ مبنای بررسی حسابدار</p>
+    {text ? <blockquote dir="auto" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-7 text-ink">{text}</blockquote>
+      : <p className="mt-2 text-xs text-muted">متن اصلی برای این مورد ذخیره نشده است.</p>}
+  </section>;
+}
+
 function QuestionCard({ question, busy, onAnswer }) {
   const [text, setText] = useState('');
   const [freeFor, setFreeFor] = useState(null);
@@ -193,6 +202,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
       </div>
     </div>
 
+    <OriginalTranscript text={item.originalTranscript || item.event?.utterance || item.event?.evidence} />
     {item.approvalBlocked && <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-xs leading-6">
       <p>{item.approvalNextStep === 'answer-question' ? 'ابتدا به سؤال پایین کارت پاسخ بده؛ بعد از تکمیل، امکان ثبت دوباره بررسی می‌شود.' : 'سطرهای این سند هنوز قطعی نیست. پیشنهاد AI را با «تحلیل کن» بگیر و حساب‌ها را بررسی کن.'}</p>
     </div>}
@@ -213,7 +223,6 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
     </p>}
 
     {open && <div className="mt-2">
-      {item.event?.evidence && <blockquote className="rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{item.event.evidence}»</blockquote>}
       <ConfidencePanel assessment={{ percent: confidence.percent ?? 0, fields: confidence.components || {}, reasons: confidence.reasons || [] }} />
       <div className="mt-3 rounded-[10px] border border-line bg-surface p-3">
         <p className="text-xs font-extrabold">تاریخچهٔ رویداد</p>
@@ -362,7 +371,7 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
   };
   return <article className="space-y-2 py-3 text-sm">
     <p className="font-bold">درخواست پیگیری حسابدار — مبلغ مشخص نشده</p>
-    <p>{item.transcript}</p>
+    <OriginalTranscript text={item.transcript} />
     <p className="text-muted">شناسه پیگیری: {item.id} — هیچ سند یا مبلغ فرضی ثبت نشده است. ابتدا مبلغ، تاریخ و سند مبنا را بررسی کن.</p>
     <input className="w-full rounded border border-line p-2" value={journalEntryId} onChange={e => setJournalEntryId(e.target.value)} placeholder="شناسه سند مرتبط در صورت ثبت اصلاح توسط حسابدار (اختیاری)" />
     <textarea className="w-full rounded border border-line p-2" value={reason} onChange={e => setReason(e.target.value)} placeholder="نتیجه بررسی و دلیل بستن پرونده" />
