@@ -63,8 +63,10 @@ export function reviewKnowledgeFingerprint(database) {
   return createHash('sha256').update(JSON.stringify([
     reviewAccountCatalog(database),
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
-    identity('accounts') ? database.prepare('SELECT id,name,active FROM accounts ORDER BY id').all() : [],
+    identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_entries').get(),
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_lines').get(),
+    identity('accounting_review_ai') ? database.prepare("SELECT id,state,feedback_reason,reviewed_at FROM accounting_review_ai WHERE state!='proposed' ORDER BY id").all() : [],
+    database.prepare("SELECT count(*) n,MAX(rowid) last FROM financial_event_audit WHERE stage IN ('approved','accountant-reviewed','rejected')").get(),
   ])).digest('hex');
 }
