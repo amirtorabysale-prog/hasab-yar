@@ -53,9 +53,10 @@ export async function proposeReview(database, eventId, { fetcher = fetch } = {})
   if (row.status !== 'pending' || row.route !== 'accountant-review') throw fail('این مورد در صف حسابدار نیست.', 'EVENT_NOT_REVIEWABLE');
   const old = latestReviewProposal(database, eventId);
   if (old && old.state === 'proposed' && old.sourceFingerprint === sourceHash(row)) return old;
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw fail('کلید GEMINI_API_KEY برای بررسی AI تنظیم نشده است.', 'AI_NOT_CONFIGURED', 503);
-  const model = process.env.GEMINI_REVIEW_MODEL || 'gemini-2.5-flash';
+  const openai = Boolean(process.env.OPENAI_API_KEY);
+  const apiKey = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) throw fail('کلید OPENAI_API_KEY برای بررسی AI تنظیم نشده است.', 'AI_NOT_CONFIGURED', 503);
+  const model = openai ? (process.env.OPENAI_REVIEW_MODEL || 'gpt-5.4-mini') : (process.env.GEMINI_REVIEW_MODEL || 'gemini-2.5-flash');
   const event = JSON.parse(row.payload);
   const decision = decisionForEvent(database, eventId);
   const capture = database.prepare("SELECT detail FROM financial_event_audit WHERE event_id=? AND stage='captured' ORDER BY rowid DESC LIMIT 1").get(eventId);
@@ -71,17 +72,33 @@ ${event.amountReferenceOnly ? `بزرگ‌ترین مبلغ گفته‌شده ${
 بازخوردهای قبلی همین دفتر (فقط راهنما؛ هیچ‌یک قانون عمومی نیستند): ${JSON.stringify(feedback)}.`;
   let response;
   try {
-    response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15_000),
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 1200 } }),
+    response = await fetcher(openai ? 'https://api.openai.com/v1/responses' : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(openai ? { Authorization: `Bearer ${apiKey}` } : {}) },
+      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify(openai ? {
+        model, store: false, max_output_tokens: 3000,
+        input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }],
+        text: { format: { type: 'json_object' } },
+      } : { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 1200 } }),
     });
-  } catch { throw fail('سرویس AI فعلاً پاسخ نداد؛ مورد در صف حسابدار باقی می‌ماند.', 'AI_UNAVAILABLE', 503); }
-  if (!response.ok) throw fail('سرویس AI پاسخ قابل استفاده نداد؛ مورد در صف باقی ماند.', 'AI_UNAVAILABLE', 503);
+  } catch { throw fail('ارتباط با سرویس AI برقرار نشد یا مهلت پاسخ تمام شد؛ دوباره تلاش کن.', 'AI_UNAVAILABLE', 503); }
+  if (!response.ok) {
+    if ([401, 403].includes(response.status)) throw fail('کلید سرویس AI معتبر نیست یا مجوز مدل تحلیل را ندارد.', 'AI_AUTH', 503);
+    if (response.status === 429) throw fail('اعتبار یا سهمیهٔ سرویس AI محدود شده است؛ اعتبار API را بررسی کن.', 'AI_QUOTA', 503);
+    if (response.status === 404) throw fail('مدل تحلیل AI در دسترس نیست؛ تنظیم مدل بررسی شود.', 'AI_MODEL', 503);
+    throw fail('سرویس AI پاسخ قابل استفاده نداد؛ مورد در صف باقی ماند.', 'AI_UNAVAILABLE', 503);
+  }
   const body = await response.json().catch(() => ({}));
-  const content = body.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
+  const content = openai
+    ? (body.output || []).flatMap(item => item.content || []).filter(part => part.type === 'output_text').map(part => part.text || '').join('')
+    : body.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
   let proposal;
-  try { proposal = parseProposal(content, row.amount); }
-  catch { throw fail('پیشنهاد AI ساختار سند قابل اعتمادی نداشت؛ مورد در صف باقی ماند.', 'AI_PLAN_INVALID', 502); }
+  try {
+    if (openai && body.status !== 'completed') throw new Error('incomplete');
+    proposal = parseProposal(content, row.amount);
+  } catch { throw fail('پیشنهاد AI ساختار سند قابل اعتمادی نداشت؛ مورد در صف باقی ماند.', 'AI_PLAN_INVALID', 502); }
+
   // حین انتظار شبکه ممکن است حسابدار دیگری ثبت یا رد کرده باشد.
   if (database.prepare('SELECT status FROM financial_events WHERE id=?').get(eventId)?.status !== 'pending') throw fail('این رویداد پیش‌تر بررسی شده است.', 'EVENT_NOT_PENDING');
   const id = randomUUID();
