@@ -59,7 +59,9 @@ function preparedProposal(database,eventId,proposal = latestReviewProposal(datab
 export function reviewAssistantHistory(eventId) {
   const database = activeWorkspaceDatabase();
   if (!database.prepare('SELECT id FROM financial_events WHERE id=?').get(eventId)) throw Object.assign(new Error('پرونده پیدا نشد.'),{status:404});
-  return { messages:reviewConversation(database,eventId).map(m=>({...m,actorName:actorName(m.actor)})),proposal:preparedProposal(database,eventId) };
+  const row=database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
+  const known=reviewedEvent(database,row);
+  return { messages:reviewConversation(database,eventId).map(m=>({...m,actorName:actorName(m.actor)})),proposal:preparedProposal(database,eventId),context:{occurredAt:known.occurredAt?.slice(0,10),dueAt:known.dueAt?.slice(0,10),counterpartyId:known.counterpartyId,accountId:known.accountId} };
 }
 export function reviewAssistantForJournal(journalEntryId) {
   const database=activeWorkspaceDatabase();

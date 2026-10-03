@@ -141,3 +141,57 @@ test('posted and reversed documents expose the same persistent accountant conver
   const reversal=database().prepare('SELECT id FROM journal_entries WHERE reverses_entry_id=?').get(row.journal_entry_id);
   assert.equal(db.reviewAssistantForJournal(reversal.id).eventId,row.id);
 }));
+
+test('review reuses recorded date, exact existing party and voice maturity, without guessing collection date',()=>run(()=>{
+  const contact=db.saveContact({name:'شرکت آفتاب هوشمند'});
+  const item=event('خرید مواد مصرفی از شرکت آفتاب هوشمند با چک به مبلغ چهل میلیون تومان سررسید پانزدهم آبان ۱۴۰۵');
+  const row=database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id);
+  const known=assistant.reviewedEvent(database(),row);
+  assert.equal(known.occurredAt,'2026-10-03');assert.equal(known.counterpartyId,contact.id);assert.equal(known.dueAt.slice(0,10),'2026-11-06');
+  const other=event('چک شرکت نمونه فردا نقدش می‌کند');
+  assert.equal(assistant.reviewedEvent(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(other.id)).dueAt,undefined);
+  const history=db.reviewAssistantHistory(item.id);assert.equal(history.context.occurredAt,'2026-10-03');assert.equal(history.context.counterpartyId,contact.id);
+}));
+
+test('actual ledger type rejects an expense proposal targeting inventory, even if balanced',()=>run(async()=>{
+  const id=crypto.randomUUID();database().prepare('INSERT INTO ledger_accounts(id,code,name,type,normal_side,source_kind,source_key) VALUES(?,?,?,?,?,?,?)').run(id,'199999','موجودی تست','asset','debit','inventory','test');
+  const item=event();const contact=db.saveContact({name:'شرکت کنترل ماهیت'});
+  const p=await ai.proposeReview(database(),item.id,{facts:{counterpartyId:contact.id,dueAt:'2026-11-01'},fetcher:fake({...chequePlan,lines:[{...chequePlan.lines[0],accountId:id},chequePlan.lines[1]]})});
+  const preview=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(preview.canPost,false);assert.ok(preview.postingBlockers.some(x=>x.includes('ماهیت')));
+  assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+}));
+
+test('a proposed account is previewed, created only on approval, linked to subsidiary and not duplicated',()=>run(async()=>{
+  const {saveChartAccount}=await import('../server/chartOfAccounts.js');
+  const group=saveChartAccount(database(),{code:'98',name:'هزینه آزمایش',level:'group',type:'expense'});
+  const general=saveChartAccount(database(),{code:'9801',name:'هزینه خدمات آزمایش',level:'general',type:'expense',parentCode:group.code});
+  const chart=saveChartAccount(database(),{code:'980101',name:'خدمات آزمایش ویژه',level:'subsidiary',type:'expense',parentCode:general.code});
+  const contact=db.saveContact({name:'شرکت حساب تازه'});
+  const item=event();
+  const plan={...chequePlan,lines:[{...chequePlan.lines[0],key:'خدمات آزمایش ویژه',chartAccountId:chart.id},chequePlan.lines[1]]};
+  const p=await ai.proposeReview(database(),item.id,{facts:{counterpartyId:contact.id,dueAt:'2026-11-01'},fetcher:fake(plan)});
+  const preview=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(preview.canPost,true);assert.equal(preview.lines[0].newAccount.chartAccountId,chart.id);
+  assert.equal(database().prepare('SELECT COUNT(*) n FROM ledger_accounts WHERE chart_account_id=?').get(chart.id).n,0);
+  const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+  const real=database().prepare('SELECT a.* FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? AND l.debit>0').get(posted.journalEntryId);
+  assert.equal(real.chart_account_id,chart.id);assert.equal(real.type,'expense');
+  const next=event();const n=await ai.proposeReview(database(),next.id,{facts:{counterpartyId:contact.id,dueAt:'2026-11-01'},fetcher:fake(plan)});
+  const np=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(next.id),n);
+  assert.equal(np.lines[0].accountId,real.id);assert.equal(np.lines[0].newAccount,null);
+}));
+
+test('unchanged retries and concurrent clicks use one API request, chart changes invalidate cached proposals',()=>run(async()=>{
+  const item=event();let calls=0;let prompt='';
+  const fetcher=async(url,options)=>{calls++;prompt=JSON.parse(options.body).input[0].content[0].text;await new Promise(r=>setTimeout(r,10));return fake(chequePlan)();};
+  const opts={message:'مواد مصرفی همین دوره است',fetcher};
+  const [p,q]=await Promise.all([ai.proposeReview(database(),item.id,opts),ai.proposeReview(database(),item.id,opts)]);
+  assert.equal(p.id,q.id);assert.equal(calls,1);
+  assert.equal((await ai.proposeReview(database(),item.id,opts)).id,p.id);assert.equal(calls,1);
+  assert.match(prompt,/occurredAt/);assert.match(prompt,/chartFields/);
+  database().prepare('UPDATE ledger_accounts SET name=? WHERE id=?').run('نام اصلاح‌شده', 'ledger-opening-equity');
+  const prepared=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(prepared.canPost,false);assert.ok(prepared.postingBlockers.some(b=>b.includes('کدینگ')));
+  const fresh=await ai.proposeReview(database(),item.id,opts);assert.notEqual(fresh.id,p.id);assert.equal(calls,2);
+}));

@@ -191,7 +191,7 @@ function dateAfter(text, marker, now, preferPast) {
  * محافظه‌کارانه است: سررسیدِ خالی فقط یعنی «نمی‌دانیم»، ولی سررسیدِ غلط سند را
  * در فهرست عقب‌افتاده می‌نشاند.
  */
-function splitDateRoles(input, { now, isCheque = false } = {}) {
+export function splitDateRoles(input, { now, isCheque = false } = {}) {
   const text = normalizePersian(input);
   const dueAt = dateAfter(text, DUE_MARKERS, now, false);
   const occurredAt = dateAfter(text, OCCURRED_MARKERS, now, true);

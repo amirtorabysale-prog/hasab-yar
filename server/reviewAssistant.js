@@ -1,6 +1,12 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { ensureFinancialEventSchema } from './financialEventStore.js';
-import { resolveEventRole, resolveEventAnalytic } from './roleResolver.js';
+import { resolveEventAnalytic } from './roleResolver.js';
+
+import { prepareReviewAccount, reviewKnowledgeFingerprint } from './reviewAccountPreparation.js';
+import { extractContactName } from '../shared/counterpartySpeech.js';
+import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
+import { detectBank } from '../shared/banks.js';
+import { splitDateRoles } from '../shared/voiceIntent.js';
 
 const fail = (message, code = 'REVIEW_DETAILS_REQUIRED') => Object.assign(new Error(message), { code, status: 409 });
 export function ensureAssistantSchema(database) {
@@ -43,8 +49,31 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     ON CONFLICT(event_id) DO UPDATE SET facts=excluded.facts,revision=revision+1`).run(eventId, JSON.stringify(next));
   return reviewContext(database, eventId);
 }
+export function reviewEvidence(database,row) {
+  const event=JSON.parse(row.payload);
+  const capture=database.prepare("SELECT detail FROM financial_event_audit WHERE event_id=? AND stage='captured' ORDER BY rowid DESC LIMIT 1").get(row.id);
+  return (capture ? JSON.parse(capture.detail).transcript : '') || event.evidence || event.utterance || '';
+}
 export function reviewedEvent(database, row) {
-  const event = { ...JSON.parse(row.payload), ...reviewContext(database, row.id).facts };
+  const facts=reviewContext(database,row.id).facts;
+  const event = { ...JSON.parse(row.payload), ...facts };
+  const text=reviewEvidence(database,row);
+  if(!event.counterpartyId && !Object.hasOwn(facts,'counterpartyId')) {
+    const candidate=event.counterparty || extractContactName(text);
+    if(candidate) {
+      const matches=database.prepare('SELECT id,name FROM contacts').all().filter(c=>exactCounterpartyKey(c.name)===exactCounterpartyKey(candidate));
+      if(matches.length===1) {event.counterpartyId=matches[0].id;event.counterparty=matches[0].name;}
+    }
+  }
+  if(!event.accountId && !Object.hasOwn(facts,'accountId') && database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()) {
+    const bank=detectBank(text);
+    if(bank) {const matches=database.prepare("SELECT id FROM accounts WHERE active=1 AND kind='bank' AND bank_id=?").all(bank.bankId);if(matches.length===1) event.accountId=matches[0].id;}
+  }
+  // Reuse voice date-role parser, anchored to the recorded event, never today's date.
+  // Only explicit maturity markers: collection tomorrow is not issuance or maturity.
+  if(!event.dueAt && !Object.hasOwn(facts,'dueAt') && /سررسید|سر رسید|به تاریخ/.test(text) && event.occurredAt) {
+    event.dueAt=splitDateRoles(text,{now:new Date(event.occurredAt),isCheque:true}).dueAt;
+  }
   if (event.counterpartyId) event.counterparty = database.prepare('SELECT name FROM contacts WHERE id=?').get(event.counterpartyId)?.name || '';
   return event;
 }
@@ -83,10 +112,12 @@ const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'de
 export function prepareReviewProposal(database, row, proposal, { resolve = false } = {}) {
   const event = reviewedEvent(database,row);
   const blockers = [...(proposal.missingFacts || [])];
+  if(proposal.knowledgeFingerprint && proposal.knowledgeFingerprint!==reviewKnowledgeFingerprint(database)) blockers.push('کدینگ، اشخاص یا دفتر کل تغییر کرده؛ تحلیل را دوباره درخواست کن.');
   if (!event.occurredAt || !Number.isFinite(Date.parse(event.occurredAt))) blockers.push('تاریخ واقعی رویداد لازم است.');
-  const named = key => database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
+  const named = key => database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
   const lines = proposal.lines.map(line => {
     let key = line.key, role = line.role;
+    if(!key && line.chartAccountId) key=database.prepare('SELECT name FROM chart_accounts WHERE id=? AND active=1').get(line.chartAccountId)?.name;
     if (partyRoles.has(role)) {
       if (!event.counterpartyId) blockers.push('طرف حساب را از فهرست اشخاص همین شرکت انتخاب کن.');
       key = event.counterparty || key;
@@ -95,8 +126,8 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
       key = event.accountId;
       if (!key || !database.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(key)) blockers.push('بانک یا صندوق واقعی را انتخاب کن.');
     }
-    if (['expense-category','income-category','prepaid-asset','fixed-asset','accumulated-depreciation'].includes(role) && !String(key || '').trim() && !line.accountId) blockers.push('نام سرفصل هر سطر را در گفت‌وگو مشخص کن.');
-    let account = line.accountId ? database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(line.accountId) : null;
+    if (['expense-category','income-category','prepaid-asset','fixed-asset','accumulated-depreciation'].includes(role) && !String(key || '').trim() && !line.accountId) blockers.push('AI نام حساب این سطر را تعیین نکرده؛ بازبینی پیشنهاد لازم است.');
+    let account = line.accountId ? database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(line.accountId) : null;
     if (line.accountId && (!account || !account.active)) blockers.push('سرفصل پیشنهادی حذف یا غیرفعال شده است.');
     if (!account && !line.accountId) {
       const source = sources[role] || role;
@@ -106,11 +137,12 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     if (account && !account.active) blockers.push('حساب پیشنهادی غیرفعال است.');
     if (account && partyRoles.has(role) && (account.sourceKind !== (sources[role] || role) || account.sourceKey !== event.counterpartyId)) blockers.push('حساب طرف‌حساب باید به شخص انتخاب‌شده متصل باشد.');
     if (account && account.sourceKind !== (systemKeys[role] ? 'system' : sources[role] || role) && role === 'cash') blockers.push('سطر نقدی باید به بانک یا صندوق عملیاتی متصل باشد.');
-    if (resolve && !blockers.length) {
-      const accountId = account?.id || resolveEventRole(database,role,key,event);
-      account = database.prepare('SELECT id,code,name,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(accountId);
-    }
-    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
+    const result=prepareReviewAccount(database,{...line,key,accountId:account?.id || line.accountId},event,{resolve:resolve && !blockers.length});
+    blockers.push(...result.blockers);
+    const mappedId=result.account?.chart_account_id || line.chartAccountId || result.creation?.chartAccountId;
+    if(mappedId && database.prepare('SELECT requires_analytic FROM chart_accounts WHERE id=?').get(mappedId)?.requires_analytic && !partyRoles.has(role)) blockers.push('این معین به تفصیلی نیاز دارد؛ مسیر تخصصی برای تعیین شخص یا پروژه لازم است.');
+    account=result.account ? {...result.account,sourceKind:result.account.source_kind,sourceKey:result.account.source_key} : account;
+    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
   });
   const cheque = lines.filter(l => ['cheque-payable','cheque-receivable'].includes(l.role));
   if (cheque.length && (cheque.length !== 1 || !event.dueAt || !event.counterpartyId)) blockers.push('برای ثبت چک، یک سطر چک، طرف حساب و تاریخ سررسید مشخص لازم است.');
@@ -119,7 +151,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const other = lines.filter(l=>l.role!=='cash');
   // گزارش عملیاتی فعلی فقط ورود/خروج ساده و سرمایه را می‌شناسد؛ ثبت پیچیده نباید فقط دفتر کل را تغییر دهد.
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !['expense-category','income-category','fixed-asset','owner-capital'].includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
-  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   if (anchor?.type==='transaction') {
     const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
@@ -138,5 +170,5 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    context:reviewContext(database,row.id).facts,conversation:reviewConversation(database,row.id) };
+    context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }
