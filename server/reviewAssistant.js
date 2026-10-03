@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { ensureFinancialEventSchema } from './financialEventStore.js';
 import { resolveEventAnalytic } from './roleResolver.js';
 
+import { prepareReviewResources } from './reviewResources.js';
 import { prepareReviewAccount, reviewKnowledgeFingerprint } from './reviewAccountPreparation.js';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
@@ -36,9 +37,10 @@ export function saveReviewFacts(database, eventId, facts = {}) {
   const old = reviewContext(database, eventId);
   database.prepare('INSERT OR IGNORE INTO accounting_review_context(event_id) VALUES(?)').run(eventId);
   const next = { ...old.facts };
-  for (const key of ['occurredAt', 'dueAt', 'counterpartyId', 'accountId']) {
+  for (const key of ['occurredAt', 'dueAt', 'counterpartyId', 'counterpartyName', 'accountId']) {
     if (!Object.hasOwn(facts, key)) continue;
     const value = String(facts[key] || '').trim();
+    if(key==='counterpartyName' && value && (value.length<2 || value.length>100)) throw fail('نام واقعی طرف‌حساب را کامل و کوتاه‌تر از ۱۰۰ نویسه بنویس.');
     if (key==='occurredAt' && !value) throw fail('تاریخ رویداد را خالی نگذار.');
     if (['occurredAt', 'dueAt'].includes(key) && value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0,10) !== value)) throw fail('تاریخ معتبر میلادی را از انتخابگر تاریخ تعیین کن.');
     if (key === 'counterpartyId' && value && !database.prepare('SELECT id FROM contacts WHERE id=?').get(value)) throw fail('طرف حساب انتخاب‌شده معتبر نیست.');
@@ -68,6 +70,7 @@ export function reviewedEvent(database, row) {
   const facts=reviewContext(database,row.id).facts;
   const event = { ...JSON.parse(row.payload), ...facts };
   const text=reviewEvidence(database,row);
+  if(facts.counterpartyName) event.counterparty=facts.counterpartyName;
   if(!event.counterpartyId && !Object.hasOwn(facts,'counterpartyId')) {
     const candidate=event.counterparty || extractContactName(text);
     if(candidate) {
@@ -115,21 +118,25 @@ export function conversationFingerprint(database,eventId) {
   return createHash('sha256').update(JSON.stringify([reviewContext(database,eventId),reviewConversation(database,eventId)])).digest('hex');
 }
 const partyRoles = new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue']);
-const roleNames = {cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
+const roleNames = {cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
 const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
-export function prepareReviewProposal(database, row, proposal, { resolve = false } = {}) {
-  const event = reviewedEvent(database,row);
+export function prepareReviewProposal(database, row, proposal, { resolve = false, eventOverride = null } = {}) {
+  const initial=eventOverride || reviewedEvent(database,row);
+  const resources=prepareReviewResources(database,initial,proposal,{evidence:reviewEvidence(database,row),facts:reviewContext(database,row.id).facts,messages:reviewConversation(database,row.id)});
+  const event={...resources.event,reviewInventoryItems:eventOverride?.reviewInventoryItems || resources.inventoryItems};
   const blockers = [...(proposal.missingFacts || [])];
-  if(proposal.knowledgeFingerprint && proposal.knowledgeFingerprint!==reviewKnowledgeFingerprint(database)) blockers.push('کدینگ، اشخاص یا دفتر کل تغییر کرده؛ تحلیل را دوباره درخواست کن.');
+  blockers.push(...resources.blockers);
+  if(proposal.lines.some(l=>l.role==='inventory-asset') && !event.amountReferenceOnly && proposal.lines.filter(l=>l.role==='inventory-asset').reduce((n,l)=>n+l.debit,0)!==row.amount) blockers.push('بهای خرید انباری با مبلغ قطعی رویداد برابر نیست؛ پیشنهاد باید اصلاح شود.');
+  if(!eventOverride && proposal.knowledgeFingerprint && proposal.knowledgeFingerprint!==reviewKnowledgeFingerprint(database)) blockers.push('کدینگ، اشخاص یا دفتر کل تغییر کرده؛ تحلیل را دوباره درخواست کن.');
   if (!event.occurredAt || !Number.isFinite(Date.parse(event.occurredAt))) blockers.push('تاریخ واقعی رویداد لازم است.');
   const named = key => database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
   const lines = proposal.lines.map(line => {
     let key = line.key, role = line.role;
     if(!key && line.chartAccountId) key=database.prepare('SELECT name FROM chart_accounts WHERE id=? AND active=1').get(line.chartAccountId)?.name;
     if (partyRoles.has(role)) {
-      if (!event.counterpartyId) blockers.push('طرف حساب را از فهرست اشخاص همین شرکت انتخاب کن.');
+      if (!event.counterpartyId && !resources.newCounterparty) blockers.push('نام واقعی طرف حساب را مشخص کن؛ انتخاب سرفصل لازم نیست.');
       key = event.counterparty || key;
     }
     if (role === 'cash') {
@@ -155,7 +162,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
   });
   const cheque = lines.filter(l => ['cheque-payable','cheque-receivable'].includes(l.role));
-  if (cheque.length && (cheque.length !== 1 || !event.dueAt || !event.counterpartyId)) blockers.push('برای ثبت چک، یک سطر چک، طرف حساب و تاریخ سررسید مشخص لازم است.');
+  if (cheque.length && (cheque.length !== 1 || !event.dueAt || (!event.counterpartyId && !resources.newCounterparty))) blockers.push('برای ثبت چک، یک سطر چک، طرف حساب و تاریخ سررسید مشخص لازم است.');
   if (cheque.some(l => l.role==='cheque-payable' ? l.debit>0 : l.credit>0)) blockers.push('وصول، برگشت یا تسویهٔ چک را در دفتر چک و با ارجاع به چک قبلی انجام بده.');
   const cash = lines.filter(l => l.role==='cash');
   const other = lines.filter(l=>l.role!=='cash');
@@ -180,5 +187,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
+    newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }
