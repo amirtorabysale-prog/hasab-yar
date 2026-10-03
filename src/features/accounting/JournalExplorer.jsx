@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
+function ReviewHistory({entryId}) {
+  const [history,setHistory]=useState(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
+  const load=async()=>{setLoading(true);setError('');try{setHistory(await api.journalReviewHistory(entryId));}catch(e){setError(e.message);}finally{setLoading(false);}};
+  const body=entry=>{if(entry.speaker!=='assistant') return entry.body;try {const p=JSON.parse(entry.body);return [p.summary,p.explanation,...(p.missingFacts || [])].filter(Boolean).join(' — ');}catch{return entry.body;}};
+  return <div className="border-t border-line p-4 text-xs leading-6">
+    <button disabled={loading} onClick={load} className="tap rounded border border-accent px-3 font-bold text-accent">{loading?'در حال خواندن…':'گفت‌وگوی ثبت و سابقه DNA'}</button>
+    {error && <p role="alert" className="text-expense">{error}</p>}
+    {history && <div className="mt-3 space-y-2"><b>تاریخچهٔ تصمیم حسابدار برای همین سند</b>{!history.messages.length && <p>برای این سند گفت‌وگوی AI ثبت نشده است.</p>}{history.messages.map(m=><div key={m.id} className="rounded bg-paper p-3"><b>{m.speaker==='assistant'?'دستیار':m.speaker==='accepted'?'تأیید حسابدار':m.speaker==='rejected'?'رد با دلیل':'حسابدار'}</b> · {m.actorName || m.actor || ''} · {date(m.createdAt)}<p className="whitespace-pre-wrap">{body(m)}</p></div>)}</div>}
+  </div>;
+}
 const date = (value) => value && !Number.isNaN(new Date(value).getTime()) ? new Intl.DateTimeFormat('fa-IR', { timeZone: 'Asia/Tehran', dateStyle: 'medium' }).format(new Date(value)) : '—';
 const kinds = { normal: 'عادی', reversal: 'معکوس', adjustment: 'اصلاحی', opening: 'افتتاحیه' };
 const states = { draft: 'پیش‌نویس', submitted: 'در انتظار تأیید', returned: 'برگشت برای اصلاح', approved: 'تأییدشده' };
@@ -43,6 +53,7 @@ export default function JournalExplorer({ revision, workspaceId }) {
         <header className="border-b border-line bg-paper p-4"><div className="flex flex-wrap justify-between gap-3"><h3 className="font-extrabold">سند شماره {toPersianDigits(selected.documentNumber ?? '—')} · سال {toPersianDigits(selected.fiscalYear ?? '—')}</h3><span className={'rounded-md px-2 py-1 text-xs ' + badge(selected.approvalState)}>{selected.approvalLabel}</span></div><p className="mt-3 text-sm leading-7">{selected.memo || 'بدون شرح'}</p><p className="mt-2 text-xs text-muted">{date(selected.occurredAt)} · {kinds[selected.entryKind] || selected.entryKind} · بازبینی {toPersianDigits(selected.revision)}</p></header>
         <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-sm"><thead className="text-xs text-muted"><tr>{['ردیف', 'حساب و کدینگ', 'شرح / تفصیلی', 'بدهکار', 'بستانکار'].map((label) => <th key={label} className="p-3 text-right">{label}</th>)}</tr></thead><tbody className="divide-y divide-line">{selected.lines.map((line, index) => <tr key={index}><td className="p-3 text-muted">{toPersianDigits(index + 1)}</td><td className="p-3"><p className="font-bold">{line.name}</p><p className="mt-1 text-xs text-muted">{toPersianDigits(line.code)}{line.chartCode ? ' · ' + toPersianDigits(line.chartCode) + ' ' + line.chartName : ' · بدون نگاشت کدینگ'}</p></td><td className="p-3 text-xs leading-6">{line.description || '—'}{line.analyticName && <p>تفصیلی: {line.analyticName}</p>}{line.costCenterName && <p>مرکز هزینه: {line.costCenterName}</p>}</td><td className="numbers p-3">{line.debit ? formatAmount(line.debit) : '—'}</td><td className="numbers p-3">{line.credit ? formatAmount(line.credit) : '—'}</td></tr>)}</tbody><tfoot className="border-t-2 border-line bg-paper font-bold"><tr><td colSpan={3} className="p-3">جمع سند</td><td className="numbers p-3">{formatAmount(totals.debit)}</td><td className="numbers p-3">{formatAmount(totals.credit)}</td></tr></tfoot></table></div>
         <div className="space-y-2 border-t border-line p-4 text-xs leading-6"><p className={totals.debit === totals.credit ? 'text-income' : 'text-expense'}>{totals.debit === totals.credit ? 'بدهکار و بستانکار متوازن است.' : 'اختلاف سند: ' + formatAmount(Math.abs(totals.debit - totals.credit))}</p><p>ایجاد: {date(selected.createdAt)}{selected.submittedAt && ' · ارسال برای تأیید: ' + date(selected.submittedAt)}{selected.reviewedAt && ' · بررسی: ' + date(selected.reviewedAt)}</p>{selected.returnReason && <p className="text-expense">دلیل برگشت: {selected.returnReason}</p>}<p className="break-all text-muted">منبع: {selected.sourceType} · {selected.sourceId}</p>{selected.reversesEntryId && <p className="break-all text-muted">معکوس سند: {selected.reversesEntryId}</p>}<p className="break-all text-muted">شناسه سند: {selected.id}</p></div>
+        <ReviewHistory key={selected.id} entryId={selected.id} />
       </article>}
     </>}
   </section>;
