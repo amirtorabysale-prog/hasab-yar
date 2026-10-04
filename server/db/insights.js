@@ -17,7 +17,7 @@ function financialTransactionRows(window, filters = {}) {
   if (filters.category) { clauses.push('transactions.category=?'); values.push(filters.category); }
   if (filters.contactId) { clauses.push('transactions.contact_id=?'); values.push(filters.contactId); }
   return db.prepare(`SELECT transactions.id,transactions.amount,transactions.type,transactions.category,
-    transactions.capital_flow AS capitalFlow,
+    transactions.capital_flow AS capitalFlow, transactions.accounting_role AS accountingRole,
     transactions.raw_text AS rawText,transactions.occurred_at AS occurredAt,transactions.account_id AS accountId,
     accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -77,7 +77,7 @@ export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
   const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
   const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
     occurred_at AS occurredAt,created_at AS createdAt
-    FROM transactions WHERE status='confirmed' AND capital_flow='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+    FROM transactions WHERE status='confirmed' AND capital_flow='' AND accounting_role='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
   // فشار پرداخت تنها صفتی است که به آینده نگاه می‌کند و ورودی‌اش تعهدهای باز
   // است، نه تراکنش‌های گذشته.
   return financialDna(rows, { timeZone: currentTimeZone(), now, months, obligations: listObligations({ status: 'open' }) });
@@ -92,7 +92,7 @@ export function dnaProfiles({ months = 6, now = new Date() } = {}) {
   const from = new Date(now.getTime() - Math.max(1, Math.min(24, Number(months) || 6)) * 30 * 24 * 60 * 60 * 1000);
   const rows = activeWorkspaceDatabase().prepare(`SELECT amount,type,category,source,
     occurred_at AS occurredAt,created_at AS createdAt
-    FROM transactions WHERE status='confirmed' AND capital_flow='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
+    FROM transactions WHERE status='confirmed' AND capital_flow='' AND accounting_role='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
   return dnaCategoryProfiles(rows, { timeZone: currentTimeZone() });
 }
 

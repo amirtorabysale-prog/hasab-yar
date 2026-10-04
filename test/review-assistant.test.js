@@ -421,3 +421,62 @@ test('direct cheque capture cannot expense delivered resale inventory or create 
  assert.equal(database().prepare('SELECT count(*) n FROM contacts').get().n,contacts);
  assert.ok(!db.listCheques().some(c=>c.id===item.id));
 }));
+
+for(const [role,outgoing,party] of [['prepaid-asset',true,false],['refundable-deposit',true,true],['loan-payable',false,true],['customer-advance',false,true],['deferred-revenue',false,true]]) {
+ test(`specialized ${role}: approval, journal, bank, reports, edit lock and reversal stay atomic`,()=>run(async()=>{
+  const amount=230000, item=event(`رویداد تخصصی ${role}`,amount);
+  const contact=party?db.saveContact({name:`طرف آزمایش ${role}`}):null;
+  const plan={summary:'ثبت تخصصی',explanation:'دریافت یا پرداخت بدون درآمد و هزینه جاری',missingFacts:[],lines:[
+   {role,key:party?contact.name:'بیمه',debit:outgoing?amount:0,credit:outgoing?0:amount},
+   {role:'cash',debit:outgoing?0:amount,credit:outgoing?amount:0}]};
+  const initial=db.listAccounts().find(a=>a.id==='cash').balance;
+  const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',...(contact?{counterpartyId:contact.id}:{})},fetcher:fake(plan)});
+  const result=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+  assert.equal(result.status,'posted');
+  assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,initial+(outgoing?-amount:amount));
+  const source=JSON.parse(database().prepare('SELECT journal_source FROM financial_events WHERE id=?').get(item.id).journal_source);
+  const tx=database().prepare('SELECT *,accounting_role AS accountingRole FROM transactions WHERE id=?').get(source.id);
+  assert.equal(tx.accountingRole,role);
+  const journal=database().prepare('SELECT l.*,a.source_kind FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE entry_id=?').all(result.journalEntryId);
+  assert.equal(journal.reduce((n,l)=>n+l.debit-l.credit,0),0);
+  assert.ok(journal.some(l=>l.source_kind===role));
+  if(party) assert.ok(journal.find(l=>l.source_kind===role).analytic_id);
+  const {summarize}=await import('../server/db/transactions.js');
+  assert.equal(summarize([tx]).income,0);assert.equal(summarize([tx]).expense,0);
+  assert.throws(()=>db.updateTransaction(source.id,{amount:999999}),{code:'REVIEWED_TRANSACTION_LOCKED'});
+  assert.throws(()=>db.deleteTransaction(source.id),{code:'REVIEWED_TRANSACTION_LOCKED'});
+  assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'EVENT_NOT_REVIEWABLE'});
+  db.reverseEvent(item.id,'برگشت آزمایش تخصصی');
+  assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,initial);
+ }));
+}
+
+test('catalog binding corrects inventory and party identities but never changes accounting roles or values',()=>run(async()=>{
+ const {bindReviewProposal}=await import('../server/reviewProposalBindings.js');
+ const catalog={ledger:[['wrong','1','هزینه','expense','debit','expense-category','مواد',null]],chart:[]};
+ const p=bindReviewProposal({inventoryItems:[{name:'زونکن',total:800000}],lines:[{role:'inventory-asset',accountId:'wrong',key:'مواد',debit:800000,credit:0},{role:'payable',accountId:'wrong',debit:0,credit:800000}]},catalog,{});
+ assert.equal(p.lines[0].key,'زونکن');assert.equal(p.lines[0].accountId,undefined);
+ assert.equal(p.lines[1].accountId,undefined);assert.equal(p.lines[1].role,'payable');assert.equal(p.lines[1].credit,800000);
+}));
+
+test('old bank mapped to cash is blocked without silently changing journal history',()=>run(async()=>{
+ const bank=db.saveAccount({name:'سامان بررسی نگاشت',kind:'bank',bankId:'saman',openingBalance:0});
+ const {resolveEventRole}=await import('../server/roleResolver.js');
+ const id=resolveEventRole(database(),'cash',bank.id,{accountId:bank.id});
+ const {saveChartAccount}=await import('../server/chartOfAccounts.js');
+ const group=saveChartAccount(database(),{code:'97',name:'دارایی آزمایش نگاشت',level:'group',type:'asset'});
+ const general=saveChartAccount(database(),{code:'9701',name:'نقد و بانک آزمایش',level:'general',type:'asset',parentCode:group.code});
+ const cash=saveChartAccount(database(),{code:'970101',name:'صندوق آزمایش',level:'subsidiary',type:'asset',parentCode:general.code,role:'cash'});
+ const target=saveChartAccount(database(),{code:'970102',name:'بانک آزمایش',level:'subsidiary',type:'asset',parentCode:general.code,role:'bank'});
+ database().prepare('UPDATE ledger_accounts SET chart_account_id=? WHERE id=?').run(cash.id,id);
+ const item=event('هزینه پیک از سامان',200000);
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:bank.id},fetcher:fake({summary:'پیک',explanation:'هزینه جاری',missingFacts:[],lines:[{role:'expense-category',key:'نظافت',debit:200000,credit:0},{role:'cash',debit:0,credit:200000}]})});
+ const prepared=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+ assert.equal(prepared.canPost,false);assert.ok(prepared.postingBlockers.some(b=>b.includes('معین صندوق')));
+ assert.equal(database().prepare('SELECT chart_account_id FROM ledger_accounts WHERE id=?').get(id).chart_account_id,cash.id);
+ assert.equal(prepared.mappingRepairs.length,1);assert.equal(prepared.mappingRepairs[0].chartAccountId,target.id);
+ db.mapLedgerAccount(id,target.id);
+ const again=await ai.proposeReview(database(),item.id,{facts:{accountId:bank.id},fetcher:fake({summary:'پیک',explanation:'هزینه جاری',missingFacts:[],lines:[{role:'expense-category',key:'نظافت',debit:200000,credit:0},{role:'cash',debit:0,credit:200000}]})});
+ assert.equal(assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),again).canPost,true);
+ assert.equal(db.reviewAiFeedback(item.id,again.id,{accepted:true}).item.status,'posted');
+}));

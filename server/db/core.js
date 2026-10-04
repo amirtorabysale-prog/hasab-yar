@@ -287,6 +287,7 @@ function ensureTransactionReviewSchema(database) {
   ensureColumnOn(database, 'transactions', "review_state TEXT NOT NULL DEFAULT 'ready'");
   ensureColumnOn(database, 'transactions', 'restored_from TEXT');
   ensureColumnOn(database, 'transactions', "capital_flow TEXT NOT NULL DEFAULT ''");
+  ensureColumnOn(database, 'transactions', "accounting_role TEXT NOT NULL DEFAULT ''");
   database.exec('CREATE INDEX IF NOT EXISTS idx_transactions_restored_from ON transactions(restored_from)');
 }
 

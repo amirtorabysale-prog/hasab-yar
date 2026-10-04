@@ -31,7 +31,7 @@ function resolverError(message, code = 'ROLE_UNRESOLVED') {
  * مجبور باشد اول دستی حساب بسازد. ولی کلید همیشه از منشأ می‌آید، نه از نام
  * نمایشی، تا تغییر نام حساب تازه‌ای نسازد.
  */
-function linkedAccount(database, sourceKind, sourceKey, name, type, normalSide = null) {
+function linkedAccount(database, sourceKind, sourceKey, name, type, normalSide = null, metadata = {}) {
   const key = String(sourceKey || '').trim() || 'default';
   const existing = database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(sourceKind, key);
   if (existing) return existing.id;
@@ -45,15 +45,21 @@ function linkedAccount(database, sourceKind, sourceKey, name, type, normalSide =
   while (used.has(code)) code += 1;
   database.prepare('INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key) VALUES (?,?,?,?,?,?,?)')
     .run(id, String(code), String(name).slice(0, 120), type, side, sourceKind, key);
-  autoMapToChart(database, { id, type, sourceKind, sourceKey: key, name });
+  autoMapToChart(database, { id, type, sourceKind, sourceKey: key, name, ...metadata });
   return id;
 }
 
 function operationalAccount(database, accountId) {
-  const account = database.prepare('SELECT id,name FROM accounts WHERE id=?').get(String(accountId || 'cash'))
-    || database.prepare('SELECT id,name FROM accounts WHERE id=?').get('cash');
+  const account = database.prepare('SELECT id,name,kind,bank_id FROM accounts WHERE id=?').get(String(accountId || 'cash'))
+    || database.prepare('SELECT id,name,kind,bank_id FROM accounts WHERE id=?').get('cash');
   if (!account) throw resolverError('حساب نقدی دفتر پیدا نشد.', 'CASH_ACCOUNT_MISSING');
-  return linkedAccount(database, 'operational-account', account.id, account.name, 'asset');
+  const id=linkedAccount(database, 'operational-account', account.id, account.name, 'asset', null, {operationalKind:account.kind,bankId:account.bank_id});
+  const mapped=database.prepare('SELECT chart_account_id FROM ledger_accounts WHERE id=?').get(id);
+  if(!mapped.chart_account_id) {
+    const chart=suggestChartAccount({sourceKind:'operational-account',type:'asset',name:account.name,operationalKind:account.kind,bankId:account.bank_id},listChartAccounts(database),{confidentOnly:true});
+    if(chart) mapLedgerAccountToChart(database,id,chart.id);
+  }
+  return id;
 }
 
 /**
@@ -103,6 +109,11 @@ export function resolveEventRole(database, role, key, event = {}) {
     // پیش‌پرداخت به تفکیک دسته، نه یک حساب یک‌کاسه: «پیش‌پرداخت بیمه» و
     // «پیش‌پرداخت اجاره» دو ماندهٔ جدا دارند و حسابدار باید بتواند هرکدام را
     // مستقل ببیند و تخصیصشان را دنبال کند.
+    case ROLES.REFUNDABLE_DEPOSIT:
+      return counterpartyRoleAccount(database, 'refundable-deposit', event, key, 'ودیعه قابل استرداد', 'asset');
+    case ROLES.LOAN_PAYABLE:
+      return counterpartyRoleAccount(database, 'loan-payable', event, key, 'اصل وام پرداختنی', 'liability');
+
     case ROLES.PREPAID_ASSET:
       return linkedAccount(database, 'prepaid-asset', key || 'عمومی', `پیش‌پرداخت — ${key || 'عمومی'}`, 'asset');
 
@@ -158,7 +169,7 @@ export function resolveEventRole(database, role, key, event = {}) {
  * صندوق یا حساب هزینه، داده‌ای می‌سازد که هیچ معنایی ندارد.
  */
 const COUNTERPARTY_ROLES = new Set([
-  ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE, ROLES.CUSTOMER_ADVANCE, ROLES.DEFERRED_REVENUE,
+  ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE, ROLES.CUSTOMER_ADVANCE, ROLES.DEFERRED_REVENUE, ROLES.REFUNDABLE_DEPOSIT, ROLES.LOAN_PAYABLE,
 ]);
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {

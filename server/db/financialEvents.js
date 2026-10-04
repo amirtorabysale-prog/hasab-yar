@@ -328,13 +328,15 @@ function acceptPreparedProposal(database,row,proposal,actor) {
       const capitalFlow = counterpart.role==='fixed-asset' ? 'fixed-asset' : counterpart.role==='owner-capital' ? 'capital-in' : '';
       const transactionId = source?.type==='transaction' ? source.id : randomUUID();
       if (source?.type==='transaction') {
-        const changed = database.prepare(`UPDATE transactions SET amount=?,type=?,category=?,account_id=?,account=?,contact_id=?,occurred_at=?,capital_flow=?,journal_deferred=0,review_state='ready',needs_review=0,updated_at=? WHERE id=? AND status!='deleted'`).run(amount,type,counterpart.key || counterpart.accountName,event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,new Date().toISOString(),transactionId).changes;
+        const changed = database.prepare(`UPDATE transactions SET amount=?,type=?,category=?,account_id=?,account=?,contact_id=?,occurred_at=?,capital_flow=?,journal_deferred=0,review_state='ready',needs_review=0,updated_at=? WHERE id=? AND status!='deleted'`).run(amount,type,counterpart.accountName || counterpart.key,event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,new Date().toISOString(),transactionId).changes;
         if (!changed) throw Object.assign(new Error('تراکنش مبنا دیگر فعال نیست.'),{code:'EVENT_NOT_REVIEWABLE',status:409});
       } else {
         database.prepare(`INSERT INTO transactions(id,client_id,amount,type,category,raw_text,source,account_id,account,contact_id,occurred_at,capital_flow,status,journal_deferred)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)`).run(transactionId,`review:${row.id}`,amount,type,counterpart.key || counterpart.accountName,event.evidence || event.utterance || 'بررسی حسابدار','text',event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,'confirmed');
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)`).run(transactionId,`review:${row.id}`,amount,type,counterpart.accountName || counterpart.key,event.evidence || event.utterance || 'بررسی حسابدار','text',event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,'confirmed');
         database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
       }
+      database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(
+        ['prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
     } else if (source?.type==='transaction') {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }

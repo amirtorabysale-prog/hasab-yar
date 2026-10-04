@@ -4,7 +4,7 @@ import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { recordInventoryMovement } from './inventory.js';
 
-const partyRoles=new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue']);
+const partyRoles=new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
 const norm=value=>exactCounterpartyKey(value).toLocaleLowerCase('fa');
 const fail=message=>Object.assign(new Error(message),{code:'REVIEW_DETAILS_REQUIRED',status:409});
 /** No writes in preview. Applied only inside the journal's approval transaction. */
@@ -19,7 +19,7 @@ export function prepareReviewResources(database,event,proposal,{evidence='',fact
         const {contact}=resolveCounterparty(database,name);
         if(contact) {result.event.counterpartyId=contact.id;result.event.counterparty=contact.name;}
         else {
-          const kind=proposal.lines.some(l=>['receivable','cheque-receivable','customer-advance','deferred-revenue'].includes(l.role))?'customer':'vendor';
+          const kind=proposal.lines.some(l=>['receivable','cheque-receivable','customer-advance','deferred-revenue','refundable-deposit','loan-payable'].includes(l.role))?'customer':'vendor';
           result.newCounterparty={name,kind};result.event.counterparty=name;
           if(apply) {
             const id=randomUUID(),clean=normalizedCounterpartyInput(name);

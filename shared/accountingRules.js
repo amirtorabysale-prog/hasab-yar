@@ -32,6 +32,8 @@ export const ROLES = Object.freeze({
   // مصرف شود. حساب «۱۴۰۱ — پیش‌پرداخت‌ها» از قبل در جدول حساب‌ها بود و هیچ
   // قاعده‌ای به آن نمی‌رسید.
   PREPAID_ASSET: 'prepaid-asset',
+  REFUNDABLE_DEPOSIT: 'refundable-deposit',
+  LOAN_PAYABLE: 'loan-payable',
   // پیش‌دریافت از مشتری: پول آمده ولی هنوز کاری نکرده‌ایم. بدهی ماست، نه
   // درآمد. شناسایی درآمد وقتی است که تعهد انجام شود.
   CUSTOMER_ADVANCE: 'customer-advance',
