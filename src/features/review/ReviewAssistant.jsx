@@ -69,6 +69,16 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
     } catch(e) {setError(e.message);}
     finally {setLoading(false);}
   };
+  const repairMapping = async repair => {
+    setLoading(true);setError('');
+    try {
+      await api.mapLedgerAccount(repair.ledgerAccountId,repair.chartAccountId);
+      const result=await api.reviewAiProposal(item.id,{});
+      setAi(result.proposal);await onSaved();
+      notify('نگاشت با تأیید شما اصلاح و پیشنهاد دوباره تحلیل شد.');
+    } catch(e) {setError(e.message);}
+    finally {setLoading(false);}
+  };
   const textOf = entry => {
     if(entry.speaker!=='assistant') return entry.body;
     try {const p=JSON.parse(entry.body);return [p.summary,p.explanation,...(p.missingFacts || [])].filter(Boolean).join(' — ');} catch{return entry.body;}
@@ -100,6 +110,11 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
         {!ai.canPost && <button disabled={loading} onClick={()=>open?null:toggle()} className="tap rounded border border-accent px-3 text-accent">پاسخ به ابهام و اصلاح پیشنهاد</button>}
       </div>
     </>}
+    {ai?.state==='proposed' && ai.mappingRepairs?.map(repair=><div key={repair.ledgerAccountId} className="mt-3 rounded border border-line p-3">
+      <p>حساب «{repair.accountName}» به صندوق نگاشت شده؛ معین مناسب «{repair.chartCode} {repair.chartName}» است. اصلاح نگاشت، نمایش کدینگ {repair.affectedLines} سطر قبلی را هم تغییر می‌دهد؛ مبلغ و بانک اسناد تغییر نمی‌کند.</p>
+      <button disabled={loading || busy} onClick={()=>repairMapping(repair)} className="tap mt-2 rounded border border-accent px-3 text-accent">تأیید اصلاح نگاشت بانک و بازتحلیل</button>
+    </div>)}
+    {ai?.state==='proposed' && ai.bindingCorrections?.map((text,index)=><p key={index} className="mt-1 text-muted">{text}</p>)}
     {ai?.state==='rejected' && <p>دلیل رد: {ai.reason}</p>}
     {ai?.state==='proposed' && (questions.length>0 || Object.keys(savedAnswers).length>0 || conditions.length>0) && <div className="mt-3 space-y-3 border-t border-line pt-3" aria-label="سؤال‌ها و پاسخ‌های این پرونده">
       {unanswered.length>0 && <><b>برای تکمیل پیشنهاد، به این سؤال‌ها پاسخ بده</b><p className="text-muted">هر پاسخ کنار سؤال خودش ذخیره می‌شود و در بازبینی‌های بعدی در اختیار دستیار می‌ماند.</p></>}

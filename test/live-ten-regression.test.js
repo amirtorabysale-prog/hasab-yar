@@ -64,3 +64,16 @@ test('two accounts in the named source bank require selection instead of first-m
  const draft=detectCaptureTransfer(samples[2][1],{now,accounts});assert.equal(draft.fromAccountId,'');assert.equal(draft.toAccountId,'p');
  const absent=detectCaptureTransfer(samples[2][1],{now,accounts:[]});assert.equal(absent.intent,'transfer');assert.equal(absent.fromAccountId,'');assert.equal(absent.toAccountId,'');
 });
+
+test('capture keeps original transcript and unmasked bank in review evidence',()=>{
+ const input=samples.find(([name])=>name==='insurance')[1];
+ const parsed=parseFinancialText(input,{now});
+ assert.equal(parsed.transcript,input);
+ const draft=transactionEventDecision(parsed.transactions[0],{transcript:parsed.transcript,sentence:'بیمه از bankplaceholder پرداخت شد'});
+ assert.equal(draft.event.evidence,input);
+});
+
+test('business questions deduplicate paraphrased coverage and useful life',()=>{
+ const q=reviewQuestions({questions:[{id:'coverage',text:'پوشش بیمه از اول آبان چه سالی شروع می‌شود؟'},{id:'life',text:'عمر استفاده مورد انتظار چاپگر چقدر است؟'}],missingFacts:['تاریخ دقیق شروع پوشش بیمه اول آبان کدام سال','عمر استفاده مورد انتظار این چاپگر چقدر است؟']});
+ assert.equal(q.length,2);
+});

@@ -45,8 +45,9 @@ export function saveChartAccountEntry(values = {}) {
 }
 
 export function mapLedgerAccount(ledgerAccountId, chartAccountId) {
+  const before=activeWorkspaceDatabase().prepare('SELECT chart_account_id FROM ledger_accounts WHERE id=?').get(ledgerAccountId);
   const result = mapLedgerAccountToChart(activeWorkspaceDatabase(), ledgerAccountId, chartAccountId);
-  audit('map', 'ledger_account', ledgerAccountId, { chartCode: result.chartAccount?.code || null });
+  audit('map', 'ledger_account', ledgerAccountId, { previousChartAccountId:before?.chart_account_id || null,chartAccountId:chartAccountId || null,chartCode: result.chartAccount?.code || null });
   return { ...result, mapping: chartMappingOverview(activeWorkspaceDatabase()) };
 }
 

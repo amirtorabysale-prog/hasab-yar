@@ -30,3 +30,13 @@ test('questions render below proposal with individual boxes, typed dates and per
     assert.doesNotMatch(answerPanel,/text-expense/);
   } finally {await vite.close();}
 });
+
+test('bank mapping repair states historical impact and requires explicit action before posting',async()=>{
+ const vite=await createServer({server:{middlewareMode:true},appType:'custom'});
+ try {
+  const {ReviewAssistant}=await vite.ssrLoadModule('/src/features/review/ReviewAssistant.jsx');
+  const html=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'bank-case'},ai:{state:'proposed',summary:'بانک',lines:[],canPost:false,mappingRepairs:[{ledgerAccountId:'bank-ledger',accountName:'سامان',chartAccountId:'bank-chart',chartCode:'1102',chartName:'بانک',affectedLines:3}]},setAi(){},onSaved(){},notify(){}}));
+  assert.match(html,/نمایش کدینگ 3 سطر قبلی/);assert.match(html,/تأیید اصلاح نگاشت بانک و بازتحلیل/);
+  assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
+ } finally {await vite.close();}
+});

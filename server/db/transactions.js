@@ -29,7 +29,7 @@ export function getToday() {
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
     transactions.journal_deferred AS journalDeferred,
-    transactions.capital_flow AS capitalFlow,
+    transactions.capital_flow AS capitalFlow, transactions.accounting_role AS accountingRole,
     transactions.occurred_at AS occurredAt,transactions.note,transactions.account,transactions.account_id AS accountId,
     accounts.name AS accountName,transactions.contact_id AS contactId,contacts.name AS contactName
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -37,7 +37,7 @@ export function getToday() {
     ORDER BY transactions.occurred_at DESC,transactions.created_at DESC`).all(start, endExclusive).map(hydrateTransaction);
   const totals = summarize(transactions);
   const previousBounds = dayBounds(addLocalDays(today, -1));
-  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND capital_flow='' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
+  const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND capital_flow='' AND accounting_role='' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
   totals.comparison = previous > 0 ? Math.round(((totals.income - previous) / previous) * 100) : null;
   return { transactions, summary: totals };
 }
@@ -46,7 +46,7 @@ export function summarize(items) {
   // آوردهٔ سرمایه درآمد نیست و خرید دارایی ثابت هزینهٔ دوره نیست؛ هر دو از صندوق
   // رد می‌شوند و در ماندهٔ حساب و کنترل پایان روز دیده می‌شوند، ولی اگر در این
   // جمع بیایند سود دوره را جعل می‌کنند.
-  const operational = items.filter((item) => !item.capitalFlow);
+  const operational = items.filter((item) => !item.capitalFlow && !item.accountingRole);
   const income = operational.filter((item) => item.type === 'income').reduce((sum, item) => sum + Number(item.amount), 0);
   const expense = operational.filter((item) => item.type === 'expense').reduce((sum, item) => sum + Number(item.amount), 0);
   const netCashFlow = income - expense;
@@ -474,7 +474,7 @@ export function findPotentialDuplicates(transactions = [], { windowMinutes = 5 }
 }
 
 export function typicalAmounts() {
-  const rows = db.prepare("SELECT type, AVG(amount) AS average FROM (SELECT type,amount FROM transactions WHERE status!='deleted' AND capital_flow='' ORDER BY occurred_at DESC LIMIT 120) GROUP BY type").all();
+  const rows = db.prepare("SELECT type, AVG(amount) AS average FROM (SELECT type,amount FROM transactions WHERE status!='deleted' AND capital_flow='' AND accounting_role='' ORDER BY occurred_at DESC LIMIT 120) GROUP BY type").all();
   return Object.fromEntries(rows.map((row) => [row.type, Math.round(row.average)]));
 }
 
@@ -485,7 +485,7 @@ export function report(range = 'month', now = new Date()) {
   const startDay = addLocalDays(today, -(days - 1));
   const start = dayBounds(startDay, timeZone).start;
   const endExclusive = dayBounds(addLocalDays(today, 1), timeZone).start;
-  const items = db.prepare("SELECT amount,type,category,capital_flow AS capitalFlow,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
+  const items = db.prepare("SELECT amount,type,category,capital_flow AS capitalFlow,accounting_role AS accountingRole,occurred_at AS occurredAt FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND occurred_at>=? AND occurred_at<? ORDER BY occurred_at").all(start, endExclusive);
   const summary = summarize(items);
   const bucketCount = range === 'quarter' ? 12 : range === 'month' ? 10 : 7;
   const bucketDays = Math.ceil(days / bucketCount);
@@ -500,7 +500,7 @@ export function report(range = 'month', now = new Date()) {
     points.push({ label: new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone, day: 'numeric', month: range === 'quarter' ? 'short' : undefined }).format(from), income: totals.income, expense: totals.expense });
   }
   const grouped = new Map();
-  for (const item of items) {
+  for (const item of items.filter(item=>!item.capitalFlow && !item.accountingRole)) {
     const key = `${item.type}:${item.category}`;
     grouped.set(key, { name: item.category, type: item.type, amount: (grouped.get(key)?.amount || 0) + Number(item.amount) });
   }
@@ -529,7 +529,7 @@ function transactionQuery(includeDeleted = false) {
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
     transactions.journal_deferred AS journalDeferred,
     transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,transactions.status,
-    transactions.capital_flow AS capitalFlow,
+    transactions.capital_flow AS capitalFlow, transactions.accounting_role AS accountingRole,
     transactions.account_id AS accountId,accounts.name AS accountName,
     transactions.contact_id AS contactId,contacts.name AS contactName,transactions.due_at AS dueAt
     FROM transactions LEFT JOIN contacts ON contacts.id=transactions.contact_id LEFT JOIN accounts ON accounts.id=transactions.account_id
@@ -586,6 +586,7 @@ export function listTransactions({ query = '', type = '', category = '', from = 
 export function updateTransaction(id, values = {}) {
   const current = transactionRow(id);
   if (!current) return null;
+  if (current.accountingRole) throw Object.assign(new Error('این ثبت تخصصی را از سند و پرونده بررسی حسابدار اصلاح یا برگشت کن.'), {code:'REVIEWED_TRANSACTION_LOCKED',status:409});
   if (current.journalDeferred) throw Object.assign(new Error('این ثبت هنوز در صف بررسی است؛ ابتدا آن را از همان صف تعیین‌تکلیف کن.'), { code: 'PENDING_TRANSACTION_LOCKED', status: 409 });
   if (current.status === 'allocated') throw Object.assign(new Error('این جابه‌جایی پول از تسویهٔ یک سند ساخته شده و فقط از داخل همان سند قابل اصلاح است.'), { code: 'ALLOCATED_TRANSACTION_LOCKED', status: 409 });
   const type = ['income', 'expense'].includes(values.type) ? values.type : current.type;
@@ -655,6 +656,7 @@ export function correctLatestTransaction(targetId, command, changes = {}) {
 export function deleteTransaction(id) {
   const current = transactionRow(id);
   if (!current) return false;
+  if (current.accountingRole) throw Object.assign(new Error('این ثبت تخصصی را از سند و پرونده بررسی حسابدار اصلاح یا برگشت کن.'), {code:'REVIEWED_TRANSACTION_LOCKED',status:409});
   if (current.journalDeferred) throw Object.assign(new Error('برای حذف ثبت معلق، آن را در صف بررسی رد کن تا رویداد و تراکنش با هم بسته شوند.'), { code: 'PENDING_TRANSACTION_LOCKED', status: 409 });
   if (current.status === 'allocated') throw Object.assign(new Error('تراکنش تخصیص‌یافته به سند را نمی‌توان جداگانه حذف کرد.'), { code: 'ALLOCATED_TRANSACTION_LOCKED', status: 409 });
   assertAccountingPeriodOpen(db, periodForDate(current.occurredAt, currentTimeZone()));

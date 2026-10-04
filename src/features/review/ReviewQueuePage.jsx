@@ -379,15 +379,15 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
   </article>;
 }
 
-export function ReviewQueuePage({ notify, access, navigate }) {
+export function ReviewQueuePage({ notify, access, navigate, refresh }) {
   const [items, setItems] = useState(null);
   const [dnaSummary,setDnaSummary] = useState(null);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
-    try { const result=await api.reviewQueue();setItems(result.items);setDnaSummary(result.dnaSummary); }
+    try { const result=await api.reviewQueue();setItems(result.items);setDnaSummary(result.dnaSummary);await refresh?.(); }
     catch (error) { notify(error.message); setItems([]); }
-  }, [notify]);
+  }, [notify,refresh]);
 
   useEffect(() => { load(); }, [load]);
 

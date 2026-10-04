@@ -137,7 +137,7 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
     : new Set();
   const direct = db.prepare(`SELECT transactions.id,transactions.occurred_at AS occurredAt,
       transactions.raw_text AS memo,transactions.category,transactions.type,transactions.amount
-    FROM transactions WHERE contact_id=? AND status!='allocated' AND capital_flow=''`).all(contact.id)
+    FROM transactions WHERE contact_id=? AND status!='allocated' AND capital_flow='' AND accounting_role=''`).all(contact.id)
     .filter((row) => !postedToOwnAccount.has(row.id))
     .map((row) => ({
       id: row.id,

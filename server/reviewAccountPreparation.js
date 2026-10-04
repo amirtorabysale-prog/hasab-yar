@@ -7,7 +7,7 @@ import { normalizePersian } from '../shared/normalize.js';
 export const REVIEW_ACCOUNT_TYPES = Object.freeze({
   'inventory-asset':'asset',cash:'asset',receivable:'asset',payable:'liability','cheque-receivable':'asset','cheque-payable':'liability',
   'expense-category':'expense','income-category':'income','prepaid-asset':'asset','fixed-asset':'asset',
-  'owner-capital':'equity','customer-advance':'liability','deferred-revenue':'liability',
+  'refundable-deposit':'asset','loan-payable':'liability','owner-capital':'equity','customer-advance':'liability','deferred-revenue':'liability',
   'accumulated-depreciation':'asset','depreciation-expense':'expense','vat-input':'asset','vat-output':'liability',
 });
 export const reviewNormalSide = role => role==='accumulated-depreciation' ? 'credit' : ['asset','expense'].includes(REVIEW_ACCOUNT_TYPES[role]) ? 'debit' : 'credit';
@@ -45,6 +45,7 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
     else if(matches.length>1) blockers.push('چند حساب هم‌نام پیدا شد؛ AI باید با کدینگ و سابقه حساب دقیق را مشخص کند.');
   }
   const suggested=mapping || (key && namedRoles.has(role) ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:key,sourceKind:role,sourceKey:key},chart,{confidentOnly:true}) : null);
+  if(role==='prepaid-asset' && suggested && !/پیش[‌\s]*پرداخت/.test(suggested.name)) blockers.push('معین پیش‌پرداخت باید مخصوص پیش‌پرداخت باشد؛ انتخاب دارایی نامرتبط مجاز نیست.');
   if(!account && suggested && namedRoles.has(role)) {
     const matches=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE chart_account_id=? AND active=1 AND source_kind='chart-account'").all(suggested.id).filter(a=>typed(a,role));
     if(matches.length===1) account=matches[0];
@@ -76,7 +77,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v3',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v4',
     reviewAccountCatalog(database),
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],

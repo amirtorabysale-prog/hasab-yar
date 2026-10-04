@@ -57,7 +57,7 @@ export function backupSummary(snapshot) {
   // آورده و خرید دارایی ثابت جابه‌جایی سرمایه‌اند، نه درآمد و هزینه؛ در خلاصهٔ
   // پشتیبان هم نباید جمع دخل‌وخرج را باد کنند. پشتیبان‌های قدیمی این ستون را
   // ندارند و همان‌طور که بودند شمرده می‌شوند.
-  const operational = transactions.filter((item) => !item.capital_flow);
+  const operational = transactions.filter((item) => !item.capital_flow && !item.accounting_role);
   return {
     exportedAt: snapshot.exportedAt,
     sourceWorkspaceId: snapshot.workspace?.id || null,

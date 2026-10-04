@@ -29,7 +29,7 @@ export const CHART_ROLES = Object.freeze([
   'cash', 'bank', 'receivable', 'payable', 'inventory', 'cogs',
   'sales', 'service-income', 'other-income', 'operating-expense',
   'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
-  'fixed-asset', 'owner-capital',
+  'fixed-asset', 'owner-capital', 'refundable-deposit', 'loan-payable',
   // حقوق و دستمزد سه بدهی جدا می‌سازد و هر سه به گیرندهٔ متفاوتی پرداخت
   // می‌شوند: خالص به خودِ پرسنل، بیمه به تأمین اجتماعی و مالیات به سازمان
   // امور مالیاتی. ریختنشان در یک «سایر پرداختنی» یعنی هیچ‌کدام قابل پیگیری
@@ -661,6 +661,7 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
   if (keyRole) return byRole(keyRole);
 
   const sourceKind = ledgerAccount.sourceKind || ledgerAccount.source_kind;
+  if(['refundable-deposit','loan-payable'].includes(sourceKind)) return byRole(sourceKind);
   // نقشِ `operating-expense` را فقط یک معین دارد (۸۱۰۹ سایر هزینه‌های عملیاتی)،
   // پس هر دستهٔ هزینه‌ای — اجاره، حمل‌ونقل، قبوض — همان‌جا می‌نشست و در پارسیان
   // همه‌چیز در یک حساب کلی جمع می‌شد. حساب دستهٔ دفتر، `source_key` برابر نام
