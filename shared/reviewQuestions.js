@@ -3,6 +3,9 @@ const normalize = text => String(text).replace(/[يى]/g,'ی').replace(/ك/g,'ک
 function businessFact(text) {
   const t=normalize(text);
   if(/پوشش|شروع خدمت|دوره خدمت/.test(t) && /شروع|آبان|سال/.test(t) && !/پایان|اتمام|انتها/.test(t)) return 'coverage-start';
+  if(/نام/.test(t) && /طرف حساب|طرف‌حساب|شخص|شرکت/.test(t)) return 'counterparty-name';
+  if(/واحد/.test(t) && /کالا|ثبت/.test(t)) return 'inventory-unit';
+  if(/چند|تعداد|مقدار/.test(t) && /کالا|تحویل|خرید/.test(t)) return 'inventory-quantity';
   if(/عمر/.test(t) && /استفاده|انتظار|چاپگر|مفید/.test(t)) return 'useful-life';
   if(/دارایی ثابت/.test(t) && /هزینه/.test(t)) return 'capitalization-choice';
   if(/سیاست/.test(t) && /سرمایه/.test(t)) return 'capitalization-policy';

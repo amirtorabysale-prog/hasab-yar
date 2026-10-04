@@ -480,3 +480,61 @@ test('old bank mapped to cash is blocked without silently changing journal histo
  assert.equal(assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),again).canPost,true);
  assert.equal(db.reviewAiFeedback(item.id,again.id,{accepted:true}).item.status,'posted');
 }));
+
+test('category semantics override unrelated same-type AI chart bindings',()=>run(async()=>{
+ const {bindReviewProposal}=await import('../server/reviewProposalBindings.js');
+ const catalog={ledger:[['salary','5102','حقوق و دستمزد','expense','debit','chart-account','salary','salary-chart']],chart:[['salary-chart','8101','حقوق و دستمزد','expense','debit','operating-expense',false],['delivery-chart','8103','حمل‌ونقل','expense','debit','operating-expense',false]]};
+ const p=bindReviewProposal({inventoryItems:[],lines:[{role:'expense-category',key:'حمل‌ونقل',accountId:'salary',chartAccountId:'salary-chart',debit:200000,credit:0}]},catalog,{});
+ assert.equal(p.lines[0].accountId,undefined);assert.equal(p.lines[0].chartAccountId,'delivery-chart');assert.equal(p.lines[0].debit,200000);
+ assert.ok(p.bindingCorrections.length);
+}));
+
+test('direct transfer rejects an old bank mapped to cash atomically, then succeeds after explicit repair',()=>{
+ const workspace=db.createWorkspace(owner.id,{name:'تست گارد انتقال',profileType:'business'});
+ return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{
+  db.installChartTemplate();
+  const from=db.saveAccount({name:'سامان',kind:'bank',bankId:'saman',openingBalance:1000000});
+  const to=db.saveAccount({name:'پاسارگاد',kind:'bank',bankId:'pasargad'});
+  const cash=database().prepare("SELECT id FROM chart_accounts WHERE role='cash' AND level='subsidiary'").get();
+  const bank=database().prepare("SELECT id FROM chart_accounts WHERE role='bank' AND level='subsidiary'").get();
+  const ledger=database().prepare("SELECT id FROM ledger_accounts WHERE source_kind='operational-account' AND source_key=?").get(from.id);
+  db.mapLedgerAccount(ledger.id,cash.id);
+  const before=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
+  assert.throws(()=>db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'}),{code:'BANK_CHART_MAPPING_INVALID'});
+  assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,before);
+  assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,1000000);
+  assert.equal(database().prepare('SELECT chart_account_id FROM ledger_accounts WHERE id=?').get(ledger.id).chart_account_id,cash.id);
+  db.mapLedgerAccount(ledger.id,bank.id);
+  db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'});
+  assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,500000);
+ });
+});
+
+test('DNA similarity cannot come only from shared bank, party and capture wording',()=>run(async()=>{
+ const bank=db.saveAccount({name:'بانک سامان مشترک',kind:'bank',bankId:'saman'});
+ const prior=event('امروز دریافت بابت خدمات چاپ از شرکت آزمون نقش به بانک سامان مشترک دریافت کردم؛ بازآزمایی تازه چاپ.',700000);
+ const p=await ai.proposeReview(database(),prior.id,{facts:{accountId:bank.id},fetcher:fake({summary:'خدمات چاپ',explanation:'درآمد خدمات',missingFacts:[],lines:[{role:'income-category',key:'خدمات',debit:0,credit:700000},{role:'cash',debit:700000,credit:0}]})});
+ db.reviewAiFeedback(prior.id,p.id,{accepted:true});
+ const next=event('امروز اصل وام از آقای آزمون وام به بانک سامان مشترک دریافت کردم؛ درآمد نیست. بازآزمایی تازه وام.',2000000);
+ const dna=assistant.relevantDna(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(next.id));
+ assert.ok(!dna.some(d=>d.id===p.id));
+}));
+
+test('a confirmation word in a party answer is not stored as part of the party identity',()=>run(async()=>{
+ const {prepareReviewResources}=await import('../server/reviewResources.js');
+ const evidence='دو بسته زونکن را از شرکت نمونه خریدیم';
+ const result=prepareReviewResources(database(),{counterparty:'بله، شرکت نمونه'},{counterpartyName:'شرکت نمونه',inventoryItems:[],lines:[{role:'payable'}]},{evidence,facts:{counterpartyName:'بله، شرکت نمونه'},messages:[{speaker:'accountant',body:'بله، شرکت نمونه'}]});
+ assert.equal(result.newCounterparty.name,'شرکت نمونه');assert.equal(result.event.counterparty,'شرکت نمونه');
+}));
+
+test('trade inventory purchase can be posted without a maturity; cheque maturity remains mandatory',()=>run(async()=>{
+ const item=event('دو بسته زونکن از شرکت آزمون اعتبار نسیه خریدیم و تحویل انبار گرفتیم برای فروش',800000);
+ const plan={summary:'خرید نسیه',explanation:'کالا تحویل شده',counterpartyName:'شرکت آزمون اعتبار',questions:[{id:'payable.due',text:'سررسید این خرید نسیه چه تاریخی است؟',field:'dueAt'}],missingFacts:[],inventoryItems:[{name:'زونکن اعتبار',unit:'بسته',quantity:2,total:800000}],lines:[{role:'inventory-asset',key:'زونکن اعتبار',debit:800000,credit:0},{role:'payable',debit:0,credit:800000}]};
+ const p=await ai.proposeReview(database(),item.id,{fetcher:fake(plan)});
+ assert.equal(p.questions.length,0);assert.equal(p.optionalQuestions.length,1);
+ assert.equal(assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p).canPost,true);
+ const cheque=event('دو بسته زونکن از شرکت آزمون اعتبار با چک خریدیم و تحویل انبار گرفتیم برای فروش',800000);
+ const cp=await ai.proposeReview(database(),cheque.id,{fetcher:fake({...plan,questions:[{id:'cheque.due',text:'سررسید چک چیست؟',field:'dueAt'}],lines:[plan.lines[0],{role:'cheque-payable',debit:0,credit:800000}]})});
+ assert.equal(cp.questions.length,1);
+ assert.equal(assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(cheque.id),cp).canPost,false);
+}));

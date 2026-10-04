@@ -37,6 +37,10 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   if(account && !typed(account,role)) blockers.push('ماهیت حساب واقعی با نقش پیشنهادی سازگار نیست؛ پیشنهاد باید اصلاح شود.');
   const mapping=line.chartAccountId ? chart.find(c=>c.id===line.chartAccountId && c.postable && typed(c,role)) : null;
   if(line.chartAccountId && !mapping) blockers.push('معین پیشنهادی معتبر یا هم‌ماهیت نیست؛ پیشنهاد باید اصلاح شود.');
+  if(['expense-category','income-category'].includes(role) && key) {
+    const expected=suggestChartAccount({name:key,type:REVIEW_ACCOUNT_TYPES[role],sourceKind:role,sourceKey:key},chart,{confidentOnly:true});
+    if(expected && ((mapping && mapping.id!==expected.id) || (account?.chart_account_id && account.chart_account_id!==expected.id))) blockers.push(`معین حساب با دستهٔ «${key}» سازگار نیست؛ معین مرتبط «${expected.name}» است.`);
+  }
   if(account && mapping && account.chart_account_id!==mapping.id) blockers.push('حساب و معین پیشنهادی با هم تطبیق ندارند.');
   if(!account && !line.accountId && namedRoles.has(role) && key) {
     const matches=database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE active=1 AND type=? AND normal_side=?').all(REVIEW_ACCOUNT_TYPES[role],reviewNormalSide(role))
@@ -77,7 +81,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v4',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v5',
     reviewAccountCatalog(database),
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
