@@ -31,6 +31,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
   });
   const linesTotal = invoiceLinesTotal(draft);
   const isCheque = draft.intent === 'cheque';
+  const isTransfer = draft.intent === 'transfer';
   const isInvoice = draft.intent === 'invoice';
   const isCapital = draft.intent === 'capital';
   const isAsset = draft.intent === 'fixed-asset';
@@ -39,10 +40,11 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
   // چک بدون پاسخ «بابت چه؟» ثبت نمی‌شود: پیش‌فرض «معاملهٔ تازه» همان فروش را
   // دو بار در درآمد می‌آورد وقتی چک بابت طلب قبلی بود.
   const chequeReady = !isCheque || (['income', 'receivable'].includes(draft.against) && Boolean(String(draft.contactName || '').trim()));
-  const ready = isInvoice ? true
+  const ready = isTransfer ? hasAmount && Boolean(draft.fromAccountId && draft.toAccountId && draft.fromAccountId!==draft.toAccountId)
+    : isInvoice ? true
     : isEquityMove ? Boolean(String(draft.title || '').trim())
       : Boolean(draft.direction) && hasAmount && chequeReady;
-  const label = isInvoice ? 'فاکتور' : isCapital ? 'سرمایه' : isAsset ? 'دارایی ثابت' : isCheque ? 'چک' : 'طلب و بدهی';
+  const label = isTransfer ? 'انتقال بین حساب‌ها' : isInvoice ? 'فاکتور' : isCapital ? 'سرمایه' : isAsset ? 'دارایی ثابت' : isCheque ? 'چک' : 'طلب و بدهی';
   const submit = async () => {
     if (!ready) return;
     setBusy(true);
@@ -50,11 +52,11 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
     setBusy(false);
   };
   return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
-    <section role="dialog" aria-modal="true" aria-label={isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
+    <section role="dialog" aria-modal="true" aria-label={isTransfer ? 'تأیید انتقال بین حساب‌ها' : isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">{label}</span>
       <h2 className="mt-3 text-xl font-extrabold">
-        {isInvoice ? 'پیش‌نویس فاکتور ساخته شود؟'
+        {isTransfer ? 'این مبلغ بین حساب‌های شرکت منتقل شود؟' : isInvoice ? 'پیش‌نویس فاکتور ساخته شود؟'
           : isCapital ? 'این آورده به حساب سرمایه برود؟'
             : isAsset ? 'این خرید دارایی ثابت است؟'
               : isCheque ? 'این چک ثبت شود؟' : 'این مورد ثبت شود؟'}
@@ -74,7 +76,17 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
         </> : <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>}
       </div>
 
-      {isEquityMove ? <>
+      {isTransfer ? <>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {[['fromAccountId','از حساب'],['toAccountId','به حساب']].map(([field,title])=><label key={field} className="text-xs font-bold text-muted">{title}
+            <select value={draft[field] || ''} onChange={event=>setDraft({...draft,[field]:event.target.value})} className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink">
+              <option value="">انتخاب حساب</option>
+              {accounts.filter(account=>account.active!==false).map(account=><option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          </label>)}
+        </div>
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">فقط ماندهٔ مبدأ و مقصد جابه‌جا می‌شود؛ این انتقال درآمد یا هزینه نیست.</p>
+      </> : isEquityMove ? <>
         <label className="mt-3 block text-xs font-bold text-muted">{isCapital ? 'عنوان آورده' : 'نام دارایی'}
           <input value={draft.title || ''} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
             placeholder={isCapital ? 'آوردهٔ نقدی مالک' : 'مثلاً لپ‌تاپ، خودرو، دستگاه چاپ'}

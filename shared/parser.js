@@ -584,7 +584,10 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       ...(prepayment ? { prepaymentSignal: true } : {}),
       ...(unpaid ? { unpaidSignal: true } : {}),
       ...(eventNature !== EVENT_NATURES.NEW ? { eventNature } : {}),
-      ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), chartCode: classified.chartCode, rawText: rawContext || text,
+      ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), chartCode: classified.chartCode,
+      // Amount extraction masks banks and dates. Those masks must never become
+      // the user's evidence. Keep scoped context for genuinely separate amounts.
+      rawText: spans.length === 1 ? String(input) : rawContext || text,
       ...(counterpartyName ? {
         contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
       } : {}),

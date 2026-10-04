@@ -265,10 +265,14 @@ test('similar party names require identity resolution instead of merging silentl
 }));
 
 test('purchase reversal is blocked after later inventory use and leaves stock, cheque and journal unchanged',()=>run(async()=>{
-  const item=event(inventoryText);
-  const p=await ai.proposeReview(database(),item.id,{fetcher:fake(inventoryPlan)});
+  // Independent SKU: another test's reversal is dated at wall-clock time and
+  // must not accidentally turn this purchase into a backdated inventory event.
+  const name='فیلتر روغن مصرف بعدی';
+  const item=event(inventoryText.replaceAll('فیلتر روغن تست',name));
+  const plan=JSON.parse(JSON.stringify(inventoryPlan).replaceAll('فیلتر روغن تست',name));
+  const p=await ai.proposeReview(database(),item.id,{fetcher:fake(plan)});
   const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
-  const product=database().prepare('SELECT id FROM products WHERE name=?').get('فیلتر روغن تست');
+  const product=database().prepare('SELECT id FROM products WHERE name=?').get(name);
   const {recordInventoryMovement}=await import('../server/inventory.js');
   recordInventoryMovement(database(),product.id,{quantity:-2,movementType:'adjustment',sourceType:'manual',sourceId:crypto.randomUUID(),occurredAt:'2026-10-03'},{journal:false});
   const before=database().prepare('SELECT stock,inventory_value FROM products WHERE id=?').get(product.id);
@@ -361,4 +365,59 @@ test('editing an ordinary field updates its saved answer so prompt never retains
   assert.equal(changed.facts.questionAnswers['cheque.due_at'].value,'2026-11-12');
   const cleared=assistant.saveReviewFacts(database(),item.id,{dueAt:''});
   assert.equal(cleared.facts.dueAt,null);assert.equal(cleared.facts.questionAnswers['cheque.due_at'],undefined);
+}));
+
+test('OpenAI request uses strict output contract and includes unlinked operational banks',()=>run(async()=>{
+  const bank=db.saveAccount({name:'بانک بدون دفتر جدید',kind:'bank',bankId:'pasargad'});
+  const item=event('هزینه پیک پرداخت شد',200000);let sent;
+  await ai.proposeReview(database(),item.id,{fetcher:async(url,options)=>{
+    sent=JSON.parse(options.body);
+    return fake({summary:'نیاز به تاریخ',explanation:'تاریخ پرداخت مشخص نیست',questions:[{id:'payment.date',text:'پرداخت چه روزی بود؟',field:'occurredAt'}],lines:[]})() ;
+  }});
+  assert.equal(sent.text.format.type,'json_schema');assert.equal(sent.text.format.strict,true);assert.equal(sent.store,false);
+  assert.ok(sent.input[0].content[0].text.includes(bank.id));
+}));
+
+test('one uniquely valued inventory line binds to its real SKU and posts stock atomically',()=>run(async()=>{
+ const name='زونکن آزمایشی قرارداد';
+ const item=event('امروز دو بسته زونکن آزمایشی قرارداد به بهای کل هشتصد هزار تومان از شرکت آزمون بایگانی نسیه خریدیم و تحویل انبار گرفتیم؛ برای فروش است و هنوز پرداخت نکردیم.',800000);
+ const p=await ai.proposeReview(database(),item.id,{fetcher:fake({summary:'خرید نسیه',explanation:'ورود کالای برای فروش',counterpartyName:'شرکت آزمون بایگانی',missingFacts:[],inventoryItems:[{name,unit:'بسته',quantity:2,total:800000}],lines:[{role:'inventory-asset',key:'موجودی کالا و مواد',debit:800000,credit:0},{role:'payable',key:'شرکت آزمون بایگانی',debit:0,credit:800000}]})});
+ assert.equal(p.lines[0].key,name);
+ const beforeCash=db.listAccounts().find(a=>a.id==='cash').balance;
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const product=database().prepare('SELECT * FROM products WHERE name=?').get(name);
+ assert.equal(product.stock,2);assert.equal(product.inventory_value,800000);
+ assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,beforeCash);
+ const rows=database().prepare('SELECT a.source_kind,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE entry_id=?').all(posted.journalEntryId);
+ assert.ok(rows.some(r=>r.source_kind==='inventory-product' && r.debit===800000));
+ assert.ok(rows.some(r=>r.source_kind==='vendor-payable' && r.credit===800000));
+ assert.ok(!rows.some(r=>r.source_kind==='expense-category'));
+}));
+
+test('short named real banks map to bank subsidiary on transfer; no income or expense',()=>{
+ const workspace=db.createWorkspace(owner.id,{name:'تست بانک کوتاه',profileType:'business'});
+ return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{
+  db.installChartTemplate();
+  const from=db.saveAccount({name:'سامان',kind:'bank',bankId:'saman',openingBalance:1000000});
+  const to=db.saveAccount({name:'پاسارگاد',kind:'bank',bankId:'pasargad'});
+  db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'});
+  for(const id of [from.id,to.id]) {
+   const mapped=database().prepare("SELECT c.role FROM ledger_accounts a JOIN chart_accounts c ON c.id=a.chart_account_id WHERE a.source_kind='operational-account' AND a.source_key=?").get(id);
+   assert.equal(mapped.role,'bank');
+  }
+  const rows=database().prepare("SELECT a.type,l.debit,l.credit FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id WHERE j.source_type='account_transfer'").all();
+  assert.equal(rows.length,2);assert.ok(rows.every(r=>r.type==='asset'));
+  assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,500000);
+  assert.equal(db.listAccounts().find(a=>a.id===to.id).balance,500000);
+ });
+});
+
+test('direct cheque capture cannot expense delivered resale inventory or create a party',()=>run(()=>{
+ const journals=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
+ const contacts=database().prepare('SELECT count(*) n FROM contacts').get().n;
+ const item=db.recordCheque({direction:'payable',against:'income',amount:2000000,counterpartyName:'شرکت گارد انبار تازه',dueAt:'2026-11-04',note:'دو بسته کاغذ از شرکت گارد انبار تازه برای فروش خریدیم و تحویل انبار گرفتیم، دو میلیون تومان چک دادیم'});
+ assert.equal(item.queuedForAccountant,true);assert.equal(item.status,'pending');assert.equal(item.route,'accountant-review');
+ assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,journals);
+ assert.equal(database().prepare('SELECT count(*) n FROM contacts').get().n,contacts);
+ assert.ok(!db.listCheques().some(c=>c.id===item.id));
 }));

@@ -13,8 +13,27 @@
  */
 
 import { normalizePersian } from './normalize.js';
-import { BANKS, detectBank } from './banks.js';
+import { BANKS, detectBank, detectTransferBanks } from './banks.js';
 import { parseFinancialText } from './parser.js';
+
+/** Main capture only accepts an explicit internal transfer. An ordinary
+ * customer payment mentioning a bank must stay on the income/expense path. */
+export function detectCaptureTransfer(input, options = {}) {
+  if (!/(?:انتقال|منتقل|جابه\s*جا|جابجا)\s*(?:داد|ده|کن|کرد|شد|می|بین|از|به)/.test(normalizePersian(input))) return null;
+  const pair=detectTransferBanks(input);
+  const parsed=parseFinancialText(input,{now:options.now});
+  if(parsed.transactions.length!==1) return null;
+  if(pair) {
+    const unique=side=>{
+      const matches=(options.accounts || []).filter(a=>a.active!==false && (side.id==='cash' ? a.kind==='cash' : a.bankId===side.id));
+      return matches.length===1 ? matches[0].id : '';
+    };
+    return {intent:'transfer',amount:parsed.transactions[0].amount,fromAccountId:unique(pair.from),toAccountId:unique(pair.to),
+      transcript:String(input),occurredAt:parsed.transactions[0].occurredAt || null};
+  }
+  const draft=detectBankMovementIntent(input,options);
+  return draft?.intent==='transfer' ? { ...draft, transcript: String(input), occurredAt: parsed.transactions[0].occurredAt || null } : null;
+}
 
 const CREATE_PATTERNS = [
   /(?:حساب|اکانت)\s+.*?(?:بساز|ایجاد\s*کن|اضافه\s*کن|باز\s*کن)/,
@@ -71,8 +90,8 @@ export function mentionedAccounts(input, accounts = []) {
 /** حرف اضافهٔ درست پیش از نام: «از» مبدأ است و «به» مقصد. */
 function prepositionBefore(text, index) {
   const before = text.slice(Math.max(0, index - 14), index);
-  if (/\bاز\s*$/.test(before) || /از\s+\S{0,6}$/.test(before)) return 'from';
-  if (/\bبه\s*$/.test(before) || /به\s+\S{0,6}$/.test(before)) return 'to';
+  if (/(?:^|\s)از\s*(?:بانک|حساب|کارت)?\s*$/.test(before)) return 'from';
+  if (/(?:^|\s)به\s*(?:بانک|حساب|کارت)?\s*$/.test(before)) return 'to';
   return '';
 }
 

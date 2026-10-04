@@ -88,7 +88,7 @@ function nextCode(database, type) {
   throw accountingError('شماره حساب آزاد پیدا نشد.', 'LEDGER_CODE_EXHAUSTED');
 }
 
-function linkedLedgerAccount(database, sourceKind, sourceKey, name, type, forcedNormalSide = null) {
+function linkedLedgerAccount(database, sourceKind, sourceKey, name, type, forcedNormalSide = null, metadata = {}) {
   ensureAccountingSchema(database);
   const existing = database.prepare('SELECT * FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(sourceKind, sourceKey);
   if (existing) {
@@ -101,7 +101,7 @@ function linkedLedgerAccount(database, sourceKind, sourceKey, name, type, forced
   const normalSide = forcedNormalSide || (['asset', 'expense'].includes(type) ? 'debit' : 'credit');
   database.prepare(`INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key)
     VALUES (?,?,?,?,?,?,?)`).run(id, nextCode(database, type), name, type, normalSide, sourceKind, sourceKey);
-  autoMapNewAccount(database, { id, type, sourceKind, sourceKey, name });
+  autoMapNewAccount(database, { id, type, sourceKind, sourceKey, name, ...metadata });
   return id;
 }
 
@@ -131,9 +131,9 @@ function autoMapNewAccount(database, ledgerAccount) {
 }
 
 function operationalLedgerAccount(database, accountId) {
-  const account = database.prepare('SELECT id,name FROM accounts WHERE id=?').get(accountId);
+  const account = database.prepare('SELECT id,name,kind,bank_id FROM accounts WHERE id=?').get(accountId);
   if (!account) throw accountingError('حساب مالی تراکنش برای دفتر کل پیدا نشد.', 'LEDGER_ACCOUNT_MISSING');
-  return linkedLedgerAccount(database, 'operational-account', account.id, account.name, 'asset');
+  return linkedLedgerAccount(database, 'operational-account', account.id, account.name, 'asset', null, { operationalKind: account.kind, bankId: account.bank_id });
 }
 
 function categoryLedgerAccount(database, type, category) {

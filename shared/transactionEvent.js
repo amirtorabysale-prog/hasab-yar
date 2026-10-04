@@ -125,6 +125,11 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     eventNature: item.eventNature || 'new',
     servicePeriodStart: item.servicePeriodStart || null,
     servicePeriodEnd: item.servicePeriodEnd || null,
+    refundable: typeof item.refundable==='boolean' ? item.refundable : (() => {
+      const text=String(sentence || item.rawText || transcript || '');
+      if(/غیر\s*قابل\s*استرداد|قابل\s*استرداد\s*نیست/.test(text)) return false;
+      return /قابل\s*استرداد/.test(text) ? true : null;
+    })(),
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(sentence || item.rawText || transcript || '').slice(0, 1000),

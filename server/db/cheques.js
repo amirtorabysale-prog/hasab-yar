@@ -14,6 +14,8 @@ import { chequeLedgerAccounts, postChequeJournal } from '../accounting.js';
 import { activeWorkspaceDatabase, audit, cleanAmount, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { contactIdForName } from './contacts.js';
 import { resolveAccountId } from './accounts.js';
+import { recordFinancialEvent } from '../financialEventStore.js';
+import { normalizeFinancialEvent } from '../../shared/financialEvent.js';
 
 export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
@@ -83,6 +85,19 @@ export function recordCheque(values = {}) {
   if (!direction) throw invalidInput('نوع چک (دریافتی یا پرداختی) مشخص نیست.');
   const amount = cleanAmount(values.amount);
   if (amount <= 0) throw invalidInput('مبلغ چک باید بیشتر از صفر باشد.');
+  const evidence=String(values.note || '').trim();
+  if(direction==='payable' && values.against==='income'
+    && /خرید|خریدم|خریدیم/.test(evidence) && /انبار|برای\s*فروش|موجودی\s*کالا/.test(evidence)) {
+    const reason='خرید کالای انباری با چک نیازمند ثبت موجودی و ورود انبار است؛ هزینه ساخته نشد و به صف حسابدار رفت.';
+    const item=recordFinancialEvent(db_,normalizeFinancialEvent({kind:'cash-expense',amount,
+      occurredAt:values.occurredAt || new Date().toISOString(),dueAt:values.dueAt,
+      evidence,utterance:evidence,counterparty:values.counterpartyName,counterpartyId:values.contactId,
+      category:values.category || 'مواد و کالا',source:'text'}),{
+      sourceEventId:`inventory-cheque:${randomUUID()}`,decision:{route:'accountant-review',guardBlocked:true,reasons:[reason]},
+      actor:currentWorkspace()?.userId || null,transcript:evidence,rawInput:evidence,timeZone:currentTimeZone(),
+    });
+    return {...item,queuedForAccountant:true,queuedReason:reason};
+  }
   const contactId = values.contactId || (values.counterpartyName ? contactIdForName(values.counterpartyName, values.counterpartyResolution) : null);
   const counterpartyName = String(values.counterpartyName || '').trim().slice(0, 120)
     || (contactId ? db_.prepare('SELECT name FROM contacts WHERE id=?').get(contactId)?.name || '' : '');

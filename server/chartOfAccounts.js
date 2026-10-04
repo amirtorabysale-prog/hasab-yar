@@ -686,8 +686,8 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
   }
   if (sourceKind === 'operational-account') {
     const name = String(ledgerAccount.name || '');
-    const wantsBank = /بانک|کارت|شبا|حساب جاری/.test(name);
-    return byRole(wantsBank ? 'bank' : 'cash') || byRole(wantsBank ? 'cash' : 'bank');
+    const wantsBank = ledgerAccount.operationalKind === 'bank' || Boolean(ledgerAccount.bankId) || /بانک|کارت|شبا|حساب جاری/.test(name);
+    return byRole(wantsBank ? 'bank' : 'cash');
   }
   for (const role of ROLE_BY_SOURCE_KIND[sourceKind] || []) {
     const match = byRole(role);

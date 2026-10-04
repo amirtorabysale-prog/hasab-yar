@@ -7,7 +7,12 @@ export function listAccounts() {
   return db.prepare(`SELECT accounts.id,accounts.name,accounts.kind,accounts.opening_balance AS openingBalance,accounts.active,
     accounts.created_at AS createdAt,accounts.bank_id AS bankId,
     accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' AND COALESCE(transactions.journal_deferred,0)=0 THEN
-      CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0) AS balance
+      CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0)
+      + COALESCE((SELECT SUM(l.debit-l.credit) FROM journal_lines l
+        JOIN ledger_accounts a ON a.id=l.account_id JOIN journal_entries j ON j.id=l.entry_id
+        LEFT JOIN journal_entries original ON original.id=j.reverses_entry_id
+        WHERE a.source_kind='operational-account' AND a.source_key=accounts.id
+          AND (j.source_type='account_transfer' OR original.source_type='account_transfer')),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
     GROUP BY accounts.id ORDER BY accounts.active DESC,accounts.sort_order,accounts.name`).all();
 }

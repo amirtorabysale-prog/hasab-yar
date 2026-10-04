@@ -34,10 +34,10 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
     if (!draft.counterpartyName.trim() || !draft.amount) return;
     setBusy('save');
     try {
-      await api.recordCheque({ ...draft, amount: Number(draft.amount) });
+      const { item } = await api.recordCheque({ ...draft, amount: Number(draft.amount) });
       setDraft(EMPTY);
       await load(); await refresh?.();
-      notify('چک ثبت شد و سندش خورد.');
+      notify(item.queuedForAccountant ? item.queuedReason : 'چک ثبت شد و سندش خورد.');
     } catch (error) { notify(error.message); }
     setBusy('');
   };

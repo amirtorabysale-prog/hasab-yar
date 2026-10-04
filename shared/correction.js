@@ -9,6 +9,10 @@ const CORRECTION_ACTION = /(تغییر بده|اصلاح کن|حسابش کن|د
 
 export function isCorrectionCommand(input = '') {
   const text = normalizePersian(input);
+  // A request about an older/specific document is not permission to edit the
+  // most recent transaction. It belongs in the accountant's review intake.
+  if (/حسابدار|ماه\s*(?:قبل|پیش|گذشته)|سال\s*(?:قبل|گذشته)|سند\s*(?:شماره|\d)|ثبت\s*(?:شماره|\d)/.test(text)
+    && !/همین\s*(?:آخرین|ثبت)|آخرین\s*(?:ثبت|تراکنش)/.test(text)) return false;
   return CORRECTION_START.test(text) || CORRECTION_ACTION.test(text);
 }
 

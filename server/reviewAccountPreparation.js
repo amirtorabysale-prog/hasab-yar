@@ -64,6 +64,8 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
 export function reviewAccountCatalog(database) {
   const ledger=database.prepare('SELECT id,code,name,type,normal_side,source_kind,source_key,chart_account_id FROM ledger_accounts WHERE active=1 ORDER BY code').all();
   return {
+    operationalAccounts: database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()
+      ? database.prepare('SELECT id,name,kind,bank_id AS bankId FROM accounts WHERE active=1 ORDER BY id').all() : [],
     ledgerFields:['id','code','name','type','normalSide','sourceKind','sourceKey','chartAccountId'],
     ledger:ledger.map(a=>[a.id,a.code,a.name,a.type,a.normal_side,a.source_kind,a.source_key,a.chart_account_id]),
     chartFields:['id','code','name','type','normalSide','role','requiresAnalytic'],
@@ -74,7 +76,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-questions-v2',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v3',
     reviewAccountCatalog(database),
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
