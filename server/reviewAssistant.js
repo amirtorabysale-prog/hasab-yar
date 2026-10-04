@@ -1,3 +1,5 @@
+import { classifyCategory } from '../shared/categoryRules.js';
+import { listChartAccounts, suggestChartAccount } from './chartOfAccounts.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { classifyFamily, FAMILY_UNKNOWN } from '../shared/economicFamily.js';
 import { reviewQuestions } from '../shared/reviewQuestions.js';
@@ -216,6 +218,14 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     const result=prepareReviewAccount(database,{...line,key,accountId:account?.id || line.accountId},event,{resolve:resolve && !blockers.length});
     blockers.push(...result.blockers);
     const mappedId=result.account?.chart_account_id || line.chartAccountId || result.creation?.chartAccountId;
+    if(['expense-category','income-category'].includes(role)) {
+      const type=role==='expense-category'?'expense':'income';
+      const meaning=classifyCategory(reviewEvidence(database,row),type);
+      if(meaning.matched && !meaning.ambiguous && meaning.confidence>=.86 && meaning.category===event.category) {
+        const expected=suggestChartAccount({name:meaning.category,type,sourceKind:role,sourceKey:meaning.category},listChartAccounts(database),{confidentOnly:true});
+        if(expected && mappedId && mappedId!==expected.id) blockers.push(`معین سطر با متن اصلی و دستهٔ «${meaning.category}» سازگار نیست؛ پیشنهاد باید بازبینی شود.`);
+      }
+    }
     if(mappedId && database.prepare('SELECT requires_analytic FROM chart_accounts WHERE id=?').get(mappedId)?.requires_analytic && !partyRoles.has(role)) blockers.push('این معین به تفصیلی نیاز دارد؛ مسیر تخصصی برای تعیین شخص یا پروژه لازم است.');
     account=result.account ? {...result.account,sourceKind:result.account.source_kind,sourceKey:result.account.source_key} : account;
     return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };

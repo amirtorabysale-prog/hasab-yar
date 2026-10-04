@@ -538,3 +538,16 @@ test('trade inventory purchase can be posted without a maturity; cheque maturity
  assert.equal(cp.questions.length,1);
  assert.equal(assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(cheque.id),cp).canPost,false);
 }));
+
+test('a model cannot hide a wrong courier account by renaming its expense key to wages',()=>{
+ const workspace=db.createWorkspace(owner.id,{name:'تست ماهیت متن اصلی',profileType:'business'});
+ return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},async()=>{
+  db.installChartTemplate();
+  const item=store.recordFinancialEvent(database(),{kind:'cash-expense',amount:200000,accountId:'cash',occurredAt:'2026-10-04',evidence:'امروز دویست هزار تومان هزینه پیک پرداخت کردم',category:'حمل‌ونقل'}, {sourceEventId:crypto.randomUUID(),decision:{route:'accountant-review',guardBlocked:true,reasons:['بررسی لازم است']}});
+  const salary=database().prepare("SELECT id FROM chart_accounts WHERE code='8101'").get();
+  const p=await ai.proposeReview(database(),item.id,{fetcher:fake({summary:'هزینه پیک',explanation:'هزینه جاری',missingFacts:[],lines:[{role:'expense-category',key:'حقوق و دستمزد',chartAccountId:salary.id,debit:200000,credit:0},{role:'cash',debit:0,credit:200000}]})});
+  const preview=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),p);
+  assert.equal(preview.canPost,false);assert.ok(preview.postingBlockers.some(b=>b.includes('متن اصلی')));
+  assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+ });
+});

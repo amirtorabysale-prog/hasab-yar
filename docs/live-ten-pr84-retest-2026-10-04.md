@@ -34,7 +34,7 @@ Before direct transfer, the old Saman ledger was found mapped to the cash subsid
 
 ## Validation and remaining limits
 
-Local suite: 1,396 tests, 1,391 passed, 5 skipped, 0 failed. Production build passed. Regressions cover wrong same-type chart binding, atomic transfer rejection/repair, irrelevant DNA, duplicate question boxes, confirmation-name handling and trade-vs-cheque maturity.
+Local suite: 1,397 tests, 1,392 passed, 5 skipped, 0 failed. Production build passed. Regressions cover wrong same-type chart binding, atomic transfer rejection/repair, irrelevant DNA, duplicate question boxes, confirmation-name handling and trade-vs-cheque maturity.
 
 These new changes have not yet been deployed or live-retested. Prompt improvements cannot guarantee every model response is correct; the deterministic posting checks remain necessary. An invalid model output stays in review.
 
