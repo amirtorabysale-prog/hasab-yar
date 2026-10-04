@@ -75,3 +75,12 @@ test('OpenAI provider failures are actionable and leave the queue untouched', as
     }
   } finally { if (before === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = before; }
 });
+
+test('incomplete OpenAI output is diagnosed separately and never persisted as a plan',async()=>{
+ const before=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='test-openai';
+ const database=fixture();
+ try {
+  await assert.rejects(proposeReview(database,'one',{fetcher:async()=>({ok:true,json:async()=>({status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[]})})}),{code:'AI_OUTPUT_INCOMPLETE'});
+  assert.equal(database.prepare('SELECT count(*) n FROM accounting_review_ai').get().n,0);
+ } finally {database.close();if(before===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=before;}
+});

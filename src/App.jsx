@@ -19,6 +19,7 @@ import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
 import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
+import { detectCaptureTransfer } from '../shared/bankSpeech.js';
 import { isNetworkQueueError, isPermanentQueueError } from './lib/offlineScope.js';
 import { realtimeWorthTrying } from './lib/voiceStatus.js';
 import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
@@ -734,6 +735,8 @@ export default function App() {
     // تسویه پیش از ساخت سنجیده می‌شود: «طلب رضایی وصول شد» هم واژهٔ «طلب» دارد
     // هم فعل تسویه، و اگر اول مسیر ساخت برود یک طلب تازه می‌سازد به‌جای بستن
     // طلب موجود.
+    const transfer = detectCaptureTransfer(transcript, { accounts: data.accounts || [] });
+    if (transfer) { setIntentDraft(transfer); return true; }
     const settle = detectSettleIntent(transcript);
     if (settle) { setSettleDraft(settle); return true; }
     const found = detectVoiceIntent(transcript);
@@ -758,6 +761,14 @@ export default function App() {
 
   const saveIntentDraft = async (draft) => {
     try {
+      if (draft.intent === 'transfer') {
+        await api.transferBetweenAccounts({ fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId,
+          amount: draft.amount, note: draft.transcript, occurredAt: draft.occurredAt || undefined });
+        setIntentDraft(null);
+        await load();
+        notify('انتقال بین حساب‌ها ثبت شد؛ درآمد یا هزینه‌ای ساخته نشد.');
+        return;
+      }
       if (draft.intent === 'invoice') {
         const payload = invoiceDraftPayload(draft, { taxRateId: draft.taxRateId || null });
         if (!payload) return;
@@ -786,14 +797,14 @@ export default function App() {
       // به‌عنوان طلب یا بدهی عادی ذخیره می‌شد و همیشه درآمد یا هزینهٔ تازه
       // می‌ساخت — حتی وقتی چک بابت فاکتور قبلی بود.
       if (draft.intent === 'cheque') {
-        await withCounterpartyConfirmation((counterpartyResolution) => api.recordCheque({
+        const { item } = await withCounterpartyConfirmation((counterpartyResolution) => api.recordCheque({
           direction: draft.direction, counterpartyName: draft.contactName, amount: draft.amount,
           against: draft.against, dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
           note: draft.transcript.slice(0, 300), counterpartyResolution,
         }));
         setIntentDraft(null);
         await load();
-        notify(draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
+        notify(item.queuedForAccountant ? item.queuedReason : draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
         return;
       }
       await api.saveObligation({

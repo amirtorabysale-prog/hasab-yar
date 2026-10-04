@@ -11,6 +11,9 @@ export function reviewQuestions(proposal={}) {
     if(typeof text!=='string' || !text.trim()) return;
     text=text.trim().slice(0,150);
     id=typeof id==='string' && /^[a-z][a-z0-9_.-]{0,79}$/.test(id)?id:legacyId(text);
+    // Coverage is a contract fact, never the cash occurrence date. Keep the
+    // answer in the conversation without overwriting the transaction date.
+    if(field==='occurredAt' && /coverage|service[_.-]?(?:start|end)|پوشش|شروع خدمت|دوره خدمت/.test(`${id} ${text}`)) field=null;
     if(!result.some(q=>q.id===id || normalize(q.text)===normalize(text))) result.push({id,text,...(['occurredAt','dueAt','counterpartyName','counterpartyId','accountId'].includes(field)?{field}:{})});
   };
   for(const q of (Array.isArray(proposal.questions)?proposal.questions:[]).slice(0,5)) add(q?.text,q?.id,q?.field);

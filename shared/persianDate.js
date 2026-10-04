@@ -389,10 +389,12 @@ export function extractOccurrenceDate(input, options = {}) {
   let text = normalizePersian(input);
   const months = PERSIAN_MONTHS.map(([name]) => name).join('|');
   if (/بیمه|اجاره|پوشش|شارژ|اشتراک/.test(text)) {
+    text = text.replace(/پوشش\s*(?:بیمه\s*)?(?:از|برای)\s*[^،,؛.]+/g, ' ');
     text = text.replace(new RegExp(`از\\s+(?:${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})\\s+تا\\s+(?:آخر|پایان|${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})(?:\\s+همین\\s+امسال)?`, 'g'), ' ');
     text = text.replace(/(?:شروع|آغاز)\s*(?:پوشش|بیمه|قرارداد)\s*[^،,؛.]+/g, ' ');
   }
   text = text.replace(/(?:خرید|فروش|فاکتور|بدهی|اجاره)\s*(?:ماه\s*(?:قبل|پیش|گذشته)|سال\s*(?:قبل|گذشته))/g, ' ');
+  text = text.replace(/(?:سفارش\s*)?(?:خدمات|خدمت|پوشش|اشتراک)\s*(?:ماه\s*(?:آینده|بعد|آتی)|سال\s*(?:آینده|بعد))/g, ' ');
   text = text.replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
   text = text.replace(/(?:فردا|پس\s*فردا|هفته\s*بعد)\s*(?:نقدش|نقد|وصولش|وصول|پاسش|پاس)\s*(?:می\s*)?(?:کنه|کند|کنند|کنن|شه|شود)/g, ' ');
   return extractDateMention(text, { ...options, preferPast: true });
