@@ -11,7 +11,7 @@ const fail=message=>Object.assign(new Error(message),{code:'REVIEW_DETAILS_REQUI
 export function prepareReviewResources(database,event,proposal,{evidence='',facts={},messages=[],apply=false}={}) {
   const result={event:{...event},newCounterparty:null,inventoryItems:[],blockers:[]};
   if(proposal.lines.some(l=>partyRoles.has(l.role)) && !event.counterpartyId) {
-    const name=String(facts.counterpartyName || event.counterparty || proposal.counterpartyName || extractContactName(evidence) || '').trim();
+    const name=String(facts.counterpartyName || event.counterparty || proposal.counterpartyName || extractContactName(evidence) || '').trim().replace(/^(?:بله|بلی|آره)[،,:]\s*/, '');
     const knownText=[evidence,event.counterparty,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body),facts.counterpartyName].filter(Boolean).join(' ');
     if(name.length<2 || name.length>100 || !norm(knownText).includes(norm(name))) result.blockers.push('نام واقعی طرف‌حساب در متن یا پاسخ حسابدار مشخص نیست؛ نام او را بگو.');
     else {

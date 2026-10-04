@@ -250,6 +250,16 @@ function reversedLine(line) {
 }
 
 function insertJournal(database, values) {
+  // Old bank/cash mappings require explicit repair. Opening/reversal history remains usable.
+  if ((values.entryKind || 'normal') === 'normal') {
+    for (const line of values.lines || []) {
+      const mismatch=database.prepare(`SELECT o.name FROM ledger_accounts a
+        JOIN accounts o ON a.source_kind='operational-account' AND a.source_key=o.id
+        JOIN chart_accounts c ON c.id=a.chart_account_id
+        WHERE a.id=? AND (o.kind='bank' OR COALESCE(o.bank_id,'')!='') AND c.role='cash'`).get(line.accountId);
+      if(mismatch) throw accountingError(`حساب بانکی «${mismatch.name}» به معین صندوق نگاشت شده است؛ در کدینگ حساب‌ها نگاشت بانک را اصلاح و دوباره ثبت کن.`, 'BANK_CHART_MAPPING_INVALID');
+    }
+  }
   const validated = validateLines(database, values.lines);
   const id = randomUUID();
   // شماره در همان لحظهٔ درج و در همان تراکنش گرفته می‌شود تا دنبالهٔ سال مالی گپ نگیرد.

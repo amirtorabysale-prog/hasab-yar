@@ -1,3 +1,7 @@
+import { classifyCategory } from '../shared/categoryRules.js';
+import { listChartAccounts, suggestChartAccount } from './chartOfAccounts.js';
+import { factsFromEvent } from '../shared/eventFacts.js';
+import { classifyFamily, FAMILY_UNKNOWN } from '../shared/economicFamily.js';
 import { reviewQuestions } from '../shared/reviewQuestions.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { ensureFinancialEventSchema } from './financialEventStore.js';
@@ -121,10 +125,20 @@ export function reviewedEvent(database, row) {
   if (event.counterpartyId) event.counterparty = database.prepare('SELECT name FROM contacts WHERE id=?').get(event.counterpartyId)?.name || '';
   return event;
 }
-const words = (text) => new Set(String(text).replace(/[يى]/g,'ی').replace(/ك/g,'ک').replace(/[\d۰-۹٠-٩]+/g,' ').split(/[^\p{L}]+/u).filter(w => w.length > 2 && !['تومان','میلیون','امروز','مبلغ','هزار','پرداخت'].includes(w)));
+const words = (text) => new Set(String(text).replace(/[يى]/g,'ی').replace(/ك/g,'ک').replace(/[\d۰-۹٠-٩]+/g,' ').split(/[^\p{L}]+/u).filter(w => w.length > 2 && !['تومان','میلیون','امروز','مبلغ','هزار','پرداخت','دریافت','کردم','کردیم','بانک','حساب','شرکت','آقای','بابت','تازه','بازآزمایی','آزمون'].includes(w)));
 /** بازیابی تجربه، نه قانون یا اجازهٔ ثبت خودکار. مقدار و حساب‌های رویداد تازه مستقل کنترل می‌شوند. */
 export function relevantDna(database, row) {
-  const event = reviewedEvent(database, row), tokens = words(event.evidence || event.utterance || event.category);
+  const event = reviewedEvent(database, row);
+  // A shared bank or person is context, not evidence of the same accounting treatment.
+  const identityNames=[];
+  for(const table of ['accounts','contacts']) {
+    if(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
+      for(const item of database.prepare(`SELECT name FROM ${table}`).all()) if(item.name?.length>2) identityNames.push(item.name.replace(/[يى]/g,'ی').replace(/ك/g,'ک'));
+    }
+  }
+  const meaningfulWords=text=>{let clean=String(text || '').replace(/[يى]/g,'ی').replace(/ك/g,'ک');for(const name of identityNames.sort((a,b)=>b.length-a.length)) clean=clean.split(name).join(' ');return words(clean);};
+  const tokens=meaningfulWords(event.evidence || event.utterance || event.category);
+  const family=classifyFamily(factsFromEvent(event)).family;
   const records = database.prepare(`SELECT a.id,a.event_id,a.state,a.proposal,a.feedback_reason,a.reviewed_by,a.reviewed_at,e.payload,e.status,e.journal_entry_id
     FROM accounting_review_ai a JOIN financial_events e ON e.id=a.event_id
     WHERE a.state IN ('accepted','rejected') AND a.event_id!=? ORDER BY a.reviewed_at DESC,a.rowid DESC LIMIT 200`).all(row.id);
@@ -138,10 +152,12 @@ export function relevantDna(database, row) {
   }
 
   return records.map(r => {
-    const source = JSON.parse(r.payload), other = words(source.evidence || source.utterance || source.category);
+    const source = JSON.parse(r.payload), other = meaningfulWords(source.evidence || source.utterance || source.category);
     const common = [...tokens].filter(w => other.has(w)).length;
+    const sourceFamily=classifyFamily(factsFromEvent(source)).family;
+    const compatible=family===FAMILY_UNKNOWN || sourceFamily===FAMILY_UNKNOWN || family===sourceFamily;
     return { id:r.id,eventId:r.event_id,state:r.state,summary:JSON.parse(r.proposal).summary,reason:r.feedback_reason,actor:r.reviewed_by,date:r.reviewed_at,journalEntryId:r.journal_entry_id,
-      similarity: common / Math.max(1,new Set([...tokens,...other]).size), valid:r.state==='rejected' || r.status==='posted' };
+      similarity: common / Math.max(1,new Set([...tokens,...other]).size), valid:compatible && (r.state==='rejected' || r.status==='posted') };
   }).filter(r => r.valid && r.similarity >= .25).sort((a,b)=>b.similarity-a.similarity).slice(0,5).map(({valid,...r})=>({...r,finalLines:r.journalEntryId ? database.prepare('SELECT a.code,a.name,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? ORDER BY l.rowid').all(r.journalEntryId) : []}));
 }
 export function proposalRevision(database, eventId) { return reviewContext(database,eventId).revision; }
@@ -202,6 +218,14 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     const result=prepareReviewAccount(database,{...line,key,accountId:account?.id || line.accountId},event,{resolve:resolve && !blockers.length});
     blockers.push(...result.blockers);
     const mappedId=result.account?.chart_account_id || line.chartAccountId || result.creation?.chartAccountId;
+    if(['expense-category','income-category'].includes(role)) {
+      const type=role==='expense-category'?'expense':'income';
+      const meaning=classifyCategory(reviewEvidence(database,row),type);
+      if(meaning.matched && !meaning.ambiguous && meaning.confidence>=.86 && meaning.category===event.category) {
+        const expected=suggestChartAccount({name:meaning.category,type,sourceKind:role,sourceKey:meaning.category},listChartAccounts(database),{confidentOnly:true});
+        if(expected && mappedId && mappedId!==expected.id) blockers.push(`معین سطر با متن اصلی و دستهٔ «${meaning.category}» سازگار نیست؛ پیشنهاد باید بازبینی شود.`);
+      }
+    }
     if(mappedId && database.prepare('SELECT requires_analytic FROM chart_accounts WHERE id=?').get(mappedId)?.requires_analytic && !partyRoles.has(role)) blockers.push('این معین به تفصیلی نیاز دارد؛ مسیر تخصصی برای تعیین شخص یا پروژه لازم است.');
     account=result.account ? {...result.account,sourceKind:result.account.source_kind,sourceKey:result.account.source_key} : account;
     return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };

@@ -40,3 +40,8 @@ test('bank mapping repair states historical impact and requires explicit action 
   assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
  } finally {await vite.close();}
 });
+
+test('paraphrased party and inventory fact questions do not create duplicate answer boxes',()=>{
+ const questions=reviewQuestions({questions:[{id:'party.name',text:'نام دقیق طرف حساب را تأیید می‌کنید؟'}],missingFacts:['نام دقیق طرف حساب تأیید شود.','واحد ثبت این کالا چیست؟','واحد کالا چیست؟']});
+ assert.equal(questions.length,2);
+});
