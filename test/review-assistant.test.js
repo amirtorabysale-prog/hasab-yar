@@ -551,3 +551,80 @@ test('a model cannot hide a wrong courier account by renaming its expense key to
   assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
  });
 });
+
+// Regressions from the live acceptance test: balanced entries are not sufficient.
+test('unknown receipt uses deterministic liability, posts real bank, excludes income and reverses atomically',()=>run(async()=>{
+ const bank=db.saveAccount({name:'بانک ملی کنترل ماهیت',kind:'bank',bankId:'melli'});
+ const amount=22000000, item=event('یه پولی اومده تو حساب ملی بیست و دو میلیون، معلوم نیس کی ریخته، هیچکی فیش نیاورده.',amount);
+ const initial=db.listAccounts().find(a=>a.id===bank.id).balance;
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:bank.id},fetcher:()=>{throw new Error('Unknown receipt must not use API');}});
+ assert.equal(p.model,'nature-rules-v1');assert.equal(p.analysisCost.source,'rules');
+ assert.equal(p.lines[1].role,'unidentified-receipt');
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const lines=database().prepare('SELECT a.type,a.source_kind AS kind,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(posted.journalEntryId);
+ assert.equal(lines.find(l=>l.credit).type,'liability');assert.equal(lines.find(l=>l.credit).kind,'unidentified-receipt');
+ const tx=database().prepare('SELECT accounting_role FROM transactions WHERE client_id=?').get(`review:${item.id}`);
+ assert.equal(tx.accounting_role,'unidentified-receipt');
+ assert.equal(db.listAccounts().find(a=>a.id===bank.id).balance,initial+amount);
+ db.reverseEvent(item.id,'برگشت آزمون وجه ناشناس');assert.equal(db.listAccounts().find(a=>a.id===bank.id).balance,initial);
+}));
+
+test('default cash is not evidence: missing bank becomes an answerable persistent question',()=>run(async()=>{
+ const item=store.recordFinancialEvent(database(),{kind:'cash-income',accountId:'cash',amount:50000000,occurredAt:'2026-10-03',evidence:'یه مبلغ مشکوک پنجاه میلیون بدون مشخصات به حساب اومده؛ بزن درآمد کسی نفهمه',eventNature:'new'}, {sourceEventId:crypto.randomUUID(),decision:{route:'accountant-review',guardBlocked:true,reasons:['بررسی لازم است']}});
+ const p=await ai.proposeReview(database(),item.id,{fetcher:()=>{throw new Error('No API');}});
+ const row=database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id);
+ const preview=assistant.prepareReviewProposal(database(),row,p);
+ assert.equal(preview.canPost,false);assert.equal(preview.context.accountId,null);
+ assert.ok(preview.questions.some(q=>q.id==='cash.account' && q.field==='accountId'));
+ assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+ const fixed=await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'cash.account':{value:'cash'}}},fetcher:()=>{throw new Error('No API');}});
+ assert.equal(fixed.questions.length,0);
+ assert.equal(assistant.prepareReviewProposal(database(),row,fixed).canPost,true);
+}));
+
+for(const [label,text,role,incoming] of [
+ ['VAT refund','اداره دارایی ده میلیون از مالیات ارزش افزوده فصول قبل بابت اضافه پرداختی به حساب شرکت عودت داد.','income-category',true],
+ ['shareholder transfer','آقای یوسفی سهامدار عمده، برای خرید مواد اولیه از حساب شخصیش به شرکت انتقال داد.','owner-capital',true],
+ ['payroll insurance','بیمه تامین اجتماعی پرسنل سهم کارفرما و کارگر به تامین اجتماعی پرداخت شد.','expense-category',false],
+ ['annual insurance','بیمه مسئولیت مدنی یک ساله شرکت از اول فروردین تا آخر اسفند پرداخت شد.','expense-category',false],
+ ['old debt','بدهی خرید ماه قبل را پرداخت کردم.','expense-category',false],
+]) test(`${label}: wrong balanced model proposal cannot post or learn`,()=>run(async()=>{
+ const amount=10000000,item=event(text,amount),entryCount=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
+ const plan={summary:label,explanation:'مدل می‌گوید درست است',missingFacts:[],lines:[{role,key:'عمومی',debit:incoming?0:amount,credit:incoming?amount:0},{role:'cash',debit:incoming?amount:0,credit:incoming?0:amount}]};
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:fake(plan)});
+ assert.ok(p.questions.some(q=>q.id.startsWith('nature.')));
+ // Remove advisory questions to prove that final posting has its own guard.
+ const forged={...p,questions:[],missingFacts:[]};
+ const preview=assistant.prepareReviewProposal(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id),forged);
+ assert.equal(preview.canPost,false);assert.ok(preview.postingBlockers.length>0);
+ assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+ assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,entryCount);
+ assert.equal(ai.latestReviewProposal(database(),item.id).state,'proposed');
+}));
+
+test('old wrong accepted income cannot poison DNA even though audit history remains',()=>run(async()=>{
+ const prior=event('اداره دارایی مالیات ارزش افزوده اضافه پرداختی فصول قبل را به شرکت عودت داد.',10000000);
+ const proposal=await ai.proposeReview(database(),prior.id,{fetcher:fake({summary:'قدیمی',missingFacts:['بررسی لازم است'],lines:[]})});
+ const account=database().prepare("SELECT id FROM ledger_accounts WHERE type='income' LIMIT 1").get();
+ assert.ok(account);
+ const journal=crypto.randomUUID();
+ database().prepare("INSERT INTO journal_entries(id,occurred_at,memo,source_type,source_id) VALUES(?,?,'ثبت قدیمی غلط','test',?)").run(journal,'2026-10-03',prior.id);
+ database().prepare('INSERT INTO journal_lines(id,entry_id,account_id,debit,credit) VALUES(?,?,?,?,?)').run(crypto.randomUUID(),journal,account.id,0,10000000);
+ database().prepare("UPDATE financial_events SET status='posted',journal_entry_id=? WHERE id=?").run(journal,prior.id);
+ database().prepare("UPDATE accounting_review_ai SET state='accepted',reviewed_at=CURRENT_TIMESTAMP WHERE id=?").run(proposal.id);
+ const related=event('اداره دارایی مالیات ارزش افزوده اضافه پرداختی فصول قبل را به شرکت عودت داد.',10000000);
+ assert.ok(!assistant.relevantDna(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(related.id)).some(d=>d.id===proposal.id));
+ assert.equal(database().prepare('SELECT state FROM accounting_review_ai WHERE id=?').get(proposal.id).state,'accepted');
+}));
+
+test('automatic recognition is held before any bank or income journal is written',()=>run(()=>{
+ const count=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
+ const item=store.recordFinancialEvent(database(),{kind:'cash-income',accountId:'cash',amount:50000000,occurredAt:'2026-10-03',evidence:'پنجاه میلیون وجه ناشناس واریز شده، درآمد ثبت کن',category:'سایر درآمدها',eventNature:'new'}, {sourceEventId:crypto.randomUUID(),decision:{route:'auto'},postJournal:()=>{throw new Error('Must not reach posting');}});
+ assert.equal(item.status,'pending');assert.equal(item.route,'accountant-review');
+ assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,count);
+ assert.throws(()=>store.approveFinancialEvent(database(),item.id,{overrideReason:'درآمد است به نظر حسابدار',actor:owner.id}),{code:'EVENT_PLAN_REVISION_REQUIRED'});
+ // A legacy plan created before this routing guard is also prevented from posting.
+ database().prepare("UPDATE financial_events SET confidence='{}',route='confirm' WHERE id=?").run(item.id);
+ assert.throws(()=>store.approveFinancialEvent(database(),item.id,{actor:owner.id}),{code:'REVIEW_NATURE_REQUIRED'});
+ assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,count);
+}));

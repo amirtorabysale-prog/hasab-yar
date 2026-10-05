@@ -71,7 +71,7 @@ test('پذیرش AI فقط با همان مبالغ و بدون واقعیت گ�
         summary: 'فروش شامل مالیات', explanation: 'بررسی فاکتور', missingFacts: [],
         lines: [{ role: 'cash', debit: 22_000_000, credit: 0 }, { role: 'income-category', debit: 0, credit: 22_000_000 }],
       }) }] } }] }) });
-      const proposal = await proposeReview(app.activeWorkspaceDatabase(), event.id, { fetcher: fake });
+      const proposal = await proposeReview(app.activeWorkspaceDatabase(), event.id, { facts:{accountId:'cash'}, fetcher: fake });
       assert.throws(() => app.recordReviewedComposite(event.id, { lines: [{ ...lines()[0], debit: 21_000_000 }, lines()[1]], reason: 'اصلاح ثبت با شواهد', proposalId: proposal.id, aiAccepted: true }), { code: 'AI_PLAN_REVISION_REQUIRED' });
       const result = app.recordReviewedComposite(event.id, { lines: lines(), reason: 'بررسی فاکتور و تأیید حساب‌های سند', proposalId: proposal.id, aiAccepted: true });
       assert.equal(result.item.status, 'posted');

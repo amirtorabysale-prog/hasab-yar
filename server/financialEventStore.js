@@ -1,3 +1,4 @@
+import { reviewNatureViolations } from '../shared/reviewNature.js';
 import { ensureReviewIntakeSchema } from './reviewIntakeSchema.js';
 import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal } from '../shared/accountingRules.js';
@@ -339,12 +340,13 @@ export function recordFinancialEvent(database, event, {
   // تا اینجا مانع یک خطای ۴۰۹ بود، و مسیر تراکنش هر خطای این لایه را «لایهٔ
   // رویداد نتوانست» می‌خواند و سند را از مسیر قدیمی می‌زد. یعنی درست همان
   // موردی که نگهبان گفته بود نباید ثبت شود، بی‌صدا ثبت می‌شد.
-  const blocked = guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
-  const routing = blocked
-    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), guards?.reason || 'این گفته هنوز نقشهٔ سند قطعی ندارد.'])] }
-    : decision;
-  // تصمیم، شکل سند را تعیین می‌کند. بدون تصمیم، همان قاعدهٔ نوع رویداد.
   const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);
+  const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
+  const blocked = natureIssues.length>0 || guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
+  const routing = blocked
+    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), ...natureIssues.map(q=>q.text), guards?.reason || 'این گفته هنوز نقشهٔ سند قطعی ندارد.'])] }
+    : decision;
+  // The proposed plan is retained for audit even when semantic validation holds it.
 
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
   try {
@@ -400,6 +402,8 @@ export function recordFinancialEvent(database, event, {
  * برگشت، سند را پیدا کنند.
  */
 function postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal }) {
+  const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
+  if(natureIssues.length) throw storeError(natureIssues.map(q=>q.text).join(' '),'REVIEW_NATURE_REQUIRED',409);
   if (postJournal && !isGuardPlan(plan)) {
     const posted = postJournal(database, { event, plan, eventId: id, actor, timeZone });
     // مسیر تزریقی وضعیت و ردپا را خودش نمی‌نویسد؛ ردپا نباید به انتخاب

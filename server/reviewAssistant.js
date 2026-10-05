@@ -1,3 +1,4 @@
+import { reviewNatureViolations } from '../shared/reviewNature.js';
 import { classifyCategory } from '../shared/categoryRules.js';
 import { listChartAccounts, suggestChartAccount } from './chartOfAccounts.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
@@ -113,9 +114,10 @@ export function reviewedEvent(database, row) {
       if(matches.length===1) {event.counterpartyId=matches[0].id;event.counterparty=matches[0].name;}
     }
   }
-  if(!event.accountId && !Object.hasOwn(facts,'accountId') && database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()) {
+  if(!Object.hasOwn(facts,'accountId') && database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()) {
     const bank=detectBank(text);
-    if(bank) {const matches=database.prepare("SELECT id FROM accounts WHERE active=1 AND kind='bank' AND bank_id=?").all(bank.bankId);if(matches.length===1) event.accountId=matches[0].id;}
+    if(event.accountId==='cash' && !/از صندوق|به صندوق|پول نقد|اسکناس/.test(text)) event.accountId=null;
+    if(bank) {event.accountId=null;const matches=database.prepare("SELECT id FROM accounts WHERE active=1 AND kind='bank' AND bank_id=?").all(bank.bankId);if(matches.length===1) event.accountId=matches[0].id;}
   }
   // Reuse voice date-role parser, anchored to the recorded event, never today's date.
   // Only explicit maturity markers: collection tomorrow is not issuance or maturity.
@@ -154,10 +156,15 @@ export function relevantDna(database, row) {
   return records.map(r => {
     const source = JSON.parse(r.payload), other = meaningfulWords(source.evidence || source.utterance || source.category);
     const common = [...tokens].filter(w => other.has(w)).length;
+    const journalRoles=r.journal_entry_id ? database.prepare('SELECT a.type,a.source_kind AS sourceKind,a.source_key AS sourceKey,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(r.journal_entry_id).map(l=>({...l,role:l.type==='income'?'income-category':l.type==='expense'?'expense-category':l.sourceKind==='system' && l.sourceKey==='owner-capital'?'owner-capital':l.sourceKind})) : [];
+    const sourceRow={id:r.event_id,payload:r.payload};
+    const cashAccount=reviewedEvent(database,sourceRow).accountId;
+    const safeCash=journalRoles.filter(l=>l.sourceKind==='operational-account').every(l=>cashAccount && cashAccount===l.sourceKey);
+    const safeNature=r.state==='rejected' || (safeCash && journalRoles.length>0 && reviewNatureViolations(originalReviewTranscript(database,{id:r.event_id,payload:r.payload}),journalRoles,reviewedEvent(database,sourceRow)).length===0);
     const sourceFamily=classifyFamily(factsFromEvent(source)).family;
     const compatible=family===FAMILY_UNKNOWN || sourceFamily===FAMILY_UNKNOWN || family===sourceFamily;
     return { id:r.id,eventId:r.event_id,state:r.state,summary:JSON.parse(r.proposal).summary,reason:r.feedback_reason,actor:r.reviewed_by,date:r.reviewed_at,journalEntryId:r.journal_entry_id,
-      similarity: common / Math.max(1,new Set([...tokens,...other]).size), valid:compatible && (r.state==='rejected' || r.status==='posted') };
+      similarity: common / Math.max(1,new Set([...tokens,...other]).size), valid:safeNature && compatible && (r.state==='rejected' || r.status==='posted') };
   }).filter(r => r.valid && r.similarity >= .25).sort((a,b)=>b.similarity-a.similarity).slice(0,5).map(({valid,...r})=>({...r,finalLines:r.journalEntryId ? database.prepare('SELECT a.code,a.name,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? ORDER BY l.rowid').all(r.journalEntryId) : []}));
 }
 export function proposalRevision(database, eventId) { return reviewContext(database,eventId).revision; }
@@ -165,9 +172,9 @@ export function conversationFingerprint(database,eventId) {
   return createHash('sha256').update(JSON.stringify([reviewContext(database,eventId),reviewConversation(database,eventId)])).digest('hex');
 }
 const partyRoles = new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
-const roleNames = {cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
+const roleNames = {'unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
 const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
-const cashCounterparts=['expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
+const cashCounterparts=['unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
 const outgoingCashRoles=['expense-category','fixed-asset','prepaid-asset','refundable-deposit'];
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
@@ -176,7 +183,10 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const resources=prepareReviewResources(database,initial,proposal,{evidence:reviewEvidence(database,row),facts:reviewContext(database,row.id).facts,messages:reviewConversation(database,row.id)});
   const event={...resources.event,reviewInventoryItems:eventOverride?.reviewInventoryItems || resources.inventoryItems};
   const mappingRepairs=[];
-  const blockers = [...(proposal.missingFacts || [])];
+  const natureIssues=reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial);
+  const blockers = [...(proposal.missingFacts || []),...natureIssues.map(q=>q.text)];
+  const cashQuestion=proposal.lines.some(l=>l.role==='cash') && !event.accountId ? {id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'} : null;
+  if(cashQuestion) blockers.push(cashQuestion.text);
   if(event.refundable===true && proposal.lines.some(l=>l.role==='prepaid-asset')) blockers.push('ودیعه قابل استرداد پیش‌پرداخت هزینه نیست؛ پیشنهاد باید با نقش ودیعه بازبینی شود.');
   if(/اصل\s*وام/.test(reviewEvidence(database,row)) && proposal.lines.some(l=>['income-category','payable'].includes(l.role))) blockers.push('اصل وام درآمد یا بدهی تجاری نیست؛ نقش اصل وام پرداختنی لازم است.');
   blockers.push(...resources.blockers);
@@ -200,7 +210,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     if (line.accountId && (!account || !account.active)) blockers.push('سرفصل پیشنهادی حذف یا غیرفعال شده است.');
     if (!account && !line.accountId) {
       const source = sources[role] || role;
-      account = named([systemKeys[role] ? 'system' : source, systemKeys[role] || (partyRoles.has(role) ? event.counterpartyId : key)]);
+      account = named([systemKeys[role] ? 'system' : source, systemKeys[role] || (role==='unidentified-receipt'?'unidentified-receipt':partyRoles.has(role) ? event.counterpartyId : key)]);
     }
     if (account && role==='cash' && account.sourceKey!==event.accountId) blockers.push('بانک سطر پیشنهادی با بانک انتخاب‌شده یکسان نیست.');
     if(account && role==='cash') {
@@ -212,6 +222,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
         if(targets.length===1) mappingRepairs.push({ledgerAccountId:account.id,accountName:account.name,chartAccountId:targets[0].id,chartCode:targets[0].code,chartName:targets[0].name,affectedLines:database.prepare('SELECT count(*) n FROM journal_lines WHERE account_id=?').get(account.id).n});
       }
     }
+    if(account && role==='unidentified-receipt' && account.sourceKind!=='unidentified-receipt') blockers.push('وجه ناشناس فقط در حساب مستقل وجوه تعیین‌تکلیف‌نشده قابل نگهداری است.');
     if (account && !account.active) blockers.push('حساب پیشنهادی غیرفعال است.');
     if (account && partyRoles.has(role) && (account.sourceKind !== (sources[role] || role) || account.sourceKey !== event.counterpartyId)) blockers.push('حساب طرف‌حساب باید به شخص انتخاب‌شده متصل باشد.');
     if (account && account.sourceKind !== (systemKeys[role] ? 'system' : sources[role] || role) && role === 'cash') blockers.push('سطر نقدی باید به بانک یا صندوق عملیاتی متصل باشد.');
@@ -237,7 +248,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const other = lines.filter(l=>l.role!=='cash');
   // Only supported two-sided cash shapes synchronize the operational register atomically.
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !cashCounterparts.includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
-  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   if (anchor?.type==='transaction') {
     const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
@@ -256,6 +267,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions(proposal),
+    mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues,...(proposal.questions || [])]}),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }
