@@ -1,7 +1,7 @@
 import { suggestChartAccount } from './chartOfAccounts.js';
 import { REVIEW_ACCOUNT_TYPES, reviewNormalSide } from './reviewAccountPreparation.js';
 const sources={cash:'operational-account',receivable:'customer-receivable',payable:'vendor-payable','inventory-asset':'inventory-product'};
-const identityRoles=new Set(['unidentified-receipt','cash','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable','inventory-asset']);
+const identityRoles=new Set(['partner-payable','partner-receivable','unidentified-receipt','cash','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable','inventory-asset']);
 /** Correct only catalog bindings, never amounts, dates, accounting roles or business facts. */
 export function bindReviewProposal(proposal,catalog,event) {
   const corrections=[];

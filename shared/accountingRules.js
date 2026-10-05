@@ -20,6 +20,8 @@ import { EVENT_KINDS } from './financialEvent.js';
  */
 export const ROLES = Object.freeze({
   CASH: 'cash',
+  PARTNER_PAYABLE: 'partner-payable',
+  PARTNER_RECEIVABLE: 'partner-receivable',
   UNIDENTIFIED_RECEIPT: 'unidentified-receipt',
   RECEIVABLE: 'receivable',
   PAYABLE: 'payable',

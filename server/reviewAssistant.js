@@ -1,4 +1,4 @@
-import { reviewNatureViolations } from '../shared/reviewNature.js';
+import { partnerTreatment, PARTNER_TREATMENTS, reviewNatureViolations } from '../shared/reviewNature.js';
 import { classifyCategory } from '../shared/categoryRules.js';
 import { listChartAccounts, suggestChartAccount } from './chartOfAccounts.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
@@ -156,7 +156,7 @@ export function relevantDna(database, row) {
   return records.map(r => {
     const source = JSON.parse(r.payload), other = meaningfulWords(source.evidence || source.utterance || source.category);
     const common = [...tokens].filter(w => other.has(w)).length;
-    const journalRoles=r.journal_entry_id ? database.prepare('SELECT a.type,a.source_kind AS sourceKind,a.source_key AS sourceKey,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(r.journal_entry_id).map(l=>({...l,role:l.type==='income'?'income-category':l.type==='expense'?'expense-category':l.sourceKind==='system' && l.sourceKey==='owner-capital'?'owner-capital':l.sourceKind})) : [];
+    const journalRoles=r.journal_entry_id ? database.prepare('SELECT a.type,a.source_kind AS sourceKind,a.source_key AS sourceKey,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(r.journal_entry_id).map(l=>({...l,role:l.sourceKind==='operational-account'?'cash':l.type==='income'?'income-category':l.type==='expense'?'expense-category':l.sourceKind==='system' && l.sourceKey==='owner-capital'?'owner-capital':l.sourceKind})) : [];
     const sourceRow={id:r.event_id,payload:r.payload};
     const cashAccount=reviewedEvent(database,sourceRow).accountId;
     const safeCash=journalRoles.filter(l=>l.sourceKind==='operational-account').every(l=>cashAccount && cashAccount===l.sourceKey);
@@ -171,10 +171,10 @@ export function proposalRevision(database, eventId) { return reviewContext(datab
 export function conversationFingerprint(database,eventId) {
   return createHash('sha256').update(JSON.stringify([reviewContext(database,eventId),reviewConversation(database,eventId)])).digest('hex');
 }
-const partyRoles = new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
-const roleNames = {'unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
+const partyRoles = new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
+const roleNames = {'partner-payable':'جاری شریک — بدهی شرکت','partner-receivable':'جاری شریک — طلب شرکت','unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
 const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
-const cashCounterparts=['unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
+const cashCounterparts=['partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
 const outgoingCashRoles=['expense-category','fixed-asset','prepaid-asset','refundable-deposit'];
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
@@ -185,6 +185,8 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const mappingRepairs=[];
   const natureIssues=reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial);
   const blockers = [...(proposal.missingFacts || []),...natureIssues.map(q=>q.text)];
+  const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
+  if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');
   const cashQuestion=proposal.lines.some(l=>l.role==='cash') && !event.accountId ? {id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'} : null;
   if(cashQuestion) blockers.push(cashQuestion.text);
   if(event.refundable===true && proposal.lines.some(l=>l.role==='prepaid-asset')) blockers.push('ودیعه قابل استرداد پیش‌پرداخت هزینه نیست؛ پیشنهاد باید با نقش ودیعه بازبینی شود.');
@@ -248,7 +250,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const other = lines.filter(l=>l.role!=='cash');
   // Only supported two-sided cash shapes synchronize the operational register atomically.
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !cashCounterparts.includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
-  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   if (anchor?.type==='transaction') {
     const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
@@ -259,7 +261,15 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   if ((proposal.contextRevision || 0) !== reviewContext(database,row.id).revision || proposal.sourceFingerprint !== createHash('sha256').update(`${row.payload}|${row.posting_plan}|${row.decision_id}`).digest('hex')) blockers.push('اطلاعات یا گفت‌وگو تغییر کرده؛ پیشنهاد را دوباره بررسی کن.');
   if (cash.length===1 && other.length===1 && cashCounterparts.includes(other[0].role)) {
     const creditCash=cash[0].credit>0;
-    if (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+    if (!['partner-payable','partner-receivable'].includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+  }
+  const partnerMode=partnerTreatment(reviewEvidence(database,row),initial);
+  const settlementRole=partnerMode===PARTNER_TREATMENTS.repayCompany?'partner-payable':partnerMode===PARTNER_TREATMENTS.repayPartner?'partner-receivable':null;
+  if(settlementRole) {
+    const account=event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(settlementRole,event.counterpartyId) : null;
+    const balance=account ? database.prepare('SELECT COALESCE(SUM(debit-credit),0) balance FROM journal_lines WHERE account_id=?').get(account.id).balance : 0;
+    const available=settlementRole==='partner-payable'?-balance:balance;
+    if(available<row.amount) blockers.push('مانده واقعی حساب جاری این شریک برای بازپرداخت کافی نیست؛ سند مبنای بدهی/طلب یا تفکیک مبلغ لازم است.');
   }
   const locked = row.posting_plan ? JSON.parse(row.posting_plan) : null;
   const shape = list => (list || []).map(l=>[l.role,l.key || '',l.debit,l.credit].join(':')).sort().join('|');
