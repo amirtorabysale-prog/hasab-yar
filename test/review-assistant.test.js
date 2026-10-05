@@ -628,3 +628,45 @@ test('automatic recognition is held before any bank or income journal is written
  assert.throws(()=>store.approveFinancialEvent(database(),item.id,{actor:owner.id}),{code:'REVIEW_NATURE_REQUIRED'});
  assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,count);
 }));
+
+test('partner funding asks purpose once then posts a party-linked liability without API or operating income',()=>run(async()=>{
+ const person=db.saveContact({name:'یوسفی شریک آزمون'}), bank=db.saveAccount({name:'بانک شریک آزمون',kind:'bank',bankId:'saman'});
+ const item=event('یوسفی شریک آزمون برای خرید مواد اولیه پنجاه میلیون به حساب شرکت انتقال داد',50000000);
+ const fetcher=()=>{throw new Error('No API needed');};
+ const first=await ai.proposeReview(database(),item.id,{facts:{counterpartyId:person.id,accountId:bank.id},fetcher});
+ assert.equal(first.lines.length,0);assert.equal(first.questions[0].id,'nature.partner-transfer');
+ const p=await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'nature.partner-transfer':{value:'وجه در اختیار شرکت'}}},fetcher});
+ assert.equal(p.questions.length,0);assert.equal(p.lines[1].role,'partner-payable');
+ const opening=db.listAccounts().find(a=>a.id===bank.id).balance;
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const line=database().prepare("SELECT a.source_key,l.credit,l.analytic_id FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? AND a.source_kind='partner-payable'").get(posted.journalEntryId);
+ assert.equal(line.source_key,person.id);assert.equal(line.credit,50000000);assert.ok(line.analytic_id);
+ assert.equal(database().prepare('SELECT accounting_role FROM transactions WHERE client_id=?').get(`review:${item.id}`).accounting_role,'partner-payable');
+ assert.equal(db.listAccounts().find(a=>a.id===bank.id).balance,opening+50000000);
+ const similar=event('یوسفی شریک آزمون برای خرید مواد اولیه پنجاه میلیون به حساب شرکت انتقال داد',50000000);
+ assert.ok(assistant.relevantDna(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(similar.id)).some(d=>d.id===p.id));
+ const repayment=event('بازپرداخت بدهی شرکت به یوسفی شریک آزمون پرداخت شد',20000000);
+ const q=await ai.proposeReview(database(),repayment.id,{facts:{counterpartyId:person.id,accountId:bank.id},fetcher});
+ assert.equal(q.lines[1].debit,20000000);
+ const settlement=db.reviewAiFeedback(repayment.id,q.id,{accepted:true}).item;
+ assert.ok(settlement.journalEntryId);assert.equal(db.listAccounts().find(a=>a.id===bank.id).balance,opening+30000000);
+ const excess=event('بازپرداخت بدهی شرکت به یوسفی شریک آزمون پرداخت شد',40000000);
+ const x=await ai.proposeReview(database(),excess.id,{facts:{counterpartyId:person.id,accountId:bank.id},fetcher});
+ assert.throws(()=>db.reviewAiFeedback(excess.id,x.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+ db.reverseEvent(repayment.id,'برگشت تسویه آزمایشی شریک');db.reverseEvent(item.id,'برگشت تامین وجه آزمایشی شریک');
+ assert.equal(db.listAccounts().find(a=>a.id===bank.id).balance,opening);
+}));
+
+test('personal shareholder withdrawal creates receivable, never expense; another partner cannot repay its balance',()=>run(async()=>{
+ const person=db.saveContact({name:'کاظمی شریک آزمون'}), other=db.saveContact({name:'راد شریک آزمون'});
+ const item=event('کاظمی شریک آزمون برداشت شخصی کرد',1000000);
+ const fetcher=()=>{throw new Error('No API');};
+ const p=await ai.proposeReview(database(),item.id,{facts:{counterpartyId:person.id,accountId:'cash'},fetcher});
+ assert.equal(p.lines[1].role,'partner-receivable');
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const credit=event('بازپرداخت طلب شرکت از راد شریک آزمون واریز شد',1000000);
+ const q=await ai.proposeReview(database(),credit.id,{facts:{counterpartyId:other.id,accountId:'cash'},fetcher});
+ assert.throws(()=>db.reviewAiFeedback(credit.id,q.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+ assert.ok(posted.journalEntryId);
+ db.reverseEvent(item.id,'برگشت برداشت شخصی آزمون');
+}));

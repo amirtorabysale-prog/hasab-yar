@@ -128,6 +128,11 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.UNIDENTIFIED_RECEIPT:
       return linkedAccount(database, 'unidentified-receipt', 'unidentified-receipt', 'وجوه دریافتی تعیین‌تکلیف‌نشده', 'liability');
 
+    case ROLES.PARTNER_PAYABLE:
+      return counterpartyRoleAccount(database,'partner-payable',event,key,'جاری شریک — بدهی شرکت','liability');
+    case ROLES.PARTNER_RECEIVABLE:
+      return counterpartyRoleAccount(database,'partner-receivable',event,key,'جاری شریک — طلب شرکت','asset');
+
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');
 
@@ -172,6 +177,7 @@ export function resolveEventRole(database, role, key, event = {}) {
  * صندوق یا حساب هزینه، داده‌ای می‌سازد که هیچ معنایی ندارد.
  */
 const COUNTERPARTY_ROLES = new Set([
+  ROLES.PARTNER_PAYABLE,ROLES.PARTNER_RECEIVABLE,
   ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE, ROLES.CUSTOMER_ADVANCE, ROLES.DEFERRED_REVENUE, ROLES.REFUNDABLE_DEPOSIT, ROLES.LOAN_PAYABLE,
 ]);
 

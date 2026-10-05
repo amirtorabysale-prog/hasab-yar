@@ -4,7 +4,7 @@ import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { recordInventoryMovement } from './inventory.js';
 
-const partyRoles=new Set(['receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
+const partyRoles=new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
 const norm=value=>exactCounterpartyKey(value).toLocaleLowerCase('fa');
 const fail=message=>Object.assign(new Error(message),{code:'REVIEW_DETAILS_REQUIRED',status:409});
 /** No writes in preview. Applied only inside the journal's approval transaction. */

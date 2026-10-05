@@ -118,7 +118,7 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
       throw Object.assign(new Error('مبالغ سند با پیشنهاد AI برابر نیست؛ اصلاح را با دلیل ثبت کن.'), { code: 'AI_PLAN_REVISION_REQUIRED', status: 409 });
     }
     if(aiAccepted) {
-      const actualRoles=(lines || []).map(line=>{const a=database.prepare('SELECT type,source_kind,source_key FROM ledger_accounts WHERE id=?').get(line.accountId);return {...line,role:a?.type==='income'?'income-category':a?.type==='expense'?'expense-category':a?.source_kind==='system' && a?.source_key==='owner-capital'?'owner-capital':a?.source_kind};});
+      const actualRoles=(lines || []).map(line=>{const a=database.prepare('SELECT type,source_kind,source_key FROM ledger_accounts WHERE id=?').get(line.accountId);return {...line,role:a?.source_kind==='operational-account'?'cash':a?.type==='income'?'income-category':a?.type==='expense'?'expense-category':a?.source_kind==='system' && a?.source_key==='owner-capital'?'owner-capital':a?.source_kind};});
       const issues=reviewNatureViolations(originalReviewTranscript(database,row),actualRoles,reviewedEvent(database,row));
       if(issues.length) throw Object.assign(new Error(issues.map(q=>q.text).join(' ')),{code:'REVIEW_NATURE_REQUIRED',status:409});
     }
@@ -342,7 +342,7 @@ function acceptPreparedProposal(database,row,proposal,actor) {
         database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
       }
       database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(
-        ['unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
+        ['partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
     } else if (source?.type==='transaction') {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }

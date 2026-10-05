@@ -29,6 +29,7 @@ export const CHART_ROLES = Object.freeze([
   'cash', 'bank', 'receivable', 'payable', 'inventory', 'cogs',
   'sales', 'service-income', 'other-income', 'operating-expense',
   'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
+  'partner-payable', 'partner-receivable',
   'fixed-asset', 'owner-capital', 'refundable-deposit', 'loan-payable',
   // حقوق و دستمزد سه بدهی جدا می‌سازد و هر سه به گیرندهٔ متفاوتی پرداخت
   // می‌شوند: خالص به خودِ پرسنل، بیمه به تأمین اجتماعی و مالیات به سازمان
@@ -354,7 +355,7 @@ function readFlag(value) {
 // معین‌هایی که در هر کدینگی تفصیلی‌دارند: بدهکاران و بستانکاران بدون طرف حساب
 // معنا ندارند. وقتی فایل چیزی نگفته باشد، همین حدس زده می‌شود — حدسی که فقط
 // یک هشدار می‌سازد و حسابدار می‌تواند خاموشش کند.
-const ANALYTIC_ROLES = new Set(['receivable', 'payable']);
+const ANALYTIC_ROLES = new Set(['partner-payable','partner-receivable','receivable', 'payable']);
 
 export function parseChartCsv(input) {
   const text = String(input ?? '').replace(/^﻿/, '');
@@ -401,6 +402,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['1103', 'تنخواه‌گردان', 'subsidiary', '11', 'asset', ''],
   ['12', 'حساب‌ها و اسناد دریافتنی', 'general', '1', 'asset', ''],
   ['1201', 'حساب‌های دریافتنی تجاری', 'subsidiary', '12', 'asset', 'receivable'],
+  ['1204', 'جاری شرکا — طلب شرکت', 'subsidiary', '12', 'asset', 'partner-receivable'],
   ['1203', 'اسناد دریافتنی (چک)', 'subsidiary', '12', 'asset', 'note-receivable'],
   ['1202', 'اسناد دریافتنی', 'subsidiary', '12', 'asset', ''],
   ['13', 'موجودی کالا', 'general', '1', 'asset', ''],
@@ -414,6 +416,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['3', 'بدهی‌های جاری', 'group', '', 'liability', ''],
   ['31', 'حساب‌ها و اسناد پرداختنی', 'general', '3', 'liability', ''],
   ['3101', 'حساب‌های پرداختنی تجاری', 'subsidiary', '31', 'liability', 'payable'],
+  ['3103', 'جاری شرکا — بدهی شرکت', 'subsidiary', '31', 'liability', 'partner-payable'],
   ['3102', 'اسناد پرداختنی (چک)', 'subsidiary', '31', 'liability', 'note-payable'],
   ['32', 'مالیات و عوارض پرداختنی', 'general', '3', 'liability', ''],
   ['3201', 'مالیات و عوارض ارزش افزودهٔ فروش', 'subsidiary', '32', 'liability', 'output-tax'],
@@ -661,7 +664,7 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
   if (keyRole) return byRole(keyRole);
 
   const sourceKind = ledgerAccount.sourceKind || ledgerAccount.source_kind;
-  if(['refundable-deposit','loan-payable'].includes(sourceKind)) return byRole(sourceKind);
+  if(['partner-payable','partner-receivable','refundable-deposit','loan-payable'].includes(sourceKind)) return byRole(sourceKind);
   // نقشِ `operating-expense` را فقط یک معین دارد (۸۱۰۹ سایر هزینه‌های عملیاتی)،
   // پس هر دستهٔ هزینه‌ای — اجاره، حمل‌ونقل، قبوض — همان‌جا می‌نشست و در پارسیان
   // همه‌چیز در یک حساب کلی جمع می‌شد. حساب دستهٔ دفتر، `source_key` برابر نام
