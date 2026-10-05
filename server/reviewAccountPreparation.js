@@ -5,6 +5,7 @@ import { resolveEventRole } from './roleResolver.js';
 import { normalizePersian } from '../shared/normalize.js';
 
 export const REVIEW_ACCOUNT_TYPES = Object.freeze({
+  'unidentified-receipt':'liability',
   'inventory-asset':'asset',cash:'asset',receivable:'asset',payable:'liability','cheque-receivable':'asset','cheque-payable':'liability',
   'expense-category':'expense','income-category':'income','prepaid-asset':'asset','fixed-asset':'asset',
   'refundable-deposit':'asset','loan-payable':'liability','owner-capital':'equity','customer-advance':'liability','deferred-revenue':'liability',
@@ -81,7 +82,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v5',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v6-nature',
     reviewAccountCatalog(database),
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],

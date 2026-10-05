@@ -125,6 +125,9 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.DEFERRED_REVENUE:
       return counterpartyRoleAccount(database, 'deferred-revenue', event, key || 'مشتری متفرقه', 'درآمد انتقالی', 'liability');
 
+    case ROLES.UNIDENTIFIED_RECEIPT:
+      return linkedAccount(database, 'unidentified-receipt', 'unidentified-receipt', 'وجوه دریافتی تعیین‌تکلیف‌نشده', 'liability');
+
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');
 
