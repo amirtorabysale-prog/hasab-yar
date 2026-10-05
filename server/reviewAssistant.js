@@ -1,4 +1,5 @@
-import { partnerTreatment, PARTNER_TREATMENTS, reviewNatureViolations } from '../shared/reviewNature.js';
+import { ensureTaxRefundSchema, taxRefundValidation } from './reviewTaxRefund.js';
+import { partnerTreatment, PARTNER_TREATMENTS, reviewNature, reviewNatureViolations } from '../shared/reviewNature.js';
 import { classifyCategory } from '../shared/categoryRules.js';
 import { listChartAccounts, suggestChartAccount } from './chartOfAccounts.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
@@ -18,6 +19,7 @@ import { splitDateRoles } from '../shared/voiceIntent.js';
 const fail = (message, code = 'REVIEW_DETAILS_REQUIRED') => Object.assign(new Error(message), { code, status: 409 });
 export function ensureAssistantSchema(database) {
   ensureFinancialEventSchema(database);
+  ensureTaxRefundSchema(database);
   database.exec(`CREATE TABLE IF NOT EXISTS accounting_review_messages (
     id TEXT PRIMARY KEY,event_id TEXT NOT NULL REFERENCES financial_events(id),speaker TEXT NOT NULL,
     actor TEXT,body TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -156,11 +158,12 @@ export function relevantDna(database, row) {
   return records.map(r => {
     const source = JSON.parse(r.payload), other = meaningfulWords(source.evidence || source.utterance || source.category);
     const common = [...tokens].filter(w => other.has(w)).length;
-    const journalRoles=r.journal_entry_id ? database.prepare('SELECT a.type,a.source_kind AS sourceKind,a.source_key AS sourceKey,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(r.journal_entry_id).map(l=>({...l,role:l.sourceKind==='operational-account'?'cash':l.type==='income'?'income-category':l.type==='expense'?'expense-category':l.sourceKind==='system' && l.sourceKey==='owner-capital'?'owner-capital':l.sourceKind})) : [];
+    const journalRoles=r.journal_entry_id ? database.prepare('SELECT a.type,a.source_kind AS sourceKind,a.source_key AS sourceKey,c.role AS chartRole,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id LEFT JOIN chart_accounts c ON c.id=a.chart_account_id WHERE l.entry_id=?').all(r.journal_entry_id).map(l=>({...l,role:l.chartRole==='tax-receivable'?'tax-receivable':l.sourceKind==='operational-account'?'cash':l.type==='income'?'income-category':l.type==='expense'?'expense-category':l.sourceKind==='system' && l.sourceKey==='owner-capital'?'owner-capital':l.sourceKind})) : [];
     const sourceRow={id:r.event_id,payload:r.payload};
     const cashAccount=reviewedEvent(database,sourceRow).accountId;
     const safeCash=journalRoles.filter(l=>l.sourceKind==='operational-account').every(l=>cashAccount && cashAccount===l.sourceKey);
-    const safeNature=r.state==='rejected' || (safeCash && journalRoles.length>0 && reviewNatureViolations(originalReviewTranscript(database,{id:r.event_id,payload:r.payload}),journalRoles,reviewedEvent(database,sourceRow)).length===0);
+    const safeTax=!reviewNature(originalReviewTranscript(database,sourceRow)).vatRefund || Boolean(database.prepare("SELECT 1 FROM accounting_review_tax_refunds WHERE event_id=? AND refund_journal_id=?").get(r.event_id,r.journal_entry_id));
+    const safeNature=r.state==='rejected' || (safeTax && safeCash && journalRoles.length>0 && reviewNatureViolations(originalReviewTranscript(database,{id:r.event_id,payload:r.payload}),journalRoles,reviewedEvent(database,sourceRow)).length===0);
     const sourceFamily=classifyFamily(factsFromEvent(source)).family;
     const compatible=family===FAMILY_UNKNOWN || sourceFamily===FAMILY_UNKNOWN || family===sourceFamily;
     return { id:r.id,eventId:r.event_id,state:r.state,summary:JSON.parse(r.proposal).summary,reason:r.feedback_reason,actor:r.reviewed_by,date:r.reviewed_at,journalEntryId:r.journal_entry_id,
@@ -172,9 +175,9 @@ export function conversationFingerprint(database,eventId) {
   return createHash('sha256').update(JSON.stringify([reviewContext(database,eventId),reviewConversation(database,eventId)])).digest('hex');
 }
 const partyRoles = new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
-const roleNames = {'partner-payable':'جاری شریک — بدهی شرکت','partner-receivable':'جاری شریک — طلب شرکت','unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
+const roleNames = {'tax-receivable':'مطالبات مالیاتی','partner-payable':'جاری شریک — بدهی شرکت','partner-receivable':'جاری شریک — طلب شرکت','unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
 const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
-const cashCounterparts=['partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
+const cashCounterparts=['tax-receivable','partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
 const outgoingCashRoles=['expense-category','fixed-asset','prepaid-asset','refundable-deposit'];
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
@@ -183,7 +186,8 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const resources=prepareReviewResources(database,initial,proposal,{evidence:reviewEvidence(database,row),facts:reviewContext(database,row.id).facts,messages:reviewConversation(database,row.id)});
   const event={...resources.event,reviewInventoryItems:eventOverride?.reviewInventoryItems || resources.inventoryItems};
   const mappingRepairs=[];
-  const natureIssues=reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial);
+  const taxRefund=taxRefundValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
+  const natureIssues=[...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial),...taxRefund.issues];
   const blockers = [...(proposal.missingFacts || []),...natureIssues.map(q=>q.text)];
   const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
   if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');
@@ -250,7 +254,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const other = lines.filter(l=>l.role!=='cash');
   // Only supported two-sided cash shapes synchronize the operational register atomically.
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !cashCounterparts.includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
-  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','tax-receivable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   if (anchor?.type==='transaction') {
     const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
@@ -277,6 +281,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues,...(proposal.questions || [])]}),
+    taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues,...(proposal.questions || [])]}),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }

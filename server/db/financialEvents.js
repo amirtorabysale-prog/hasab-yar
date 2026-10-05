@@ -1,4 +1,5 @@
-import { reviewNatureViolations } from '../../shared/reviewNature.js';
+import { allocateTaxRefund } from '../reviewTaxRefund.js';
+import { reviewNature, reviewNatureViolations } from '../../shared/reviewNature.js';
 import { prepareReviewResources, applyReviewInventory, reverseReviewInventory } from '../reviewResources.js';
 import { randomUUID } from 'node:crypto';
 import { prepareReviewProposal, reviewConversation, reviewedEvent, originalReviewTranscript, relevantDna, proposalRevision, addReviewMessage, reviewContext } from '../reviewAssistant.js';
@@ -118,6 +119,7 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
       throw Object.assign(new Error('مبالغ سند با پیشنهاد AI برابر نیست؛ اصلاح را با دلیل ثبت کن.'), { code: 'AI_PLAN_REVISION_REQUIRED', status: 409 });
     }
     if(aiAccepted) {
+      if(reviewNature(originalReviewTranscript(database,row)).vatRefund) throw Object.assign(new Error('استرداد مالیات را با دکمه اعمال پیشنهاد ثبت کن تا سند طلب و تخصیص وصول هم ثبت شوند.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
       const actualRoles=(lines || []).map(line=>{const a=database.prepare('SELECT type,source_kind,source_key FROM ledger_accounts WHERE id=?').get(line.accountId);return {...line,role:a?.source_kind==='operational-account'?'cash':a?.type==='income'?'income-category':a?.type==='expense'?'expense-category':a?.source_kind==='system' && a?.source_key==='owner-capital'?'owner-capital':a?.source_kind};});
       const issues=reviewNatureViolations(originalReviewTranscript(database,row),actualRoles,reviewedEvent(database,row));
       if(issues.length) throw Object.assign(new Error(issues.map(q=>q.text).join(' ')),{code:'REVIEW_NATURE_REQUIRED',status:409});
@@ -342,11 +344,12 @@ function acceptPreparedProposal(database,row,proposal,actor) {
         database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
       }
       database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(
-        ['partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
+        ['tax-receivable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
     } else if (source?.type==='transaction') {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }
     const item = postReviewedComposite(database,row.id,{lines:final.lines,reason:`تأیید حسابدار: ${proposal.summary}`,actor,timeZone:currentTimeZone(),accountantProposal:true,eventOverride:event});
+    allocateTaxRefund(database,row.id,item.journalEntryId,final.taxRefundClaim,row.amount);
     applyReviewInventory(database,row.id,event,resources.inventoryItems,{actor,timeZone:currentTimeZone()});
     const cheque = final.lines.find(l=>['cheque-receivable','cheque-payable'].includes(l.role));
     if (cheque) attachReviewedCheque({eventId:row.id,event,line:cheque,journalEntryId:item.journalEntryId,against:final.lines.some(l=>['receivable','payable'].includes(l.role))?'receivable':'income'});
