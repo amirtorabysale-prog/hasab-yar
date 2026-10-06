@@ -331,6 +331,7 @@ export const api = {
   reviewAiConversation: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/ai-conversation`),
   reviewAiProposal: (id, payload = {}) => request(`/api/financial-events/${encodeURIComponent(id)}/ai-proposal`, { method: 'POST', body: JSON.stringify(payload) }),
   reviewAiFeedback: (id, proposalId, accepted, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/ai-feedback`, { method: 'POST', body: JSON.stringify({ proposalId, accepted, reason }) }),
+  reviewPriorBasis: (id,payload) => request(`/api/financial-events/${encodeURIComponent(id)}/prior-basis`, {method:'POST',body:JSON.stringify(payload)}),
   reviewedJournal: (id, payload) => request(`/api/financial-events/${encodeURIComponent(id)}/reviewed-journal`, { method: 'POST', body: JSON.stringify(payload) }),
   eventAudit: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/audit`),
   eventDecision: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/decision`),

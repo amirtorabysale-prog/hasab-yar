@@ -3,6 +3,7 @@ import { resolveCounterparty, normalizedCounterpartyInput } from './counterparti
 import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { recordInventoryMovement } from './inventory.js';
+import { isReviewSupplierAdvance } from '../shared/reviewSupplierAdvance.js';
 
 const partyRoles=new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
 const norm=value=>exactCounterpartyKey(value).toLocaleLowerCase('fa');
@@ -10,10 +11,11 @@ const fail=message=>Object.assign(new Error(message),{code:'REVIEW_DETAILS_REQUI
 /** No writes in preview. Applied only inside the journal's approval transaction. */
 export function prepareReviewResources(database,event,proposal,{evidence='',facts={},messages=[],apply=false}={}) {
   const result={event:{...event},newCounterparty:null,inventoryItems:[],blockers:[]};
-  if(proposal.lines.some(l=>partyRoles.has(l.role)) && !event.counterpartyId) {
+  result.event.reviewSupplierAdvance=isReviewSupplierAdvance([evidence,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body)].join(' '),proposal.lines);
+  if((result.event.reviewSupplierAdvance || proposal.lines.some(l=>partyRoles.has(l.role))) && !event.counterpartyId) {
     const name=String(facts.counterpartyName || event.counterparty || proposal.counterpartyName || extractContactName(evidence) || '').trim().replace(/^(?:بله|بلی|آره)[،,:]\s*/, '');
     const knownText=[evidence,event.counterparty,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body),facts.counterpartyName].filter(Boolean).join(' ');
-    if(name.length<2 || name.length>100 || !norm(knownText).includes(norm(name))) result.blockers.push('نام واقعی طرف‌حساب در متن یا پاسخ حسابدار مشخص نیست؛ نام او را بگو.');
+    if(name.length<2 || name.length>100 || /^(بنگاهی?|مبلغ|تامین کننده|تأمین کننده|طرف حساب|شرکت|شخص|شد مبلغ|شرکت عودت داد)$/.test(norm(name)) || !norm(knownText).includes(norm(name))) result.blockers.push('نام واقعی طرف‌حساب در متن یا پاسخ حسابدار مشخص نیست؛ نام او را بگو.');
     else {
       try {
         const {contact}=resolveCounterparty(database,name);

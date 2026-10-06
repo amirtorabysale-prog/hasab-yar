@@ -115,6 +115,7 @@ export function resolveEventRole(database, role, key, event = {}) {
       return counterpartyRoleAccount(database, 'loan-payable', event, key, 'اصل وام پرداختنی', 'liability');
 
     case ROLES.PREPAID_ASSET:
+      if(event.reviewSupplierAdvance) return counterpartyRoleAccount(database, 'prepaid-asset', event, key, 'پیش‌پرداخت خرید', 'asset');
       return linkedAccount(database, 'prepaid-asset', key || 'عمومی', `پیش‌پرداخت — ${key || 'عمومی'}`, 'asset');
 
     // پیش‌دریافت و درآمد انتقالی هر دو بدهی‌اند و به تفکیک طرف حساب نگه
@@ -182,7 +183,7 @@ const COUNTERPARTY_ROLES = new Set([
 ]);
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {
-  if (!COUNTERPARTY_ROLES.has(role)) return null;
+  if (!COUNTERPARTY_ROLES.has(role) && !(role===ROLES.PREPAID_ASSET && event.reviewSupplierAdvance)) return null;
   const contactId = String(event.counterpartyId || '').trim();
   // کلید از شناسهٔ شخص می‌آید نه از نامش، تا تغییر نام تفصیلی تازه‌ای نسازد.
   if (contactId) return analyticForContact(database, contactId, String(event.counterparty || '').trim() || 'طرف حساب')?.id || null;
