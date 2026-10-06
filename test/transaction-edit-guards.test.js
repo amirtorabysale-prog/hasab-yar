@@ -17,6 +17,8 @@ process.env.ADMIN_PASSWORD = 'editguard-strong-password-4417';
 
 const database = await import(`../server/db.js?editguard=${process.pid}`);
 const accounting = await import(`../server/accounting.js?editguard=${process.pid}`);
+const store = await import('../server/financialEventStore.js');
+const { parseFinancialText } = await import('../shared/parser.js');
 database.ensureAdmin();
 
 const owner = database.authenticateUser('editguard-owner', 'editguard-strong-password-4417');
@@ -108,6 +110,49 @@ test('ثبت عادی مثل قبل ویرایش می‌شود', () => {
     database.updateTransaction(id, { amount: 4_000_000 });
     // هزینه بدهکار است، پس در این تابعِ «بستانکار منهای بدهکار» منفی می‌شود.
     assert.equal(byType('expense'), before - 1_000_000);
+    assert.equal(accounting.trialBalance(db()).balanced, true);
+  });
+});
+
+/**
+ * سندی که لایهٔ رویداد ساخته، با ویرایش به سند ساده برنمی‌گردد.
+ *
+ * فقط عوض کردن یادداشت، فروش با ارزش افزوده را کامل درآمد می‌کرد و
+ * پیش‌پرداخت را هزینهٔ همین دوره — هر دو با سند متوازن.
+ */
+const journalOf = (id) => db().prepare(`SELECT ledger_accounts.source_kind AS kind,ledger_accounts.source_key AS key,journal_lines.debit,journal_lines.credit
+  FROM journal_entries j JOIN journal_lines ON journal_lines.entry_id=j.id JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+  WHERE j.source_type='transaction' AND j.source_id=? AND j.entry_kind='normal'
+    AND NOT EXISTS(SELECT 1 FROM journal_entries r WHERE r.reverses_entry_id=j.id) ORDER BY journal_lines.rowid`).all(id);
+const recordSpoken = (sentence) => {
+  const [item] = parseFinancialText(sentence).transactions;
+  const [id] = database.insertTransactions({ transcript: sentence, transactions: [{ ...item, source: 'text', accountId: 'cash' }] });
+  const event = store.findEventBySource(db(), `transaction:${id}`);
+  if (event.status === 'pending') database.approveEvent(event.id, { reason: 'حسابدار: ماهیت بررسی و تأیید شد.' });
+  return id;
+};
+
+test('ویرایش یادداشت، تفکیک ارزش افزوده و پیش‌پرداخت را نگه می‌دارد؛ ویرایش مبلغ قفل است', () => {
+  inWorkspace(() => {
+    database.saveTaxRate({ name: 'ارزش افزوده ۱۰٪', rate: 10, treatment: 'taxable', isDefault: true });
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true });
+    const sale = recordSpoken('۱۱۰ میلیون فروختم با ارزش افزوده');
+    const prepaid = recordSpoken('پونزده میلیون شارژ ساختمان اداری رو برای شش ماه جلوتر نقدی پرداخت کردم');
+    const saleBefore = journalOf(sale);
+    const prepaidBefore = journalOf(prepaid);
+    assert.ok(saleBefore.some((line) => line.key === 'output-tax' && line.credit === 10_000_000), 'پیش‌فرض: فروش تفکیک شده');
+    assert.ok(prepaidBefore.some((line) => line.kind === 'prepaid-asset' && line.debit === 15_000_000), 'پیش‌فرض: پیش‌پرداخت');
+
+    database.updateTransaction(sale, { note: 'فاکتور ۱۲' });
+    database.updateTransaction(prepaid, { note: 'قرارداد شش‌ماهه' });
+    assert.deepEqual(journalOf(sale), saleBefore);
+    assert.deepEqual(journalOf(prepaid), prepaidBefore);
+
+    for (const [id, before] of [[sale, saleBefore], [prepaid, prepaidBefore]]) {
+      assert.throws(() => database.updateTransaction(id, { amount: 5_000_000 }), { code: 'SPECIALIZED_TRANSACTION_LOCKED' });
+      assert.throws(() => database.updateTransaction(id, { category: 'سایر' }), { code: 'SPECIALIZED_TRANSACTION_LOCKED' });
+      assert.deepEqual(journalOf(id), before, 'تلاش ناموفق سند را دست نمی‌زند');
+    }
     assert.equal(accounting.trialBalance(db()).balanced, true);
   });
 });
