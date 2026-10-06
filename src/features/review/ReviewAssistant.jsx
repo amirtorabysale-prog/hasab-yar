@@ -1,7 +1,7 @@
 import { reviewQuestions } from '../../../shared/reviewQuestions.js';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, persianDate } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 
 export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
   const [open,setOpen] = useState(false), [loading,setLoading] = useState(false), [error,setError] = useState('');
@@ -30,6 +30,10 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
   };
   const questionInput=(q,value)=>{
     const props={value,onChange:e=>answerQuestion(q,e.target.value),'aria-label':q.text,className:'mt-2 block w-full rounded border border-line bg-paper p-2'};
+    if(q.id==='nature.vat-refund' && ai?.taxRefundCandidates?.length) return <>
+      <input {...props} list={`tax-sources-${item.id}`} placeholder="شماره سال/سند، مثلاً ۱۴۰۵/۱۲" />
+      <datalist id={`tax-sources-${item.id}`}>{ai.taxRefundCandidates.map(c=><option key={c.lineId} value={c.reference}>{c.accountName} · {persianDate(c.occurredAt)} · مانده {formatAmount(c.available)} تومان</option>)}</datalist>
+    </>;
     if(['occurredAt','dueAt'].includes(q.field)) return <input {...props} type="date" />;
     if(['counterpartyId','accountId'].includes(q.field)) return <select {...props}><option value="">انتخاب کن…</option>{(q.field==='counterpartyId'?contacts:accounts).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>;
     return <textarea {...props} rows={2} maxLength={1000} placeholder="پاسخ این سؤال را اینجا بنویس…" />;
@@ -94,6 +98,12 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
     {!ai && item.dnaMatches?.length>0 && <div className="mt-2 rounded bg-accent/5 p-2"><b>DNA شرکت {item.dnaMatches.length} تجربهٔ مشابه پیدا کرده است.</b>{item.dnaMatches.map(d=><p key={d.id}>{d.summary} · {d.actorName || d.actor} · {persianDate(d.date)} — {d.reason || 'تأیید قبلی'}</p>)}<p>با «تحلیل کن» تطبیق رویداد تازه را درخواست کن؛ تجربهٔ قبلی مجوز ثبت خودکار نیست.</p></div>}
     {ai?.state==='proposed' && <>
       <p className="mt-2 font-bold">{ai.summary}</p><p className="text-muted">{ai.explanation}</p>
+      {ai.taxRefundClaim && <div className="my-2 rounded border border-line bg-paper p-2">
+        <b>سند مبنای طلب مالیاتی: <span className="numbers" dir="ltr">{toPersianDigits(ai.taxRefundClaim.reference)}</span></b>
+        <p>{persianDate(ai.taxRefundClaim.occurredAt)} · {ai.taxRefundClaim.accountName}</p>
+        <p>مانده قابل وصول پیش از این ثبت: <span className="numbers">{formatAmount(ai.taxRefundClaim.available)}</span> تومان</p>
+        <p className="text-muted">با تأیید شما، وصول به همین سند متصل می‌شود؛ درآمد تازه ثبت نمی‌شود.</p>
+      </div>}
       {ai.dnaEvidence?.length > 0 && <div className="my-2 rounded border border-accent/30 bg-accent/5 p-2">
         <b>این پیشنهاد با توجه به تجربه‌های DNA همین شرکت تهیه شده؛ ثبت فقط با اجازهٔ شماست.</b>
         {ai.dnaEvidence.map(d=><p key={d.id}>{d.state==='accepted'?'تجربهٔ تأییدشده':'اصلاح قبلی'}: {d.summary} — {d.reason || 'تأیید حسابدار'} · {persianDate(d.date)} · حسابدار {d.actorName || d.actor || 'ثبت‌نشده'}{d.journalEntryId && ` · سند ${d.journalEntryId}`}</p>)}

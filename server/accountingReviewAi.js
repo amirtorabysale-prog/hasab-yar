@@ -1,3 +1,4 @@
+import { taxRefundProposal } from './reviewTaxRefund.js';
 import { partnerTransferProposal, unidentifiedReceiptProposal, reviewNatureViolations } from '../shared/reviewNature.js';
 import { bindReviewProposal } from './reviewProposalBindings.js';
 import { reviewQuestions } from '../shared/reviewQuestions.js';
@@ -103,7 +104,7 @@ async function proposeReviewOnce(database, eventId, { fetcher = fetch, message =
   const knowledgeFingerprint=reviewKnowledgeFingerprint(database);
   const old = latestReviewProposal(database, eventId);
   if (old && !reviewQuestions(old).some(q=>reviewContext(database,eventId).facts.questionAnswers?.[q.id]) && old.knowledgeFingerprint===knowledgeFingerprint && old.state === 'proposed' && old.sourceFingerprint === sourceHash(row) && (old.contextRevision || 0) === reviewContext(database,eventId).revision) return old;
-  const localProposal=unidentifiedReceiptProposal(reviewEvidence(database,row),row.amount) || partnerTransferProposal(reviewEvidence(database,row),row.amount,reviewContext(database,row.id).facts);
+  const localProposal=taxRefundProposal(database,reviewEvidence(database,row),row.amount,reviewedEvent(database,row)) || unidentifiedReceiptProposal(reviewEvidence(database,row),row.amount) || partnerTransferProposal(reviewEvidence(database,row),row.amount,reviewContext(database,row.id).facts);
   const openai = Boolean(process.env.OPENAI_API_KEY);
   const apiKey = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey && !localProposal) throw fail('کلید OPENAI_API_KEY برای بررسی AI تنظیم نشده است.', 'AI_NOT_CONFIGURED', 503);

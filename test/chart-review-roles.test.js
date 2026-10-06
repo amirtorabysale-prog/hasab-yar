@@ -86,3 +86,13 @@ test('کدینگ پیش از تفکیک: کد عمومی قبلی پیشنهاد
   assert.equal(chart.suggestChartAccount(ledger('کارمزد بانکی'), oldChart, { confidentOnly: true })?.code, '8109');
   assert.equal(chart.suggestChartAccount(ledger('بیمه'), oldChart, { confidentOnly: true })?.code, '8109', 'بیمه نباید به حقوق برود');
 });
+
+test('پیش‌پرداخت‌ها و مطالبات مالیاتی هر دو در کدینگ پیشنهادی نقش دارند', () => {
+  // ۱۴۰۱ (این تغییر) و ۱۴۰۳ (PR #89) کنار هم در یک گروه نشسته‌اند و در مرج
+  // تداخل داشتند؛ هیچ‌کدام نباید جای دیگری را بگیرد.
+  inPrimary(() => {
+    const byCode = new Map(chart.listChartAccounts(db()).map((item) => [item.code, item]));
+    assert.equal(byCode.get('1401')?.role, 'prepaid-asset');
+    assert.equal(byCode.get('1403')?.role, 'tax-receivable');
+  });
+});

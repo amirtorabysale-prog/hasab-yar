@@ -29,7 +29,7 @@ export const CHART_ROLES = Object.freeze([
   'cash', 'bank', 'receivable', 'payable', 'inventory', 'cogs',
   'sales', 'service-income', 'other-income', 'operating-expense',
   'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
-  'partner-payable', 'partner-receivable',
+  'tax-receivable', 'partner-payable', 'partner-receivable',
   'fixed-asset', 'owner-capital', 'refundable-deposit', 'loan-payable',
   // حقوق و دستمزد سه بدهی جدا می‌سازد و هر سه به گیرندهٔ متفاوتی پرداخت
   // می‌شوند: خالص به خودِ پرسنل، بیمه به تأمین اجتماعی و مالیات به سازمان
@@ -414,6 +414,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['1301', 'موجودی کالا و مواد', 'subsidiary', '13', 'asset', 'inventory'],
   ['14', 'پیش‌پرداخت‌ها و مالیات', 'general', '1', 'asset', ''],
   ['1401', 'پیش‌پرداخت‌ها', 'subsidiary', '14', 'asset', 'prepaid-asset'],
+  ['1403', 'مطالبات مالیاتی و اضافه‌پرداخت قابل استرداد', 'subsidiary', '14', 'asset', 'tax-receivable'],
   ['1402', 'مالیات و عوارض ارزش افزودهٔ خرید', 'subsidiary', '14', 'asset', 'input-tax'],
   ['2', 'دارایی‌های غیرجاری', 'group', '', 'asset', ''],
   ['21', 'دارایی‌های ثابت مشهود', 'general', '2', 'asset', ''],
