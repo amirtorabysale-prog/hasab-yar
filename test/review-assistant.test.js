@@ -767,8 +767,16 @@ test('tax refund period lock rolls back allocation and cash; reversed source and
  assert.equal(wrongType.claim,null);assert.ok(wrongType.question.text.includes('نوع مالیات'));
  const equity=database().prepare("SELECT id FROM ledger_accounts WHERE source_key='opening-equity'").get().id;
  accounting.postJournalEntry(database(),{sourceType:'old-tax-settlement',sourceId:crypto.randomUUID(),occurredAt:'2026-10-01',lines:[{accountId:equity,debit:500000,credit:0},{accountId:other.accountId,debit:0,credit:500000}]});
- const unlinked=taxRefundContext(database(),refundText,1000000,{occurredAt:'2026-10-03',questionAnswers:{'nature.vat-refund':{value:other.reference}}});
- assert.equal(unlinked.claim,null);assert.ok(unlinked.question.text.includes('تسویه قبلی'));
+ // وصول قدیمیِ بی‌اتصال، انتخاب خودکار را متوقف می‌کند و سند را نام می‌برد.
+ const incomeRefund='اداره دارایی بابت استرداد اضافه پرداخت مالیات عملکرد به حساب شرکت واریز کرد';
+ const unlinked=taxRefundContext(database(),incomeRefund,1000000,{occurredAt:'2026-10-03'});
+ assert.equal(unlinked.claim,null);assert.ok(unlinked.question.text.includes('وصل نشده'));
+ assert.ok(unlinked.question.text.includes(other.reference));assert.equal(unlinked.candidates[0].reference,other.reference);
+ // شمارهٔ صریح حسابدار بن‌بست را باز می‌کند، ولی سقف همچنان ماندهٔ واقعی حساب است.
+ const explicit=taxRefundContext(database(),refundText,1000000,{occurredAt:'2026-10-03',questionAnswers:{'nature.vat-refund':{value:other.reference}}});
+ assert.equal(explicit.claim.lineId,other.lineId);assert.equal(explicit.claim.available,2500000);
+ const over=taxRefundContext(database(),refundText,3000000,{occurredAt:'2026-10-03',questionAnswers:{'nature.vat-refund':{value:other.reference}}});
+ assert.equal(over.claim,null);assert.ok(over.question.text.includes('بیشتر'));
 }));
 
 test('golden T076 uses an actual chart-backed tax claim and learns its approved journal, not purchase input credit',()=>run(async()=>{

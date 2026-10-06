@@ -113,6 +113,12 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
   if (!row || row.status !== 'pending') throw Object.assign(new Error('این مورد دیگر در انتظار نیست.'), { code: 'EVENT_NOT_PENDING', status: 409 });
   const proposal = latestReviewProposal(database, eventId);
+  // بستانکار کردن حساب طلب مالیاتی فقط از مسیر «اعمال پیشنهاد» که تخصیص وصول
+  // را هم ثبت می‌کند. سند دستیِ بدون تخصیص، همان طلب را برای وصول دوم باز
+  // می‌گذارد و وصول‌های بعدیِ همان حساب را متوقف می‌کند.
+  const creditsTaxClaim=(lines || []).some(line=>line.credit>0 && database.prepare(`SELECT 1 FROM ledger_accounts a LEFT JOIN chart_accounts c ON c.id=a.chart_account_id
+    WHERE a.id=? AND (a.source_kind='tax-receivable' OR c.role='tax-receivable')`).get(line.accountId));
+  if(creditsTaxClaim) throw Object.assign(new Error('وصول طلب مالیاتی را با «تحلیل کن» و دکمهٔ اعمال پیشنهاد ثبت کن تا به سند مبنا وصل شود.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
   if (proposal?.state === 'proposed') {
     if (!proposalId || proposal.id !== proposalId || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صف را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
     if (aiAccepted && (proposal.missingFacts.length || !proposal.lines || proposal.lines.length !== lines?.length || proposal.lines.some((line, index) => line.debit !== lines[index].debit || line.credit !== lines[index].credit))) {

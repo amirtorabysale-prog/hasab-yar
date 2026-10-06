@@ -53,6 +53,27 @@ export function TaxPage({ access, notify }) {
     } catch (error) { notify(error.message); }
     finally { setBusy(false); }
   };
+  /**
+   * طلب استرداد — سند مبنای وصولی که بعداً از سازمان می‌رسد.
+   *
+   * بدون این سند، استرداد در صف حسابدار هیچ طلبی برای بستن پیدا نمی‌کند و
+   * فقط با درآمد تازه یا کم کردن اعتبار دورهٔ جاری ثبت‌شدنی بود.
+   */
+  const claimRefund = async () => {
+    const claimable = ledger.refundClaimable || 0;
+    const amountText = window.prompt(`مبلغ درخواست استرداد (حداکثر ${formatAmount(claimable)} تومان):`, String(claimable));
+    if (!amountText) return;
+    const amount = Number(String(amountText).replace(/[۰-۹]/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)).replace(/[^\d]/g, ''));
+    const reference = window.prompt('شمارهٔ اظهارنامه یا درخواست استرداد (وصول بعدی با همین شماره به این طلب وصل می‌شود):');
+    if (!reference?.trim()) return;
+    setBusy(true);
+    try {
+      const { item } = await api.claimVatRefund({ amount, reference: reference.trim() });
+      await load();
+      notify(`طلب استرداد ${formatAmount(item.amount)} تومان با شمارهٔ ${item.reference} ثبت شد؛ سند ${toPersianDigits(item.documentNumber)}.`);
+    } catch (error) { notify(error.message); }
+    finally { setBusy(false); }
+  };
   const summary = report.summary || {};
   const ledger = report.ledger || {};
   const treatmentLabels = { taxable: 'مشمول', zero: 'نرخ صفر', exempt: 'معاف' };
@@ -71,9 +92,17 @@ export function TaxPage({ access, notify }) {
             تسویه اعتبار را خنثی می‌کند و فقط خالص را می‌پردازد؛ اعتبار اضافی به دورهٔ بعد منتقل می‌شود.
           </p>
         </div>
-        {canManage && (ledger.outputTax || 0) > 0 && <button disabled={busy} onClick={settleVat}
-          className="tap shrink-0 rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">ثبت سند تسویه</button>}
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {canManage && (ledger.outputTax || 0) > 0 && <button disabled={busy} onClick={settleVat}
+            className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">ثبت سند تسویه</button>}
+          {canManage && (ledger.refundClaimable || 0) > 0 && <button disabled={busy} onClick={claimRefund}
+            className="tap rounded-lg border border-accent px-4 font-bold text-accent disabled:opacity-45">ثبت طلب استرداد</button>}
+        </div>
       </div>
+      {(ledger.refundClaimable || 0) > 0 && <p className="mt-2 text-[12px] leading-6 text-muted">
+        <b className="numbers text-ink">{formatAmount(ledger.refundClaimable)}</b> تومان اعتبار یا اضافه‌پرداخت قابل استرداد است.
+        اگر استرداد درخواست شده، اینجا ثبتش کن تا وصولش در صف حسابدار به همین طلب وصل شود و درآمد تازه ساخته نشود.
+      </p>}
     </section>
     <div className="mt-4 grid grid-cols-3 rounded-lg border border-line bg-surface p-1">{[[30, '۳۰ روز'], [90, '۹۰ روز'], [365, 'یک سال']].map(([value, label]) => <button key={value} onClick={() => setDays(value)} className={`tap rounded-md text-sm font-bold ${days === value ? 'bg-ink text-white' : 'text-muted'}`}>{label}</button>)}</div>
     <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات فروش</p><b className="numbers mt-2 block text-lg text-expense">{formatAmount(summary.outputTax || 0)}</b><span className="text-[10px] text-muted">تومان</span></div><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">اعتبار خرید</p><b className="numbers mt-2 block text-lg text-income">{formatAmount(summary.inputTax || 0)}</b><span className="text-[10px] text-muted">تومان</span></div><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">خالص برآوردی</p><b className={`numbers mt-2 block text-lg ${(summary.netTax || 0) > 0 ? 'text-expense' : 'text-income'}`}>{formatAmount(summary.netTax || 0)}</b><span className="text-[10px] text-muted">تومان</span></div><div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات دستی قدیمی</p><b className="numbers mt-2 block text-lg">{formatAmount(summary.manualTax || 0)}</b><span className="text-[10px] text-muted">نیازمند بازبینی</span></div></div>

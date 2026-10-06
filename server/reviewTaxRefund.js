@@ -1,5 +1,6 @@
 import { reviewNature } from '../shared/reviewNature.js';
 import { normalizePersian } from '../shared/normalize.js';
+import { vatRefundClaimable } from './accounting.js';
 
 export function ensureTaxRefundSchema(database) {
   database.exec(`CREATE TABLE IF NOT EXISTS accounting_review_tax_refunds (
@@ -31,7 +32,9 @@ export function taxRefundContext(database,text,amount,event={}) {
     const allocated=database.prepare(`SELECT COALESCE(SUM(r.amount),0) n FROM accounting_review_tax_refunds r
       JOIN financial_events e ON e.id=r.event_id WHERE r.claim_line_id=? AND e.status='posted'
       AND NOT EXISTS(SELECT 1 FROM journal_entries j WHERE j.reverses_entry_id=r.refund_journal_id)`).get(c.lineId).n;
-    const balance=database.prepare(`SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l
+    // محافظه‌کارانه: بدهکارِ پیش‌نویس هنوز طلبی نساخته، ولی بستانکارِ
+    // پیش‌نویس شاید فردا تأیید شود و همین طلب را ببندد.
+    const balance=database.prepare(`SELECT COALESCE(SUM(CASE WHEN j.approval_state='approved' THEN l.debit ELSE 0 END-l.credit),0) n FROM journal_lines l
       JOIN journal_entries j ON j.id=l.entry_id WHERE l.account_id=? AND j.occurred_at<=?`).get(c.accountId,event.occurredAt).n;
     // Old unallocated credits cannot be silently assigned to an arbitrary claim.
     const unlinked=database.prepare(`SELECT count(*) n FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id
@@ -49,11 +52,19 @@ export function taxRefundContext(database,text,amount,event={}) {
   const matched=answer ? claims.filter(c=>[c.reference,String(c.documentNumber),c.journalId,c.lineId].some(v=>reference(v)===answer)) : available;
   if(matched.length!==1) {
     const candidates=claims.filter(c=>c.available>0 && (!requestedScope || !scope(c) || scope(c)===requestedScope)).slice(0,20);
-    return {claim:null,candidates,question:question(candidates.length ? 'استرداد مربوط به کدام سند طلب مالیاتی است؟ شماره سال/سند را از پیشنهادهای زیر انتخاب یا وارد کن.' : 'سند طلب مالیاتی مرتبط پیدا نشد؛ سند واقعی طلب را ثبت یا نگاشت کن و شماره سال/سند آن را وارد کن.')};
+    // نبودِ سند طلب، بن‌بست نیست وقتی دفتر اعتبار یا اضافه‌پرداخت قابل استرداد
+    // دارد: راهش ثبت «طلب استرداد» در صفحهٔ مالیات است، نه درآمد تازه.
+    const claimable=candidates.length ? 0 : vatRefundClaimable(database).total;
+    return {claim:null,candidates,question:question(candidates.length ? 'استرداد مربوط به کدام سند طلب مالیاتی است؟ شماره سال/سند را از پیشنهادهای زیر انتخاب یا وارد کن.'
+      : claimable>0 ? `سند طلب استرداد ثبت نشده، ولی دفتر ${claimable.toLocaleString('fa-IR')} تومان اعتبار یا اضافه‌پرداخت ارزش افزوده دارد. در صفحهٔ «مالیات» دکمهٔ «ثبت طلب استرداد» را با شمارهٔ اظهارنامه بزن، سپس شمارهٔ سال/سند همان طلب را اینجا وارد کن.`
+        : 'سند طلب مالیاتی مرتبط پیدا نشد؛ سند واقعی طلب را ثبت یا نگاشت کن و شماره سال/سند آن را وارد کن.')};
   }
   const claim=matched[0];
   if(requestedScope && scope(claim) && scope(claim)!==requestedScope) return {claim:null,question:question('نوع مالیات سند مبنا با استرداد بیان‌شده سازگار نیست؛ سند مالیات مربوط را انتخاب کن.')};
-  if(claim.unlinked) return {claim:null,question:question('این حساب تسویه قبلی بدون اتصال به سند مبنا دارد؛ تخصیص تسویه‌های قبلی باید بررسی شود تا طلب دوباره وصول نشود.')};
+  // وصولِ قدیمیِ بدون اتصال، انتخاب خودکار را متوقف می‌کند — شاید همین سند را
+  // بسته باشد. ولی بن‌بست نیست: وقتی حسابدار شمارهٔ سند را صریح می‌دهد، آن
+  // تصمیم مال اوست، و مبلغ همچنان به ماندهٔ واقعی حساب محدود است.
+  if(claim.unlinked && !answer) return {claim:null,candidates:[claim],question:question(`این حساب وصولی دارد که به سند مبنا وصل نشده؛ شاید سند ${claim.reference} را بسته باشد. اگر مطمئنی این سند هنوز وصول نشده، شمارهٔ ${claim.reference} را صریح وارد کن.`)};
   if(!Number.isSafeInteger(amount) || amount<=0 || claim.available<amount) return {claim:null,question:question('مبلغ استرداد از مانده واقعی سند طلب مالیاتی بیشتر است؛ سند مبنا یا تفکیک مبلغ را بررسی کن.')};
   return {claim,question:null};
 }
