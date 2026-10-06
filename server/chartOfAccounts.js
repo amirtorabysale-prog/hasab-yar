@@ -615,6 +615,7 @@ const ROLE_BY_SOURCE_KIND = {
   'customer-advance': ['customer-advance'],
   'deferred-revenue': ['deferred-revenue'],
   'unidentified-receipt': ['unidentified-receipt'],
+  'tax-receivable': ['tax-receivable'],
 };
 
 const ROLE_BY_SOURCE_KEY = {

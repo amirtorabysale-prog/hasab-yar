@@ -1,7 +1,7 @@
 import { askTaxAssistant as askTaxAssistantCore, listTaxAssistantQuestions as listTaxAssistantQuestionsCore, listTaxKnowledgeSources as listTaxKnowledgeSourcesCore, resolveTaxAssistantQuestion as resolveTaxAssistantQuestionCore, saveTaxKnowledgeSource as saveTaxKnowledgeSourceCore } from '../taxAssistant.js';
 import { randomUUID } from 'node:crypto';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db } from './core.js';
-import { postVatSettlementJournal, vatBalances } from '../accounting.js';
+import { postVatRefundClaimJournal, postVatSettlementJournal, vatBalances, vatRefundClaimable } from '../accounting.js';
 import { resolveAccountId } from './accounts.js';
 import { citableVersionsAt, getTaxDocument as getTaxDocumentCore, getTaxDocumentVersion as getTaxDocumentVersionCore, listTaxDocuments as listTaxDocumentsCore, listTaxReviewQueue as listTaxReviewQueueCore, publishTaxDocumentVersion as publishTaxDocumentVersionCore, rejectTaxDocumentVersion as rejectTaxDocumentVersionCore, saveTaxDocumentDraft as saveTaxDocumentDraftCore, saveTaxDocumentRelation as saveTaxDocumentRelationCore } from '../taxKnowledge.js';
 import { listTaxRates as listTaxRatesCore, saveTaxRate as saveTaxRateCore, taxReport as taxReportCore } from '../tax.js';
@@ -20,7 +20,27 @@ export function taxReport(filters = {}) {
   // ماندهٔ دفتری کنار گزارش فاکتوری می‌آید: گزارش می‌گوید این دوره چه شد و
   // مانده می‌گوید چقدر از آن هنوز تسویه نشده. این دو یکی نیستند و
   // قاطی‌شدنشان یعنی مالیات دو بار پرداخت می‌شود.
-  return { ...taxReportCore(db, filters), ledger: vatBalances(activeWorkspaceDatabase()) };
+  const database = activeWorkspaceDatabase();
+  return { ...taxReportCore(db, filters), ledger: { ...vatBalances(database), refundClaimable: vatRefundClaimable(database).total } };
+}
+
+/**
+ * ثبت طلب استرداد ارزش افزوده — از ماندهٔ واقعی دفتر.
+ *
+ * سند مبنایی می‌سازد که وصول استرداد در صف حسابدار به آن وصل می‌شود؛ بدون
+ * آن، وصول هیچ طلبی برای بستن پیدا نمی‌کند.
+ */
+export function claimVatRefund({ amount, occurredAt = '', reference = '', memo = '' } = {}) {
+  const database = activeWorkspaceDatabase();
+  database.exec('BEGIN IMMEDIATE');
+  let result;
+  try {
+    result = postVatRefundClaimJournal(database, { claimId: randomUUID(), amount, occurredAt, reference, memo },
+      { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
+    database.exec('COMMIT');
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
+  audit('claim', 'vat_refund', result.id, { amount: result.amount, reference: result.reference, fromInput: result.fromInput, fromOverpayment: result.fromOverpayment });
+  return result;
 }
 
 /**

@@ -15,7 +15,7 @@ import {
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
-  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, transferBetweenAccounts,
+  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferBetweenAccounts,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
@@ -455,6 +455,12 @@ app.post('/api/accounts/transfer', (request, response, next) => {
 });
 app.post('/api/tax/settle-vat', (request, response, next) => {
   try { return response.json(settleVatPeriod(request.body || {})); } catch (error) { return next(error); }
+});
+app.post('/api/tax/vat-refund-claim', (request, response, next) => {
+  try {
+    const { amount, occurredAt, reference, memo } = request.body || {};
+    return response.status(201).json({ item: claimVatRefund({ amount, occurredAt, reference, memo }) });
+  } catch (error) { return next(error); }
 });
 
 // دفتر چک: ثبت، وصول، برگشت.
