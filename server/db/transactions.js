@@ -4,7 +4,7 @@ import { accountForBank, resolveAccountId } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
 import { settlementDirection } from '../../shared/counterpartySettlement.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
-import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal } from '../accounting.js';
+import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal, transactionJournalIsPlain } from '../accounting.js';
 import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
 import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
@@ -608,9 +608,15 @@ export function updateTransaction(id, values = {}) {
   const confidenceDetails = values.confidenceDetails ?? current.confidenceDetails ?? {};
   const reviewReasons = values.reviewReasons ?? current.reviewReasons ?? [];
   const reviewState = normalizeReviewState(values.reviewState, changedByUser ? 'reviewed' : current.reviewState);
+  // یادداشت، متن و وضعیت بازبینی در سند نیستند؛ عوض کردنشان سند را دست نمی‌زند.
+  const journalChanged = amount !== current.amount || type !== current.type || category !== current.category
+    || accountId !== current.accountId || occurredAt !== current.occurredAt;
+  if (journalChanged && !current.capitalFlow && !transactionJournalIsPlain(db, id)) {
+    throw Object.assign(new Error('سند این ثبت تخصصی است (تفکیک ارزش افزوده، پیش‌پرداخت یا تسویهٔ طرف حساب) و با ویرایش ساده بازسازی نمی‌شود؛ برای تغییر مبلغ، نوع، دسته، حساب یا تاریخ، حذفش کن و دوباره ثبت کن.'), { code: 'SPECIALIZED_TRANSACTION_LOCKED', status: 409 });
+  }
   db.exec('BEGIN IMMEDIATE');
   try {
-    reverseTransactionJournal(db, id, current.occurredAt, { createdBy: currentWorkspace()?.userId });
+    if (journalChanged) reverseTransactionJournal(db, id, current.occurredAt, { createdBy: currentWorkspace()?.userId });
     db.prepare(`UPDATE transactions SET amount=?,type=?,category=?,raw_text=?,note=?,account=?,account_id=?,contact_id=?,occurred_at=?,due_at=?,
       confidence=?,needs_review=?,confidence_details=?,review_reasons=?,review_state=?,updated_at=? WHERE id=?`)
       .run(amount, type, category, rawText, String(values.note ?? current.note ?? '').slice(0, 500), accountId, accountId,
@@ -622,7 +628,9 @@ export function updateTransaction(id, values = {}) {
     // درآمد/هزینه بسازد، آورده تبدیل به درآمد می‌شود و دارایی ثابت به هزینه —
     // دقیقاً همان چیزی که کل طراحی «جریان سرمایه» برای جلوگیری از آن ساخته
     // شده بود. جمع سند هم درست می‌ماند، پس هیچ کنترلی نمی‌گیردش.
-    if (current.capitalFlow) {
+    if (!journalChanged) {
+      // سند فعلی سر جایش می‌ماند.
+    } else if (current.capitalFlow) {
       postCapitalJournal(db, {
         transactionId: id, kind: current.capitalFlow, amount, accountId, occurredAt,
         title: capitalEntryTitle({ ...current, category }),

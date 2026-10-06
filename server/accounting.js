@@ -358,6 +358,24 @@ export function postCapitalJournal(database, entry, { createdBy = null } = {}) {
   });
 }
 
+/**
+ * آیا سند فعال این تراکنش همان شکل ساده‌ای است که `syncTransactionJournal` می‌سازد؟
+ *
+ * ویرایش، سند را معکوس می‌کند و از همان مسیر ساده دوباره می‌زند. برای سندی
+ * که لایهٔ رویداد ساخته — تفکیک ارزش افزوده، پیش‌پرداخت، تسویهٔ طرف حساب —
+ * این بازسازی ماهیت را بی‌صدا عوض می‌کند و جمع سند هم به هم نمی‌خورد.
+ */
+const PLAIN_TRANSACTION_SOURCES = new Set(['operational-account', 'income-category', 'expense-category']);
+export function transactionJournalIsPlain(database, transactionId) {
+  ensureAccountingSchema(database);
+  const entry = database.prepare(`SELECT id FROM journal_entries j WHERE source_type='transaction' AND source_id=? AND entry_kind='normal'
+    AND NOT EXISTS(SELECT 1 FROM journal_entries r WHERE r.reverses_entry_id=j.id) ORDER BY revision DESC LIMIT 1`).get(transactionId);
+  if (!entry) return true;
+  const kinds = database.prepare(`SELECT ledger_accounts.source_kind AS kind FROM journal_lines
+    JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id WHERE journal_lines.entry_id=?`).all(entry.id);
+  return kinds.length === 2 && kinds.every(({ kind }) => PLAIN_TRANSACTION_SOURCES.has(kind));
+}
+
 export function reverseTransactionJournal(database, transactionId, occurredAt, { createdBy = null, memo = 'سند معکوس اصلاح' } = {}) {
   ensureAccountingSchema(database);
   const original = database.prepare(`SELECT * FROM journal_entries WHERE source_type='transaction' AND source_id=?
