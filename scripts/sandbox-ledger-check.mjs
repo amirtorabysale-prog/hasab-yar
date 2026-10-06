@@ -1,7 +1,7 @@
 /**
  * اجرای زندهٔ آزمون روی دفتر «ازمایشی» — هرگز دفتر اصلی.
  *
- *   BASE_URL=https://… HY_USER=… HY_PASS=… node scripts/test-ledger-run.mjs
+ *   BASE_URL=https://… HY_USER=… HY_PASS=… node scripts/sandbox-ledger-check.mjs
  *
  * همان مسیر برنامه از راه HTTP: کدینگ و نگاشت، فاکتور خرید با ارزش افزوده،
  * طلب استرداد، T076 در صف حسابدار، و سپس ۴۰ سناریو. اگر دفتری با نام
