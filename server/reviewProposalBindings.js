@@ -1,4 +1,5 @@
 import { suggestChartAccount } from './chartOfAccounts.js';
+import { classifyCategory } from '../shared/categoryRules.js';
 import { REVIEW_ACCOUNT_TYPES, reviewNormalSide } from './reviewAccountPreparation.js';
 const sources={cash:'operational-account',receivable:'customer-receivable',payable:'vendor-payable','inventory-asset':'inventory-product'};
 const identityRoles=new Set(['partner-payable','partner-receivable','unidentified-receipt','cash','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable','inventory-asset']);
@@ -8,6 +9,13 @@ export function bindReviewProposal(proposal,catalog,event) {
   const charts=catalog.chart.map(a=>({id:a[0],code:a[1],name:a[2],type:a[3],normalSide:a[4],role:a[5],level:'subsidiary',postable:true,active:true}));
   const lines=proposal.lines.map(original=>{
     const line={...original}, role=line.role;
+    if(role==='expense-category' && /^(سایر هزینه‌ها|سایر هزینه های عملیاتی|سایر هزینه‌های عملیاتی)$/.test(line.key || '')) {
+      const meaning=classifyCategory(event.evidence || event.utterance || '', 'expense');
+      if(meaning.matched && !meaning.ambiguous && meaning.confidence>=.86 && meaning.category===event.category) {
+        line.key=meaning.category;delete line.accountId;delete line.chartAccountId;
+        corrections.push(`دستهٔ عمومی با دستهٔ صریح متن «${meaning.category}» تطبیق داده شد؛ مبلغ و جهت ثبت تغییر نکرد.`);
+      }
+    }
     const account=catalog.ledger.find(a=>a[0]===line.accountId);
     const chart=catalog.chart.find(a=>a[0]===line.chartAccountId);
     const type=REVIEW_ACCOUNT_TYPES[role], side=reviewNormalSide(role);

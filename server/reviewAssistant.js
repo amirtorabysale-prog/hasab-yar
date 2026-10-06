@@ -1,3 +1,4 @@
+import { tradeSettlementValidation } from './reviewTradeSettlement.js';
 import { ensureTaxRefundSchema, taxRefundValidation } from './reviewTaxRefund.js';
 import { ensureInsuranceSettlementSchema, insuranceSettlementValidation } from './reviewInsurance.js';
 import { partnerTreatment, PARTNER_TREATMENTS, reviewNature, reviewNatureViolations } from '../shared/reviewNature.js';
@@ -5,7 +6,7 @@ import { classifyCategory } from '../shared/categoryRules.js';
 import { listChartAccounts, suggestChartAccount } from './chartOfAccounts.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { classifyFamily, FAMILY_UNKNOWN } from '../shared/economicFamily.js';
-import { reviewQuestions } from '../shared/reviewQuestions.js';
+import { reviewQuestions, reviewSavedAnswers } from '../shared/reviewQuestions.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { ensureFinancialEventSchema } from './financialEventStore.js';
 import { resolveEventAnalytic } from './roleResolver.js';
@@ -52,7 +53,7 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     if(!submitted || typeof submitted!=='object' || Array.isArray(submitted) || Object.keys(submitted).length>40) throw fail('پاسخ سؤال‌ها معتبر نیست.');
     const latest=database.prepare('SELECT proposal FROM accounting_review_ai WHERE event_id=? ORDER BY rowid DESC LIMIT 1').get(eventId);
     const allowed=new Map(reviewQuestions(latest?JSON.parse(latest.proposal):{}).map(q=>[q.id,q]));
-    const answers={...(old.facts.questionAnswers || {})};
+    const answers=reviewSavedAnswers(old.facts.questionAnswers || {});
     for(const [id,answer] of Object.entries(submitted)) {
       if(!allowed.has(id) && !Object.hasOwn(answers,id)) throw fail('این سؤال مربوط به پیشنهاد فعلی این پرونده نیست.');
       if(!answer || typeof answer.value!=='string' || !answer.value.trim() || answer.value.trim().length>1000) throw fail('پاسخ هر سؤال باید بین ۱ تا ۱۰۰۰ نویسه باشد.');
@@ -179,8 +180,8 @@ export function conversationFingerprint(database,eventId) {
 const partyRoles = new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
 const roleNames = {'tax-receivable':'مطالبات مالیاتی','payroll-insurance-payable':'بیمهٔ پرداختنی (تأمین اجتماعی)','partner-payable':'جاری شریک — بدهی شرکت','partner-receivable':'جاری شریک — طلب شرکت','unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
 const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
-const cashCounterparts=['tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
-const outgoingCashRoles=['expense-category','fixed-asset','prepaid-asset','refundable-deposit','payroll-insurance-payable'];
+const cashCounterparts=['payable','receivable','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
+const outgoingCashRoles=['payable','expense-category','fixed-asset','prepaid-asset','refundable-deposit','payroll-insurance-payable'];
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
 export function prepareReviewProposal(database, row, proposal, { resolve = false, eventOverride = null } = {}) {
@@ -190,7 +191,8 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const mappingRepairs=[];
   const taxRefund=taxRefundValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const insurance=insuranceSettlementValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
-  const natureIssues=[...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial),...taxRefund.issues,...insurance.issues];
+  const trade=tradeSettlementValidation(database,event,proposal.lines);
+  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial),...taxRefund.issues,...insurance.issues];
   const blockers = [...(proposal.missingFacts || []),...natureIssues.map(q=>q.text)];
   const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
   if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');
@@ -248,7 +250,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     }
     if(mappedId && database.prepare('SELECT requires_analytic FROM chart_accounts WHERE id=?').get(mappedId)?.requires_analytic && !partyRoles.has(role)) blockers.push('این معین به تفصیلی نیاز دارد؛ مسیر تخصصی برای تعیین شخص یا پروژه لازم است.');
     account=result.account ? {...result.account,sourceKind:result.account.source_kind,sourceKey:result.account.source_key} : account;
-    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
+    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (role==='cash' ? database.prepare('SELECT name FROM accounts WHERE id=?').get(key || '')?.name || 'بانک یا صندوق انتخاب‌نشده' : key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
   });
   const cheque = lines.filter(l => ['cheque-payable','cheque-receivable'].includes(l.role));
   if (cheque.length && (cheque.length !== 1 || !event.dueAt || (!event.counterpartyId && !resources.newCounterparty))) blockers.push('برای ثبت چک، یک سطر چک، طرف حساب و تاریخ سررسید مشخص لازم است.');
@@ -257,7 +259,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const other = lines.filter(l=>l.role!=='cash');
   // Only supported two-sided cash shapes synchronize the operational register atomically.
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !cashCounterparts.includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
-  if (cash.length && other.some(l => l.accountId && !['income-category','expense-category','fixed-asset','system','chart-account','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  if (cash.length && other.some(l => l.accountId && !['customer-receivable','vendor-payable','income-category','expense-category','fixed-asset','system','chart-account','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   if (anchor?.type==='transaction') {
     const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
@@ -284,6 +286,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues,...(proposal.questions || [])]}),
+    tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }
