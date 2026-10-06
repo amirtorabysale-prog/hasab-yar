@@ -1,4 +1,5 @@
 import { runGuards, GUARD_VERDICTS } from '../../shared/guards.js';
+import { detectSettleIntent } from '../../shared/settleSpeech.js';
 import { randomUUID } from 'node:crypto';
 import { accountForBank, resolveAccountId } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
@@ -288,6 +289,21 @@ export function queueCompositeUtterance(transcript, { clientId = '', source = 't
     actor: currentWorkspace()?.userId || null, transcript: text, rawInput: text,
     timeZone: currentTimeZone(),
   });
+}
+
+/** A failed match is an auditable case, never a guessed settlement. */
+export function queueUnmatchedSettlement(transcript, { clientId = '', source = 'text' } = {}) {
+  const text=String(transcript || '').trim().slice(0,1000),draft=detectSettleIntent(text);
+  if(!draft || draft.bounced) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
+  const amounts=extractAmounts(text).spans.map(s=>s.amount).filter(n=>Number.isSafeInteger(n) && n>0);
+  const amount=Math.max(...amounts);
+  if(!Number.isSafeInteger(amount) || amount>999_999_999_999) throw invalidInput('مبلغ مرجع معتبر لازم است.');
+  const reason='سند مبنای تسویه انتخاب نشده؛ حسابدار باید مانده و مرجع واقعی را بررسی کند. هیچ وجه یا سندی ثبت نشده است.';
+  const event=normalizeFinancialEvent({kind:EVENT_KINDS.REVIEW_PLACEHOLDER,amount,amountReferenceOnly:true,
+    occurredAt:draft.occurredAt || new Date().toISOString(),source:source==='voice'?'voice':'text',evidence:text,utterance:text,description:reason});
+  return recordFinancialEvent(db,event,{sourceEventId:`unmatched-settlement:${String(clientId || randomUUID()).slice(0,100)}`,
+    decision:{route:ROUTES.ACCOUNTANT_REVIEW,guardBlocked:true,reasons:[reason],summary:reason},
+    actor:currentWorkspace()?.userId || null,transcript:text,rawInput:text,timeZone:currentTimeZone()});
 }
 
 // `fromUtterance` فقط از مسیر عمومی ثبت (گفته یا متن کاربر) روشن است. مسیرهای

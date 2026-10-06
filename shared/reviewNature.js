@@ -1,3 +1,4 @@
+import { taxPenaltyFacts, isTaxPenaltyCategory } from './reviewTaxPenalty.js';
 import { conditionalWaiver, conditionalPaymentProposal } from './reviewSettlement.js';
 import { normalizePersian } from './normalize.js';
 
@@ -11,19 +12,25 @@ export function reviewNature(text) {
   const capital=/افزایش سرمایه|آورده (?:قطعی|سرمایه)|ثبت سرمایه/.test(t) && !/بدون|هنوز|نیست|نشده/.test(t);
   const insuranceSettlement=/بیمه/.test(t) && /حقوق|کارکنان|کارگر|تامین اجتماعی|لیست/.test(t) && /پرداخت|تسویه|واریز/.test(t);
   const prepaid=(/پیش پرداخت/.test(t) || (/بیمه/.test(t) && /یک ساله|یکساله|12 ماه|دوازده ماه/.test(t) && !insuranceSettlement)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
-  const advance=/پیش دریافت/.test(t);
-  const deposit=/ودیعه/.test(t) && /استرداد|قابل برگشت|پس می/.test(t);
+  const advance=/پیش دریافت/.test(t) || /(?:خدمات|خدماتی|خدمت).*هنوز.*انجام نشده/.test(t) && /دریافت|واریز/.test(t);
+  const deposit=/ودیعه|سپرده/.test(t) && /استرداد|قابل برگشت|پس می/.test(t);
+  const intangible=/حق استفاده|حق امتیاز|علامت تجاری/.test(t) && /خرید|پرداخت/.test(t);
+  const leasehold=/استیجاری|اجاره ای/.test(t) && /نصب|بهسازی|احداث/.test(t) && /عمر|چند سال|چهار سال/.test(t);
+  const advanceRefund=advance && /پس داد|بازپرداخت|عودت/.test(t);
   const principal=/اصل وام/.test(t);
   const settlement=/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
-  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,principal,settlement};
+  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,principal,settlement};
 }
 
 export function reviewNatureViolations(text, lines=[], facts={}) {
+  const fine=taxPenaltyFacts(text);
   const n=reviewNature(text), roles=new Set(lines.map(l=>l.role)), issues=[];
   const [start,end,occurred]=[facts.servicePeriodStart,facts.servicePeriodEnd,facts.occurredAt].map(v=>v?Date.parse(v):NaN);
   const consumed=[start,end,occurred].every(Number.isFinite) && start<=end && end<=occurred;
   const approvedCapital=facts.questionAnswers?.['nature.partner-transfer']?.value==='افزایش سرمایه مصوب';
   const add=(id,message)=>issues.push({id,text:message});
+  if(fine.penalty && lines.length && (fine.prior || fine.mixed || !fine.paid)) add('nature.tax-penalty-basis','جریمه ثبت‌شده یا همراه اصل مالیات به سند مبنا و تفکیک مبلغ نیاز دارد؛ هزینه دوباره مجاز نیست.');
+  if(fine.penalty && lines.some(l=>l.role==='expense-category' && !isTaxPenaltyCategory(l.key))) add('nature.tax-penalty-category','جریمه مالیاتی را در حساب مستقل جرایم مالیاتی ثبت کن؛ مالیات و عوارض عمومی جای آن نیست.');
   if(n.unknownReceipt && (roles.has('income-category') || !roles.has('unidentified-receipt')) && lines.length) add('nature.unknown-receipt','منشأ وجه معلوم نیست؛ واریز باید در وجوه دریافتی تعیین‌تکلیف‌نشده نگهداری شود، نه درآمد.');
   if(!n.unknownReceipt && roles.has('unidentified-receipt')) add('nature.receipt-origin','برای استفاده از وجوه تعیین‌تکلیف‌نشده، ابهام واقعی منشأ واریز باید در متن رویداد مشخص باشد.');
   if(n.vatRefund && lines.length && (!roles.has('tax-receivable') || lines.some(l=>!['cash','tax-receivable'].includes(l.role)))) add('nature.vat-refund','استرداد مالیات درآمد یا هزینه تازه نیست؛ طلب مالیاتی قبلی و سند ایجاد آن باید تطبیق داده شود.');
@@ -44,6 +51,8 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   if(n.prepaid && !consumed && roles.has('expense-category')) add('nature.prepaid','پرداخت برای منفعت آینده هزینه جاری نیست؛ پیش‌پرداخت و دوره مصرف آن باید جدا ثبت شوند.');
   if(n.advance && roles.has('income-category')) add('nature.advance','پیش‌دریافت قبل از انجام تعهد درآمد نیست؛ تعهد قبلاً انجام شده یا هنوز باقی است؟');
   if(n.deposit && roles.has('expense-category')) add('nature.deposit','ودیعه قابل استرداد هزینه نیست؛ دارایی ودیعه و طرف قرارداد لازم است.');
+  if(n.intangible && (roles.has('expense-category') || roles.has('fixed-asset'))) add('nature.intangible','حق استفاده یا علامت تجاری به بررسی قرارداد و دارایی نامشهود نیاز دارد؛ هزینه جاری یا دارایی ثابت مشهود جای آن نیست.');
+  if(n.leasehold && roles.has('expense-category')) add('nature.leasehold','بهسازی چندساله ملک استیجاری قبض برق نیست؛ مدت اجاره، منفعت آینده و سیاست سرمایه‌ای شدن باید بررسی شود.');
   if(n.principal && (roles.has('income-category') || roles.has('expense-category'))) add('nature.loan-principal','اصل وام درآمد یا هزینه نیست؛ اصل بدهی و سود یا کارمزد باید جدا شوند.');
   if(conditionalWaiver(text)) {
     const expected=conditionalPaymentProposal(text,facts);

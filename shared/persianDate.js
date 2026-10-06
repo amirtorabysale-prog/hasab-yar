@@ -387,6 +387,9 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
  * not occurrence dates. Keep raw text intact for evidence and service parsing. */
 export function extractOccurrenceDate(input, options = {}) {
   let text = normalizePersian(input);
+  // A future delivery/start clause must not override an explicit payment today.
+  // Remove only that clause, retaining earlier occurrence evidence and amounts.
+  text = text.replace(/(?:بهره برداری|شروع خدمت|تحویل گزارش|تحویل کالا|ارائه خدمات|انجام خدمات)[^،,؛.]*ماه\s*(?:آینده|بعد|آتی)[^،,؛.]*/g, ' ');
   const months = PERSIAN_MONTHS.map(([name]) => name).join('|');
   if (/بیمه|اجاره|پوشش|شارژ|اشتراک/.test(text)) {
     text = text.replace(/پوشش\s*(?:بیمه\s*)?(?:از|برای)\s*[^،,؛.]+/g, ' ');

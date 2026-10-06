@@ -1,3 +1,4 @@
+import { isTaxPenaltyCategory } from '../shared/reviewTaxPenalty.js';
 import { inventoryLedgerAccount } from './accounting.js';
 import { createHash } from 'node:crypto';
 import { listChartAccounts, mapLedgerAccountToChart, suggestChartAccount } from './chartOfAccounts.js';
@@ -21,9 +22,12 @@ const namedRoles = new Set(['expense-category','income-category','prepaid-asset'
 /** Select actual ledgers, or preview a linked ledger under an existing subsidiary. Never mutate during analysis. */
 export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const blockers=[], role=line.role, key=String(line.key || '').trim();
+  const taxPenalty=role==='expense-category' && isTaxPenaltyCategory(key);
   const supplierAdvance=role==='prepaid-asset' && event.reviewSupplierAdvance;
   const chart=listChartAccounts(database);
   let account=line.accountId ? database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE id=? AND active=1').get(line.accountId) : null;
+  if(taxPenalty && account && !isTaxPenaltyCategory(account.name)) blockers.push('جریمه مالیاتی باید در حساب مستقل جرایم مالیاتی ثبت شود، نه مالیات و عوارض عمومی.');
+  if(taxPenalty && line.chartAccountId && !chart.some(c=>c.id===line.chartAccountId && c.role==='tax-penalty-expense')) blockers.push('معین جریمه باید مستقل از مالیات و عوارض عمومی باشد.');
   if(supplierAdvance) account=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE source_kind='prepaid-asset' AND source_key=? AND active=1").get(event.counterpartyId || '') || null;
   if(role==='payroll-insurance-payable') return {account,creation:null,blockers:account && typed(account,role) && account.source_kind==='payroll-insurance-payable'?[]:['پرداخت بیمه به حساب بیمهٔ پرداختنی لیست حقوق نیاز دارد؛ ایجاد حساب فرضی مجاز نیست.']};
   if(role==='tax-receivable') return {account,creation:null,blockers:account && typed(account,role)?[]:['وصول طلب مالیاتی به حساب واقعی سند مبنا نیاز دارد؛ ایجاد حساب فرضی مجاز نیست.']};
@@ -91,7 +95,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v11-supplier-advance-questions',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v13-tax-penalty-opening-nature',
     reviewAccountCatalog(database),
     identity('accounting_review_tax_refunds') ? database.prepare('SELECT * FROM accounting_review_tax_refunds ORDER BY event_id').all() : [],
     identity('payroll_runs') ? database.prepare('SELECT id,insurance_paid_at FROM payroll_runs ORDER BY id').all() : [],

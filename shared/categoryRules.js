@@ -1,3 +1,4 @@
+import { taxPenaltyFacts } from './reviewTaxPenalty.js';
 import { normalizePersian } from './normalize.js';
 
 /**
@@ -76,6 +77,7 @@ export const CATEGORY_DEFINITIONS = Object.freeze([
     [STRONG, ['بیمه تامین اجتماعی', 'بیمه تأمین اجتماعی', 'حق بیمه', 'لیست بیمه', 'بیمه پرسنل', 'بیمه تکمیلی']],
     [NORMAL, ['بیمه']],
   ]),
+  rule('exp-tax-penalty', 'جرایم مالیاتی', 'expense', '8120', [[STRONG, ['جریمه مالیاتی', 'جرایم مالیاتی', 'جرائم مالیاتی', 'جریمه دیرکرد ارزش افزوده']]]),
   rule('exp-tax', 'مالیات و عوارض', 'expense', '8114', [
     [STRONG, ['مالیات بر ارزش افزوده', 'مالیات عملکرد', 'ارزش افزوده', 'مالیات دادم', 'عوارض شهرداری', 'جریمه مالیاتی']],
     [NORMAL, ['مالیات', 'عوارض', 'دارایی']],
@@ -190,6 +192,8 @@ export function scoreCategories(text, type) {
  * ندارد نباید کاربر را معطل کند.
  */
 export function classifyCategory(text, type) {
+  const fine=taxPenaltyFacts(text);
+  if(type==='expense' && fine.penalty && !fine.mixed) return {category:'جرایم مالیاتی',chartCode:'8120',confidence:.94,reason:'جریمه مالیاتی از اصل مالیات و عوارض جدا شناسایی شد.',ambiguous:false,runnerUp:null,matched:true};
   const ranked = scoreCategories(text, type);
   const fallback = fallbackCategory(type);
   if (!ranked.length) {
