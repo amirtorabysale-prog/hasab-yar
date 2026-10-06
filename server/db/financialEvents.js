@@ -1,4 +1,5 @@
 import { allocateTaxRefund } from '../reviewTaxRefund.js';
+import { allocateInsuranceSettlement, releaseInsuranceSettlement } from '../reviewInsurance.js';
 import { reviewNature, reviewNatureViolations } from '../../shared/reviewNature.js';
 import { prepareReviewResources, applyReviewInventory, reverseReviewInventory } from '../reviewResources.js';
 import { randomUUID } from 'node:crypto';
@@ -119,6 +120,10 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   const creditsTaxClaim=(lines || []).some(line=>line.credit>0 && database.prepare(`SELECT 1 FROM ledger_accounts a LEFT JOIN chart_accounts c ON c.id=a.chart_account_id
     WHERE a.id=? AND (a.source_kind='tax-receivable' OR c.role='tax-receivable')`).get(line.accountId));
   if(creditsTaxClaim) throw Object.assign(new Error('وصول طلب مالیاتی را با «تحلیل کن» و دکمهٔ اعمال پیشنهاد ثبت کن تا به سند مبنا وصل شود.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
+  // همین برای بیمهٔ لیست حقوق: سند دستی لیست را «پرداخت‌شده» نمی‌کند و دکمهٔ
+  // پرداخت صفحهٔ حقوق همان بیمه را دوباره می‌پردازد.
+  const debitsPayrollInsurance=(lines || []).some(line=>line.debit>0 && database.prepare("SELECT 1 FROM ledger_accounts WHERE id=? AND source_kind='payroll-insurance-payable'").get(line.accountId));
+  if(debitsPayrollInsurance) throw Object.assign(new Error('پرداخت بیمهٔ لیست حقوق را با «تحلیل کن» و دکمهٔ اعمال پیشنهاد یا از صفحهٔ «حقوق» ثبت کن تا لیست پرداخت‌شده علامت بخورد.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
   if (proposal?.state === 'proposed') {
     if (!proposalId || proposal.id !== proposalId || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صف را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
     if (aiAccepted && (proposal.missingFacts.length || !proposal.lines || proposal.lines.length !== lines?.length || proposal.lines.some((line, index) => line.debit !== lines[index].debit || line.credit !== lines[index].credit))) {
@@ -248,6 +253,7 @@ export function reverseEvent(eventId, reason = '') {
     if (cheque && cheque.status!=='open') throw Object.assign(new Error('این چک پیش‌تر وصول یا تعیین تکلیف شده؛ ابتدا اسناد وابسته را اصلاح کن.'),{code:'REVIEW_CHEQUE_DEPENDENCY',status:409});
     reverseReviewInventory(database,eventId,{actor:currentWorkspace()?.userId,timeZone:currentTimeZone()});
     const item=reverseFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason,timeZone:currentTimeZone(),withinTransaction:true});
+    releaseInsuranceSettlement(database,eventId);
     if(cheque) database.prepare("UPDATE cheques SET status='cancelled' WHERE id=?").run(cheque.id);
     retireTransactionBehind(eventId,'reverse');
     database.exec('COMMIT');
@@ -350,12 +356,13 @@ function acceptPreparedProposal(database,row,proposal,actor) {
         database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
       }
       database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(
-        ['tax-receivable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
+        ['tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
     } else if (source?.type==='transaction') {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }
     const item = postReviewedComposite(database,row.id,{lines:final.lines,reason:`تأیید حسابدار: ${proposal.summary}`,actor,timeZone:currentTimeZone(),accountantProposal:true,eventOverride:event});
     allocateTaxRefund(database,row.id,item.journalEntryId,final.taxRefundClaim,row.amount);
+    allocateInsuranceSettlement(database,row.id,item.journalEntryId,final.insuranceRun,row.amount,event.occurredAt);
     applyReviewInventory(database,row.id,event,resources.inventoryItems,{actor,timeZone:currentTimeZone()});
     const cheque = final.lines.find(l=>['cheque-receivable','cheque-payable'].includes(l.role));
     if (cheque) attachReviewedCheque({eventId:row.id,event,line:cheque,journalEntryId:item.journalEntryId,against:final.lines.some(l=>['receivable','payable'].includes(l.role))?'receivable':'income'});

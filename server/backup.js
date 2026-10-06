@@ -10,7 +10,7 @@ const AAD = Buffer.from('hesab-yar-backup:v1', 'utf8');
 const MAX_BACKUP_BYTES = 30 * 1024 * 1024;
 const MAX_BACKUP_ROWS = 500_000;
 export const OPTIONAL_BACKUP_TABLES = new Set([
-  'accounting_review_tax_refunds','accountant_intakes', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations',
+  'accounting_review_tax_refunds','accounting_review_insurance','accountant_intakes', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations',
   'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai', 'accounting_review_messages', 'accounting_review_context', 'cheques',
   // هستهٔ منابع نسخه‌دار بعد از این جدول‌ها اضافه شد؛ پشتیبان‌های پیش از آن
   // بدونشان ساخته شده‌اند و باید همچنان قابل بازیابی بمانند.
