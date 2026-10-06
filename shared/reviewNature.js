@@ -1,3 +1,4 @@
+import { conditionalWaiver, conditionalPaymentProposal } from './reviewSettlement.js';
 import { normalizePersian } from './normalize.js';
 
 // Recognition and settlement are different events. These constraints do not
@@ -13,7 +14,7 @@ export function reviewNature(text) {
   const advance=/پیش دریافت/.test(t);
   const deposit=/ودیعه/.test(t) && /استرداد|قابل برگشت|پس می/.test(t);
   const principal=/اصل وام/.test(t);
-  const settlement=/تسویه|بدهی قبلی|طلب قبلی|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
+  const settlement=/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
   return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,principal,settlement};
 }
 
@@ -44,6 +45,11 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   if(n.advance && roles.has('income-category')) add('nature.advance','پیش‌دریافت قبل از انجام تعهد درآمد نیست؛ تعهد قبلاً انجام شده یا هنوز باقی است؟');
   if(n.deposit && roles.has('expense-category')) add('nature.deposit','ودیعه قابل استرداد هزینه نیست؛ دارایی ودیعه و طرف قرارداد لازم است.');
   if(n.principal && (roles.has('income-category') || roles.has('expense-category'))) add('nature.loan-principal','اصل وام درآمد یا هزینه نیست؛ اصل بدهی و سود یا کارمزد باید جدا شوند.');
+  if(conditionalWaiver(text)) {
+    const expected=conditionalPaymentProposal(text,facts);
+    const shape=ls=>ls.map(l=>[l.role,l.debit,l.credit].join(':')).sort().join('|');
+    if(lines.length && (roles.has('income-category') || (expected && shape(lines)!==shape(expected.lines)))) add('nature.conditional-waiver','بخشودگی وابسته به پرداخت بعدی هنوز تحقق نیافته؛ تعهد پرداخت وجه نیست. فقط پرداخت انجام‌شده را از بدهی کم کن و مانده را تا تحقق شرط نگه دار.');
+  }
   if(n.settlement && (roles.has('income-category') || roles.has('expense-category'))) add('nature.prior-settlement','تسویه طلب یا بدهی قبلی نباید درآمد یا هزینه را دوباره شناسایی کند؛ سند مبنای مانده کدام است؟');
   return issues;
 }

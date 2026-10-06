@@ -53,14 +53,17 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
     if(matches.length===1) account=matches[0];
     else if(matches.length>1) blockers.push('چند حساب هم‌نام پیدا شد؛ AI باید با کدینگ و سابقه حساب دقیق را مشخص کند.');
   }
-  const suggested=mapping || (key && namedRoles.has(role) ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:key,sourceKind:role,sourceKey:key},chart,{confidentOnly:true}) : null);
+  const identitySource={cash:'operational-account',payable:'vendor-payable',receivable:'customer-receivable','cheque-payable':'cheque-payable','cheque-receivable':'cheque-receivable','unidentified-receipt':'unidentified-receipt'}[role];
+  const bank=role==='cash' ? database.prepare('SELECT name,kind,bank_id FROM accounts WHERE id=?').get(event.accountId || '') : null;
+  const identityMapping=identitySource ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:bank?.name || key,sourceKind:identitySource,sourceKey:key,operationalKind:bank?.kind,bankId:bank?.bank_id},chart,{confidentOnly:true}) : null;
+  const suggested=mapping || identityMapping || (key && namedRoles.has(role) ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:key,sourceKind:role,sourceKey:key},chart,{confidentOnly:true}) : null);
   if(role==='prepaid-asset' && suggested && !/پیش[‌\s]*پرداخت/.test(suggested.name)) blockers.push('معین پیش‌پرداخت باید مخصوص پیش‌پرداخت باشد؛ انتخاب دارایی نامرتبط مجاز نیست.');
   if(!account && suggested && namedRoles.has(role)) {
     const matches=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE chart_account_id=? AND active=1 AND source_kind='chart-account'").all(suggested.id).filter(a=>typed(a,role));
     if(matches.length===1) account=matches[0];
   }
   // Party ledgers must retain identity links; a generic subsidiary cannot replace them.
-  const creation=!account && !blockers.length && key ? {name:key,type:REVIEW_ACCOUNT_TYPES[role],normalSide:reviewNormalSide(role),chartAccountId:suggested?.id || null,chartCode:suggested?.code || '',chartName:suggested?.name || '',reason:'حساب مرتبط موجود نیست؛ با تأیید سند ساخته می‌شود.'} : null;
+  const creation=!account && !blockers.length && key ? {name:bank?.name || key,type:REVIEW_ACCOUNT_TYPES[role],normalSide:reviewNormalSide(role),chartAccountId:suggested?.id || null,chartCode:suggested?.code || '',chartName:suggested?.name || '',reason:'حساب مرتبط موجود نیست؛ با تأیید سند ساخته می‌شود.'} : null;
   if(resolve && !account && !blockers.length) {
     const id=resolveEventRole(database,role,key,event);
     if(suggested) mapLedgerAccountToChart(database,id,suggested.id);
@@ -86,7 +89,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v8-tax-refund',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v10-conditional-trade-settlement',
     reviewAccountCatalog(database),
     identity('accounting_review_tax_refunds') ? database.prepare('SELECT * FROM accounting_review_tax_refunds ORDER BY event_id').all() : [],
     identity('payroll_runs') ? database.prepare('SELECT id,insurance_paid_at FROM payroll_runs ORDER BY id').all() : [],

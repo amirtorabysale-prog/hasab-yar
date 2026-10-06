@@ -363,7 +363,7 @@ function acceptPreparedProposal(database,row,proposal,actor) {
         database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
       }
       database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(
-        ['tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
+        ['payable','receivable','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
     } else if (source?.type==='transaction') {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }
