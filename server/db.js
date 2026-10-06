@@ -38,6 +38,7 @@ export * from './db/backup.js';
 export * from './db/auth.js';
 export * from './db/fixedAssets.js';
 export * from './db/financialEvents.js';
+export * from './db/unidentified.js';
 import { seedDemo } from './db/backup.js';
 
 if (String(process.env.SEED_DEMO).toLowerCase() === 'true') seedDemo();
