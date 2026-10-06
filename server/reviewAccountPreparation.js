@@ -5,7 +5,7 @@ import { resolveEventRole } from './roleResolver.js';
 import { normalizePersian } from '../shared/normalize.js';
 
 export const REVIEW_ACCOUNT_TYPES = Object.freeze({
-  'tax-receivable':'asset',
+  'tax-receivable':'asset','payroll-insurance-payable':'liability',
   'partner-payable':'liability','partner-receivable':'asset',
   'unidentified-receipt':'liability',
   'inventory-asset':'asset',cash:'asset',receivable:'asset',payable:'liability','cheque-receivable':'asset','cheque-payable':'liability',
@@ -23,6 +23,7 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const blockers=[], role=line.role, key=String(line.key || '').trim();
   const chart=listChartAccounts(database);
   let account=line.accountId ? database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE id=? AND active=1').get(line.accountId) : null;
+  if(role==='payroll-insurance-payable') return {account,creation:null,blockers:account && typed(account,role) && account.source_kind==='payroll-insurance-payable'?[]:['پرداخت بیمه به حساب بیمهٔ پرداختنی لیست حقوق نیاز دارد؛ ایجاد حساب فرضی مجاز نیست.']};
   if(role==='tax-receivable') return {account,creation:null,blockers:account && typed(account,role)?[]:['وصول طلب مالیاتی به حساب واقعی سند مبنا نیاز دارد؛ ایجاد حساب فرضی مجاز نیست.']};
   if(role==='inventory-asset') {
     const item=(event.reviewInventoryItems || []).find(i=>normalize(i.name)===normalize(key));
@@ -88,6 +89,7 @@ export function reviewKnowledgeFingerprint(database) {
   return createHash('sha256').update(JSON.stringify(['review-structured-output-v8-tax-refund',
     reviewAccountCatalog(database),
     identity('accounting_review_tax_refunds') ? database.prepare('SELECT * FROM accounting_review_tax_refunds ORDER BY event_id').all() : [],
+    identity('payroll_runs') ? database.prepare('SELECT id,insurance_paid_at FROM payroll_runs ORDER BY id').all() : [],
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_entries').get(),
