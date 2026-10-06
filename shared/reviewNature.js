@@ -25,7 +25,7 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   const add=(id,message)=>issues.push({id,text:message});
   if(n.unknownReceipt && (roles.has('income-category') || !roles.has('unidentified-receipt')) && lines.length) add('nature.unknown-receipt','منشأ وجه معلوم نیست؛ واریز باید در وجوه دریافتی تعیین‌تکلیف‌نشده نگهداری شود، نه درآمد.');
   if(!n.unknownReceipt && roles.has('unidentified-receipt')) add('nature.receipt-origin','برای استفاده از وجوه تعیین‌تکلیف‌نشده، ابهام واقعی منشأ واریز باید در متن رویداد مشخص باشد.');
-  if(n.vatRefund && (roles.has('income-category') || roles.has('expense-category'))) add('nature.vat-refund','استرداد مالیات درآمد یا هزینه تازه نیست؛ طلب مالیاتی قبلی و سند ایجاد آن باید تطبیق داده شود.');
+  if(n.vatRefund && lines.length && (!roles.has('tax-receivable') || lines.some(l=>!['cash','tax-receivable'].includes(l.role)))) add('nature.vat-refund','استرداد مالیات درآمد یا هزینه تازه نیست؛ طلب مالیاتی قبلی و سند ایجاد آن باید تطبیق داده شود.');
   if(n.partner && /به حساب شرکت/.test(normalizePersian(text)) && lines.some(l=>l.role==='cash' && l.credit>0)) add('nature.partner-direction','متن از ورود وجه به حساب شرکت می‌گوید؛ پیشنهاد خروج وجه با آن سازگار نیست.');
   const partnerRoles=lines.some(l=>['partner-payable','partner-receivable'].includes(l.role));
   if(partnerRoles && !n.partner) add('nature.partner-identity','رابطه شریک در متن رویداد مشخص نیست؛ حساب جاری شریک جای حساب تجاری نیست.');

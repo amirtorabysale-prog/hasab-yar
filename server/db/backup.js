@@ -1,3 +1,4 @@
+import { ensureTaxRefundSchema } from '../reviewTaxRefund.js';
 import { ensureChequeSchema } from './cheques.js';
 import { randomUUID } from 'node:crypto';
 import { OPTIONAL_BACKUP_TABLES } from '../backup.js';
@@ -15,12 +16,12 @@ export const FINANCIAL_BACKUP_TABLES = [
   'tax_knowledge_sources', 'tax_assistant_questions',
   'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
-  'accountant_intakes', 'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai', 'accounting_review_messages', 'accounting_review_context', 'cheques',
+  'accountant_intakes', 'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai', 'accounting_review_tax_refunds', 'accounting_review_messages', 'accounting_review_context', 'cheques',
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'accounting_review_messages', 'accounting_review_context', 'cheques', 'accountant_intakes', 'accounting_review_ai', 'financial_event_audit', 'recognition_schedule_items', 'accounting_decisions', 'financial_events',
+  'accounting_review_tax_refunds', 'accounting_review_messages', 'accounting_review_context', 'cheques', 'accountant_intakes', 'accounting_review_ai', 'financial_event_audit', 'recognition_schedule_items', 'accounting_decisions', 'financial_events',
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
@@ -32,6 +33,7 @@ const BACKUP_DELETE_ORDER = [
 export function financialBackupSnapshot(workspace = currentWorkspace()) {
   // جدول پیشنهادهای AI و بازخورد حسابدار جزئی از سابقهٔ همان دفتر است.
   ensureReviewAiSchema(db);
+  ensureTaxRefundSchema(db);
   ensureChequeSchema(db);
   const tables = {};
   for (const table of FINANCIAL_BACKUP_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table}`).all();
@@ -44,6 +46,7 @@ export function financialBackupSnapshot(workspace = currentWorkspace()) {
 export function restoreFinancialSnapshot(snapshot) {
   if (!snapshot || snapshot.format !== 'hesab-yar-financial-data' || snapshot.version !== 1 || !snapshot.tables) throw invalidInput('ساختار پشتیبان معتبر نیست.');
   ensureReviewAiSchema(db);
+  ensureTaxRefundSchema(db);
   ensureChequeSchema(db);
   db.exec('PRAGMA defer_foreign_keys = ON');
   db.exec('BEGIN IMMEDIATE');

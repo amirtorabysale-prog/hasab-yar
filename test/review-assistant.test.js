@@ -670,3 +670,124 @@ test('personal shareholder withdrawal creates receivable, never expense; another
  assert.ok(posted.journalEntryId);
  db.reverseEvent(item.id,'برگشت برداشت شخصی آزمون');
 }));
+
+const refundText='اداره دارایی بابت استرداد اضافه پرداخت مالیات به حساب شرکت واریز کرد';
+async function createTaxClaim(amount,{kind='tax-receivable',date='2026-09-01',accountId=null}={}) {
+ const accounting=await import('../server/accounting.js');
+ const id=accountId || crypto.randomUUID();
+ if(!accountId) database().prepare(`INSERT INTO ledger_accounts(id,code,name,type,normal_side,source_kind,source_key) VALUES(?,?,?,'asset','debit',?,?)`).run(id,`TAX-${id}`,kind==='tax-receivable'?'مطالبات مالیاتی':'اعتبار خرید',kind,id);
+ const equity=database().prepare("SELECT id FROM ledger_accounts WHERE source_kind='system' AND source_key='opening-equity'").get().id;
+ const sourceId=crypto.randomUUID();
+ const journal=accounting.postJournalEntry(database(),{sourceType:'tax-claim-test',sourceId,occurredAt:date,memo:'طلب مالیاتی تأیید شده',lines:[{accountId:id,debit:amount,credit:0},{accountId:equity,debit:0,credit:amount}]});
+ const line=database().prepare('SELECT id FROM journal_lines WHERE entry_id=? AND account_id=?').get(journal.id,id);
+ const doc=database().prepare('SELECT fiscal_year,document_number FROM journal_entries WHERE id=?').get(journal.id);
+ return {sourceId,accountId:id,journalId:journal.id,lineId:line.id,reference:`${doc.fiscal_year}/${doc.document_number}`};
+}
+const noTaxNetwork=async()=>{throw new Error('tax refund must not call provider');};
+const taxRow=item=>database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id);
+
+test('tax refund without a real claim asks a saved document question, rejects forged rows and never calls API',()=>run(async()=>{
+ const item=event(refundText,1000000);
+ await createTaxClaim(2000000,{kind:'system'}); // An unrelated/input credit is not a refund claim.
+ await createTaxClaim(2000000,{date:'2026-12-01'}); // A future claim cannot finance today's receipt.
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ assert.equal(p.analysisCost.source,'rules');assert.equal(p.lines.length,0);assert.ok(p.questions.some(q=>q.id==='nature.vat-refund'));
+ const forged={...p,questions:[],missingFacts:[],lines:[{role:'cash',debit:1000000,credit:0},{role:'vat-input',debit:0,credit:1000000}]};
+ assert.equal(assistant.prepareReviewProposal(database(),taxRow(item),forged).canPost,false);
+ assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+ assert.equal(taxRow(item).status,'pending');
+}));
+
+test('partial tax refund posts bank debit and actual claim credit atomically, caps reuse and reversal restores claim',()=>run(async()=>{
+ const c=await createTaxClaim(5000000), item=event(refundText,2000000);
+ const beforeCash=db.listAccounts().find(a=>a.id==='cash').balance;
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ const prepared=assistant.prepareReviewProposal(database(),taxRow(item),p);
+ assert.equal(prepared.canPost,true,prepared.postingBlockers.join(' | '));
+ assert.equal(prepared.taxRefundClaim.lineId,c.lineId);
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const lines=database().prepare('SELECT * FROM journal_lines WHERE entry_id=?').all(posted.journalEntryId);
+ assert.equal(lines.find(l=>l.account_id===c.accountId).credit,2000000);
+ assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,beforeCash+2000000);
+ assert.equal(database().prepare('SELECT accounting_role FROM transactions WHERE client_id=?').get(`review:${item.id}`).accounting_role,'tax-receivable');
+ assert.equal(database().prepare('SELECT claim_line_id FROM accounting_review_tax_refunds WHERE event_id=?').get(item.id).claim_line_id,c.lineId);
+ const excess=event(refundText,4000000);
+ const blocked=await ai.proposeReview(database(),excess.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ assert.equal(blocked.lines.length,0);assert.ok(blocked.questions.some(q=>q.text.includes('بیشتر')));
+ db.reverseEvent(item.id,'برگشت وصول آزمایشی مالیات');
+ assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,beforeCash);
+ const retry=await ai.proposeReview(database(),excess.id,{fetcher:noTaxNetwork});
+ assert.equal(assistant.prepareReviewProposal(database(),taxRow(excess),retry).canPost,true);
+ db.reviewAiFeedback(excess.id,retry.id,{accepted:true});
+ const snapshot=db.financialBackupSnapshot();
+ const restored=db.restoreFinancialSnapshot(snapshot);
+ assert.deepEqual(restored.tables.accounting_review_tax_refunds,snapshot.tables.accounting_review_tax_refunds);
+}));
+
+test('multiple tax claims require document selection, retain answer, block stale/overdrawn/wrong-account proposals and legacy acceptance',()=>run(async()=>{
+ const a=await createTaxClaim(7000000),b=await createTaxClaim(9000000);
+ const item=event(refundText,1000000);
+ const first=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ assert.equal(first.lines.length,0);assert.ok(first.taxRefundCandidates.some(c=>c.reference===a.reference));
+ const selected=await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'nature.vat-refund':{value:a.reference}}},fetcher:noTaxNetwork});
+ const ready=assistant.prepareReviewProposal(database(),taxRow(item),selected);
+ assert.equal(ready.canPost,true,ready.postingBlockers.join(' | '));assert.equal(ready.taxRefundClaim.lineId,a.lineId);
+ assert.equal(ready.questions.length,0);
+ const forged={...selected,lines:selected.lines.map(l=>l.role==='tax-receivable'?{...l,accountId:b.accountId}:l)};
+ assert.equal(assistant.prepareReviewProposal(database(),taxRow(item),forged).canPost,false);
+ assert.throws(()=>db.recordReviewedComposite(item.id,{lines:ready.lines,reason:'قبول پیشنهاد مالیاتی',proposalId:selected.id,aiAccepted:true}),{code:'REVIEW_NATURE_REQUIRED'});
+ const second=event(refundText,7000000);
+ await ai.proposeReview(database(),second.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ const settle=await ai.proposeReview(database(),second.id,{facts:{questionAnswers:{'nature.vat-refund':{value:a.reference}}},fetcher:noTaxNetwork});
+ db.reviewAiFeedback(second.id,settle.id,{accepted:true});
+ assert.equal(assistant.prepareReviewProposal(database(),taxRow(item),selected).canPost,false);
+ assert.throws(()=>db.reviewAiFeedback(item.id,selected.id,{accepted:true}),{code:'REVIEW_DETAILS_REQUIRED'});
+}));
+
+test('tax refund period lock rolls back allocation and cash; reversed source and unrelated tax type cannot be reused',()=>run(async()=>{
+ const c=await createTaxClaim(3000000), item=event(refundText,1000000);
+ await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ const p=await ai.proposeReview(database(),item.id,{facts:{questionAnswers:{'nature.vat-refund':{value:c.reference}}},fetcher:noTaxNetwork});
+ const accounting=await import('../server/accounting.js'), period=accounting.periodForDate('2026-10-03','Asia/Tehran');
+ const before={cash:db.listAccounts().find(a=>a.id==='cash').balance,transactions:database().prepare('SELECT count(*) n FROM transactions').get().n};
+ database().prepare("INSERT INTO accounting_periods(period,status) VALUES(?,'locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run(period);
+ try {
+  assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'ACCOUNTING_PERIOD_LOCKED'});
+  assert.equal(database().prepare('SELECT count(*) n FROM transactions').get().n,before.transactions);
+  assert.equal(database().prepare('SELECT count(*) n FROM accounting_review_tax_refunds WHERE event_id=?').get(item.id).n,0);
+  assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,before.cash);
+ } finally {database().prepare("UPDATE accounting_periods SET status='open' WHERE period=?").run(period);}
+ accounting.reverseJournalEntry(database(),{sourceType:'tax-claim-test',sourceId:c.sourceId,occurredAt:'2026-10-02'});
+ assert.equal(assistant.prepareReviewProposal(database(),taxRow(item),p).canPost,false);
+ const fresh=await ai.proposeReview(database(),item.id,{fetcher:noTaxNetwork});assert.equal(fresh.lines.length,0);
+ const other=await createTaxClaim(3000000);
+ database().prepare("UPDATE ledger_accounts SET name='مطالبات مالیات عملکرد' WHERE id=?").run(other.accountId);
+ const {taxRefundContext}=await import('../server/reviewTaxRefund.js');
+ const wrongType=taxRefundContext(database(),'استرداد مالیات ارزش افزوده به حساب شرکت واریز شد',1000000,{occurredAt:'2026-10-03',questionAnswers:{'nature.vat-refund':{value:other.reference}}});
+ assert.equal(wrongType.claim,null);assert.ok(wrongType.question.text.includes('نوع مالیات'));
+ const equity=database().prepare("SELECT id FROM ledger_accounts WHERE source_key='opening-equity'").get().id;
+ accounting.postJournalEntry(database(),{sourceType:'old-tax-settlement',sourceId:crypto.randomUUID(),occurredAt:'2026-10-01',lines:[{accountId:equity,debit:500000,credit:0},{accountId:other.accountId,debit:0,credit:500000}]});
+ const unlinked=taxRefundContext(database(),refundText,1000000,{occurredAt:'2026-10-03',questionAnswers:{'nature.vat-refund':{value:other.reference}}});
+ assert.equal(unlinked.claim,null);assert.ok(unlinked.question.text.includes('تسویه قبلی'));
+}));
+
+test('golden T076 uses an actual chart-backed tax claim and learns its approved journal, not purchase input credit',()=>run(async()=>{
+ const {readFileSync}=await import('node:fs');
+ const scenario=JSON.parse(readFileSync(new URL('./fixtures/stress-scenarios-v1.json',import.meta.url),'utf8')).find(s=>s.id==='T076');
+ const {saveChartAccount}=await import('../server/chartOfAccounts.js');
+ const {ledgerAccountForChart}=await import('../server/ledgerImport.js');
+ const group=saveChartAccount(database(),{code:'96',name:'دارایی آزمون مالیات',level:'group',type:'asset'});
+ const general=saveChartAccount(database(),{code:'9601',name:'مطالبات آزمون مالیات',parentCode:group.code,level:'general',type:'asset'});
+ const chart=saveChartAccount(database(),{code:'960101',name:'طلب استرداد مالیات ارزش افزوده',parentCode:general.code,level:'subsidiary',type:'asset',role:'tax-receivable'});
+ const accountId=ledgerAccountForChart(database(),chart,()=> '199998');
+ const c=await createTaxClaim(10000000,{accountId});
+ const item=event(scenario.text,10000000);
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noTaxNetwork});
+ const prepared=assistant.prepareReviewProposal(database(),taxRow(item),p);
+ assert.equal(prepared.canPost,true,prepared.postingBlockers.join(' | '));assert.equal(prepared.taxRefundClaim.lineId,c.lineId);
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const actual=database().prepare('SELECT a.type,l.debit,l.credit,l.account_id FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?').all(posted.journalEntryId);
+ assert.equal(actual.length,2);assert.ok(actual.every(l=>l.type==='asset'));assert.equal(actual.find(l=>l.account_id===accountId).credit,10000000);
+ const related=event(scenario.text,10000000);
+ assert.ok(assistant.relevantDna(database(),taxRow(related)).some(d=>d.id===p.id && d.journalEntryId===posted.journalEntryId));
+}));
