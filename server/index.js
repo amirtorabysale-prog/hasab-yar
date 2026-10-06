@@ -8,7 +8,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, previewDayClosing,
+  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
@@ -153,7 +153,10 @@ app.use('/api', (request, response, next) => {
   request.user = user;
   request.sessionToken = sessionToken;
   const requestedWorkspace = request.get('x-workspace-id') || (['GET', 'HEAD'].includes(request.method) ? request.query.workspace : '') || cookies(request).hy_workspace;
-  const workspace = workspaceForUser(user.id, requestedWorkspace);
+  // کوکیِ دفتری که بایگانی شده، کاربر را قفل نمی‌کند؛ به دفتر فعال بعدی برمی‌گردد.
+  // درخواست صریح (هدر) به دفتر بایگانی‌شده همچنان رد می‌شود.
+  const workspace = workspaceForUser(user.id, requestedWorkspace)
+    || (!request.get('x-workspace-id') && requestedWorkspace === cookies(request).hy_workspace ? workspaceForUser(user.id) : null);
   if (!workspace) return response.status(403).json({ code: 'WORKSPACE_FORBIDDEN', message: 'به این دفتر دسترسی نداری.' });
   request.workspace = workspace;
   response.append('Set-Cookie', workspaceCookie(workspace.id));
@@ -215,6 +218,28 @@ app.post('/api/workspaces', (request, response, next) => {
     const workspace = createWorkspace(request.user.id, request.body || {});
     return response.status(201).json({ workspace, workspaces: listUserWorkspaces(request.user.id) });
   } catch (error) { error.status ||= 400; return next(error); }
+});
+// بایگانی و نام دفتر — فقط مالک همان دفتر، هرکدام که دفتر فعال باشد.
+app.get('/api/workspaces/archived', (request, response) => response.json({ items: listArchivedWorkspaces(request.user.id) }));
+app.put('/api/workspaces/:id', (request, response, next) => {
+  try { renameWorkspace(request.user.id, request.params.id, request.body?.name); return response.json(accessPayload(request.user, request.workspace.id)); }
+  catch (error) { return next(error); }
+});
+app.post('/api/workspaces/:id/archive', async (request, response, next) => {
+  try {
+    const target = listUserWorkspaces(request.user.id).find((item) => item.id === request.params.id);
+    if (!target) return response.status(404).json({ code: 'WORKSPACE_NOT_FOUND', message: 'دفتر فعال پیدا نشد.' });
+    if (target.role !== 'owner') return response.status(403).json({ code: 'WORKSPACE_OWNER_REQUIRED', message: 'فقط مالک دفتر می‌تواند آن را بایگانی کند.' });
+    // پشتیبان رمزشده پیش از بایگانی؛ اگر پیکربندی نشده، فایل داده همچنان دست‌نخورده می‌ماند.
+    const backup = automaticBackupConfigured() ? await writeServerBackup(target, { reason: 'archive' }) : null;
+    const item = archiveWorkspace(request.user.id, target.id);
+    const nextWorkspace = request.workspace.id === target.id ? listUserWorkspaces(request.user.id)[0]?.id : request.workspace.id;
+    return response.json({ item, backup, ...accessPayload(request.user, nextWorkspace) });
+  } catch (error) { return next(error); }
+});
+app.post('/api/workspaces/:id/restore', (request, response, next) => {
+  try { const item = restoreArchivedWorkspace(request.user.id, request.params.id); return response.json({ item, ...accessPayload(request.user, request.workspace.id) }); }
+  catch (error) { return next(error); }
 });
 app.get('/api/workspace/members', (request, response) => {
   if (!requireRank(request, response, 'manager')) return undefined;

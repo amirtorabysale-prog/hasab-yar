@@ -24,6 +24,8 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath.startsWith('/commercial/admin/')) return 'owner';
   if (normalizedPath === '/commercial/status') return 'viewer';
   if (['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return normalizedPath.startsWith('/backups/') ? 'manager' : 'viewer';
+  // نام و بایگانی دفتر: مالکیت همان دفترِ هدف داخل تابع کنترل می‌شود، نه نقش دفتر فعال.
+  if (normalizedPath.startsWith('/workspaces/')) return 'viewer';
   if (normalizedPath.startsWith('/auth/') || normalizedPath.startsWith('/alerts/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
   // تأیید و برگشت رویداد مالی، سند در دفتر کل می‌سازد یا معکوس می‌کند؛
   // این کار حسابدار است، نه هر کسی که می‌تواند ثبت روزانه بزند.

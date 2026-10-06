@@ -132,7 +132,8 @@ async function pruneBackups(workspaceId, now = Date.now()) {
   const prefix = `${safeWorkspaceId(workspaceId)}-`;
   const cutoff = now - retentionDays() * 24 * 60 * 60 * 1000;
   const files = await readdir(folder).catch(() => []);
-  for (const file of files.filter((item) => item.startsWith(prefix) && item.endsWith('.hybackup'))) {
+  // پشتیبان پیش از بایگانی، تنها نسخهٔ قابل‌حمل یک دفتر کنارگذاشته است؛ هرس نمی‌شود.
+  for (const file of files.filter((item) => item.startsWith(prefix) && item.endsWith('.hybackup') && !item.includes('-archive-'))) {
     const path = resolve(folder, file);
     const info = await stat(path).catch(() => null);
     if (info && info.mtimeMs < cutoff) await unlink(path);
