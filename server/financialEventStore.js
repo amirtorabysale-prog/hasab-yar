@@ -1,4 +1,5 @@
-import { reviewNatureViolations } from '../shared/reviewNature.js';
+import { reviewNature, reviewNatureViolations } from '../shared/reviewNature.js';
+import { matchingUnidentifiedHolding } from './unidentifiedReceipts.js';
 import { ensureReviewIntakeSchema } from './reviewIntakeSchema.js';
 import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal } from '../shared/accountingRules.js';
@@ -342,9 +343,12 @@ export function recordFinancialEvent(database, event, {
   // موردی که نگهبان گفته بود نباید ثبت شود، بی‌صدا ثبت می‌شد.
   const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);
   const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
-  const blocked = natureIssues.length>0 || guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
+  // همان پولی که پیش‌تر «ناشناس» نگه داشته شده، دریافت تازه نیست.
+  const held = !reviewNature(event.utterance || event.evidence || '').unknownReceipt ? matchingUnidentifiedHolding(database, event) : null;
+  const heldReason = held ? `این واریز با وجه ناشناس ${held.reference} (${Number(held.remaining).toLocaleString('fa-IR')} تومان، همین حساب) می‌خواند. اگر همان پول است، آن وجه را از صف «وجوه ناشناس» تعیین تکلیف کن و این مورد را رد کن.` : '';
+  const blocked = natureIssues.length>0 || Boolean(held) || guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
   const routing = blocked
-    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), ...natureIssues.map(q=>q.text), guards?.reason || 'این گفته هنوز نقشهٔ سند قطعی ندارد.'])] }
+    ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), ...natureIssues.map(q=>q.text), ...(heldReason ? [heldReason] : []), guards?.reason || (heldReason ? '' : 'این گفته هنوز نقشهٔ سند قطعی ندارد.')].filter(Boolean))] }
     : decision;
   // The proposed plan is retained for audit even when semantic validation holds it.
 

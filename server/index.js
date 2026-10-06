@@ -16,6 +16,7 @@ import {
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
   bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferBetweenAccounts,
+  listUnidentifiedReceipts, resolveUnidentifiedReceipt, reverseUnidentifiedReceiptResolution,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
@@ -569,6 +570,16 @@ app.get('/api/automation-policy', (_request, response, next) => {
 });
 app.put('/api/automation-policy', (request, response, next) => {
   try { return response.json({ policy: saveAutomationPolicy(request.body || {}) }); } catch (error) { return next(error); }
+});
+// وجوه ناشناس: فهرست، تعیین تکلیف و برگشت آن.
+app.get('/api/financial-events/unidentified', (request, response, next) => {
+  try { return response.json(listUnidentifiedReceipts({ includeClosed: request.query.closed === '1' })); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/unidentified/:lineId/resolve', (request, response, next) => {
+  try { return response.status(201).json({ item: resolveUnidentifiedReceipt(request.params.lineId, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/unidentified/resolutions/:id/reverse', (request, response, next) => {
+  try { return response.json({ item: reverseUnidentifiedReceiptResolution(request.params.id) }); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/review-queue', (request, response, next) => {
   try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }

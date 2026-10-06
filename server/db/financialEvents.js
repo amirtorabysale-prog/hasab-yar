@@ -1,5 +1,6 @@
 import { allocateTaxRefund } from '../reviewTaxRefund.js';
 import { allocateInsuranceSettlement, releaseInsuranceSettlement } from '../reviewInsurance.js';
+import { assertHoldHasNoResolutions } from '../unidentifiedReceipts.js';
 import { reviewNature, reviewNatureViolations } from '../../shared/reviewNature.js';
 import { prepareReviewResources, applyReviewInventory, reverseReviewInventory } from '../reviewResources.js';
 import { randomUUID } from 'node:crypto';
@@ -123,6 +124,10 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   // همین برای بیمهٔ لیست حقوق: سند دستی لیست را «پرداخت‌شده» نمی‌کند و دکمهٔ
   // پرداخت صفحهٔ حقوق همان بیمه را دوباره می‌پردازد.
   const debitsPayrollInsurance=(lines || []).some(line=>line.debit>0 && database.prepare("SELECT 1 FROM ledger_accounts WHERE id=? AND source_kind='payroll-insurance-payable'").get(line.accountId));
+  // وجه ناشناس فقط از «تعیین تکلیف» بسته می‌شود؛ سند دستی ردی از منشأ و
+  // فاکتور تسویه‌شده نمی‌گذارد.
+  const debitsUnidentified=(lines || []).some(line=>line.debit>0 && database.prepare("SELECT 1 FROM ledger_accounts WHERE id=? AND source_kind='unidentified-receipt'").get(line.accountId));
+  if(debitsUnidentified) throw Object.assign(new Error('وجه ناشناس را از بخش «وجوه ناشناس» صف حسابدار تعیین تکلیف کن.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
   if(debitsPayrollInsurance) throw Object.assign(new Error('پرداخت بیمهٔ لیست حقوق را با «تحلیل کن» و دکمهٔ اعمال پیشنهاد یا از صفحهٔ «حقوق» ثبت کن تا لیست پرداخت‌شده علامت بخورد.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
   if (proposal?.state === 'proposed') {
     if (!proposalId || proposal.id !== proposalId || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صف را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
@@ -251,6 +256,8 @@ export function reverseEvent(eventId, reason = '') {
     const hasCheques=database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cheques'").get();
     const cheque=hasCheques ? database.prepare('SELECT id,status FROM cheques WHERE id=?').get(`review:${eventId}`) : null;
     if (cheque && cheque.status!=='open') throw Object.assign(new Error('این چک پیش‌تر وصول یا تعیین تکلیف شده؛ ابتدا اسناد وابسته را اصلاح کن.'),{code:'REVIEW_CHEQUE_DEPENDENCY',status:409});
+    const posted=database.prepare('SELECT journal_entry_id FROM financial_events WHERE id=?').get(eventId);
+    if(posted?.journal_entry_id) assertHoldHasNoResolutions(database,posted.journal_entry_id);
     reverseReviewInventory(database,eventId,{actor:currentWorkspace()?.userId,timeZone:currentTimeZone()});
     const item=reverseFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason,timeZone:currentTimeZone(),withinTransaction:true});
     releaseInsuranceSettlement(database,eventId);
