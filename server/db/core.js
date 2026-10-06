@@ -273,6 +273,8 @@ function ensureColumnOn(database, table, definition) {
 // صاحب کسب‌وکار است و در پروندهٔ مشتری، حسابدار. تجربه باید در هر پرونده
 // جداگانه تصمیم گرفته شود.
 ensureColumnOn(controlDb, 'workspace_members', 'experience TEXT');
+// دفتر بایگانی‌شده از فهرست بیرون می‌رود ولی فایل داده‌اش دست نمی‌خورد.
+ensureColumnOn(controlDb, 'workspaces', 'archived_at TEXT');
 
 function ensureVoiceMetricSchema(database) {
   ensureColumnOn(database, 'voice_metrics', 'first_transcript_ms INTEGER NOT NULL DEFAULT 0');
