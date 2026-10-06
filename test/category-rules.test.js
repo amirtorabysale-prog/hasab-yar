@@ -65,7 +65,8 @@ test('هر دستهٔ داخلی به یک کد حساب معتبر نگاشت �
 });
 
 test('کد حساب روی خود تراکنش می‌نشیند تا سند بدون حدس ساخته شود', () => {
-  assert.equal(firstTransaction('دو میلیون بابت تبلیغات دادم').chartCode, '8109');
+  // تبلیغات معین خودش را دارد؛ پیش از تفکیک کدینگ در «۸۱۰۹ سایر» دفن می‌شد.
+  assert.equal(firstTransaction('دو میلیون بابت تبلیغات دادم').chartCode, '8110');
   assert.equal(firstTransaction('پنج میلیون حقوق دادم').chartCode, '8101');
   assert.equal(firstTransaction('ده میلیون فروختم').chartCode, '6101');
 });

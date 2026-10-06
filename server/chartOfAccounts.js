@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { canonicalCounterpartyName } from '../shared/counterpartyIdentity.js';
-import { chartCodeForCategory } from '../shared/categoryRules.js';
+import { chartCodeForCategory, legacyChartCodeForCategory } from '../shared/categoryRules.js';
 import { normalizePersian } from '../shared/normalize.js';
 
 export const CHART_LEVELS = Object.freeze({
@@ -40,6 +40,11 @@ export const CHART_ROLES = Object.freeze([
   // چک از مطالبات عادی جداست: سررسید دارد، ممکن است برگشت بخورد، و تا وصول
   // نشود پول نیست. در تراز هم باید جدا دیده شود.
   'note-receivable', 'note-payable',
+  // حساب‌هایی که مسیر بررسی حسابدار می‌سازد. بدون نقش در کدینگ، سندشان متوازن
+  // بود ولی در خروجی پارسیان «بدون نگاشت» می‌ماند: پیش‌پرداخت، پیش‌دریافت،
+  // درآمد انتقالی، وجوه تعیین‌تکلیف‌نشده و استهلاک.
+  'prepaid-asset', 'customer-advance', 'deferred-revenue', 'unidentified-receipt',
+  'accumulated-depreciation', 'depreciation-expense',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({
@@ -408,22 +413,30 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['13', 'موجودی کالا', 'general', '1', 'asset', ''],
   ['1301', 'موجودی کالا و مواد', 'subsidiary', '13', 'asset', 'inventory'],
   ['14', 'پیش‌پرداخت‌ها و مالیات', 'general', '1', 'asset', ''],
-  ['1401', 'پیش‌پرداخت‌ها', 'subsidiary', '14', 'asset', ''],
+  ['1401', 'پیش‌پرداخت‌ها', 'subsidiary', '14', 'asset', 'prepaid-asset'],
   ['1402', 'مالیات و عوارض ارزش افزودهٔ خرید', 'subsidiary', '14', 'asset', 'input-tax'],
   ['2', 'دارایی‌های غیرجاری', 'group', '', 'asset', ''],
   ['21', 'دارایی‌های ثابت مشهود', 'general', '2', 'asset', ''],
   ['2101', 'اموال، ماشین‌آلات و تجهیزات', 'subsidiary', '21', 'asset', 'fixed-asset'],
+  ['2102', 'استهلاک انباشتهٔ اموال و تجهیزات', 'subsidiary', '21', 'asset', 'accumulated-depreciation'],
+  ['22', 'ودایع و سپرده‌ها', 'general', '2', 'asset', ''],
+  ['2201', 'ودیعه و سپردهٔ قابل استرداد', 'subsidiary', '22', 'asset', 'refundable-deposit'],
   ['3', 'بدهی‌های جاری', 'group', '', 'liability', ''],
   ['31', 'حساب‌ها و اسناد پرداختنی', 'general', '3', 'liability', ''],
   ['3101', 'حساب‌های پرداختنی تجاری', 'subsidiary', '31', 'liability', 'payable'],
   ['3103', 'جاری شرکا — بدهی شرکت', 'subsidiary', '31', 'liability', 'partner-payable'],
   ['3102', 'اسناد پرداختنی (چک)', 'subsidiary', '31', 'liability', 'note-payable'],
+  ['3104', 'پیش‌دریافت از مشتریان', 'subsidiary', '31', 'liability', 'customer-advance'],
+  ['3105', 'درآمد انتقالی (پیش‌دریافت خدمات دوره‌دار)', 'subsidiary', '31', 'liability', 'deferred-revenue'],
+  ['3106', 'وجوه دریافتی تعیین‌تکلیف‌نشده', 'subsidiary', '31', 'liability', 'unidentified-receipt'],
   ['32', 'مالیات و عوارض پرداختنی', 'general', '3', 'liability', ''],
   ['3201', 'مالیات و عوارض ارزش افزودهٔ فروش', 'subsidiary', '32', 'liability', 'output-tax'],
   ['33', 'حقوق و بیمهٔ پرداختنی', 'general', '3', 'liability', ''],
   ['3301', 'حقوق و دستمزد پرداختنی', 'subsidiary', '33', 'liability', 'salary-payable'],
   ['3302', 'بیمهٔ پرداختنی (تأمین اجتماعی)', 'subsidiary', '33', 'liability', 'insurance-payable'],
   ['3303', 'مالیات حقوق پرداختنی', 'subsidiary', '33', 'liability', 'payroll-tax-payable'],
+  ['34', 'تسهیلات مالی', 'general', '3', 'liability', ''],
+  ['3401', 'اصل وام و تسهیلات پرداختنی', 'subsidiary', '34', 'liability', 'loan-payable'],
   ['5', 'حقوق صاحبان سرمایه', 'group', '', 'equity', ''],
   ['51', 'سرمایه', 'general', '5', 'equity', ''],
   ['5101', 'سرمایه و ماندهٔ افتتاحیه', 'subsidiary', '51', 'equity', 'equity'],
@@ -435,6 +448,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['62', 'درآمد غیرعملیاتی', 'general', '6', 'income', ''],
   ['6201', 'سایر درآمدها', 'subsidiary', '62', 'income', 'other-income'],
   ['6202', 'اضافی موجودی و تعدیلات', 'subsidiary', '62', 'income', 'inventory-gain'],
+  ['6203', 'درآمد اجاره', 'subsidiary', '62', 'income', ''],
   ['7', 'بهای تمام‌شده', 'group', '', 'expense', ''],
   ['71', 'بهای تمام‌شدهٔ فروش', 'general', '7', 'expense', ''],
   ['7101', 'بهای تمام‌شدهٔ کالای فروش‌رفته', 'subsidiary', '71', 'expense', 'cogs'],
@@ -446,7 +460,19 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['8103', 'حمل‌ونقل', 'subsidiary', '81', 'expense', ''],
   ['8104', 'قبوض و انرژی', 'subsidiary', '81', 'expense', ''],
   ['8105', 'کسری و ضایعات موجودی', 'subsidiary', '81', 'expense', 'inventory-shrinkage'],
+  ['8107', 'کارمزد و هزینه‌های بانکی', 'subsidiary', '81', 'expense', ''],
+  ['8108', 'ملزومات و لوازم مصرفی اداری', 'subsidiary', '81', 'expense', ''],
   ['8109', 'سایر هزینه‌های عملیاتی', 'subsidiary', '81', 'expense', 'operating-expense'],
+  ['8110', 'تبلیغات و بازاریابی', 'subsidiary', '81', 'expense', ''],
+  ['8111', 'تعمیر و نگهداری', 'subsidiary', '81', 'expense', ''],
+  ['8112', 'نرم‌افزار و اشتراک', 'subsidiary', '81', 'expense', ''],
+  ['8113', 'پیمانکار و خدمات بیرونی', 'subsidiary', '81', 'expense', ''],
+  ['8114', 'مالیات و عوارض', 'subsidiary', '81', 'expense', ''],
+  ['8115', 'خوراک و پذیرایی', 'subsidiary', '81', 'expense', ''],
+  ['8116', 'آموزش', 'subsidiary', '81', 'expense', ''],
+  ['8117', 'هزینهٔ استهلاک', 'subsidiary', '81', 'expense', 'depreciation-expense'],
+  ['8118', 'سوخت و ایاب‌وذهاب', 'subsidiary', '81', 'expense', ''],
+  ['8119', 'بیمهٔ دارایی و مسئولیت', 'subsidiary', '81', 'expense', ''],
 ].map(([code, name, level, parentCode, type, role]) => Object.freeze({ code, name, level, parentCode, type, role })));
 
 // ---------------------------------------------------------------------------
@@ -583,6 +609,11 @@ const ROLE_BY_SOURCE_KIND = {
   'operational-account': ['cash', 'bank'],
   // هر دارایی ثابت حساب دفترکل خودش را می‌گیرد؛ همه به همان معین اموال نگاشته می‌شوند.
   'fixed-asset': ['fixed-asset'],
+  'accumulated-depreciation': ['accumulated-depreciation'],
+  'prepaid-asset': ['prepaid-asset'],
+  'customer-advance': ['customer-advance'],
+  'deferred-revenue': ['deferred-revenue'],
+  'unidentified-receipt': ['unidentified-receipt'],
 };
 
 const ROLE_BY_SOURCE_KEY = {
@@ -592,6 +623,7 @@ const ROLE_BY_SOURCE_KEY = {
   'owner-capital': 'owner-capital',
   'inventory-gain': 'inventory-gain',
   'inventory-shrinkage': 'inventory-shrinkage',
+  'depreciation-expense': 'depreciation-expense',
 };
 
 /**
@@ -676,6 +708,11 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
     const code = specific ? chartCodeForCategory(sourceKey) : null;
     const exact = code ? postable.find((item) => normalizeChartCode(item.code) === code) : null;
     if (exact) return exact;
+    // کدینگ پیش از تفکیک معین‌های هزینه: کد تازه را ندارد، کد عمومی قبلی را دارد.
+    const legacy = specific ? legacyChartCodeForCategory(sourceKey) : null;
+    const legacyExact = legacy && !postable.some((item) => normalizeChartCode(item.code) === code)
+      ? postable.find((item) => normalizeChartCode(item.code) === legacy) : null;
+    if (legacyExact) return legacyExact;
     // کد دسته‌ها از کدینگ پیشنهادی خودمان می‌آید و در کدینگ دفتر معنای دیگری
     // دارد. وقتی کد نخورد، نام تنها نشانهٔ قابل اتکاست: «حقوق و دستمزد» به
     // «هزینه حقوق و دستمزد» می‌خورد، نه به اولین معین هزینه‌ای فهرست.

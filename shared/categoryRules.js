@@ -22,10 +22,21 @@ const STRONG = 3;
 const NORMAL = 2;
 const WEAK = 1;
 
+/**
+ * کد معین پیش از تفکیک کدینگ پیشنهادی.
+ *
+ * تا مهر ۱۴۰۵ ده دستهٔ هزینه — کارمزد بانکی، ملزومات، تبلیغات، تعمیر و … —
+ * همه روی «۸۱۰۹ سایر هزینه‌های عملیاتی» می‌نشستند و «بیمه» حتی روی «۸۱۰۱ حقوق
+ * و دستمزد». دفتری که کدینگ را پیش از تفکیک نصب کرده، کد تازه را ندارد؛ برای
+ * او همان کد عمومی قبلی پیشنهاد می‌شود تا نگاشت خودکارش خالی نماند. بیمه
+ * عمداً به ۸۱۰۹ برمی‌گردد، نه ۸۱۰۱: حق‌بیمهٔ دارایی و مسئولیت، حقوق نیست.
+ */
+const LEGACY_CHART_CODES = Object.freeze({ 'inc-rent': '6201', 'exp-insurance': '8109', 'exp-tax': '8109', 'exp-fuel': '8103', 'exp-office': '8109', 'exp-marketing': '8109', 'exp-software': '8109', 'exp-bank': '8109', 'exp-repair': '8109', 'exp-contractor': '8109', 'exp-food': '8109', 'exp-training': '8109' });
+
 function rule(id, name, type, chartCode, groups) {
   const keywords = [];
   for (const [weight, words] of groups) for (const word of words) keywords.push({ word: normalizePersian(word), weight });
-  return Object.freeze({ id, name, type, chartCode, keywords: Object.freeze(keywords) });
+  return Object.freeze({ id, name, type, chartCode, legacyChartCode: LEGACY_CHART_CODES[id] || null, keywords: Object.freeze(keywords) });
 }
 
 export const CATEGORY_DEFINITIONS = Object.freeze([
@@ -42,7 +53,7 @@ export const CATEGORY_DEFINITIONS = Object.freeze([
     [STRONG, ['دستمزد گرفتم', 'پول پروژه', 'قرارداد بستم', 'فاز پروژه']],
     [NORMAL, ['پروژه', 'قرارداد']],
   ]),
-  rule('inc-rent', 'درآمد اجاره', 'income', '6201', [
+  rule('inc-rent', 'درآمد اجاره', 'income', '6203', [
     [STRONG, ['اجاره گرفتم', 'اجاره دادم به', 'اجاره بها گرفتم', 'کرایه گرفتم']],
   ]),
   rule('inc-other', 'سایر درآمدها', 'income', '6201', [
@@ -61,11 +72,11 @@ export const CATEGORY_DEFINITIONS = Object.freeze([
     [STRONG, ['حقوق دادم', 'حقوق پرسنل', 'حقوق کارگر', 'دستمزد دادم', 'عیدی', 'سنوات', 'پاداش پرسنل', 'اضافه کاری', 'اضافه‌کاری', 'مساعده']],
     [NORMAL, ['حقوق', 'دستمزد', 'کارگر', 'پرسنل', 'کارمند']],
   ]),
-  rule('exp-insurance', 'بیمه', 'expense', '8101', [
+  rule('exp-insurance', 'بیمه', 'expense', '8119', [
     [STRONG, ['بیمه تامین اجتماعی', 'بیمه تأمین اجتماعی', 'حق بیمه', 'لیست بیمه', 'بیمه پرسنل', 'بیمه تکمیلی']],
     [NORMAL, ['بیمه']],
   ]),
-  rule('exp-tax', 'مالیات و عوارض', 'expense', '8109', [
+  rule('exp-tax', 'مالیات و عوارض', 'expense', '8114', [
     [STRONG, ['مالیات بر ارزش افزوده', 'مالیات عملکرد', 'ارزش افزوده', 'مالیات دادم', 'عوارض شهرداری', 'جریمه مالیاتی']],
     [NORMAL, ['مالیات', 'عوارض', 'دارایی']],
   ]),
@@ -77,7 +88,7 @@ export const CATEGORY_DEFINITIONS = Object.freeze([
     [STRONG, ['حمل بار', 'کرایه حمل', 'باربری', 'پست کردم', 'هزینه ارسال', 'تیپاکس', 'ترخیص']],
     [NORMAL, ['اسنپ', 'تپسی', 'تاکسی', 'پیک', 'کرایه', 'حمل', 'باربر', 'راننده', 'بارنامه']],
   ]),
-  rule('exp-fuel', 'سوخت و ایاب‌وذهاب', 'expense', '8103', [
+  rule('exp-fuel', 'سوخت و ایاب‌وذهاب', 'expense', '8118', [
     [STRONG, ['بنزین زدم', 'گازوئیل', 'سوخت ماشین', 'عوارض آزادراهی', 'ایاب و ذهاب', 'ایاب‌وذهاب']],
     [NORMAL, ['بنزین', 'سوخت', 'پارکینگ', 'جریمه رانندگی']],
   ]),
@@ -85,35 +96,35 @@ export const CATEGORY_DEFINITIONS = Object.freeze([
     [STRONG, ['قبض برق', 'قبض گاز', 'قبض آب', 'قبض تلفن', 'پول اینترنت', 'شارژ ساختمان']],
     [NORMAL, ['قبض', 'برق', 'گاز', 'اینترنت', 'تلفن', 'مخابرات', 'شارژ']],
   ]),
-  rule('exp-office', 'ملزومات اداری', 'expense', '8109', [
+  rule('exp-office', 'ملزومات اداری', 'expense', '8108', [
     [STRONG, ['لوازم التحریر', 'لوازم‌التحریر', 'ملزومات اداری', 'کاغذ ای فور', 'کاغذ a4', 'تونر', 'کارتریج', 'زونکن']],
     [NORMAL, ['ملزومات', 'نوشت افزار', 'پرینتر', 'کاغذ']],
   ]),
-  rule('exp-marketing', 'تبلیغات و بازاریابی', 'expense', '8109', [
+  rule('exp-marketing', 'تبلیغات و بازاریابی', 'expense', '8110', [
     [STRONG, ['تبلیغات', 'تبلیغ', 'بازاریابی', 'کمپین', 'بنر', 'تراکت', 'کاتالوگ', 'اینفلوئنسر', 'گوگل ادز', 'ادوردز']],
     [NORMAL, ['بیلبورد', 'اسپانسر', 'نمایشگاه']],
   ]),
-  rule('exp-software', 'نرم‌افزار و اشتراک', 'expense', '8109', [
+  rule('exp-software', 'نرم‌افزار و اشتراک', 'expense', '8112', [
     [STRONG, ['اشتراک نرم افزار', 'اشتراک نرم‌افزار', 'لایسنس', 'هاست', 'دامنه', 'سرور مجازی', 'پنل پیامک']],
     [NORMAL, ['نرم افزار', 'نرم‌افزار', 'اشتراک', 'سرور']],
   ]),
-  rule('exp-bank', 'کارمزد بانکی', 'expense', '8109', [
+  rule('exp-bank', 'کارمزد بانکی', 'expense', '8107', [
     [STRONG, ['کارمزد بانک', 'کارمزد انتقال', 'کارمزد دستگاه', 'کارمزد پوز', 'هزینه صدور چک', 'کارمزد درگاه']],
     [NORMAL, ['کارمزد']],
   ]),
-  rule('exp-repair', 'تعمیر و نگهداری', 'expense', '8109', [
+  rule('exp-repair', 'تعمیر و نگهداری', 'expense', '8111', [
     [STRONG, ['تعمیر دستگاه', 'تعمیر ماشین', 'سرویس دستگاه', 'قطعه یدکی', 'نگهداری تجهیزات']],
     [NORMAL, ['تعمیر', 'تعمیرات', 'سرویس کار', 'قطعه']],
   ]),
-  rule('exp-contractor', 'پیمانکار و خدمات بیرونی', 'expense', '8109', [
+  rule('exp-contractor', 'پیمانکار و خدمات بیرونی', 'expense', '8113', [
     [STRONG, ['پیمانکار', 'حق الزحمه دادم', 'حق‌الزحمه دادم', 'مشاور حقوقی', 'وکیل', 'حسابدار', 'خدمات بیرونی', 'برون سپاری']],
     [NORMAL, ['مشاور', 'طراح', 'مترجم']],
   ]),
-  rule('exp-food', 'خوراک', 'expense', '8109', [
+  rule('exp-food', 'خوراک', 'expense', '8115', [
     [STRONG, ['پذیرایی', 'ناهار پرسنل', 'اسنپ فود', 'میوه و شیرینی']],
     [NORMAL, ['غذا', 'خوراک', 'ناهار', 'شام', 'چای', 'رستوران']],
   ]),
-  rule('exp-training', 'آموزش', 'expense', '8109', [
+  rule('exp-training', 'آموزش', 'expense', '8116', [
     [STRONG, ['دوره آموزشی', 'کلاس آموزش', 'شهریه', 'سمینار', 'وبینار']],
     [NORMAL, ['آموزش', 'کتاب']],
   ]),
@@ -138,6 +149,11 @@ export function categoryByName(name) {
 /** کد حساب پیشنهادی برای یک نام دسته؛ برای دسته‌های دست‌ساز کاربر null است. */
 export function chartCodeForCategory(name) {
   return categoryByName(name)?.chartCode || null;
+}
+
+/** کد معین همین دسته در کدینگ پیشنهادیِ پیش از تفکیک؛ برای دفترهای قدیمی. */
+export function legacyChartCodeForCategory(name) {
+  return categoryByName(name)?.legacyChartCode || null;
 }
 
 /**
