@@ -124,3 +124,80 @@ test('bank preview uses readable name and existing bank subsidiary',()=>run(asyn
  const cash=prepared(item,p).lines.find(l=>l.role==='cash');
  assert.equal(cash.accountName,'بانک سامان تست');assert.ok(cash.newAccount?.chartAccountId);
 }));
+
+test('supplier purchase advance retains person identity, creates resources only at approval and reverses cash',()=>run(async()=>{
+ const t='صد و بیست میلیون پیش‌پیش ریختیم حساب کارخانه فولاد مبارکه واسه خرید ورق هنوز بار نرسیده';
+ const item=event(t,120000000),name='کارخانه فولاد مبارکه';
+ const plan={summary:'پیش‌پرداخت خرید ورق',explanation:t,questions:[],missingFacts:[],inventoryItems:[],counterpartyName:name,lines:[{role:'prepaid-asset',key:'پیش‌پرداخت‌ها',debit:120000000,credit:0},{role:'cash',debit:0,credit:120000000}]};
+ const count=database().prepare('SELECT count(*) n FROM contacts').get().n;
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',counterpartyName:name},fetcher:fake(plan)});
+ const preview=prepared(item,p);assert.equal(preview.canPost,true,preview.postingBlockers.join(' / '));assert.equal(preview.newCounterparty.name,name);
+ assert.equal(database().prepare('SELECT count(*) n FROM contacts').get().n,count);
+ const posted=db.reviewAiFeedback(item.id,p.id,{accepted:true}).item;
+ const party=database().prepare('SELECT id FROM contacts WHERE name=?').get(name);
+ const lines=database().prepare('SELECT a.source_kind,a.source_key,l.analytic_id,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE entry_id=?').all(posted.journalEntryId);
+ const advance=lines.find(l=>l.source_kind==='prepaid-asset');assert.equal(advance.source_key,party.id);assert.ok(advance.analytic_id);assert.equal(advance.debit,120000000);
+ assert.equal(lines.find(l=>l.source_kind==='operational-account').credit,120000000);
+ db.reverseEvent(item.id,'برگشت پیش پرداخت آزمایشی');
+}));
+
+test('bank and purpose paraphrases use one stable answer, without hiding real follow-up facts',()=>{
+ const qs=reviewQuestions({questions:[{id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'},{id:'payment.bank',text:'این مبلغ از کدام بانک یا حساب عملیاتی پرداخت شد؟',field:'accountId'}],missingFacts:['بانک یا حساب عملیاتی پرداخت‌کننده مشخص نیست.']});
+ assert.equal(qs.length,1);assert.equal(qs[0].id,'cash.account');
+ assert.equal(reviewSavedAnswers({'payment.bank':{question:'این مبلغ از کدام بانک پرداخت شد؟',field:'accountId',value:'cash'}})['cash.account'].value,'cash');
+ const purpose=reviewQuestions({missingFacts:['این هفت میلیون دقیقاً بابت چه هزینه‌ای پرداخت شد؟','ماهیت دقیق هزینه‌ای که امروز پرداخت شده چیست؟','آیا اصل بدهی قبلی ثبت شده؟']});
+ assert.equal(purpose.length,2);assert.equal(purpose[0].id,'fact.expense-purpose');
+});
+
+test('confirmed imported T031 balance -> actual collection -> zero receivable, duplicate import denied',()=>run(async()=>{
+ const party=db.saveContact({name:'مشتری مانده منتقل شده آزمون'});
+ const item=event('طلب قبلی مشتری بابت خرید ماه قبل پنجاه میلیون وصول شد',50000000);
+ database().prepare("UPDATE financial_events SET payload=? WHERE id=?").run(JSON.stringify({...JSON.parse(row(item).payload),amountReferenceOnly:false}),item.id);
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',counterpartyId:party.id},fetcher:noNetwork});
+ assert.ok(prepared(item,p).priorBasis);assert.equal(prepared(item,p).canPost,false);
+ const input={proposalId:p.id,amount:50000000,occurredAt:'2026-09-01',reference:'مانده مستند آزمایشی دفتر قبلی T031',confirmed:true};
+ assert.throws(()=>db.recordReviewPriorBasis(item.id,{...input,confirmed:false}),{code:'REVIEW_BASIS_INVALID'});
+ const result=db.recordReviewPriorBasis(item.id,input);assert.ok(result.journal.id);assert.equal(row(item).status,'pending');
+ assert.throws(()=>db.recordReviewPriorBasis(item.id,input),{code:'REVIEW_BASIS_INVALID'});
+ const fresh=await ai.proposeReview(database(),item.id,{fetcher:noNetwork});assert.equal(prepared(item,fresh).canPost,true);
+ const posted=db.reviewAiFeedback(item.id,fresh.id,{accepted:true}).item;
+ assert.ok(posted.journalEntryId);
+ const accountId=database().prepare("SELECT id FROM ledger_accounts WHERE source_kind='customer-receivable' AND source_key=?").get(party.id).id;
+ assert.equal(database().prepare('SELECT sum(debit-credit) n FROM journal_lines WHERE account_id=?').get(accountId).n,0);
+}));
+
+test('T079 imported tax receivable -> refund allocated to confirmed basis, no income',()=>run(async()=>{
+ const item=event('اداره دارایی ده میلیون از مالیات ارزش افزوده بابت اضافه پرداختی به حساب شرکت عودت داد',10000000);
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noNetwork});
+ assert.ok(prepared(item,p).priorBasis);
+ const basis=db.recordReviewPriorBasis(item.id,{proposalId:p.id,amount:10000000,occurredAt:'2026-09-01',reference:'پرونده مستند استرداد ارزش افزوده آزمایشی T079',confirmed:true}).journal;
+ const fresh=await ai.proposeReview(database(),item.id,{fetcher:noNetwork});assert.equal(prepared(item,fresh).canPost,true,prepared(item,fresh).postingBlockers.join(' / '));
+ const posted=db.reviewAiFeedback(item.id,fresh.id,{accepted:true}).item;
+ const allocated=database().prepare('SELECT * FROM accounting_review_tax_refunds WHERE event_id=?').get(item.id);
+ assert.equal(allocated.amount,10000000);assert.equal(allocated.refund_journal_id,posted.journalEntryId);
+ assert.equal(database().prepare('SELECT entry_id FROM journal_lines WHERE id=?').get(allocated.claim_line_id).entry_id,basis.id);
+ assert.equal(database().prepare("SELECT count(*) n FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? AND a.type='income'").get(posted.journalEntryId).n,0);
+}));
+
+test('prior balance requires manager, prior date and absence of existing ledger history',()=>run(async()=>{
+ const party=db.saveContact({name:'منبع دسترسی آزمایشی'}),item=event('طلب مشتری وصول شد',10000000);
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',counterpartyId:party.id},fetcher:fake({summary:'وصول',missingFacts:[],inventoryItems:[],lines:[{role:'cash',debit:10000000,credit:0},{role:'receivable',debit:0,credit:10000000}]})});
+ const input={proposalId:p.id,amount:10000000,occurredAt:'2026-10-06',reference:'مرجع مستند آزمایشی',confirmed:true};
+ assert.throws(()=>db.runInWorkspace('primary',{role:'accountant',userId:owner.id},()=>db.recordReviewPriorBasis(item.id,input)),{code:'FORBIDDEN'});
+ assert.throws(()=>db.recordReviewPriorBasis(item.id,input),{code:'REVIEW_BASIS_INVALID'});
+ assert.equal(row(item).status,'pending');
+}));
+
+test('closed period atomically rejects basis, creating no receivable, journal or audit message',()=>run(async()=>{
+ const party=db.saveContact({name:'مانده بسته آزمون'}),item=event('طلب مشتری وصول شد',10000000);
+ const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',counterpartyId:party.id},fetcher:fake({summary:'وصول',missingFacts:[],inventoryItems:[],lines:[{role:'cash',debit:10000000,credit:0},{role:'receivable',debit:0,credit:10000000}]})});
+ const period=accounting.periodForDate('2026-09-01');database().prepare("INSERT INTO accounting_periods(period,status) VALUES(?,'locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run(period);
+ const before=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
+ const messages=assistant.reviewConversation(database(),item.id).length;
+ try {
+  assert.throws(()=>db.recordReviewPriorBasis(item.id,{proposalId:p.id,amount:10000000,occurredAt:'2026-09-01',reference:'مانده مستند دوره بسته آزمایشی',confirmed:true}),{code:'ACCOUNTING_PERIOD_LOCKED'});
+  assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,before);
+  assert.equal(assistant.reviewConversation(database(),item.id).length,messages);
+  assert.equal(database().prepare("SELECT 1 FROM ledger_accounts WHERE source_kind='customer-receivable' AND source_key=?").get(party.id),undefined);
+ } finally {database().prepare("UPDATE accounting_periods SET status='open' WHERE period=?").run(period);}
+}));

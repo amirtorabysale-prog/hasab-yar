@@ -11,7 +11,7 @@ import {
   correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -620,6 +620,9 @@ app.post('/api/financial-events/:id/ai-proposal', async (request, response, next
 });
 app.post('/api/financial-events/:id/ai-feedback', (request, response, next) => {
   try { return response.json(reviewAiFeedback(request.params.id, String(request.body?.proposalId || ''), { accepted: request.body?.accepted === true, reason: String(request.body?.reason || '').slice(0, 1000) })); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/:id/prior-basis', (request,response,next)=>{
+  try {return response.status(201).json(recordReviewPriorBasis(request.params.id,request.body || {}));} catch(error) {return next(error);}
 });
 app.post('/api/financial-events/:id/reviewed-journal', (request, response, next) => {
   try { return response.status(201).json(recordReviewedComposite(request.params.id, request.body || {})); }

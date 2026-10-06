@@ -1,3 +1,5 @@
+import { postReviewPriorBasis } from '../reviewPriorBasis.js';
+import { roleAllows } from '../access.js';
 import { allocateTaxRefund } from '../reviewTaxRefund.js';
 import { allocateInsuranceSettlement, releaseInsuranceSettlement } from '../reviewInsurance.js';
 import { assertHoldHasNoResolutions } from '../unidentifiedReceipts.js';
@@ -379,5 +381,24 @@ function acceptPreparedProposal(database,row,proposal,actor) {
     database.exec('COMMIT');
     audit('accept-ai-proposal','financial-event',row.id,{proposalId:proposal.id,journalEntryId:item.journalEntryId,dnaEvidence:proposal.dnaEvidence?.map(d=>d.id) || []});
     return {item};
+  } catch(error) {database.exec('ROLLBACK');throw error;}
+}
+
+/** A separate, explicit import action; never an automatic remedy for insufficient debt. */
+export function recordReviewPriorBasis(eventId,input={}) {
+  const actor=currentWorkspace();
+  if(!roleAllows(actor?.role,'manager')) throw Object.assign(new Error('ثبت مانده منتقل‌شده به تأیید مدیر دفتر نیاز دارد.'),{status:403,code:'FORBIDDEN'});
+  const database=activeWorkspaceDatabase();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const row=database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
+    if(!row) throw Object.assign(new Error('پرونده پیدا نشد.'),{status:404});
+    const proposal=latestReviewProposal(database,eventId);
+    if(!proposal || proposal.id!==input.proposalId || !proposalIsCurrent(proposal,row) || proposal.contextRevision!==proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد تغییر کرده؛ پیش از ثبت مبنا بازتحلیل کن.'),{status:409,code:'AI_PROPOSAL_STALE'});
+    const event=reviewedEvent(database,row);
+    const journal=postReviewPriorBasis(database,row,{...event,evidence:originalReviewTranscript(database,row)},proposal.lines,input,{actor:actor.userId,timeZone:currentTimeZone()});
+    addReviewMessage(database,eventId,'basis-confirmed',`مانده منتقل‌شده با تأیید صریح مدیر ثبت شد: ${input.amount} تومان؛ تاریخ ${input.occurredAt}؛ مرجع ${input.reference}؛ سند ${journal.fiscalYear}/${journal.documentNumber}. پرداخت/وصول هنوز ثبت نشده است.`,actor.userId);
+    audit('create','review-prior-basis',journal.id,{eventId,amount:input.amount,reference:input.reference});
+    database.exec('COMMIT');return {journal};
   } catch(error) {database.exec('ROLLBACK');throw error;}
 }

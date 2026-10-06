@@ -29,6 +29,7 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath.startsWith('/auth/') || normalizedPath.startsWith('/alerts/') || (normalizedPath === '/workspaces' && normalizedMethod === 'POST') || normalizedPath === '/ask') return 'viewer';
   // تأیید و برگشت رویداد مالی، سند در دفتر کل می‌سازد یا معکوس می‌کند؛
   // این کار حسابدار است، نه هر کسی که می‌تواند ثبت روزانه بزند.
+  if (/^\/financial-events\/[^/]+\/prior-basis$/.test(normalizedPath)) return 'manager';
   if (/^\/financial-events\/[^/]+\/(approve|reverse|reject)$/.test(normalizedPath)) return 'accountant';
   // پاسخ کاربر به پرسش خودش هم سند می‌سازد، پس رتبه‌اش همان است. تفاوتش با
   // مسیر بالا در تجربه است نه در اختیار: اینجا در محیط ساده هم باز می‌ماند.

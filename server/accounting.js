@@ -763,7 +763,7 @@ export function vatRefundClaimable(database) {
   return { fromInput, fromOverpayment, total: fromInput + fromOverpayment };
 }
 
-function taxReceivableLedgerAccount(database) {
+export function taxReceivableLedgerAccount(database) {
   return linkedLedgerAccount(database, 'tax-receivable', 'vat-refund', 'مطالبات مالیاتی — استرداد ارزش افزوده', 'asset');
 }
 

@@ -21,8 +21,10 @@ const namedRoles = new Set(['expense-category','income-category','prepaid-asset'
 /** Select actual ledgers, or preview a linked ledger under an existing subsidiary. Never mutate during analysis. */
 export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const blockers=[], role=line.role, key=String(line.key || '').trim();
+  const supplierAdvance=role==='prepaid-asset' && event.reviewSupplierAdvance;
   const chart=listChartAccounts(database);
   let account=line.accountId ? database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE id=? AND active=1').get(line.accountId) : null;
+  if(supplierAdvance) account=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE source_kind='prepaid-asset' AND source_key=? AND active=1").get(event.counterpartyId || '') || null;
   if(role==='payroll-insurance-payable') return {account,creation:null,blockers:account && typed(account,role) && account.source_kind==='payroll-insurance-payable'?[]:['پرداخت بیمه به حساب بیمهٔ پرداختنی لیست حقوق نیاز دارد؛ ایجاد حساب فرضی مجاز نیست.']};
   if(role==='tax-receivable') return {account,creation:null,blockers:account && typed(account,role)?[]:['وصول طلب مالیاتی به حساب واقعی سند مبنا نیاز دارد؛ ایجاد حساب فرضی مجاز نیست.']};
   if(role==='inventory-asset') {
@@ -47,7 +49,7 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
     if(expected && ((mapping && mapping.id!==expected.id) || (account?.chart_account_id && account.chart_account_id!==expected.id))) blockers.push(`معین حساب با دستهٔ «${key}» سازگار نیست؛ معین مرتبط «${expected.name}» است.`);
   }
   if(account && mapping && account.chart_account_id!==mapping.id) blockers.push('حساب و معین پیشنهادی با هم تطبیق ندارند.');
-  if(!account && !line.accountId && namedRoles.has(role) && key) {
+  if(!supplierAdvance && !account && !line.accountId && namedRoles.has(role) && key) {
     const matches=database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE active=1 AND type=? AND normal_side=?').all(REVIEW_ACCOUNT_TYPES[role],reviewNormalSide(role))
       .filter(a=>normalize(a.name)===normalize(key) && (!mapping || a.chart_account_id===mapping.id));
     if(matches.length===1) account=matches[0];
@@ -58,7 +60,7 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const identityMapping=identitySource ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:bank?.name || key,sourceKind:identitySource,sourceKey:key,operationalKind:bank?.kind,bankId:bank?.bank_id},chart,{confidentOnly:true}) : null;
   const suggested=mapping || identityMapping || (key && namedRoles.has(role) ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:key,sourceKind:role,sourceKey:key},chart,{confidentOnly:true}) : null);
   if(role==='prepaid-asset' && suggested && !/پیش[‌\s]*پرداخت/.test(suggested.name)) blockers.push('معین پیش‌پرداخت باید مخصوص پیش‌پرداخت باشد؛ انتخاب دارایی نامرتبط مجاز نیست.');
-  if(!account && suggested && namedRoles.has(role)) {
+  if(!supplierAdvance && !account && suggested && namedRoles.has(role)) {
     const matches=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE chart_account_id=? AND active=1 AND source_kind='chart-account'").all(suggested.id).filter(a=>typed(a,role));
     if(matches.length===1) account=matches[0];
   }
@@ -89,7 +91,7 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v10-conditional-trade-settlement',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v11-supplier-advance-questions',
     reviewAccountCatalog(database),
     identity('accounting_review_tax_refunds') ? database.prepare('SELECT * FROM accounting_review_tax_refunds ORDER BY event_id').all() : [],
     identity('payroll_runs') ? database.prepare('SELECT id,insurance_paid_at FROM payroll_runs ORDER BY id').all() : [],

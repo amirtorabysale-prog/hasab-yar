@@ -1,3 +1,4 @@
+import { reviewPriorBasis } from './reviewPriorBasis.js';
 import { tradeSettlementValidation } from './reviewTradeSettlement.js';
 import { ensureTaxRefundSchema, taxRefundValidation } from './reviewTaxRefund.js';
 import { ensureInsuranceSettlementSchema, insuranceSettlementValidation } from './reviewInsurance.js';
@@ -188,6 +189,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const initial=eventOverride || reviewedEvent(database,row);
   const resources=prepareReviewResources(database,initial,proposal,{evidence:reviewEvidence(database,row),facts:reviewContext(database,row.id).facts,messages:reviewConversation(database,row.id)});
   const event={...resources.event,reviewInventoryItems:eventOverride?.reviewInventoryItems || resources.inventoryItems};
+  const isPartyRole=role=>partyRoles.has(role) || (role==='prepaid-asset' && event.reviewSupplierAdvance);
   const mappingRepairs=[];
   const taxRefund=taxRefundValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const insurance=insuranceSettlementValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
@@ -206,9 +208,10 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   if (!event.occurredAt || !Number.isFinite(Date.parse(event.occurredAt))) blockers.push('تاریخ واقعی رویداد لازم است.');
   const named = key => database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
   const lines = proposal.lines.map(line => {
+    if(line.role==='prepaid-asset' && event.reviewSupplierAdvance) {line={...line};delete line.accountId;}
     let key = line.key, role = line.role;
     if(!key && line.chartAccountId) key=database.prepare('SELECT name FROM chart_accounts WHERE id=? AND active=1').get(line.chartAccountId)?.name;
-    if (partyRoles.has(role)) {
+    if (isPartyRole(role)) {
       if (!event.counterpartyId && !resources.newCounterparty) blockers.push('نام واقعی طرف حساب را مشخص کن؛ انتخاب سرفصل لازم نیست.');
       key = event.counterparty || key;
     }
@@ -217,11 +220,11 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
       if (!key || !database.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(key)) blockers.push('بانک یا صندوق واقعی را انتخاب کن.');
     }
     if (['expense-category','income-category','prepaid-asset','fixed-asset','accumulated-depreciation'].includes(role) && !String(key || '').trim() && !line.accountId) blockers.push('AI نام حساب این سطر را تعیین نکرده؛ بازبینی پیشنهاد لازم است.');
-    let account = line.accountId ? database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(line.accountId) : null;
+    let account = line.accountId && !(role==='prepaid-asset' && event.reviewSupplierAdvance) ? database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE id=?').get(line.accountId) : null;
     if (line.accountId && (!account || !account.active)) blockers.push('سرفصل پیشنهادی حذف یا غیرفعال شده است.');
     if (!account && !line.accountId) {
       const source = sources[role] || role;
-      account = named([systemKeys[role] ? 'system' : source, systemKeys[role] || (role==='unidentified-receipt'?'unidentified-receipt':partyRoles.has(role) ? event.counterpartyId : key)]);
+      account = named([systemKeys[role] ? 'system' : source, systemKeys[role] || (role==='unidentified-receipt'?'unidentified-receipt':isPartyRole(role) ? event.counterpartyId : key)]);
     }
     if (account && role==='cash' && account.sourceKey!==event.accountId) blockers.push('بانک سطر پیشنهادی با بانک انتخاب‌شده یکسان نیست.');
     if(account && role==='cash') {
@@ -235,7 +238,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     }
     if(account && role==='unidentified-receipt' && account.sourceKind!=='unidentified-receipt') blockers.push('وجه ناشناس فقط در حساب مستقل وجوه تعیین‌تکلیف‌نشده قابل نگهداری است.');
     if (account && !account.active) blockers.push('حساب پیشنهادی غیرفعال است.');
-    if (account && partyRoles.has(role) && (account.sourceKind !== (sources[role] || role) || account.sourceKey !== event.counterpartyId)) blockers.push('حساب طرف‌حساب باید به شخص انتخاب‌شده متصل باشد.');
+    if (account && isPartyRole(role) && (account.sourceKind !== (sources[role] || role) || account.sourceKey !== event.counterpartyId)) blockers.push('حساب طرف‌حساب باید به شخص انتخاب‌شده متصل باشد.');
     if (account && account.sourceKind !== (systemKeys[role] ? 'system' : sources[role] || role) && role === 'cash') blockers.push('سطر نقدی باید به بانک یا صندوق عملیاتی متصل باشد.');
     const result=prepareReviewAccount(database,{...line,key,accountId:account?.id || line.accountId},event,{resolve:resolve && !blockers.length});
     blockers.push(...result.blockers);
@@ -248,9 +251,9 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
         if(expected && mappedId && mappedId!==expected.id) blockers.push(`معین سطر با متن اصلی و دستهٔ «${meaning.category}» سازگار نیست؛ پیشنهاد باید بازبینی شود.`);
       }
     }
-    if(mappedId && database.prepare('SELECT requires_analytic FROM chart_accounts WHERE id=?').get(mappedId)?.requires_analytic && !partyRoles.has(role)) blockers.push('این معین به تفصیلی نیاز دارد؛ مسیر تخصصی برای تعیین شخص یا پروژه لازم است.');
+    if(mappedId && database.prepare('SELECT requires_analytic FROM chart_accounts WHERE id=?').get(mappedId)?.requires_analytic && !isPartyRole(role)) blockers.push('این معین به تفصیلی نیاز دارد؛ مسیر تخصصی برای تعیین شخص یا پروژه لازم است.');
     account=result.account ? {...result.account,sourceKind:result.account.source_kind,sourceKey:result.account.source_key} : account;
-    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (role==='cash' ? database.prepare('SELECT name FROM accounts WHERE id=?').get(key || '')?.name || 'بانک یا صندوق انتخاب‌نشده' : key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && partyRoles.has(role) ? resolveEventAnalytic(database,role,event,key) : null };
+    return { ...line,key,accountId:account?.id || null,accountName:account?.name || (role==='cash' ? database.prepare('SELECT name FROM accounts WHERE id=?').get(key || '')?.name || 'بانک یا صندوق انتخاب‌نشده' : key ? `${roleNames[role] || role} — ${key}` : roleNames[role] || role),accountCode:account?.code || '',newAccount:!account?result.creation:null,analyticId: resolve && isPartyRole(role) ? resolveEventAnalytic(database,role,event,key) : null };
   });
   const cheque = lines.filter(l => ['cheque-payable','cheque-receivable'].includes(l.role));
   if (cheque.length && (cheque.length !== 1 || !event.dueAt || (!event.counterpartyId && !resources.newCounterparty))) blockers.push('برای ثبت چک، یک سطر چک، طرف حساب و تاریخ سررسید مشخص لازم است.');
@@ -286,6 +289,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),
+    priorBasis:reviewPriorBasis(database,row,{...event,evidence:reviewEvidence(database,row)},proposal.lines),tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }

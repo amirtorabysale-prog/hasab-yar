@@ -1,3 +1,4 @@
+import {ReviewPriorBasis} from './ReviewPriorBasis.jsx';
 import { reviewQuestions, reviewSavedAnswers } from '../../../shared/reviewQuestions.js';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
@@ -130,6 +131,7 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       <button disabled={loading || busy} onClick={()=>repairMapping(repair)} className="tap mt-2 rounded border border-accent px-3 text-accent">تأیید اصلاح نگاشت بانک و بازتحلیل</button>
     </div>)}
     {ai?.state==='proposed' && ai.bindingCorrections?.map((text,index)=><p key={index} className="mt-1 text-muted">{text}</p>)}
+    {ai?.state==='proposed' && <ReviewPriorBasis item={item} ai={ai} busy={busy || loading} notify={notify} onPrepared={p=>{setAi(p);setFacts(p.context || {});setHistory(p.conversation || []);setAnswers({});setMessage('');}} />}
     {ai?.state==='rejected' && <p>دلیل رد: {ai.reason}</p>}
     {ai?.state==='proposed' && (questions.length>0 || Object.keys(savedAnswers).length>0 || conditions.length>0) && <div className="mt-3 space-y-3 border-t border-line pt-3" aria-label="سؤال‌ها و پاسخ‌های این پرونده">
       {unanswered.length>0 && <><b>برای تکمیل پیشنهاد، به این سؤال‌ها پاسخ بده</b><p className="text-muted">هر پاسخ کنار سؤال خودش ذخیره می‌شود و در بازبینی‌های بعدی در اختیار دستیار می‌ماند.</p></>}

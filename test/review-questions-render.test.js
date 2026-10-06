@@ -45,3 +45,12 @@ test('paraphrased party and inventory fact questions do not create duplicate ans
  const questions=reviewQuestions({questions:[{id:'party.name',text:'نام دقیق طرف حساب را تأیید می‌کنید؟'}],missingFacts:['نام دقیق طرف حساب تأیید شود.','واحد ثبت این کالا چیست؟','واحد کالا چیست؟']});
  assert.equal(questions.length,2);
 });
+
+test('missing imported balance has explicit documented preview and separate disabled approval',async()=>{
+ const vite=await createServer({server:{middlewareMode:true},appType:'custom'});
+ try {
+  const {ReviewAssistant}=await vite.ssrLoadModule('/src/features/review/ReviewAssistant.jsx');
+  const html=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'basis-case'},ai:{state:'proposed',id:'p',canPost:false,lines:[],priorBasis:{role:'receivable',amount:50000000,latestDate:'2026-10-06',debit:'طلب مشتری',credit:'سرمایه افتتاحیه'}},setAi(){},onSaved(){},notify(){}}));
+  assert.match(html,/ثبت مانده مستند منتقل‌شده/);assert.match(html,/مدیر دفتر/);assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
+ } finally {await vite.close();}
+});
