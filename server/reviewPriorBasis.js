@@ -6,19 +6,24 @@ const fail=(message,code='REVIEW_BASIS_INVALID',status=409)=>Object.assign(new E
 /** Missing imported balances are never inferred from the AI's proposal. */
 export function reviewPriorBasis(database,row,event,lines=[]) {
   if(row.status!=='pending' || database.prepare("SELECT 1 FROM journal_entries WHERE source_type='review-prior-basis' AND source_id=?").get(row.id)) return null;
-  const tax=reviewNature(event.evidence || '').vatRefund;
+  const nature=reviewNature(event.evidence || '');
+  if(nature.writtenOffRecovery) return null;
+  const tax=nature.vatRefund;
   const trade=lines.find(l=>['payable','receivable'].includes(l.role));
+  const advance= nature.advanceRefund ? lines.find(l=>['customer-advance','deferred-revenue'].includes(l.role)) : null;
   const cash=lines.find(l=>l.role==='cash');
-  const role=tax?'tax-receivable':trade && cash && lines.length===2?trade.role:null;
+  const counterpart=trade || advance;
+  const role=tax?'tax-receivable':counterpart && cash && lines.length===2?counterpart.role:null;
   if(!role || (!tax && !event.counterpartyId)) return null;
-  if(!tax && (role==='payable' ? !(trade.debit>0 && cash.credit===trade.debit) : !(trade.credit>0 && cash.debit===trade.credit))) return null;
-  const source=tax?'tax-receivable':role==='payable'?'vendor-payable':'customer-receivable';
+  const liability=role==='payable' || Boolean(advance);
+  if(!tax && (liability ? !(counterpart.debit>0 && cash.credit===counterpart.debit) : !(counterpart.credit>0 && cash.debit===counterpart.credit))) return null;
+  const source=tax?'tax-receivable':advance?role:role==='payable'?'vendor-payable':'customer-receivable';
   const prior=database.prepare('SELECT 1 FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE a.source_kind=? AND (? OR a.source_key=?) LIMIT 1').get(source,tax?1:0,event.counterpartyId || '');
   if(prior || (tax && vatRefundClaimable(database).total>0)) return null;
   return {role,amount:tax?row.amount:cash.debit || cash.credit,counterpartyName:event.counterparty || null,
     counterpartyId:event.counterpartyId || null,latestDate:String(event.occurredAt || '').slice(0,10),
-    debit:role==='payable'?'سرمایه افتتاحیه':tax?'مطالبات استرداد ارزش افزوده':`طلب از ${event.counterparty}`,
-    credit:role==='payable'?`بدهی به ${event.counterparty}`:'سرمایه افتتاحیه'};
+    debit:liability?'سرمایه افتتاحیه':tax?'مطالبات استرداد ارزش افزوده':`طلب از ${event.counterparty}`,
+    credit:liability?`${advance?'پیش‌دریافت از':'بدهی به'} ${event.counterparty}`:'سرمایه افتتاحیه'};
 }
 
 /** Caller owns an atomic transaction and has checked manager permission. */
@@ -31,7 +36,7 @@ export function postReviewPriorBasis(database,row,event,lines,input,{actor,timeZ
   const accountId=basis.role==='tax-receivable'?taxReceivableLedgerAccount(database):resolveEventRole(database,basis.role,event.counterparty,event);
   const equity=database.prepare("SELECT id FROM ledger_accounts WHERE source_kind='system' AND source_key='opening-equity' AND active=1").get();
   if(!equity) throw fail('حساب سرمایه افتتاحیه فعال نیست.');
-  const payable=basis.role==='payable',analyticId=payable || basis.role==='receivable'?resolveEventAnalytic(database,basis.role,event):null;
+  const payable=['payable','customer-advance','deferred-revenue'].includes(basis.role),analyticId=payable || basis.role==='receivable'?resolveEventAnalytic(database,basis.role,event):null;
   return postJournalEntry(database,{sourceType:'review-prior-basis',sourceId:row.id,occurredAt:date,
     memo:`مانده منتقل‌شده تأییدشده — ${basis.role==='tax-receivable'?'طلب استرداد ارزش افزوده':event.counterparty} — ${reference}`,
     lines:[{accountId,analyticId,debit:payable?0:amount,credit:payable?amount:0,description:reference},{accountId:equity.id,debit:payable?amount:0,credit:payable?0:amount}]},{createdBy:actor,timeZone});

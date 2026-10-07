@@ -19,6 +19,8 @@ import { extractContactName } from '../shared/counterpartySpeech.js';
 import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
 import { detectBank } from '../shared/banks.js';
 import { splitDateRoles } from '../shared/voiceIntent.js';
+import { normalizePersian } from '../shared/normalize.js';
+import { availableReviewedBalance } from './reviewCashBasis.js';
 
 const fail = (message, code = 'REVIEW_DETAILS_REQUIRED') => Object.assign(new Error(message), { code, status: 409 });
 export function ensureAssistantSchema(database) {
@@ -123,7 +125,15 @@ export function reviewedEvent(database, row) {
   }
   if(!Object.hasOwn(facts,'accountId') && database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()) {
     const bank=detectBank(text);
-    if(event.accountId==='cash' && !/از صندوق|به صندوق|پول نقد|اسکناس/.test(text)) event.accountId=null;
+    const normalized=normalizePersian(text);
+    const explicitCash=/(?:از|به|در)\s+صندوق(?:\s+نقدی)?|پول نقد|اسکناس/.test(normalized);
+    if(event.accountId==='cash' && !explicitCash) event.accountId=null;
+    if(!bank && explicitCash) {
+      const matches=database.prepare("SELECT id,name FROM accounts WHERE active=1 AND kind='cash'").all()
+        .filter(a=>normalized.includes(normalizePersian(a.name)) || a.id==='cash' && /صندوق نقدی/.test(normalized));
+      if(matches.length===1) event.accountId=matches[0].id;
+      else event.accountId=null;
+    }
     if(bank) {event.accountId=null;const matches=database.prepare("SELECT id FROM accounts WHERE active=1 AND kind='bank' AND bank_id=?").all(bank.bankId);if(matches.length===1) event.accountId=matches[0].id;}
   }
   // Reuse voice date-role parser, anchored to the recorded event, never today's date.
@@ -196,7 +206,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const insurance=insuranceSettlementValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const trade=tradeSettlementValidation(database,event,proposal.lines);
   const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial),...taxRefund.issues,...insurance.issues];
-  const blockers = [...(proposal.missingFacts || []),...natureIssues.map(q=>q.text)];
+  const blockers = [...(proposal.missingFacts || []),...(proposal.workflowBlockers || []),...natureIssues.map(q=>q.text)];
   const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
   if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');
   const cashQuestion=proposal.lines.some(l=>l.role==='cash') && !event.accountId ? {id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'} : null;
@@ -278,7 +288,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     if (advanceRefund) {
       if(!creditCash || other[0].debit<=0) blockers.push('عودت پیش‌دریافت باید بدهی مشتری را کم کند و خروج وجه باشد.');
       const prior=event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(other[0].role,event.counterpartyId) : null;
-      const balance=prior ? database.prepare('SELECT COALESCE(SUM(credit-debit),0) balance FROM journal_lines WHERE account_id=?').get(prior.id).balance : 0;
+      const balance=availableReviewedBalance(database,prior?.id,event.occurredAt,'credit');
       if(balance<row.amount) blockers.push('مانده واقعی پیش‌دریافت این مشتری برای عودت کافی نیست؛ سند دریافت اولیه یا مانده مستند لازم است.');
     } else if (!['partner-payable','partner-receivable'].includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
   }
@@ -286,8 +296,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const settlementRole=partnerMode===PARTNER_TREATMENTS.repayCompany?'partner-payable':partnerMode===PARTNER_TREATMENTS.repayPartner?'partner-receivable':null;
   if(settlementRole) {
     const account=event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(settlementRole,event.counterpartyId) : null;
-    const balance=account ? database.prepare('SELECT COALESCE(SUM(debit-credit),0) balance FROM journal_lines WHERE account_id=?').get(account.id).balance : 0;
-    const available=settlementRole==='partner-payable'?-balance:balance;
+    const available=availableReviewedBalance(database,account?.id,event.occurredAt,settlementRole==='partner-payable'?'credit':'debit');
     if(available<row.amount) blockers.push('مانده واقعی حساب جاری این شریک برای بازپرداخت کافی نیست؛ سند مبنای بدهی/طلب یا تفکیک مبلغ لازم است.');
   }
   const locked = row.posting_plan ? JSON.parse(row.posting_plan) : null;

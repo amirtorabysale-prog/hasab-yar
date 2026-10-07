@@ -195,7 +195,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
               className="tap mt-2 rounded-lg bg-accent px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-45"
             >{creatingBank ? 'در حال ساخت…' : `ساخت حساب «${bankGap.bankName}»`}</button>}
           </div>}
-          {item.servicePeriodStart && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
+          {missingPaymentDate(item) && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
             <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>
             <PersianDateInput value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
           </label>}
