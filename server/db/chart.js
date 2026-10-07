@@ -136,7 +136,7 @@ export function importOpeningBalanceFile(buffer, fileName = '', { amountUnit = '
       ...item, ledgerAccountId: ledgerAccountForChart(database, item.chart, (type) => nextLedgerCode(database, type)),
     }));
     const posted = postImportedOpeningBalances(database, lines, {
-      occurredAt: occurredAt || new Date().toISOString(),
+      occurredAt: occurredAt || '',
       createdBy: currentWorkspace()?.userId || null,
       timeZone: currentTimeZone(),
       replace,

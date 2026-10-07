@@ -346,11 +346,12 @@ export const api = {
   chartOverview: () => request('/api/chart/overview'),
   importChartFile: (file, replace = false) => { const form = new FormData(); form.append('file', file); form.append('replace', String(replace)); return request('/api/import/chart', { method: 'POST', body: form }); },
   importAnalyticsFile: (file) => { const form = new FormData(); form.append('file', file); return request('/api/import/analytics', { method: 'POST', body: form }); },
-  importOpeningBalances: (file, { amountUnit = 'toman', replace = false } = {}) => {
+  importOpeningBalances: (file, { amountUnit = 'toman', replace = false, occurredAt = '' } = {}) => {
     const form = new FormData();
     form.append('file', file);
     form.append('amountUnit', amountUnit);
     form.append('replace', String(replace));
+    if (occurredAt) form.append('occurredAt', occurredAt);
     return request('/api/import/opening-balances', { method: 'POST', body: form });
   },
   transferFields: () => request('/api/accountant-transfer/fields'),

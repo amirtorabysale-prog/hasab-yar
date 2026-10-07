@@ -1,5 +1,5 @@
 import { reviewNature } from '../shared/reviewNature.js';
-import { postJournalEntry, taxReceivableLedgerAccount, vatRefundClaimable } from './accounting.js';
+import { ledgerStartDate, postJournalEntry, taxReceivableLedgerAccount, vatRefundClaimable } from './accounting.js';
 import { resolveEventRole, resolveEventAnalytic } from './roleResolver.js';
 
 const fail=(message,code='REVIEW_BASIS_INVALID',status=409)=>Object.assign(new Error(message),{code,status});
@@ -24,8 +24,7 @@ export function reviewPriorBasis(database,row,event,lines=[]) {
   // آن ایجاد شده، از خرید/فروش همین دوره آمده و ثبتش با سرمایهٔ افتتاحیه
   // هزینه یا درآمد همان دوره را پنهان می‌کند؛ آن سند اصلی خودش را می‌خواهد.
   const eventDate=String(event.occurredAt || '').slice(0,10);
-  const ledgerStart=database.prepare(`SELECT MIN(substr(occurred_at,1,10)) d FROM journal_entries
-    WHERE entry_kind='normal' AND source_type NOT IN ('opening_balance','review-prior-basis')`).get()?.d || null;
+  const ledgerStart=ledgerStartDate(database);
   const latestDate=ledgerStart && ledgerStart<eventDate ? ledgerStart : eventDate;
   return {role,amount:tax?row.amount:cash.debit || cash.credit,counterpartyName:event.counterparty || null,
     counterpartyId:event.counterpartyId || null,latestDate,ledgerStart,
