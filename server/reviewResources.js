@@ -41,7 +41,10 @@ export function prepareReviewResources(database,event,proposal,{evidence='',fact
   const items=proposal.inventoryItems || [];
   if(!items.length) {result.blockers.push('برای ورود انبار، نام کالا، مقدار و واحد را مشخص کن.');return result;}
   const other=proposal.lines.filter(l=>l.role!=='inventory-asset');
-  if(other.length!==1 || !['cheque-payable','payable'].includes(other[0].role) || other[0].debit || inventory.some(l=>l.credit || !l.debit)) result.blockers.push('این پیشنهاد انبار فقط خرید تحویل‌شده با چک یا خرید نسیه را پشتیبانی می‌کند.');
+  // خرید کالا با بانک یا صندوق همان خریدِ تحویل‌شده است، فقط شکل پرداختش فرق
+  // دارد. آزمون مهر ۱۴۰۵: «سی کارتن روغن موتور… از بانک ملت خریدیم» با پیشنهاد
+  // درستِ AI هم ثبت نمی‌شد.
+  if(other.length!==1 || !['cheque-payable','payable','cash'].includes(other[0].role) || other[0].debit || inventory.some(l=>l.credit || !l.debit)) result.blockers.push('این پیشنهاد انبار فقط خرید تحویل‌شده با چک، نسیه یا پرداخت نقدی را پشتیبانی می‌کند.');
   const used=new Set();
   for(const item of items) {
     const name=String(item.name || '').trim(), unit=String(item.unit || '').trim(), quantity=Number(item.quantity), total=Number(item.total);

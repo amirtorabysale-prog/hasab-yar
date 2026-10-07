@@ -15,7 +15,7 @@ import { ensureFinancialEventSchema } from './financialEventStore.js';
 import { resolveEventAnalytic } from './roleResolver.js';
 
 import { prepareReviewResources } from './reviewResources.js';
-import { prepareReviewAccount, reviewKnowledgeFingerprint } from './reviewAccountPreparation.js';
+import { prepareReviewAccount, proposalIsStale } from './reviewAccountPreparation.js';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
 import { detectBank } from '../shared/banks.js';
@@ -57,7 +57,9 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     const submitted=facts.questionAnswers;
     if(!submitted || typeof submitted!=='object' || Array.isArray(submitted) || Object.keys(submitted).length>40) throw fail('پاسخ سؤال‌ها معتبر نیست.');
     const latest=database.prepare('SELECT proposal FROM accounting_review_ai WHERE event_id=? ORDER BY rowid DESC LIMIT 1').get(eventId);
-    const allowed=new Map(reviewQuestions(latest?JSON.parse(latest.proposal):{}).map(q=>[q.id,q]));
+    // سؤال نام طرف حساب را خودِ سیستم از مانع می‌سازد، نه AI؛ همیشه پذیرفته است.
+    const allowed=new Map([...reviewQuestions(latest?JSON.parse(latest.proposal):{}).map(q=>[q.id,q]),
+      ['counterparty.name',{id:'counterparty.name',text:'نام طرف حساب این سند چیست؟',field:'counterpartyName'}]]);
     const answers=reviewSavedAnswers(old.facts.questionAnswers || {});
     for(const [id,answer] of Object.entries(submitted)) {
       if(!allowed.has(id) && !Object.hasOwn(answers,id)) throw fail('این سؤال مربوط به پیشنهاد فعلی این پرونده نیست.');
@@ -75,6 +77,13 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     if(Object.keys(answers).length>40) throw fail('تعداد پاسخ‌های این پرونده بیش از حد مجاز است.');
     next.questionAnswers=answers;
   }
+  // «طرف‌حساب تازه» در انتخابگر شخص: نامِ تازه، نه شناسهٔ موجود. انتخابگر تا
+  // مهر ۱۴۰۵ فقط اشخاص موجود را نشان می‌داد و سؤال «تازه است یا موجود؟» راهی
+  // برای جواب «تازه» نداشت.
+  if (String(supplied.counterpartyId || '').startsWith('new:')) {
+    supplied.counterpartyName = String(supplied.counterpartyId).slice(4).trim();
+    supplied.counterpartyId = '';
+  }
   for (const key of ['occurredAt', 'dueAt', 'counterpartyId', 'counterpartyName', 'accountId']) {
     if (!Object.hasOwn(supplied, key)) continue;
     const value = String(supplied[key] || '').trim();
@@ -86,7 +95,8 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     next[key] = value || null;
     // Editing the ordinary date/person/bank controls also updates the saved answer.
     for(const [id,answer] of Object.entries(next.questionAnswers || {})) {
-      if(answer.field!==key || answer.value===value) continue;
+      // جواب «طرف‌حساب تازه» با نامش ذخیره شده و شناسهٔ خالی، پاکش نمی‌کند.
+      if(answer.field!==key || answer.value===value || String(answer.value).startsWith('new:')) continue;
       next.questionAnswers={...next.questionAnswers};
       if(value) next.questionAnswers[id]={...answer,value};
       else delete next.questionAnswers[id];
@@ -127,12 +137,17 @@ export function reviewedEvent(database, row) {
   if(!Object.hasOwn(facts,'accountId') && database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()) {
     const bank=detectBank(text);
     const normalized=normalizePersian(text);
-    const explicitCash=/(?:از|به|در)\s+صندوق(?:\s+نقدی)?|پول نقد|اسکناس/.test(normalized);
+    // «گذاشتیم توی صندوق»، «نقدی دادیم»، «فروش نقدی» همان قدر صریح‌اند که «از
+    // صندوق». آزمون مهر ۱۴۰۵: این‌ها نشناخته می‌ماندند و «تحلیل کن» یک دور کامل
+    // فقط برای پرسیدن «از کدام بانک یا صندوق؟» صرف می‌کرد.
+    const explicitCash=/(?:از|به|در|توی|تو)\s+صندوق(?:\s+نقدی)?|پول نقد|اسکناس|نقدی\s+(?:دادیم|دادم|پرداخت|گرفتیم|گرفتم|خریدیم|خریدم|فروختیم)|نقد\s+(?:دادیم|دادم|گرفتیم|گرفتم)|فروش\s+نقدی/.test(normalized);
     if(event.accountId==='cash' && !explicitCash) event.accountId=null;
     if(!bank && explicitCash) {
-      const matches=database.prepare("SELECT id,name FROM accounts WHERE active=1 AND kind='cash'").all()
-        .filter(a=>normalized.includes(normalizePersian(a.name)) || a.id==='cash' && /صندوق نقدی/.test(normalized));
+      const cashAccounts=database.prepare("SELECT id,name FROM accounts WHERE active=1 AND kind='cash'").all();
+      const matches=cashAccounts.filter(a=>normalized.includes(normalizePersian(a.name)) || a.id==='cash' && /صندوق نقدی/.test(normalized));
+      // دفتری که فقط یک صندوق دارد، «صندوق» را بی‌ابهام به همان می‌برد.
       if(matches.length===1) event.accountId=matches[0].id;
+      else if(!matches.length && cashAccounts.length===1) event.accountId=cashAccounts[0].id;
       else event.accountId=null;
     }
     if(bank) {event.accountId=null;const matches=database.prepare("SELECT id FROM accounts WHERE active=1 AND kind='bank' AND bank_id=?").all(bank.bankId);if(matches.length===1) event.accountId=matches[0].id;}
@@ -190,11 +205,17 @@ export function proposalRevision(database, eventId) { return reviewContext(datab
 export function conversationFingerprint(database,eventId) {
   return createHash('sha256').update(JSON.stringify([reviewContext(database,eventId),reviewConversation(database,eventId)])).digest('hex');
 }
-const partyRoles = new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable']);
+const partyRoles = new Set(['partner-payable','partner-receivable','receivable','payable','cheque-receivable','cheque-payable','customer-advance','deferred-revenue','refundable-deposit','loan-payable','supplier-advance']);
 const roleNames = {'tax-receivable':'مطالبات مالیاتی','payroll-insurance-payable':'بیمهٔ پرداختنی (تأمین اجتماعی)','partner-payable':'جاری شریک — بدهی شرکت','partner-receivable':'جاری شریک — طلب شرکت','unidentified-receipt':'وجوه دریافتی تعیین‌تکلیف‌نشده',cash:'بانک و صندوق',receivable:'حساب دریافتنی',payable:'حساب پرداختنی','cheque-receivable':'اسناد دریافتنی','cheque-payable':'اسناد پرداختنی','inventory-asset':'موجودی کالا','expense-category':'هزینه','income-category':'درآمد','fixed-asset':'دارایی ثابت','refundable-deposit':'ودیعه قابل استرداد','loan-payable':'اصل وام پرداختنی','prepaid-asset':'پیش‌پرداخت','owner-capital':'سرمایه مالک','customer-advance':'پیش‌دریافت مشتری','deferred-revenue':'درآمد انتقالی','accumulated-depreciation':'استهلاک انباشته','depreciation-expense':'هزینه استهلاک','vat-input':'اعتبار ارزش افزوده','vat-output':'مالیات ارزش افزوده پرداختنی'};
 const sources = { cash:'operational-account', receivable:'customer-receivable', payable:'vendor-payable' };
-const cashCounterparts=['payable','receivable','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'];
-const outgoingCashRoles=['payable','expense-category','fixed-asset','prepaid-asset','refundable-deposit','payroll-insurance-payable'];
+const cashCounterparts=['payable','receivable','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','expense-category','income-category','fixed-asset','owner-capital','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue',
+  // خرید کالا با بانک، پیش‌پرداخت خرید و برداشت مالک هم شکل ساده‌ی دوطرفهٔ نقدی‌اند.
+  'inventory-asset','supplier-advance','inventory-unsplit','owner-drawing'];
+const outgoingCashRoles=['payable','expense-category','fixed-asset','prepaid-asset','refundable-deposit','payroll-insurance-payable','inventory-asset','supplier-advance','inventory-unsplit','owner-drawing'];
+// نقشی که پول در هر دو جهت کنارش می‌نشیند: سرمایه هم با آورده بالا می‌رود و
+// هم با برداشت مالک پایین می‌آید. کنترل یک‌جهتهٔ قدیمی برداشت را هرگز
+// قابل ثبت نمی‌گذاشت، حتی وقتی پیشنهاد AI درست بود.
+const twoWayCashRoles=['partner-payable','partner-receivable','owner-capital'];
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
 export function prepareReviewProposal(database, row, proposal, { resolve = false, eventOverride = null } = {}) {
@@ -217,7 +238,9 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   if(/اصل\s*وام/.test(reviewEvidence(database,row)) && proposal.lines.some(l=>['income-category','payable'].includes(l.role))) blockers.push('اصل وام درآمد یا بدهی تجاری نیست؛ نقش اصل وام پرداختنی لازم است.');
   blockers.push(...resources.blockers);
   if(proposal.lines.some(l=>l.role==='inventory-asset') && !event.amountReferenceOnly && proposal.lines.filter(l=>l.role==='inventory-asset').reduce((n,l)=>n+l.debit,0)!==row.amount) blockers.push('بهای خرید انباری با مبلغ قطعی رویداد برابر نیست؛ پیشنهاد باید اصلاح شود.');
-  if(!eventOverride && proposal.knowledgeFingerprint && proposal.knowledgeFingerprint!==reviewKnowledgeFingerprint(database)) blockers.push('کدینگ، اشخاص یا دفتر کل تغییر کرده؛ تحلیل را دوباره درخواست کن.');
+  // فقط پیشنهادی که به ماندهٔ دفتر وابسته است با ثبت سندهای دیگر کهنه می‌شود؛
+  // بقیه را اعتبارسنجی همین تابع با حساب‌های فعلی می‌سنجد (پیام دیگری لازم نیست).
+  if(!eventOverride && proposalIsStale(database,proposal)) blockers.push('کدینگ، اشخاص یا دفتر کل تغییر کرده؛ تحلیل را دوباره درخواست کن.');
   if (!event.occurredAt || !Number.isFinite(Date.parse(event.occurredAt))) blockers.push('تاریخ واقعی رویداد لازم است.');
   const named = key => database.prepare('SELECT id,code,name,type,normal_side AS normalSide,active,source_kind AS sourceKind,source_key AS sourceKey FROM ledger_accounts WHERE source_kind=? AND source_key=?').get(...key.map(v=>v ?? null));
   const lines = proposal.lines.map(line => {
@@ -275,7 +298,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const other = lines.filter(l=>l.role!=='cash');
   // Only supported two-sided cash shapes synchronize the operational register atomically.
   if (cash.length && (cash.length !== 1 || other.length !== 1 || !cashCounterparts.includes(other[0]?.role))) blockers.push('این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.');
-  if (cash.length && other.some(l => l.accountId && !['customer-receivable','vendor-payable','income-category','expense-category','fixed-asset','system','chart-account','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
+  if (cash.length && other.some(l => l.accountId && !['customer-receivable','vendor-payable','income-category','expense-category','fixed-asset','system','chart-account','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue','inventory-product','inventory-unsplit'].includes(database.prepare('SELECT source_kind FROM ledger_accounts WHERE id=?').get(l.accountId)?.source_kind))) blockers.push('اثر نقدی این سرفصل در گزارش عملیاتی پشتیبانی نشده؛ مسیر تخصصی لازم است.');
   const anchor = row.journal_source ? JSON.parse(row.journal_source) : null;
   if (anchor?.type==='transaction') {
     const transaction=database.prepare('SELECT amount,status FROM transactions WHERE id=?').get(anchor.id);
@@ -292,7 +315,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
       const prior=event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(other[0].role,event.counterpartyId) : null;
       const balance=availableReviewedBalance(database,prior?.id,event.occurredAt,'credit');
       if(balance<row.amount) blockers.push('مانده واقعی پیش‌دریافت این مشتری برای عودت کافی نیست؛ سند دریافت اولیه یا مانده مستند لازم است.');
-    } else if (!['partner-payable','partner-receivable'].includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+    } else if (!twoWayCashRoles.includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
   }
   const partnerMode=partnerTreatment(reviewEvidence(database,row),initial);
   const settlementRole=partnerMode===PARTNER_TREATMENTS.repayCompany?'partner-payable':partnerMode===PARTNER_TREATMENTS.repayPartner?'partner-receivable':null;
@@ -306,7 +329,11 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const decided = row.decision_id ? database.prepare('SELECT decision_status FROM accounting_decisions WHERE id=?').get(row.decision_id)?.decision_status==='decided' : true;
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
+  // مانعی که جوابش یک نام است، باید سؤالی با همان فیلد باشد؛ وگرنه حسابدار
+  // پیشنهادِ قفل را می‌بیند و نمی‌داند کجا باید چه بنویسد (آزمون مهر ۱۴۰۵، قبض گاز).
+  const askedForName=(proposal.questions || []).some(q=>['counterpartyName','counterpartyId'].includes(q.field));
+  const nameQuestion=!askedForName && unique.some(b=>/نام واقعی طرف[\s‌]*حساب/.test(b)) ? [{id:'counterparty.name',text:'نام طرف حساب این سند چیست؟',field:'counterpartyName'}] : [];
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    priorBasis:reviewPriorBasis(database,row,{...event,evidence:reviewEvidence(database,row)},proposal.lines),tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:withoutPolicyAnsweredQuestions(reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),threshold,row.amount),
+    priorBasis:reviewPriorBasis(database,row,{...event,evidence:reviewEvidence(database,row)},proposal.lines),tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:withoutPolicyAnsweredQuestions(reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...nameQuestion,...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),threshold,row.amount),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }

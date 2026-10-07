@@ -12,6 +12,8 @@ import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
 import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
+import { saveFixedAssetSettings } from '../depreciationLedger.js';
+import { todayPersian } from '../../shared/persianDate.js';
 import { contactIdForName } from './contacts.js';
 import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { settlementFor, transactionJournalPoster } from './transactions.js';
@@ -358,7 +360,9 @@ function acceptPreparedProposal(database,row,proposal,actor) {
       const ledger = database.prepare('SELECT source_kind,source_key FROM ledger_accounts WHERE id=?').get(cash.accountId);
       if (ledger?.source_kind!=='operational-account' || ledger.source_key!==event.accountId) throw Object.assign(new Error('حساب نقدی پیشنهاد با بانک انتخاب‌شده برابر نیست.'),{code:'REVIEW_ACCOUNT_MISMATCH',status:409});
       const amount = cash.debit || cash.credit, type = cash.debit ? 'income' : 'expense';
-      const capitalFlow = counterpart.role==='fixed-asset' ? 'fixed-asset' : counterpart.role==='owner-capital' ? 'capital-in' : '';
+      // سرمایه در هر دو جهت: پولی که آمده آورده است، پولی که رفته برداشت مالک.
+      const capitalFlow = counterpart.role==='fixed-asset' ? 'fixed-asset' : counterpart.role==='owner-capital' && cash.debit ? 'capital-in' : '';
+      const drawing = ['owner-capital','owner-drawing'].includes(counterpart.role) && cash.credit;
       const transactionId = source?.type==='transaction' ? source.id : randomUUID();
       if (source?.type==='transaction') {
         const changed = database.prepare(`UPDATE transactions SET amount=?,type=?,category=?,account_id=?,account=?,contact_id=?,occurred_at=?,capital_flow=?,journal_deferred=0,review_state='ready',needs_review=0,updated_at=? WHERE id=? AND status!='deleted'`).run(amount,type,counterpart.accountName || counterpart.key,event.accountId,event.accountId,event.counterpartyId || null,event.occurredAt,capitalFlow,new Date().toISOString(),transactionId).changes;
@@ -369,7 +373,7 @@ function acceptPreparedProposal(database,row,proposal,actor) {
         database.prepare('UPDATE financial_events SET journal_source=? WHERE id=?').run(JSON.stringify({type:'transaction',id:transactionId}),row.id);
       }
       database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(
-        ['payable','receivable','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue'].includes(counterpart.role) ? counterpart.role : '',transactionId);
+        drawing ? 'owner-drawing' : ['payable','receivable','tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','unidentified-receipt','prepaid-asset','refundable-deposit','loan-payable','customer-advance','deferred-revenue','supplier-advance','inventory-unsplit'].includes(counterpart.role) ? counterpart.role : '',transactionId);
     } else if (source?.type==='transaction') {
       database.prepare("UPDATE transactions SET status='deleted',journal_deferred=0,updated_at=? WHERE id=?").run(new Date().toISOString(),source.id);
     }
@@ -377,6 +381,13 @@ function acceptPreparedProposal(database,row,proposal,actor) {
     allocateTaxRefund(database,row.id,item.journalEntryId,final.taxRefundClaim,row.amount);
     allocateInsuranceSettlement(database,row.id,item.journalEntryId,final.insuranceRun,row.amount,event.occurredAt);
     applyReviewInventory(database,row.id,event,resources.inventoryItems,{actor,timeZone:currentTimeZone()});
+    // دارایی ثابت با عمر مفیدش به دفتر دارایی‌ها می‌رود، وگرنه هرگز مستهلک نمی‌شود.
+    if (proposal.fixedAsset?.usefulLifeMonths) {
+      const assetLine = final.lines.find(l=>l.role==='fixed-asset');
+      const assetKey = assetLine?.accountId && database.prepare("SELECT source_key FROM ledger_accounts WHERE id=? AND source_kind='fixed-asset'").get(assetLine.accountId)?.source_key;
+      const month = todayPersian(new Date(event.occurredAt));
+      if (assetKey) saveFixedAssetSettings(database,{assetKey,usefulLifeMonths:proposal.fixedAsset.usefulLifeMonths,inServiceMonth:`${month.year}-${String(month.month).padStart(2,'0')}`});
+    }
     const cheque = final.lines.find(l=>['cheque-receivable','cheque-payable'].includes(l.role));
     if (cheque) attachReviewedCheque({eventId:row.id,event,line:cheque,journalEntryId:item.journalEntryId,against:final.lines.some(l=>['receivable','payable'].includes(l.role))?'receivable':'income'});
     database.prepare('UPDATE accounting_review_ai SET proposal=? WHERE id=?').run(JSON.stringify({...proposal,lines:final.lines,finalJournalEntryId:item.journalEntryId}),proposal.id);

@@ -221,4 +221,14 @@ test('مبلغ محاوره‌ای: سؤال «کدام مبلغ؟» به برگ
   assert.equal(store.decisionForEvent(db(), event.id).question.fact, 'amountScale');
 }));
 
+test('چک بابت خرید مواد اولیه موجودی می‌سازد، نه هزینه', () => inWorkspace(() => {
+  const cheque = database.recordCheque({
+    direction: 'payable', counterpartyName: 'شرکت پارس پلاست', amount: 40_000_000, against: 'income', dueAt: '2027-01-05T08:30:00.000Z',
+    note: 'برای خرید مواد اولیه یک چک چهل میلیون تومانی با سررسید ۱۵ دی به شرکت پارس پلاست دادیم.',
+  });
+  const lines = db().prepare(`SELECT a.source_kind AS kind, l.debit, l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=?`).all(cheque.journalEntryId);
+  assert.ok(lines.some((line) => line.kind === 'inventory-unsplit' && line.debit === 40_000_000), JSON.stringify(lines));
+  assert.equal(lines.some((line) => line.kind === 'expense-category'), false);
+}));
+
 test.after(() => removeTempDatabase(databasePath));

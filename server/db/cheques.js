@@ -16,6 +16,7 @@ import { contactIdForName } from './contacts.js';
 import { resolveAccountId } from './accounts.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { normalizeFinancialEvent } from '../../shared/financialEvent.js';
+import { purchasePurposeFromSpeech } from '../../shared/purchasePurpose.js';
 
 export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
@@ -109,6 +110,10 @@ export function recordCheque(values = {}) {
   }
   const against = values.against;
   const category = String(values.category || (direction === 'receivable' ? 'فروش' : 'مواد و کالا')).trim().slice(0, 80);
+  // «چک دادیم برای خرید مواد اولیه» موجودی می‌خرد، نه هزینهٔ این ماه. همان
+  // خواندن هدف خرید که خرید نقدی دارد؛ بی‌نشانه، رفتار قبلی می‌ماند.
+  const intendedUse = values.intendedUse || (direction === 'payable' && against === 'income' ? purchasePurposeFromSpeech(values.note) : null);
+  const inventory = direction === 'payable' && against === 'income' && ['resale', 'production'].includes(intendedUse);
   const occurredAt = values.occurredAt || new Date().toISOString();
   const id = randomUUID();
 
@@ -118,7 +123,7 @@ export function recordCheque(values = {}) {
       ? analyticForContact(db_, contactId, counterpartyName)?.id || null
       : counterpartyAnalyticForKey(db_, counterpartyName);
     const posted = postChequeJournal(db_, {
-      chequeId: id, direction, against, amount, occurredAt, category,
+      chequeId: id, direction, against, amount, occurredAt, category, inventory,
       counterparty: { contactId, name: counterpartyName, analyticId },
       memo: `چک ${direction === 'receivable' ? 'دریافتی از' : 'پرداختی به'} ${counterpartyName}`,
     }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });

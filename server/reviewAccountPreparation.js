@@ -13,8 +13,35 @@ export const REVIEW_ACCOUNT_TYPES = Object.freeze({
   'expense-category':'expense','income-category':'income','prepaid-asset':'asset','fixed-asset':'asset',
   'refundable-deposit':'asset','loan-payable':'liability','owner-capital':'equity','customer-advance':'liability','deferred-revenue':'liability',
   'accumulated-depreciation':'asset','depreciation-expense':'expense','vat-input':'asset','vat-output':'liability',
+  // نقش‌های موتور تصمیم (مهر ۱۴۰۵) که AI هم ممکن است پیشنهاد دهد.
+  'supplier-advance':'asset','inventory-unsplit':'asset','owner-drawing':'equity',
 });
-export const reviewNormalSide = role => role==='accumulated-depreciation' ? 'credit' : ['asset','expense'].includes(REVIEW_ACCOUNT_TYPES[role]) ? 'debit' : 'credit';
+// برداشت مالک کاهندهٔ حقوق صاحبان سهام است: نوعش سرمایه، ماهیتش بدهکار.
+export const reviewNormalSide = role => role==='accumulated-depreciation' ? 'credit' : role==='owner-drawing' ? 'debit' : ['asset','expense'].includes(REVIEW_ACCOUNT_TYPES[role]) ? 'debit' : 'credit';
+
+/**
+ * آیا درستیِ این پیشنهاد به ماندهٔ دفتر بستگی دارد؟
+ *
+ * تا مهر ۱۴۰۵ هر سندی که در دفتر ثبت می‌شد، همهٔ پیشنهادهای باز را کهنه
+ * می‌کرد؛ حسابدارِ هفده پرونده باید هر کدام را درست پیش از ثبت دوباره تحلیل
+ * می‌کرد — هر بار یک درخواست به مدل. بیشتر پیشنهادها به ماندهٔ دفتر کاری
+ * ندارند: «فروش نقدی»، «ودیعه»، «وام» با ثبت یک سند دیگر غلط نمی‌شوند و
+ * اعتبار حساب‌هایشان هنگام ثبت دوباره سنجیده می‌شود. فقط تسویه با ماندهٔ قبلی،
+ * استرداد مالیات، لیست بیمه، جاری شریک و موجودی کالا به ماندهٔ دفتر
+ * وابسته‌اند و همان‌ها با هر تغییر دفتر کهنه می‌شوند.
+ */
+const LEDGER_DEPENDENT_ROLES = new Set(['tax-receivable','payroll-insurance-payable','partner-payable','partner-receivable','inventory-asset']);
+export function proposalDependsOnLedger(proposal = {}) {
+  if (proposal.ledgerDependent === true) return true;
+  if (proposal.priorBasis || proposal.tradeSettlement || proposal.taxRefundClaim || proposal.insuranceRun) return true;
+  const lines = proposal.lines || [];
+  const cashIn = lines.some((l) => l.role === 'cash' && l.debit > 0), cashOut = lines.some((l) => l.role === 'cash' && l.credit > 0);
+  return lines.some((l) => LEDGER_DEPENDENT_ROLES.has(l.role)
+    || (l.role === 'unidentified-receipt' && l.debit > 0)
+    // وصول طلب و پرداخت بدهی، یا عودت پیش‌دریافت: به ماندهٔ همان شخص بسته‌اند.
+    || (cashIn && l.role === 'receivable' && l.credit > 0)
+    || (cashOut && ['payable', 'customer-advance', 'deferred-revenue'].includes(l.role) && l.debit > 0));
+}
 const normalize = value => normalizePersian(String(value || '')).replace(/[\s‌ٔ]+/g,' ').trim();
 const typed = (account,role) => account.type===REVIEW_ACCOUNT_TYPES[role] && (account.normalSide || account.normal_side)===reviewNormalSide(role);
 const namedRoles = new Set(['expense-category','income-category','prepaid-asset','fixed-asset','accumulated-depreciation']);
@@ -26,6 +53,10 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const supplierAdvance=role==='prepaid-asset' && event.reviewSupplierAdvance;
   const chart=listChartAccounts(database);
   let account=line.accountId ? database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE id=? AND active=1').get(line.accountId) : null;
+  // دارایی ثابت حساب دفترکل خودش را می‌گیرد تا در فهرست دارایی‌ها دیده و
+  // مستهلک شود؛ حساب عمومیِ «اموال و تجهیزات» جایش نیست. آزمون مهر ۱۴۰۵:
+  // دستگاه کپی روی حساب کل نشست و هیچ‌وقت در دفتر دارایی‌ها نیامد.
+  if(role==='fixed-asset' && account && account.source_kind!=='fixed-asset') account=null;
   if(taxPenalty && account && !isTaxPenaltyCategory(account.name)) blockers.push('جریمه مالیاتی باید در حساب مستقل جرایم مالیاتی ثبت شود، نه مالیات و عوارض عمومی.');
   if(taxPenalty && line.chartAccountId && !chart.some(c=>c.id===line.chartAccountId && c.role==='tax-penalty-expense')) blockers.push('معین جریمه باید مستقل از مالیات و عوارض عمومی باشد.');
   if(supplierAdvance) account=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE source_kind='prepaid-asset' AND source_key=? AND active=1").get(event.counterpartyId || '') || null;
@@ -53,7 +84,7 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
     if(expected && ((mapping && mapping.id!==expected.id) || (account?.chart_account_id && account.chart_account_id!==expected.id))) blockers.push(`معین حساب با دستهٔ «${key}» سازگار نیست؛ معین مرتبط «${expected.name}» است.`);
   }
   if(account && mapping && account.chart_account_id!==mapping.id) blockers.push('حساب و معین پیشنهادی با هم تطبیق ندارند.');
-  if(!supplierAdvance && !account && !line.accountId && namedRoles.has(role) && key) {
+  if(!supplierAdvance && role!=='fixed-asset' && !account && !line.accountId && namedRoles.has(role) && key) {
     const matches=database.prepare('SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE active=1 AND type=? AND normal_side=?').all(REVIEW_ACCOUNT_TYPES[role],reviewNormalSide(role))
       .filter(a=>normalize(a.name)===normalize(key) && (!mapping || a.chart_account_id===mapping.id));
     if(matches.length===1) account=matches[0];
@@ -64,7 +95,7 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
   const identityMapping=identitySource ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:bank?.name || key,sourceKind:identitySource,sourceKey:key,operationalKind:bank?.kind,bankId:bank?.bank_id},chart,{confidentOnly:true}) : null;
   const suggested=mapping || identityMapping || (key && namedRoles.has(role) ? suggestChartAccount({type:REVIEW_ACCOUNT_TYPES[role],name:key,sourceKind:role,sourceKey:key},chart,{confidentOnly:true}) : null);
   if(role==='prepaid-asset' && suggested && !/پیش[‌\s]*پرداخت/.test(suggested.name)) blockers.push('معین پیش‌پرداخت باید مخصوص پیش‌پرداخت باشد؛ انتخاب دارایی نامرتبط مجاز نیست.');
-  if(!supplierAdvance && !account && suggested && namedRoles.has(role)) {
+  if(!supplierAdvance && role!=='fixed-asset' && !account && suggested && namedRoles.has(role)) {
     const matches=database.prepare("SELECT *,normal_side AS normalSide FROM ledger_accounts WHERE chart_account_id=? AND active=1 AND source_kind='chart-account'").all(suggested.id).filter(a=>typed(a,role));
     if(matches.length===1) account=matches[0];
   }
@@ -77,6 +108,30 @@ export function prepareReviewAccount(database,line,event,{resolve=false}={}) {
     if(!account?.active || !typed(account,role)) blockers.push('حساب ساخته‌شده با ماهیت پیشنهاد سازگار نیست.');
   }
   return {account,creation,blockers};
+}
+
+/**
+ * اثر انگشت ساختار: کدینگ، بانک و صندوق، و حساب‌هایی که هنگام پیشنهاد وجود
+ * داشتند.
+ *
+ * تغییر نام یا غیرفعال‌شدن یک حساب موجود پیشنهاد را کهنه می‌کند؛ حسابِ تازه‌ای
+ * که ثبت پروندهٔ دیگری ساخته («حساب پرداختنی — شرکت گاز») نه. بدون این مرز،
+ * هر ثبت با طرف‌حساب تازه همهٔ پیشنهادهای باز را باطل می‌کرد.
+ */
+export function reviewStructureFingerprint(database, maxLedgerRowid = null) {
+  const max = Number.isSafeInteger(maxLedgerRowid) ? maxLedgerRowid : database.prepare('SELECT COALESCE(MAX(rowid),0) n FROM ledger_accounts').get().n;
+  const ledger = database.prepare('SELECT id,code,name,type,normal_side,source_kind,source_key,chart_account_id,active FROM ledger_accounts WHERE rowid<=? ORDER BY rowid').all(max);
+  const chart = listChartAccounts(database).map((a) => [a.id, a.code, a.name, a.type, a.normalSide, a.role, a.active, a.postable]);
+  const accounts = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'").get()
+    ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [];
+  return { hash: createHash('sha256').update(JSON.stringify(['review-structure-v1', ledger, chart, accounts])).digest('hex'), maxLedgerRowid: max };
+}
+
+/** آیا این پیشنهاد دیگر با دفتر فعلی نمی‌خواند؟ */
+export function proposalIsStale(database, proposal = {}) {
+  const full = () => Boolean(proposal.knowledgeFingerprint) && proposal.knowledgeFingerprint !== reviewKnowledgeFingerprint(database);
+  if (proposalDependsOnLedger(proposal) || !proposal.structureFingerprint) return full();
+  return reviewStructureFingerprint(database, proposal.ledgerRowid).hash !== proposal.structureFingerprint;
 }
 
 /** Full catalog, compact tuples; no first-300 truncation that hides relevant accounts. */

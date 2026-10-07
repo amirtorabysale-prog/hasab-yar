@@ -36,7 +36,9 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       <datalist id={`tax-sources-${item.id}`}>{ai.taxRefundCandidates.map(c=><option key={c.lineId} value={c.reference}>{c.accountName} · {persianDate(c.occurredAt)} · مانده {formatAmount(c.available)} تومان</option>)}</datalist>
     </>;
     if(['occurredAt','dueAt'].includes(q.field)) return <input {...props} type="date" />;
-    if(['counterpartyId','accountId'].includes(q.field)) return <select {...props}><option value="">انتخاب کن…</option>{(q.field==='counterpartyId'?contacts:accounts).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>;
+    // شخص تازه هم یک جواب است، نه فقط انتخاب از فهرست موجود.
+    const newName=String(ai?.newCounterparty?.name || ai?.counterpartyName || '').trim();
+    if(['counterpartyId','accountId'].includes(q.field)) return <select {...props}><option value="">انتخاب کن…</option>{q.field==='counterpartyId' && newName && <option value={`new:${newName}`}>طرف‌حساب تازه: {newName}</option>}{(q.field==='counterpartyId'?contacts:accounts).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>;
     return <textarea {...props} rows={2} maxLength={1000} placeholder="پاسخ این سؤال را اینجا بنویس…" />;
   };
   const loadChoices = async () => {

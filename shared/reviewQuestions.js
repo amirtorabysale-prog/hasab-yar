@@ -56,6 +56,17 @@ export function reviewSavedAnswers(answers={}) {
 // Creation of supported ledgers is the application's job, not a fact to ask
 // the accountant. Actual bank, identity, prior balance and ambiguous mapping
 // questions must remain. Final account validation still gates posting.
+/**
+ * «با چه سرفصلی ثبت کنیم؟» — انتخاب حساب کار سیستم است، نه واقعیتی که از
+ * حسابدار پرسیده شود. متن دستوری این را منع کرده، ولی آزمون مهر ۱۴۰۵ نشان داد
+ * مدل گاهی باز هم می‌پرسد. انتخاب بانک و صندوق (با فیلد) عمداً بیرون است.
+ */
+export function isHeadingChoiceQuestion(q) {
+  if (q?.field) return false;
+  const t=normalize(q.text || q);
+  return /سرفصل|معین|کدینگ/.test(t) && /چه|کدام|کدوم|انتخاب|ثبت کنیم|ثبت شود/.test(t) && !/بانک|صندوق/.test(t);
+}
+
 export function isReviewAccountSetupQuestion(q) {
   const t=normalize(q.text || q);
   return /حساب|سرفصل|معین/.test(t) && /ایجاد|ساخت|تطبیق/.test(t) && /موجود نیست|وجود ندارد/.test(t) &&

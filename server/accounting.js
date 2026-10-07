@@ -884,9 +884,12 @@ export function postChequeJournal(database, values, { createdBy = null, timeZone
 
   let lines;
   if (stage === 'record') {
+    // خرید کالا برای فروش یا تولید با چک: موجودی تفکیک‌نشده، نه هزینه.
     const other = values.against === 'receivable'
       ? partyAccount()
-      : categoryLedgerAccount(database, receivable ? 'income' : 'expense', values.category);
+      : !receivable && values.inventory
+        ? linkedLedgerAccount(database, 'inventory-unsplit', 'unsplit', 'موجودی کالا — تفکیک‌نشده', 'asset')
+        : categoryLedgerAccount(database, receivable ? 'income' : 'expense', values.category);
     // تفصیلی فقط روی سطری می‌نشیند که واقعاً مال یک شخص است؛ روی حساب درآمد
     // و هزینه معنایی ندارد.
     const otherAnalytic = values.against === 'receivable' ? analyticId : null;
