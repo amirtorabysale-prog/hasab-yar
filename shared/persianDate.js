@@ -78,6 +78,29 @@ function persianParts(date, timeZone) {
   return { year: part('year'), month: part('month'), day: part('day') };
 }
 
+/**
+ * سالِ گفته‌شده با حروف، به رقم: «هزار و چهارصد و شش» → «1406».
+ *
+ * تشخیص گفتار سال را گاهی با حروف می‌نویسد. با حروف، نه الگوی بازهٔ پوشش آن را
+ * می‌شناخت و نه حذف بازه از متنِ تاریخ پرداخت؛ تاریخ شروع پوشش جای تاریخ
+ * پرداخت می‌نشست. فقط سده‌های ۱۳ و ۱۴ شمسی تبدیل می‌شوند و فقط وقتی پس از نام
+ * ماه یا «سال» آمده باشند — «هزار و چهارصد تومان» دست نمی‌خورد.
+ */
+const YEAR_HUNDREDS = Object.freeze({ سیصد: 300, چهارصد: 400 });
+const YEAR_TENS = Object.freeze({ ده: 10, بیست: 20, سی: 30, چهل: 40, پنجاه: 50, شصت: 60, هفتاد: 70, هشتاد: 80, نود: 90 });
+const YEAR_SMALL = Object.freeze({
+  یک: 1, دو: 2, سه: 3, چهار: 4, پنج: 5, شش: 6, شیش: 6, هفت: 7, هشت: 8, نه: 9,
+  یازده: 11, دوازده: 12, سیزده: 13, چهارده: 14, پانزده: 15, پونزده: 15, شانزده: 16, هفده: 17, هجده: 18, نوزده: 19,
+});
+const SPOKEN_YEAR = new RegExp(`((?:${PERSIAN_MONTHS.map(([name]) => name).join('|')}|ماه|سال)\\s+)هزار\\s+و\\s+(سیصد|چهارصد)((?:\\s+و\\s+(?:${[...Object.keys(YEAR_TENS), ...Object.keys(YEAR_SMALL)].join('|')})){0,2})(?![آ-ی])`, 'g');
+export function normalizeSpokenYears(text) {
+  return String(text || '').replace(SPOKEN_YEAR, (match, lead, hundreds, rest) => {
+    if (/^\s*(?:تومان|تومن|ریال|میلیون)/.test(text.slice(text.indexOf(match) + match.length))) return match;
+    const parts = rest.split(/\s+و\s+/).filter(Boolean).map((word) => YEAR_TENS[word.trim()] ?? YEAR_SMALL[word.trim()] ?? 0);
+    return `${lead}${1000 + YEAR_HUNDREDS[hundreds] + parts.reduce((sum, value) => sum + value, 0)}`;
+  });
+}
+
 export function todayPersian(now = new Date(), timeZone = 'Asia/Tehran') {
   return persianParts(now instanceof Date ? now : new Date(now), timeZone);
 }
@@ -386,14 +409,17 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
 /** Dates belonging to coverage, an old invoice, or future cheque cashing are
  * not occurrence dates. Keep raw text intact for evidence and service parsing. */
 export function extractOccurrenceDate(input, options = {}) {
-  let text = normalizePersian(input);
+  let text = normalizeSpokenYears(normalizePersian(input));
   // A future delivery/start clause must not override an explicit payment today.
   // Remove only that clause, retaining earlier occurrence evidence and amounts.
   text = text.replace(/(?:بهره برداری|شروع خدمت|تحویل گزارش|تحویل کالا|ارائه خدمات|انجام خدمات)[^،,؛.]*ماه\s*(?:آینده|بعد|آتی)[^،,؛.]*/g, ' ');
   const months = PERSIAN_MONTHS.map(([name]) => name).join('|');
   if (/بیمه|اجاره|پوشش|شارژ|اشتراک/.test(text)) {
     text = text.replace(/پوشش\s*(?:بیمه\s*)?(?:از|برای)\s*[^،,؛.]+/g, ' ');
-    text = text.replace(new RegExp(`از\\s+(?:${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})\\s+تا\\s+(?:آخر|پایان|${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})(?:\\s+همین\\s+امسال)?`, 'g'), ' ');
+    // سالِ کنار هر ماه («از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶») هم بخشی از همان
+    // بازهٔ پوشش است؛ بدون آن، «اول آبان» تاریخ پرداخت خوانده می‌شد و «امروز» گم.
+    const year = '(?:\\s+(?:سال\\s+)?\\d{2,4})?';
+    text = text.replace(new RegExp(`از\\s+(?:${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})${year}\\s+تا\\s+(?:آخر|پایان|${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})${year}(?:\\s+همین\\s+امسال)?`, 'g'), ' ');
     text = text.replace(/(?:شروع|آغاز)\s*(?:پوشش|بیمه|قرارداد)\s*[^،,؛.]+/g, ' ');
   }
   text = text.replace(/(?:خرید|فروش|فاکتور|بدهی|اجاره)\s*(?:ماه\s*(?:قبل|پیش|گذشته)|سال\s*(?:قبل|گذشته))/g, ' ');

@@ -1,4 +1,4 @@
-import { PERSIAN_MONTHS, persianToISO, todayPersian } from './persianDate.js';
+import { PERSIAN_MONTHS, normalizeSpokenYears, persianToISO, todayPersian } from './persianDate.js';
 
 /**
  * دورهٔ پوششِ گفته‌شده در جمله.
@@ -67,8 +67,17 @@ function termOfPayment(text, index) {
 const MONTH_NAMES = PERSIAN_MONTHS.map(([name]) => name).join('|');
 const monthNumber = (name) => PERSIAN_MONTHS.find(([candidate]) => candidate === name)?.[1] || 0;
 
-/** «از اول فروردین تا آخر اسفند» — بازهٔ صریح ماه‌ها. */
-const MONTH_RANGE = new RegExp(`(?<![آ-ی])از${GAP}(?:اول${GAP}|ابتدا${YA}${GAP})?(${MONTH_NAMES})${GAP}(?:ماه${GAP})?تا${GAP}(?:آخر${GAP}|پا${YA}ان${GAP}|انتها${YA}${GAP})?(${MONTH_NAMES})`);
+/**
+ * «از اول فروردین تا آخر اسفند» — بازهٔ صریح ماه‌ها، با سالِ اختیاری کنار هر ماه.
+ *
+ * «از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶» تا مهر ۱۴۰۵ خوانده نمی‌شد، چون سالِ
+ * میان ماه و «تا» الگو را می‌شکست؛ دوره از «یک‌ساله» و از روز پرداخت ساخته
+ * می‌شد و سال‌ها مبلغ شمرده می‌شدند.
+ */
+const RANGE_YEAR = `(?:${GAP}(?:سال${GAP})?(\\d{4}|\\d{2})(?![\\d]))?`;
+const MONTH_RANGE = new RegExp(`(?<![آ-ی])از${GAP}(?:اول${GAP}|ابتدا${YA}${GAP})?(${MONTH_NAMES})${GAP}(?:ماه${GAP})?${RANGE_YEAR}${GAP}تا${GAP}(?:آخر${GAP}|پا${YA}ان${GAP}|انتها${YA}${GAP})?(${MONTH_NAMES})(?:${GAP}ماه)?${RANGE_YEAR}`);
+/** «۰۵» یعنی ۱۴۰۵: سال دورقمی در گفتار، سال همین سده است. */
+const fullYear = (value) => (!value ? null : value.length === 2 ? 1400 + Number(value) : Number(value));
 /**
  * «بابت اجاره اردیبهشت ماه» — یک ماه نام‌برده، به‌عنوان موضوع پرداخت.
  *
@@ -94,8 +103,9 @@ function lastDayOf(year, month) {
   return first ? new Date(new Date(first).getTime() - 86_400_000).toISOString() : null;
 }
 
-function monthSpan(year, fromMonth, toMonth) {
-  const endYear = toMonth < fromMonth ? year + 1 : year;
+function monthSpan(year, fromMonth, toMonth, explicitEndYear = null) {
+  const endYear = explicitEndYear || (toMonth < fromMonth ? year + 1 : year);
+  if (endYear < year || (endYear === year && toMonth < fromMonth)) return null;
   const start = persianToISO(year, fromMonth, 1);
   const end = lastDayOf(endYear, toMonth);
   if (!start || !end) return null;
@@ -114,7 +124,14 @@ function namedMonths(text, occurredAt) {
   const reference = todayPersian(new Date(occurredAt));
   const year = reference.year + yearShift(text);
   const range = MONTH_RANGE.exec(text);
-  if (range) return monthSpan(year, monthNumber(range[1]), monthNumber(range[2]));
+  if (range) {
+    // سالِ گفته‌شده بر سال تاریخ رویداد مقدم است؛ اگر فقط سالِ پایان گفته شده،
+    // سال شروع از روی ترتیب ماه‌ها پیدا می‌شود.
+    const fromMonth = monthNumber(range[1]), toMonth = monthNumber(range[3]);
+    const endYear = fullYear(range[4]);
+    const startYear = fullYear(range[2]) || (endYear ? (toMonth < fromMonth ? endYear - 1 : endYear) : year);
+    return monthSpan(startYear, fromMonth, toMonth, endYear);
+  }
   const single = NAMED_MONTH.exec(text);
   if (single) {
     const month = monthNumber(single[1] || single[2]);
@@ -124,7 +141,10 @@ function namedMonths(text, occurredAt) {
 }
 
 export function readServicePeriod(input, { occurredAt } = {}) {
-  const text = String(input || '');
+  // «مهر هزار و چهارصد و پنج» همان «مهر 1405» است؛ بی‌این، بازه شناخته نمی‌شد.
+  // آزمون ارزان پیش از تبدیل: تایپ زنده بودجهٔ میلی‌ثانیه‌ای دارد.
+  const raw = String(input || '');
+  const text = /هزار\s+و\s+(?:سیصد|چهارصد)/.test(raw) ? normalizeSpokenYears(raw) : raw;
   if (!/ماه|سال|فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند/.test(text)) return null;
   if (PAST.test(text)) return null;
   const start = occurredAt || null;

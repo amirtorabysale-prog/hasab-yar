@@ -187,7 +187,55 @@ const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگر�
   'برگ', 'برگه', 'دستگاه', 'جلد', 'قلم', 'جفت', 'لیتر', 'کیسه', 'رول', 'ورق',
   'ماه', 'ماهه', 'ماهانه', 'سال', 'ساله', 'سالانه', 'هفته', 'هفتگی', 'روزه', 'روزانه', 'ساعته',
   ...PERSIAN_MONTHS.map(([name]) => name)];
-const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
+const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز', 'تاریخ'];
+
+/**
+ * تاریخ، مبلغ نیست.
+ *
+ * «امروز ۲۴ میلیون… از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶ پرداخت کردم» دو تراکنش
+ * می‌ساخت: ۲۴ میلیون، و یک تراکنش «۱٬۴۰۶ تومانی» از سالِ پایان دوره. روز ماه
+ * پیش از نام ماه («۲۰ آذر») از قبل کنار گذاشته می‌شد، ولی سالِ بعد از نام ماه،
+ * سال بی‌نام ماه، و تاریخ عددی («۱۴۰۵/۰۷/۱۵») نه — تاریخ عددی حتی بدتر بود:
+ * سه بخشش با هم جمع می‌شدند و یک مبلغ ۱۴۲۷ تومانی می‌ساختند.
+ *
+ * سه قاعده، از قطعی به محتاط:
+ *
+ * ۱. **تاریخ عددی کامل** — سال/ماه/روز یا روز/ماه/سال با یک جداکنندهٔ یکسان و
+ *    محدودهٔ معتبر — پیش از هر چیز پوشانده می‌شود. «2.500.000» تاریخ نیست چون
+ *    بخش میانی‌اش ماه نیست.
+ * ۲. **سال در بافت تاریخ** — بعد از نام ماه، «ماه» یا «سال»، یا پیش از «شمسی»
+ *    و «میلادی» — حتی اگر با حروف گفته شده باشد («مهر هزار و چهارصد و شش»).
+ * ۳. **سالِ برهنه** — عدد چهاررقمی ۱۳۰۰ تا ۱۴۹۹ (یا ۱۹۰۰ تا ۲۱۰۰) که هیچ واحد
+ *    پولی پشتش نیست. «۱۴۰۵ تومان» مبلغ می‌ماند؛ «مالیات ۱۴۰۴» نه.
+ *
+ * در هر سه حالت، واحد پولِ چسبیده («… ۱۴۰۵ تومان») قاعده را لغو می‌کند.
+ */
+const isYearLike = (value) => (value >= 1300 && value <= 1499) || (value >= 1900 && value <= 2100);
+const MONEY_AFTER = /^(?:تومان|تومن|ریال|هزار|میلیون|میلیارد|دلار|یورو|درهم)/;
+const DATE_SUFFIX = /^(?:شمسی|هجری|ه\s*\.?\s*ش|میلادی)/;
+const YEAR_CONTEXT = new RegExp(`(?:^|\\s)(?:${PERSIAN_MONTHS.map(([name]) => name).join('|')}|ماه|سال)(?:\\s+(?:ماه|سال|مالی))*$`);
+const NUMERIC_DATE = /(?<![\d,.])(\d{1,4})([/\-.])(\d{1,2})\2(\d{1,4})(?![\d,]|\.\d)/g;
+
+function looksLikeDate(first, month, last) {
+  const [x, m, z] = [Number(first), Number(month), Number(last)];
+  if (!(m >= 1 && m <= 12)) return false;
+  const yearFirst = (first.length === 4 ? isYearLike(x) : first.length === 2) && z >= 1 && z <= 31;
+  const dayFirst = x >= 1 && x <= 31 && (last.length === 4 ? isYearLike(z) : last.length === 2);
+  return yearFirst || dayFirst;
+}
+
+/** تاریخ عددی کامل با فاصلهٔ هم‌طول جایگزین می‌شود تا جای بقیهٔ جمله تکان نخورد. */
+function maskNumericDates(text) {
+  return text.replace(NUMERIC_DATE, (match, first, _separator, month, last) => (
+    looksLikeDate(first, month, last) ? ' '.repeat(match.length) : match));
+}
+
+function isYearSpan(span, before, after) {
+  if (!isYearLike(span.amount) || MONEY_AFTER.test(after)) return false;
+  if (YEAR_CONTEXT.test(before) || DATE_SUFFIX.test(after)) return true;
+  // سال برهنه فقط به شکل رقمی؛ «هزار و چهارصد» با حروف بی‌بافت تاریخ، مبلغ است.
+  return /^\d{4}$/.test(span.raw.replace(/[.,]+$/, ''));
+}
 
 // عبارت‌های دوکلمه‌ای که هیچ خوانش مبلغی ندارند. این‌ها از معافیتِ واژهٔ مقیاس
 // هم قوی‌ترند: در «کد حساب هزار و دویست»، وجود «هزار» باعث می‌شد عدد مبلغ
@@ -206,6 +254,8 @@ function isNonAmountSpan(text, span) {
 
   // شناسهٔ صریح، حتی با واژهٔ مقیاس، هرگز مبلغ نیست.
   if (precededBy(STRONG_IDENTIFIER_PREFIXES)) return true;
+  // سال، حتی با «هزار» در خودش («مهر هزار و چهارصد و شش»)، مبلغ نیست.
+  if (isYearSpan(span, before, after)) return true;
   // عددهای دارای مقیاس پولی، حتی اگر کنار واژه‌های دیگر باشند، مبلغ محسوب می‌شوند.
   if (/هزار|میلیون|میلیارد/.test(raw)) return false;
   // واژهٔ بعدی، بی‌توجه به ویرگول و نقطه: «پنجاه برگه، کارمزد…».
@@ -214,7 +264,7 @@ function isNonAmountSpan(text, span) {
 }
 
 export function extractAmounts(input) {
-  const text = repairNumberSpeech(normalizePersian(input));
+  const text = maskNumericDates(repairNumberSpeech(normalizePersian(input)));
   const tokens = tokenize(text);
   const spans = [];
   for (let index = 0; index < tokens.length; index += 1) {
@@ -225,6 +275,9 @@ export function extractAmounts(input) {
     let end = token.end;
     while (cursor < tokens.length) {
       const next = tokens[cursor];
+      // ویرگول و نقطه میان دو واژهٔ عددی یعنی دو عدد جدا: «…هزار و چهارصد و شش،
+      // دوازده میلیون» یک مبلغ ۴۱۸ میلیونی می‌ساخت.
+      if (/[،,؛;.:!؟?\n]/.test(text.slice(end, next.start))) break;
       if (isNumericWord(next.value)) {
         collected.push(next.value);
         end = next.end;
