@@ -20,8 +20,15 @@ export function reviewPriorBasis(database,row,event,lines=[]) {
   const source=tax?'tax-receivable':advance?role:role==='payable'?'vendor-payable':'customer-receivable';
   const prior=database.prepare('SELECT 1 FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE a.source_kind=? AND (? OR a.source_key=?) LIMIT 1').get(source,tax?1:0,event.counterpartyId || '');
   if(prior || (tax && vatRefundClaimable(database).total>0)) return null;
+  // «منتقل‌شده» یعنی از پیش از شروع ثبت در این دفتر. بدهی یا طلبی که بعد از
+  // آن ایجاد شده، از خرید/فروش همین دوره آمده و ثبتش با سرمایهٔ افتتاحیه
+  // هزینه یا درآمد همان دوره را پنهان می‌کند؛ آن سند اصلی خودش را می‌خواهد.
+  const eventDate=String(event.occurredAt || '').slice(0,10);
+  const ledgerStart=database.prepare(`SELECT MIN(substr(occurred_at,1,10)) d FROM journal_entries
+    WHERE entry_kind='normal' AND source_type NOT IN ('opening_balance','review-prior-basis')`).get()?.d || null;
+  const latestDate=ledgerStart && ledgerStart<eventDate ? ledgerStart : eventDate;
   return {role,amount:tax?row.amount:cash.debit || cash.credit,counterpartyName:event.counterparty || null,
-    counterpartyId:event.counterpartyId || null,latestDate:String(event.occurredAt || '').slice(0,10),
+    counterpartyId:event.counterpartyId || null,latestDate,ledgerStart,
     debit:liability?'سرمایه افتتاحیه':tax?'مطالبات استرداد ارزش افزوده':`طلب از ${event.counterparty}`,
     credit:liability?`${advance?'پیش‌دریافت از':'بدهی به'} ${event.counterparty}`:'سرمایه افتتاحیه'};
 }
@@ -32,7 +39,9 @@ export function postReviewPriorBasis(database,row,event,lines,input,{actor,timeZ
   if(!basis) throw fail('این پرونده مانده منتقل‌شده قابل ثبت ندارد؛ سند مبنای موجود را بررسی کن.');
   const amount=Number(input.amount),date=String(input.occurredAt || ''),reference=String(input.reference || '').trim();
   if(input.confirmed!==true || !Number.isSafeInteger(amount) || amount<basis.amount || amount<=0 || reference.length<8 || reference.length>300) throw fail('مبلغ واقعی، مرجع مستند و تأیید صریح مانده منتقل‌شده لازم است.');
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date || date>=basis.latestDate) throw fail('تاریخ مانده منتقل‌شده باید معتبر و قبل از تاریخ پرداخت یا وصول باشد.');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date || date>=basis.latestDate) throw fail(basis.ledgerStart && basis.latestDate===basis.ledgerStart
+    ? `تاریخ ماندهٔ منتقل‌شده باید پیش از شروع ثبت در این دفتر (${basis.ledgerStart}) باشد؛ بدهی یا طلبی که بعد از آن ایجاد شده، سند خرید یا فروش اصلی خودش را لازم دارد، نه سرمایهٔ افتتاحیه.`
+    : 'تاریخ مانده منتقل‌شده باید معتبر و قبل از تاریخ پرداخت یا وصول باشد.');
   const accountId=basis.role==='tax-receivable'?taxReceivableLedgerAccount(database):resolveEventRole(database,basis.role,event.counterparty,event);
   const equity=database.prepare("SELECT id FROM ledger_accounts WHERE source_kind='system' AND source_key='opening-equity' AND active=1").get();
   if(!equity) throw fail('حساب سرمایه افتتاحیه فعال نیست.');
