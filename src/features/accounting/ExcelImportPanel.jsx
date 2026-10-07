@@ -14,6 +14,7 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
   const [file, setFile] = useState(null);
   const [amountUnit, setAmountUnit] = useState('toman');
   const [replace, setReplace] = useState(false);
+  const [openingDate, setOpeningDate] = useState('');
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState([]);
   const [result, setResult] = useState(null);
@@ -37,7 +38,7 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
     try {
       const response = kind === 'chart' ? await api.importChartFile(file, replace)
         : kind === 'analytics' ? await api.importAnalyticsFile(file)
-          : await api.importOpeningBalances(file, { amountUnit, replace });
+          : await api.importOpeningBalances(file, { amountUnit, replace, occurredAt: openingDate });
       setResult(response); setFile(null); await refresh(); notify('فایل با موفقیت وارد شد.');
     } catch (error) {
       setIssues(error.details?.errors || []); notify(error.message);
@@ -64,6 +65,8 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
       {kind === 'opening' && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-warn-bg px-3 py-2">
         <label className="text-[13px] font-bold text-accent">واحد مبلغ فایل<select value={amountUnit} onChange={(event) => setAmountUnit(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] text-ink"><option value="toman">تومان</option><option value="rial">ریال</option></select></label>
         <span className="text-[11px] leading-5 text-muted">اشتباه در این انتخاب یعنی خطای ده‌برابری؛ حساب‌یار آن را حدس نمی‌زند.</span>
+        <label className="text-[13px] font-bold text-accent">تاریخ افتتاحیه<input type="date" value={openingDate} onChange={(event) => setOpeningDate(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] text-ink" /></label>
+        <span className="text-[11px] leading-5 text-muted">خالی یعنی روز شروع ثبت در این دفتر؛ تاریخ بعد از آن پذیرفته نمی‌شود.</span>
       </div>}
       {kind !== 'analytics' && <label className="flex items-center gap-2 text-[12px] text-muted"><input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} />{kind === 'chart' ? 'کدینگ فعلی جایگزین شود (فقط وقتی هیچ نگاشتی وجود ندارد)' : 'سند افتتاحیهٔ قبلی معکوس و جایگزین شود'}</label>}
       <button disabled={!canManage || !file || busy} className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">{busy ? 'در حال ورود…' : 'بارگذاری فایل'}</button>

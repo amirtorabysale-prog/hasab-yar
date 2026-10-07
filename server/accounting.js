@@ -541,9 +541,27 @@ export function syncOpeningBalanceJournal(database, operationalAccountId, { crea
  * تبدیل می‌کند. ورود دوباره، سند قبلی را معکوس می‌کند و سند تازه می‌سازد؛
  * تاریخچه بازنویسی نمی‌شود.
  */
+/**
+ * تاریخ شروع ثبت در این دفتر: نخستین سند عملیاتی، بدون اسناد افتتاحیه.
+ *
+ * مانده‌ای که در طرف «سرمایهٔ افتتاحیه» می‌نشیند فقط تا این تاریخ معنا دارد؛
+ * بعد از آن، بدهی یا طلب از خرید و فروش همین دوره آمده و سند خودش را می‌خواهد.
+ */
+export function ledgerStartDate(database) {
+  ensureAccountingSchema(database);
+  return database.prepare(`SELECT MIN(substr(occurred_at,1,10)) d FROM journal_entries
+    WHERE entry_kind='normal' AND source_type NOT IN ('opening_balance','opening_import','review-prior-basis')`).get()?.d || null;
+}
+
 export function postImportedOpeningBalances(database, prepared = [], { occurredAt, memo = 'ماندهٔ افتتاحیهٔ واردشده', createdBy = null, timeZone = 'Asia/Tehran', replace = false } = {}) {
   ensureAccountingSchema(database);
-  const postedAt = occurredAt || new Date().toISOString();
+  // افتتاحیهٔ دفتری که سابقه دارد، پیش‌فرض در روز شروع ثبت می‌نشیند، نه امروز؛
+  // وگرنه سرمایهٔ افتتاحیه وسط سال و بعد از عملیات واقعی ظاهر می‌شود.
+  const start = ledgerStartDate(database);
+  if (occurredAt && start && String(occurredAt).slice(0, 10) > start) {
+    throw accountingError(`تاریخ ماندهٔ افتتاحیه باید روز شروع ثبت در این دفتر (${start}) یا پیش از آن باشد؛ مانده‌ای که بعد از آن ایجاد شده، سند اصلی خودش را لازم دارد.`, 'OPENING_DATE_AFTER_START', 409);
+  }
+  const postedAt = occurredAt || (start ? `${start}T00:00:00.000Z` : new Date().toISOString());
   assertAccountingPeriodOpen(database, periodForDate(postedAt, timeZone));
 
   const prior = database.prepare(`SELECT * FROM journal_entries WHERE source_type='opening_import'
