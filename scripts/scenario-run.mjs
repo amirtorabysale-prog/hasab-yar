@@ -17,6 +17,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const work = process.argv[2];
 if (!work) throw new Error('پوشهٔ کار را بده.');
@@ -30,8 +31,9 @@ Object.assign(process.env, {
   PORT: '0', NODE_ENV: 'development', OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'stand-in-model',
 });
 
-const root = new URL('..', import.meta.url).pathname;
-const scenarios = JSON.parse(readFileSync(join(root, 'docs/testing/scenarios-30-v2.json'), 'utf8'));
+const root = fileURLToPath(new URL('..', import.meta.url));
+const scenarioFile = process.argv[3] || 'docs/testing/scenarios-30-v2.json';
+const scenarios = JSON.parse(readFileSync(join(root, scenarioFile), 'utf8'));
 const answersFile = join(work, 'ai-answers.json');
 const aiAnswers = existsSync(answersFile) ? JSON.parse(readFileSync(answersFile, 'utf8')) : {};
 const aiCalls = {};
@@ -53,15 +55,15 @@ globalThis.fetch = async (url, init) => {
   return new Response(JSON.stringify({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(answer) }] }], usage: {} }), { status: 200 });
 };
 
-const { server } = await import(join(root, 'server/index.js'));
+const { server } = await import(pathToFileURL(join(root, 'server/index.js')).href);
 if (!server.listening) await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
-const { parseFinancialText, hasCompositeAmounts } = await import(join(root, 'shared/parser.js'));
-const { needsUnquantifiedReview } = await import(join(root, 'shared/reviewIntake.js'));
-const { detectCaptureTransfer } = await import(join(root, 'shared/bankSpeech.js'));
-const { detectSettleIntent } = await import(join(root, 'shared/settleSpeech.js'));
-const { detectVoiceIntent, invoiceDraftPayload, capitalEntryPayload } = await import(join(root, 'shared/voiceIntent.js'));
-const { assessTransactionReview } = await import(join(root, 'shared/review.js'));
+const { parseFinancialText, hasCompositeAmounts } = await import(pathToFileURL(join(root, 'shared/parser.js')).href);
+const { needsUnquantifiedReview } = await import(pathToFileURL(join(root, 'shared/reviewIntake.js')).href);
+const { detectCaptureTransfer } = await import(pathToFileURL(join(root, 'shared/bankSpeech.js')).href);
+const { detectSettleIntent } = await import(pathToFileURL(join(root, 'shared/settleSpeech.js')).href);
+const { detectVoiceIntent, invoiceDraftPayload, capitalEntryPayload } = await import(pathToFileURL(join(root, 'shared/voiceIntent.js')).href);
+const { assessTransactionReview } = await import(pathToFileURL(join(root, 'shared/review.js')).href);
 
 let cookie = '';
 let csrf = '';
