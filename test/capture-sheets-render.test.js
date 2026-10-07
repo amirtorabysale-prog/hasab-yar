@@ -22,5 +22,11 @@ test('capture sheets render saved decisions and unresolved bank honestly', async
     assert.match(html, /حساب را انتخاب کن/);
     assert.doesNotMatch(html, /فعلاً روی حساب پیش‌فرض/);
     assert.match(html, /disabled=""[^>]*>.*تأیید و ارسال/);
+    const props={categories:[{id:'software',name:'نرم‌افزار و اشتراک',type:'expense'}],accounts:[{id:'cash',name:'صندوق نقدی',active:true}],onCancel(){},onConfirm(){}};
+    const covered={...item,category:'نرم‌افزار و اشتراک',servicePeriodStart:'2026-11-01',occurredAt:'2026-10-07'};
+    const dated=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'امروز پرداخت؛ بهره‌برداری ماه آینده',transactions:[covered]}}));
+    assert.doesNotMatch(dated,/تاریخ واقعی پرداخت/);
+    const missing=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'شروع پوشش ماه آینده',transactions:[{...covered,occurredAt:null}]}}));
+    assert.match(missing,/تاریخ واقعی پرداخت/);
   } finally { await vite.close(); }
 });

@@ -13,7 +13,11 @@ export function prepareReviewResources(database,event,proposal,{evidence='',fact
   const result={event:{...event},newCounterparty:null,inventoryItems:[],blockers:[]};
   result.event.reviewSupplierAdvance=isReviewSupplierAdvance([evidence,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body)].join(' '),proposal.lines);
   if((result.event.reviewSupplierAdvance || proposal.lines.some(l=>partyRoles.has(l.role))) && !event.counterpartyId) {
-    const name=String(facts.counterpartyName || event.counterparty || proposal.counterpartyName || extractContactName(evidence) || '').trim().replace(/^(?:بله|بلی|آره)[،,:]\s*/, '');
+    const accountantText=messages.filter(m=>m.speaker==='accountant').map(m=>m.body).join(' ');
+    // A grounded correction must win over the truncated capture candidate.
+    // Never rename an already selected person implicitly; that needs the person control.
+    const corrected=proposal.counterpartyName && norm(accountantText).includes(norm(proposal.counterpartyName)) ? proposal.counterpartyName : '';
+    const name=String(facts.counterpartyName || corrected || extractContactName(evidence) || event.counterparty || proposal.counterpartyName || '').trim().replace(/^(?:بله|بلی|آره)[،,:]\s*/, '');
     const knownText=[evidence,event.counterparty,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body),facts.counterpartyName].filter(Boolean).join(' ');
     if(name.length<2 || name.length>100 || /^(بنگاهی?|مبلغ|تامین کننده|تأمین کننده|طرف حساب|شرکت|شخص|شد مبلغ|شرکت عودت داد)$/.test(norm(name)) || !norm(knownText).includes(norm(name))) result.blockers.push('نام واقعی طرف‌حساب در متن یا پاسخ حسابدار مشخص نیست؛ نام او را بگو.');
     else {

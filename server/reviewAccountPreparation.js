@@ -95,13 +95,14 @@ export function reviewAccountCatalog(database) {
 // A cached suggestion is invalid when the chart, identity, bank or ledger changes.
 export function reviewKnowledgeFingerprint(database) {
   const identity = table => database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return createHash('sha256').update(JSON.stringify(['review-structured-output-v13-tax-penalty-opening-nature',
+  return createHash('sha256').update(JSON.stringify(['review-structured-output-v14-cash-identity-prior-basis',
     reviewAccountCatalog(database),
     identity('accounting_review_tax_refunds') ? database.prepare('SELECT * FROM accounting_review_tax_refunds ORDER BY event_id').all() : [],
     identity('payroll_runs') ? database.prepare('SELECT id,insurance_paid_at FROM payroll_runs ORDER BY id').all() : [],
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_entries').get(),
+    database.prepare('SELECT id,approval_state,occurred_at FROM journal_entries ORDER BY id').all(),
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_lines').get(),
     identity('accounting_review_ai') ? database.prepare("SELECT id,state,feedback_reason,reviewed_at FROM accounting_review_ai WHERE state!='proposed' ORDER BY id").all() : [],
     identity('products') ? database.prepare('SELECT id,name,unit,stock,average_cost,inventory_value,track_inventory FROM products ORDER BY id').all() : [],

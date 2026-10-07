@@ -17,9 +17,10 @@ export function reviewNature(text) {
   const intangible=/حق استفاده|حق امتیاز|علامت تجاری/.test(t) && /خرید|پرداخت/.test(t);
   const leasehold=/استیجاری|اجاره ای/.test(t) && /نصب|بهسازی|احداث/.test(t) && /عمر|چند سال|چهار سال/.test(t);
   const advanceRefund=advance && /پس داد|بازپرداخت|عودت/.test(t);
+  const writtenOffRecovery=/طلب|مطالبات/.test(t) && /سوخت شده|حذف شده|حذف.*دفاتر|از دفاتر حذف/.test(t) && /دریافت|وصول|برگشت/.test(t);
   const principal=/اصل وام/.test(t);
   const settlement=/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
-  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,principal,settlement};
+  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,writtenOffRecovery,principal,settlement};
 }
 
 export function reviewNatureViolations(text, lines=[], facts={}) {
@@ -53,6 +54,13 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   if(n.deposit && roles.has('expense-category')) add('nature.deposit','ودیعه قابل استرداد هزینه نیست؛ دارایی ودیعه و طرف قرارداد لازم است.');
   if(n.intangible && (roles.has('expense-category') || roles.has('fixed-asset'))) add('nature.intangible','حق استفاده یا علامت تجاری به بررسی قرارداد و دارایی نامشهود نیاز دارد؛ هزینه جاری یا دارایی ثابت مشهود جای آن نیست.');
   if(n.leasehold && roles.has('expense-category')) add('nature.leasehold','بهسازی چندساله ملک استیجاری قبض برق نیست؛ مدت اجاره، منفعت آینده و سیاست سرمایه‌ای شدن باید بررسی شود.');
+  if(n.leasehold && roles.has('fixed-asset')) {
+    const term=normalizePersian(facts.questionAnswers?.['leasehold.lease-term']?.value || '');
+    const policy=normalizePersian(facts.questionAnswers?.['leasehold.capitalization-policy']?.value || '');
+    if(!/\d|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده/.test(term) || !/سال|ماه|روز|تا تاریخ/.test(term) || /نامشخص|نامعلوم|نمی دان/.test(term)) add('leasehold.lease-term','مدت باقی‌مانده قطعی اجاره و حق استفاده از محل چقدر است؟');
+    if(!/سرمایه ای|دارایی|بالاتر از حد/.test(policy) || /نیست|نباید|نامشخص|نامعلوم|نمی دان/.test(policy)) add('leasehold.capitalization-policy','طبق سیاست مصوب شرکت، این مبلغ و نوع بهسازی واجد شرایط سرمایه‌ای شدن است؟');
+  }
+  if(n.writtenOffRecovery && lines.length) issues.push({id:'workflow.written-off-recovery',action:true,text:'وصول طلب حذف‌شده با تسویه طلب باز فرق دارد؛ سند حذف و روش بازیافت باید بررسی شود. مانده افتتاحیه فرضی یا درآمد تازه از حدس ثبت نمی‌شود.'});
   if(n.principal && (roles.has('income-category') || roles.has('expense-category'))) add('nature.loan-principal','اصل وام درآمد یا هزینه نیست؛ اصل بدهی و سود یا کارمزد باید جدا شوند.');
   if(conditionalWaiver(text)) {
     const expected=conditionalPaymentProposal(text,facts);
