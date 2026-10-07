@@ -182,7 +182,9 @@ function isNumericWord(value) { return /^\d/.test(value) || NUMBER_WORDS.has(val
 // «برای شش ماه جلوتر تسویه کردم» یک تراکنش شش تومانی می‌ساخت و «بیمه یک‌ساله»
 // یک تراکنش یک‌تومانی. رکورد شبح در دفتر بدتر از ثبت‌نشدن است، چون هیچ‌کس
 // دنبالش نمی‌گردد و در تراز هم گم می‌شود.
+// شمارش کالا هم مبلغ نیست: «دسته چک پنجاه برگه» یک کارمزد پنجاه تومانی می‌ساخت.
 const NON_AMOUNT_UNITS = ['تا', 'عدد', 'نفر', 'کیلو', 'کیلوگرم', 'گرم', 'متر', 'درصد', 'درصدی', 'بسته', 'کارتن',
+  'برگ', 'برگه', 'دستگاه', 'جلد', 'قلم', 'جفت', 'لیتر', 'کیسه', 'رول', 'ورق',
   'ماه', 'ماهه', 'ماهانه', 'سال', 'ساله', 'سالانه', 'هفته', 'هفتگی', 'روزه', 'روزانه', 'ساعته',
   ...PERSIAN_MONTHS.map(([name]) => name)];
 const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفارش', 'کد', 'تلفن', 'موبایل', 'ساعت', 'روز'];
@@ -206,7 +208,8 @@ function isNonAmountSpan(text, span) {
   if (precededBy(STRONG_IDENTIFIER_PREFIXES)) return true;
   // عددهای دارای مقیاس پولی، حتی اگر کنار واژه‌های دیگر باشند، مبلغ محسوب می‌شوند.
   if (/هزار|میلیون|میلیارد/.test(raw)) return false;
-  if (NON_AMOUNT_UNITS.some((unit) => after === unit || after.startsWith(`${unit} `))) return true;
+  // واژهٔ بعدی، بی‌توجه به ویرگول و نقطه: «پنجاه برگه، کارمزد…».
+  if (NON_AMOUNT_UNITS.includes(after.split(/[\s،,.؛:]/)[0])) return true;
   return precededBy(IDENTIFIER_PREFIXES);
 }
 

@@ -106,8 +106,10 @@ export const FACT_REQUIREMENTS = Object.freeze({
     optional: Object.freeze([FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.COUNTERPARTY, FACT_KEYS.CATEGORY,
       FACT_KEYS.INTENDED_USE, FACT_KEYS.CONTRACT_REFERENCE, FACT_KEYS.DESCRIPTION]),
   }),
+  // ارجاع به رویداد اصلی مالِ برخورد تخصیص است، نه خانواده: قبض برقی که
+  // همین امروز پرداخت و مصرف شد، رویداد قبلی ندارد که به آن ارجاع بدهد.
   [ECONOMIC_FAMILIES.ASSET_CONSUMPTION]: Object.freeze({
-    required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.ORIGINAL_EVENT_REFERENCE]),
+    required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT]),
     optional: Object.freeze([FACT_KEYS.CATEGORY, FACT_KEYS.DESCRIPTION]),
   }),
   [ECONOMIC_FAMILIES.LIABILITY_CREATION]: Object.freeze({

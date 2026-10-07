@@ -15,6 +15,7 @@ import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { contactIdForName } from './contacts.js';
 import { describeEvent, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { settlementFor, transactionJournalPoster } from './transactions.js';
+import { automationPolicy } from './settings.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { vatGuardContext } from '../tax.js';
 import { ensureReviewAiSchema, latestReviewProposal, proposeReview, proposalIsCurrent, recordReviewFeedback } from '../accountingReviewAi.js';
@@ -306,6 +307,9 @@ export function answerEvent(eventId, { fact, value, freeText = '' } = {}) {
   const contactId = stored ? JSON.parse(stored.payload).counterpartyId : null;
   const item = answerEventQuestion(database, eventId, {
     fact, value, freeText, actor: currentWorkspace()?.userId || null,
+    // همان حدی که در لحظهٔ ثبت خوانده شد؛ بدون آن، جواب «استفادهٔ بلندمدت»
+    // پرینتر هشت میلیونی را دارایی ثابت می‌کرد.
+    capitalizationThreshold: automationPolicy().capitalizationThreshold,
     guardContext: { vat: vatGuardContext(database), openDocuments: contactId ? openDocumentsFor(contactId) : undefined },
   });
   audit('answer', 'financial-event', eventId, { fact, value, status: item.decision?.decisionStatus });

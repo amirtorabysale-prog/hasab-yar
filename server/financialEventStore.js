@@ -2,7 +2,7 @@ import { reviewNature, reviewNatureViolations } from '../shared/reviewNature.js'
 import { matchingUnidentifiedHolding } from './unidentifiedReceipts.js';
 import { ensureReviewIntakeSchema } from './reviewIntakeSchema.js';
 import { randomUUID } from 'node:crypto';
-import { ROLES, planJournal } from '../shared/accountingRules.js';
+import { ROLES, planJournal, treatmentHasPlan } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
 import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
@@ -388,7 +388,7 @@ export function recordFinancialEvent(database, event, {
 
     let journalEntryId = null;
     if (routing.route === ROUTES.AUTO) {
-      const posted = postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal });
+      const posted = postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal, treatment: accountingDecision?.treatment });
       journalEntryId = posted?.id || null;
     }
     if (!withinTransaction) database.exec('COMMIT');
@@ -405,10 +405,13 @@ export function recordFinancialEvent(database, event, {
  * درحالی‌که ردپا می‌گفت تفکیک شده. لنگر همان تراکنش می‌ماند تا ویرایش و
  * برگشت، سند را پیدا کنند.
  */
-function postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal }) {
+function postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal, treatment = null }) {
   const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
   if(natureIssues.length) throw storeError(natureIssues.map(q=>q.text).join(' '),'REVIEW_NATURE_REQUIRED',409);
-  if (postJournal && !isGuardPlan(plan)) {
+  // ثبت‌کنندهٔ تزریقیِ تراکنش فقط هزینه و درآمد می‌شناسد. برخوردی که نقشهٔ
+  // خودش را دارد — پیش‌پرداخت، پیش‌دریافت — نباید در تأیید فوری یا ثبت خودکار
+  // بی‌صدا هزینهٔ همان ماه شود؛ تأیید از صف این را از قبل رعایت می‌کرد.
+  if (postJournal && !isGuardPlan(plan) && !treatmentHasPlan(treatment)) {
     const posted = postJournal(database, { event, plan, eventId: id, actor, timeZone });
     // مسیر تزریقی وضعیت و ردپا را خودش نمی‌نویسد؛ ردپا نباید به انتخاب
     // ثبت‌کننده وابسته باشد.
@@ -462,7 +465,7 @@ function markEventPosted(database, eventId, posted, lines, actor) {
  * سند اینجا ثبت **نمی‌شود**. جواب دادن یعنی ابهام برطرف شد، نه اینکه کاربر
  * تأیید کرد. ثبت همچنان کار `approveFinancialEvent` است.
  */
-export function answerEventQuestion(database, eventId, { fact, value, freeText = '', actor = null, today = null, guardContext = {} } = {}) {
+export function answerEventQuestion(database, eventId, { fact, value, freeText = '', actor = null, today = null, guardContext = {}, capitalizationThreshold = null } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
@@ -473,13 +476,17 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
   const reference = today || stored.occurredAt;
   const patch = applyAnswer(stored, { fact, value, freeText }, { today: reference });
   const event = normalizeFinancialEvent({ ...stored, ...patch });
-  const decision = decide(factsFromEvent(event), { today: reference });
+  const decision = decide(factsFromEvent(event), { today: reference, capitalizationThreshold });
   // نگهبان‌ها دوباره، چون ماهیت عوض شده. بدون این، جواب دادن به سؤال دورهٔ
   // پوشش نقشهٔ تفکیک ارزش افزوده را با نقشهٔ سادهٔ قاعده عوض می‌کرد و کل مبلغ
   // دوباره به سود و زیان می‌رفت — بی‌آنکه نگهبانی دوباره نگاه کند.
   const guards = runGuards(event, factsFromEvent(event), { ...guardContext, decision });
   const plan = guardedPlan(event, decision, guards);
   const blocked = guards.verdict === GUARD_VERDICTS.BLOCK;
+  // جوابی که ماهیت را روشن کرد ولی ثبتش قضاوت می‌خواهد — دارایی ثابت، موجودی —
+  // جایش صف حسابدار است. بدون این، رویداد در «تأیید کاربر» می‌ماند و تأییدش
+  // هم رد می‌شد: کاربر گیر می‌کرد بی‌آنکه بداند منتظر چه کسی است.
+  const forAccountant = ![DECISION_STATUS.DECIDED, DECISION_STATUS.NEEDS_USER_INPUT].includes(decision.decisionStatus);
 
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -488,6 +495,10 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
     if (blocked) {
       const confidence = JSON.parse(row.confidence);
       const routing = { ...confidence, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(confidence.reasons || []), guards.reason])] };
+      database.prepare('UPDATE financial_events SET route=?,confidence=? WHERE id=?').run(routing.route, JSON.stringify(routing), row.id);
+    } else if (forAccountant) {
+      const confidence = JSON.parse(row.confidence);
+      const routing = { ...confidence, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(confidence.reasons || []), decision.explanation].filter(Boolean))] };
       database.prepare('UPDATE financial_events SET route=?,confidence=? WHERE id=?').run(routing.route, JSON.stringify(routing), row.id);
     }
     const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
@@ -543,7 +554,7 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   try {
     // سندِ رویدادی که روی تراکنش نشسته باید همان شکلی را داشته باشد که اگر
     // خودکار ثبت می‌شد داشت. تأیید حسابدار زمانِ ثبت را عوض می‌کند، نه سند را.
-    postPlanned(database, { id: row.id, event, plan, actor, timeZone, journalSource, postJournal });
+    postPlanned(database, { id: row.id, event, plan, actor, timeZone, journalSource, postJournal, treatment: decision?.treatment });
     writeAudit(database, row.id, 'approved', {
       by: actor, planSource: lockedPlan ? 'locked-at-capture' : 'recomputed-legacy',
       ...(reviewedGuardPlan ? { override: true, reason: reason.slice(0, 500), guard: lockedPlan.guard } : {}),

@@ -23,6 +23,7 @@ import {
 import {
   EVENT_NATURES, NATURE_EXPLANATIONS, natureAffectsPast, natureNeedsAccountant,
 } from './eventNature.js';
+import { needsPurchasePurpose } from './purchasePurpose.js';
 
 /**
  * پنج وضعیت.
@@ -347,6 +348,65 @@ export const DEFAULT_POLICIES = Object.freeze([
       };
     },
   }),
+  /**
+   * هزینهٔ همین دوره.
+   *
+   * قبض و سوخت و کارمزد — یا خریدی که کاربر گفته مصرف جاری است. نقشهٔ سندش
+   * همان نقشهٔ همیشگیِ پرداخت هزینه است؛ ارزش این قاعده این است که موتورِ
+   * روشن، ساده‌ترین ثبت‌های روز را «ماهیت نامعلوم» نخواند و به صف حسابدار
+   * نفرستد.
+   */
+  Object.freeze({
+    policyKey: 'period-expense',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.ASSET_CONSUMPTION,
+    riskLevel: RISK_LEVELS.GREEN,
+    supportedTreatments: Object.freeze([TREATMENTS.PERIOD_EXPENSE]),
+    // تخصیص پیش‌پرداخت هم همین خانواده است، ولی پولی جابه‌جا نمی‌کند.
+    appliesTo(facts) { return facts?.moneyDirection === 'out'; },
+    resolve(facts) {
+      return { treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null };
+    },
+  }),
+  /**
+   * خرید کالایی که هدفش گفته شده.
+   *
+   * فقط یک حالت قاعدهٔ ثبت دارد: کالای ماندگارِ زیر حد سرمایه‌ای شدنِ دفتر،
+   * که طبق سیاست خودِ دفتر هزینه است. دارایی ثابت و موجودی، نامشان درست
+   * گذاشته می‌شود ولی به حسابدار می‌روند: دارایی ثابت عمر مفید و شروع
+   * استهلاک می‌خواهد و موجودی کارت کالا و روش بهای تمام‌شده — هیچ‌کدام از یک
+   * جملهٔ صوتی درنمی‌آید.
+   */
+  Object.freeze({
+    policyKey: 'goods-purchase',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.ASSET_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.PERIOD_EXPENSE]),
+    appliesTo(facts) {
+      return ['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)
+        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts)
+        && !isFactPresent(facts?.servicePeriodStart) && !isFactPresent(facts?.servicePeriodEnd);
+    },
+    resolve(facts) {
+      if (facts.intendedUse !== 'long-term-use') {
+        return { treatment: TREATMENTS.INVENTORY_PURCHASE, reviewNote: 'کالا برای فروش یا تولید خریده شده و موجودی است، نه هزینه؛ کارت کالا و بهای تمام‌شده‌اش را حسابدار ثبت می‌کند.' };
+      }
+      const threshold = facts?.capitalizationThreshold;
+      if (Number.isSafeInteger(threshold) && Number(facts?.amount) < threshold) {
+        return {
+          treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null,
+          assumptions: [`مبلغ زیر حد سرمایه‌ای شدن دفتر (${threshold.toLocaleString('fa-IR')} تومان) است و طبق سیاست دفتر هزینه می‌شود.`],
+        };
+      }
+      return {
+        treatment: TREATMENTS.FIXED_ASSET,
+        reviewNote: Number.isSafeInteger(threshold)
+          ? 'کالای ماندگار و هم‌اندازه یا بالاتر از حد سرمایه‌ای شدن دفتر است؛ دارایی ثابت با عمر مفید و شروع استهلاک را حسابدار ثبت می‌کند.'
+          : 'کالای ماندگار است و حد سرمایه‌ای شدن دفتر تعیین نشده؛ دارایی ثابت یا هزینه بودنش را حسابدار تعیین می‌کند.',
+      };
+    },
+  }),
 ]);
 
 /**
@@ -429,7 +489,11 @@ export function simulatePolicyChange(factsList = [], currentPolicies = [], candi
  * اطمینان مدل در هیچ‌کدام از این پنج گام دخالت ندارد. یک برداشت با اطمینان
  * کامل، جای دورهٔ پوشش نامعلوم را نمی‌گیرد.
  */
-export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null } = {}) {
+export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, capitalizationThreshold = null } = {}) {
+  // حد سرمایه‌ای شدن سیاست دفتر است، نه واقعیت رویداد؛ ولی قاعده‌ها و طبقه‌بند
+  // آن را کنار واقعیت‌ها می‌خوانند تا تابع خالص بماند.
+  const facts = Number.isSafeInteger(capitalizationThreshold) && capitalizationThreshold > 0
+    ? { ...input, capitalizationThreshold } : input;
   // ابهام مقیاس مبلغ، پیش از هر چیز دیگری.
   //
   // «سی تومن» یعنی سی هزار یا سی میلیون؟ تا این روشن نشده، پرسیدن دورهٔ پوشش
@@ -473,6 +537,17 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
   const sourceReferences = facts?.evidence ? [facts.evidence] : [];
 
   if (family === FAMILY_UNKNOWN) {
+    // خرید کالا بدون هدف: ماهیتش با یک سؤال روشن می‌شود، نه با قضاوت حسابدار.
+    if (facts?.moneyDirection === 'out' && isFactPresent(facts?.amount) && needsPurchasePurpose(facts, { capitalizationThreshold: facts?.capitalizationThreshold ?? null })) {
+      return createDecision({
+        family, riskLevel: RISK_LEVELS.YELLOW, sourceReferences,
+        requiredFacts: [FACT_KEYS.INTENDED_USE],
+        missingFacts: [FACT_KEYS.INTENDED_USE],
+        decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
+        explanation: 'خرید کالاست؛ اینکه هزینه است، موجودی یا دارایی ثابت، به هدف خرید بستگی دارد.',
+        question: nextQuestionFor([FACT_KEYS.INTENDED_USE], facts),
+      });
+    }
     return createDecision({
       family, riskLevel, sourceReferences,
       decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
@@ -524,7 +599,7 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
       policyVersion: policy.version,
       riskLevel: policy.riskLevel || riskLevel,
       decisionStatus: DECISION_STATUS.UNSUPPORTED,
-      explanation: `ماهیت روشن است، ولی قاعدهٔ ثبت «${resolved.treatment}» در این فاز ساخته نشده است.`,
+      explanation: resolved.reviewNote || `ماهیت روشن است، ولی قاعدهٔ ثبت «${resolved.treatment}» در این فاز ساخته نشده است.`,
     });
   }
 
@@ -567,6 +642,7 @@ export function decide(facts = {}, { policies = DEFAULT_POLICIES, today = null }
     missingFacts: [],
     riskLevel: policy.riskLevel || riskLevel,
     sourceReferences,
+    assumptions: resolved.assumptions || [],
     decisionStatus: DECISION_STATUS.DECIDED,
     explanation: classified.reason,
   });

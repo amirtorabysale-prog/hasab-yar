@@ -5,6 +5,7 @@ import { resolveAutomationPolicy } from './automationPolicy.js';
 import { DECISION_STATUS, decide } from './accountingDecision.js';
 import { factsFromEvent } from './eventFacts.js';
 import { FACT_LABELS } from './factRequirements.js';
+import { purchasePurposeFromSpeech } from './purchasePurpose.js';
 
 /**
  * پل میان ردیف تراکنش و لایهٔ رویداد مالی.
@@ -123,6 +124,8 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     amountScaleAmbiguous: item.amountScaleAmbiguous === true,
     prepaymentSignal: item.prepaymentSignal === true,
     eventNature: item.eventNature || 'new',
+    // هدف خرید وقتی خودِ کاربر گفته («جنس خریدم برای فروش»)، سؤالش پرسیده نمی‌شود.
+    intendedUse: item.intendedUse || purchasePurposeFromSpeech(item.rawText || sentence || transcript) || null,
     servicePeriodStart: item.servicePeriodStart || null,
     servicePeriodEnd: item.servicePeriodEnd || null,
     refundable: typeof item.refundable==='boolean' ? item.refundable : (() => {
@@ -181,7 +184,9 @@ function decideForEvent(event, policyOverrides, item) {
   const policy = resolveAutomationPolicy(policyOverrides);
   if (!policy.engineV2) return null;
   try {
-    return decide(factsFromEvent(event), { today: item?.occurredAt || event.occurredAt });
+    return decide(factsFromEvent(event), {
+      today: item?.occurredAt || event.occurredAt, capitalizationThreshold: policy.capitalizationThreshold,
+    });
   } catch (error) { throw error; }
 }
 
@@ -202,12 +207,14 @@ function needsAccountant(accountingDecision) {
 
 /** دلیل، به زبان حسابدار — نه نام فنی وضعیت. */
 function explainBlock(accountingDecision) {
-  const { decisionStatus, missingFacts, question } = accountingDecision;
+  const { decisionStatus, missingFacts, question, policyKey, explanation } = accountingDecision;
   if (decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT) {
     const gap = FACT_LABELS[missingFacts?.[0]] || '';
     return question?.text || (gap ? `${gap} هنوز معلوم نیست.` : 'یک اطلاعات لازم هنوز معلوم نیست.');
   }
-  if (decisionStatus === DECISION_STATUS.UNSUPPORTED) return 'برای این ماهیت هنوز قاعدهٔ ثبتی تعریف نشده است.';
+  // خرید کالا دلیل مشخص خودش را دارد — موجودی یا دارایی ثابت — و همان به
+  // حسابدار گفته می‌شود، نه جملهٔ عمومی.
+  if (decisionStatus === DECISION_STATUS.UNSUPPORTED) return policyKey === 'goods-purchase' && explanation ? explanation : 'برای این ماهیت هنوز قاعدهٔ ثبتی تعریف نشده است.';
   if (decisionStatus === DECISION_STATUS.BLOCKED) return 'یک مانع ساختاری جلوی ثبت را گرفته است.';
   return 'ماهیت این رویداد برای ثبت خودکار روشن نیست.';
 }
