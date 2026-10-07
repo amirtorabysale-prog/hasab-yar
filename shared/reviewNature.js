@@ -8,7 +8,9 @@ export function reviewNature(text) {
   const t=normalizePersian(text).replace(/\s+/g,' ');
   const unknownReceipt=/ناشناس|نامعلوم|نامشخص|بدون مشخصات|معلوم نیس|مشکوک|نمی دانم.*(?:واریز|فرست|بابت)|(?:واریز|فرست).*نمی دانم/.test(t) && /واریز|دریافت|آمده|اومده|نشسته/.test(t);
   const vatRefund=/مالیات|ارزش افزوده/.test(t) && /استرداد|اضافه پرداخت|اضافه واریز/.test(t) && /برگشت|برگرد|عودت|واریز|دریافت|استرداد/.test(t);
-  const partner=/شریک|سهامدار|سهام دار/.test(t) && /واریز|انتقال|پرداخت|برداشت/.test(t);
+  // «برادرم که شریکمه ده میلیون به حساب شرکت ریخت» هم انتقال شریک است؛ با
+  // فعل‌های رسمی تنها، رابطهٔ شریک «نامشخص» خوانده می‌شد (آزمون زندهٔ مهر ۱۴۰۵).
+  const partner=/شریک|سهامدار|سهام دار/.test(t) && /واریز|انتقال|پرداخت|برداشت|ریخت|کارت به کارت|داد(?![آ-ی])|دادن/.test(t);
   const capital=/افزایش سرمایه|آورده (?:قطعی|سرمایه)|ثبت سرمایه/.test(t) && !/بدون|هنوز|نیست|نشده/.test(t);
   const insuranceSettlement=/بیمه/.test(t) && /حقوق|کارکنان|کارگر|تامین اجتماعی|لیست/.test(t) && /پرداخت|تسویه|واریز/.test(t);
   const prepaid=(/پیش پرداخت/.test(t) || (/بیمه/.test(t) && /یک ساله|یکساله|12 ماه|دوازده ماه/.test(t) && !insuranceSettlement)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
@@ -97,7 +99,8 @@ export function partnerTreatment(text,facts={}) {
   if(/برداشت شخصی/.test(t)) return PARTNER_TREATMENTS.withdrawal;
   if(/بازپرداخت بدهی شرکت/.test(t)) return PARTNER_TREATMENTS.repayCompany;
   if(/بازپرداخت طلب شرکت/.test(t)) return PARTNER_TREATMENTS.repayPartner;
-  if(/در اختیار شرکت|به شرکت قرض داد/.test(t)) return PARTNER_TREATMENTS.funding;
+  // «که بعداً بهش پس بدیم» یعنی قرض شریک به شرکت؛ پول در اختیار شرکت است.
+  if(/در اختیار شرکت|به شرکت قرض داد|قرض\s*(?:داد|گرفتیم)|(?:بهش|به او|بهشون)\s*پس\s*(?:بدیم|میدیم|می دیم|بدهیم|بده)/.test(t)) return PARTNER_TREATMENTS.funding;
   return null;
 }
 export function partnerTransferProposal(text,amount,facts={}) {

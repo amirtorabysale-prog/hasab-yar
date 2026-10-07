@@ -115,6 +115,14 @@ test('برداشت مالک و خرید کالا با بانک، با پیشنه
   assert.equal(ready.postingBlockers.some((b) => b.includes('فقط خرید تحویل‌شده')), false, ready.postingBlockers.join(' / '));
 }));
 
+test('قرض شریک با فعل محاوره‌ای: پیشنهاد قاعده‌ای، بی‌درخواست به مدل', () => run(async () => {
+  const item = queued('برادرم که شریکمه ده میلیون تومان به صندوق شرکت ریخت که بعداً بهش پس بدیم.', { amount: 10_000_000, kind: 'cash-income', category: 'سایر درآمدها' });
+  const fetcher = counting({});
+  const proposal = await ai.proposeReview(database(), item.id, { fetcher });
+  assert.equal(fetcher.calls, 0);
+  assert.deepEqual(proposal.lines.map((l) => `${l.debit ? 'Dr' : 'Cr'} ${l.role}`), ['Dr cash', 'Cr partner-payable']);
+}));
+
 test('طرف‌حساب تازه از انتخابگر شخص پذیرفته می‌شود و سؤال سرفصل حذف می‌شود', () => run(() => {
   const item = queued('پیش‌پرداخت به تأمین‌کننده', { amount: 1_000_000 });
   assistant.saveReviewFacts(database(), item.id, { counterpartyId: 'new:فروشگاه آرمان' });
