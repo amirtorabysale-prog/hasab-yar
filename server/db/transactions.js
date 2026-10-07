@@ -40,7 +40,26 @@ export function getToday() {
   const previousBounds = dayBounds(addLocalDays(today, -1));
   const previous = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount ELSE 0 END),0) AS income FROM transactions WHERE status!='deleted' AND journal_deferred=0 AND capital_flow='' AND accounting_role='' AND occurred_at>=? AND occurred_at<?").get(previousBounds.start, previousBounds.endExclusive).income;
   totals.comparison = previous > 0 ? Math.round(((totals.income - previous) / previous) * 100) : null;
+  totals.ledger = ledgerDaySummary(start, endExclusive);
   return { transactions, summary: totals };
+}
+
+/**
+ * سود و زیان همان روز از دفتر کل — کنار دریافت و پرداخت، نه به‌جای آن.
+ *
+ * کارت‌های امروز جریان پول‌اند: فروش ۱۱۰ با ارزش افزوده ۱۱۰ دریافت است، ولی
+ * درآمد ۱۰۰؛ پیش‌پرداخت پرداخت است، نه هزینه؛ و درآمدِ تعیین تکلیف وجه
+ * ناشناس اصلاً ردیف نقدی ندارد. بدون این، اختلاف دو تصویر دیده نمی‌شد.
+ */
+function ledgerDaySummary(start, endExclusive) {
+  const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='journal_lines'").get();
+  if (!exists) return null;
+  const row = db.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN a.type='income' THEN l.credit-l.debit ELSE 0 END),0) AS income,
+      COALESCE(SUM(CASE WHEN a.type='expense' THEN l.debit-l.credit ELSE 0 END),0) AS expense
+    FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id
+    WHERE j.approval_state='approved' AND j.occurred_at>=? AND j.occurred_at<?`).get(start, endExclusive);
+  return { income: Number(row.income), expense: Number(row.expense), profit: Number(row.income) - Number(row.expense) };
 }
 
 export function summarize(items) {
