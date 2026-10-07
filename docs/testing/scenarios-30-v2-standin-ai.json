@@ -1,0 +1,762 @@
+{
+ "S01#1": {
+  "summary": "فروش نقدی روز",
+  "explanation": "دریافت نقدی بابت فروش همان روز؛ درآمد فروش شناسایی می‌شود.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 18000000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "فروش",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 18000000
+   }
+  ]
+ },
+ "S02#1": {
+  "summary": "فروش با کارتخوان به بانک ملت",
+  "explanation": "وجه فروش روز مستقیم به حساب ملت واریز شده است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 32000000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "فروش",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 32000000
+   }
+  ]
+ },
+ "S03#1": {
+  "summary": "درآمد خدمات مشاوره از شرکت آرمان",
+  "explanation": "خدمت انجام و وجه دریافت شده؛ درآمد خدمات شناسایی می‌شود.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "شرکت آرمان",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 25000000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "خدمات",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 25000000
+   }
+  ]
+ },
+ "S04#1": {
+  "summary": "سود سپرده بانکی",
+  "explanation": "سود سپرده درآمد غیرعملیاتی است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@tejarat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 2300000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "سود سپرده بانکی",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 2300000
+   }
+  ]
+ },
+ "S05#1": {
+  "summary": "فروش نسیه به نیک پخش با ارزش افزوده",
+  "explanation": "فاکتور صادر شده و وجه دریافت نشده؛ طلب ۴۴ میلیون (۴۰ فروش + ۴ ارزش افزوده).",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "شرکت نیک پخش",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "receivable",
+    "key": "شرکت نیک پخش",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 44000000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "فروش",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 40000000
+   },
+   {
+    "role": "vat-output",
+    "key": null,
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 4000000
+   }
+  ]
+ },
+ "S08#1": {
+  "summary": "هزینه سوخت وانت",
+  "explanation": "هزینه جاری سوخت؛ حساب پرداخت در متن نیامده است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "expense-category",
+    "key": "سوخت و ایاب‌وذهاب",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 800000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": null,
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 800000
+   }
+  ]
+ },
+ "S11#1": {
+  "summary": "پرداخت حقوق مهر",
+  "explanation": "پیش از ثبت باید معلوم شود ۶۰ میلیون خالص پرداختی است یا ناخالص؛ بیمه و مالیات حقوق بدهی جداگانه می‌سازند.",
+  "questions": [
+   {
+    "id": "payroll.gross-or-net",
+    "text": "این ۶۰ میلیون خالص پرداختی به کارکنان است یا حقوق ناخالص پیش از کسر بیمه و مالیات؟"
+   }
+  ],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": []
+ },
+ "S11#2": {
+  "summary": "پرداخت خالص حقوق مهر",
+  "explanation": "طبق پاسخ حسابدار، مبلغ خالص پرداختی است و لیست حقوق جدا ثبت نشده؛ هزینه حقوق به اندازه پرداخت ثبت می‌شود و بیمه و مالیات پس از تهیه لیست جدا ثبت شوند.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "expense-category",
+    "key": "حقوق و دستمزد",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 60000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 60000000
+   }
+  ]
+ },
+ "S13#1": {
+  "summary": "مبلغ با متن نمی‌خواند",
+  "explanation": "در متن مبلغ پرداخت ۲۴ میلیون است ولی مبلغ رویداد ۱٬۴۳۰ میلیون ثبت شده؛ احتمالاً سال ۱۴۰۶ با مبلغ ترکیب شده. تا تأیید مبلغ سندی پیشنهاد نمی‌شود.",
+  "questions": [
+   {
+    "id": "amount.confirm",
+    "text": "مبلغ واقعی پرداخت بیمهٔ آتش‌سوزی چقدر بود؟ متن ۲۴ میلیون می‌گوید ولی ۱٬۴۳۰ میلیون ثبت شده."
+   }
+  ],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": []
+ },
+ "S13#2": {
+  "summary": "پیش‌پرداخت بیمه آتش‌سوزی یک‌ساله",
+  "explanation": "مبلغ واقعی ۲۴ میلیون است؛ پوشش مهر ۱۴۰۵ تا شهریور ۱۴۰۶ پیش‌پرداخت است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "prepaid-asset",
+    "key": "بیمه آتش‌سوزی انبار",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 24000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 24000000
+   }
+  ]
+ },
+ "S15#1": {
+  "summary": "ودیعه قابل استرداد اجاره مغازه",
+  "explanation": "ودیعه دارایی قابل استرداد است؛ نام طرف قرارداد (صاحبخانه) لازم است.",
+  "questions": [
+   {
+    "id": "deposit.counterparty",
+    "text": "نام صاحبخانه‌ای که ودیعه به او پرداخت شد چیست؟",
+    "field": "counterpartyName"
+   }
+  ],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": []
+ },
+ "S15#2": {
+  "summary": "ودیعه قابل استرداد اجاره مغازه",
+  "explanation": "ودیعه نزد صاحبخانه، دارایی قابل استرداد است و هزینه اجاره نیست.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "آقای کریمی",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "refundable-deposit",
+    "key": "آقای کریمی",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 100000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@tejarat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 100000000
+   }
+  ]
+ },
+ "S16#1": {
+  "summary": "پیش‌پرداخت خرید پارچه به نساجی کاوه",
+  "explanation": "کالا هنوز تحویل نشده؛ پرداخت پیش‌پرداخت خرید است نه هزینه.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "شرکت نساجی کاوه",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "prepaid-asset",
+    "key": "پیش‌پرداخت خرید — شرکت نساجی کاوه",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 30000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 30000000
+   }
+  ]
+ },
+ "S17#1": {
+  "summary": "بیعانهٔ دریافتی از آقای رضایی",
+  "explanation": "وجه نقد پیش از تحویل مبلمان دریافت شده؛ پیش‌دریافت مشتری است، نه هزینه و نه درآمد.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "آقای رضایی",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 15000000,
+    "credit": 0
+   },
+   {
+    "role": "customer-advance",
+    "key": "آقای رضایی",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 15000000
+   }
+  ]
+ },
+ "S18#1": {
+  "summary": "هزینهٔ سرویس کولر پرداخت‌نشده",
+  "explanation": "خدمت دریافت و پول پرداخت نشده؛ هزینه تعمیر و بدهی به تعمیرکار. نام تعمیرکار لازم است.",
+  "questions": [
+   {
+    "id": "payable.counterparty",
+    "text": "نام تعمیرکار (طرف بدهی) چیست؟",
+    "field": "counterpartyName"
+   }
+  ],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": []
+ },
+ "S18#2": {
+  "summary": "هزینهٔ سرویس کولر پرداخت‌نشده",
+  "explanation": "هزینه تعمیر شناسایی و بدهی به تعمیرکار ثبت می‌شود؛ وجهی جابه‌جا نشده است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "آقای نوری",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "expense-category",
+    "key": "تعمیر و نگهداری",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 4000000,
+    "credit": 0
+   },
+   {
+    "role": "payable",
+    "key": "آقای نوری",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 4000000
+   }
+  ]
+ },
+ "S19#1": {
+  "summary": "فروش نسیه به خانم احمدی",
+  "explanation": "کالا فروخته و وجه دریافت نشده؛ طلب از مشتری.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "خانم احمدی",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "receivable",
+    "key": "خانم احمدی",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 9000000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "فروش",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 9000000
+   }
+  ]
+ },
+ "S23#1": {
+  "summary": "برداشت شخصی مالک از صندوق",
+  "explanation": "برداشت مالک هزینه شرکت نیست؛ بدهکار جاری مالک.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "partner-receivable",
+    "key": "مالک",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 10000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 10000000
+   }
+  ]
+ },
+ "S24#1": {
+  "summary": "دریافت تسهیلات از بانک ملت",
+  "explanation": "اصل وام بدهی است و درآمد نیست.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "بانک ملت",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 300000000,
+    "credit": 0
+   },
+   {
+    "role": "loan-payable",
+    "key": "تسهیلات بانک ملت",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 300000000
+   }
+  ]
+ },
+ "S26#1": {
+  "summary": "خرید لپ‌تاپ برای حسابدار",
+  "explanation": "تجهیز رایانه‌ای برای استفاده بلندمدت و بالاتر از حد سرمایه‌ای ۲۰ میلیون؛ برای ثبت دارایی و استهلاک عمر مفید لازم است.",
+  "questions": [
+   {
+    "id": "asset.useful-life",
+    "text": "عمر مفید این لپ‌تاپ چند سال در نظر گرفته می‌شود؟"
+   }
+  ],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": []
+ },
+ "S26#2": {
+  "summary": "خرید لپ‌تاپ — دارایی ثابت",
+  "explanation": "لپ‌تاپ با عمر مفید ۳ سال دارایی ثابت است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "fixed-asset",
+    "key": "لپ‌تاپ حسابداری",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 45000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 45000000
+   }
+  ]
+ },
+ "S27#1": {
+  "summary": "خرید پارچه برای فروش",
+  "explanation": "خرید کالا برای فروش موجودی است؛ مقدار و واحد پارچه در متن نیامده است.",
+  "questions": [
+   {
+    "id": "inventory.quantity",
+    "text": "چند متر پارچه خریدید؟"
+   }
+  ],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": []
+ },
+ "S27#2": {
+  "summary": "خرید پارچه برای فروش",
+  "explanation": "۴۰۰ متر پارچه به بهای ۶۰ میلیون به موجودی کالا اضافه می‌شود.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [
+   {
+    "productId": null,
+    "name": "پارچه",
+    "unit": "متر",
+    "quantity": 400,
+    "total": 60000000
+   }
+  ],
+  "lines": [
+   {
+    "role": "inventory-asset",
+    "key": "پارچه",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 60000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 60000000
+   }
+  ]
+ },
+ "S30#1": {
+  "summary": "واریز نامشخص به بانک ملت",
+  "explanation": "واریزکننده و بابت آن معلوم نیست؛ تا شناسایی در وجوه نامشخص می‌ماند و درآمد نیست.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 12000000,
+    "credit": 0
+   },
+   {
+    "role": "unidentified-receipt",
+    "key": "واریز نامشخص",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 12000000
+   }
+  ]
+ },
+ "S01#2": {
+  "summary": "فروش نقدی روز",
+  "explanation": "دریافت نقدی بابت فروش همان روز؛ درآمد فروش شناسایی می‌شود.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 18000000,
+    "credit": 0
+   },
+   {
+    "role": "income-category",
+    "key": "فروش",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 18000000
+   }
+  ]
+ },
+ "S08#2": {
+  "summary": "هزینه سوخت وانت",
+  "explanation": "هزینه جاری سوخت؛ حساب پرداخت در متن نیامده است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "expense-category",
+    "key": "سوخت و ایاب‌وذهاب",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 800000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 800000
+   }
+  ]
+ },
+ "S13#3": {
+  "summary": "پیش‌پرداخت بیمه آتش‌سوزی یک‌ساله",
+  "explanation": "مبلغ واقعی ۲۴ میلیون است؛ پوشش مهر ۱۴۰۵ تا شهریور ۱۴۰۶ پیش‌پرداخت است.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "prepaid-asset",
+    "key": "بیمه آتش‌سوزی انبار",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 24000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 24000000
+   }
+  ]
+ },
+ "S17#2": {
+  "summary": "بیعانهٔ دریافتی از آقای رضایی",
+  "explanation": "وجه نقد پیش از تحویل مبلمان دریافت شده؛ پیش‌دریافت مشتری است، نه هزینه و نه درآمد.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": "آقای رضایی",
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 15000000,
+    "credit": 0
+   },
+   {
+    "role": "customer-advance",
+    "key": "آقای رضایی",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 15000000
+   }
+  ]
+ },
+ "S27#3": {
+  "summary": "خرید پارچه برای فروش",
+  "explanation": "۴۰۰ متر پارچه به بهای ۶۰ میلیون به موجودی کالا اضافه می‌شود.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [
+   {
+    "productId": null,
+    "name": "پارچه",
+    "unit": "متر",
+    "quantity": 400,
+    "total": 60000000
+   }
+  ],
+  "lines": [
+   {
+    "role": "inventory-asset",
+    "key": "پارچه",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 60000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 60000000
+   }
+  ]
+ },
+ "S23#2": {
+  "summary": "برداشت شخصی مالک از صندوق",
+  "explanation": "طبق پاسخ حسابدار برداشت‌کننده خود مالک است؛ برداشت هزینه شرکت نیست و بدهکار جاری مالک می‌شود.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "partner-receivable",
+    "key": "مالک",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 10000000,
+    "credit": 0
+   },
+   {
+    "role": "cash",
+    "key": "@cash",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 10000000
+   }
+  ]
+ },
+ "S30#2": {
+  "summary": "واریز نامشخص به بانک ملت",
+  "explanation": "واریزکننده و بابت آن معلوم نیست؛ تا شناسایی در وجوه نامشخص می‌ماند و درآمد نیست.",
+  "questions": [],
+  "missingFacts": [],
+  "counterpartyName": null,
+  "inventoryItems": [],
+  "lines": [
+   {
+    "role": "cash",
+    "key": "@mellat",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 12000000,
+    "credit": 0
+   },
+   {
+    "role": "unidentified-receipt",
+    "key": "واریز نامشخص",
+    "accountId": null,
+    "chartAccountId": null,
+    "debit": 0,
+    "credit": 12000000
+   }
+  ]
+ }
+}
