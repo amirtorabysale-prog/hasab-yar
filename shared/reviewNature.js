@@ -58,7 +58,10 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
     const term=normalizePersian(facts.questionAnswers?.['leasehold.lease-term']?.value || '');
     const policy=normalizePersian(facts.questionAnswers?.['leasehold.capitalization-policy']?.value || '');
     if(!/\d|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده/.test(term) || !/سال|ماه|روز|تا تاریخ/.test(term) || /نامشخص|نامعلوم|نمی دان/.test(term)) add('leasehold.lease-term','مدت باقی‌مانده قطعی اجاره و حق استفاده از محل چقدر است؟');
-    if(!/سرمایه ای|دارایی|بالاتر از حد/.test(policy) || /نیست|نباید|نامشخص|نامعلوم|نمی دان/.test(policy)) add('leasehold.capitalization-policy','طبق سیاست مصوب شرکت، این مبلغ و نوع بهسازی واجد شرایط سرمایه‌ای شدن است؟');
+    // حد سرمایه‌ای مصوب دفتر خودش پاسخ «سیاست» است؛ زیر آن حد را نگهبان جدا رد می‌کند.
+    const assetAmount=lines.filter(l=>l.role==='fixed-asset').reduce((sum,l)=>sum+Number(l.debit || 0),0);
+    const byPolicy=Number(facts.capitalizationThreshold)>0 && assetAmount>=Number(facts.capitalizationThreshold);
+    if(!byPolicy && (!/سرمایه ای|دارایی|بالاتر از حد/.test(policy) || /نیست|نباید|نامشخص|نامعلوم|نمی دان/.test(policy))) add('leasehold.capitalization-policy','طبق سیاست مصوب شرکت، این مبلغ و نوع بهسازی واجد شرایط سرمایه‌ای شدن است؟');
   }
   if(n.writtenOffRecovery && lines.length) issues.push({id:'workflow.written-off-recovery',action:true,text:'وصول طلب حذف‌شده با تسویه طلب باز فرق دارد؛ سند حذف و روش بازیافت باید بررسی شود. مانده افتتاحیه فرضی یا درآمد تازه از حدس ثبت نمی‌شود.'});
   if(n.principal && (roles.has('income-category') || roles.has('expense-category'))) add('nature.loan-principal','اصل وام درآمد یا هزینه نیست؛ اصل بدهی و سود یا کارمزد باید جدا شوند.');

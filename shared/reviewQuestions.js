@@ -15,6 +15,8 @@ function businessFact(text) {
   if(/سیاست/.test(t) && /سرمایه/.test(t)) return 'capitalization-policy';
   return null;
 }
+/** موضوع کسب‌وکاری یک سؤال (مثلاً سیاست سرمایه‌ای شدن)، مستقل از متن و شناسه‌اش. */
+export function reviewQuestionFact(text) { return businessFact(String(text || '')); }
 const stableFacts=new Set(['cash-account','expense-purpose','counterparty-name','waiver-amount','payment-performed','capitalization-choice']);
 function legacyId(text) {
   let hash=2166136261;
