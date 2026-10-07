@@ -67,3 +67,23 @@ test('legacy template receives only missing fine subsidiary; collision or custom
   accounting.ensureAccountingSchema(database());assert.equal(database().prepare("SELECT 1 FROM chart_accounts WHERE code='8120'").get(),undefined);
  });
 }));
+
+test('«بدون جریمه» و «که جریمه نخوریم» جریمه نیستند؛ پرداخت اصل مالیات هزینهٔ جریمه نمی‌شود',async()=>{
+ const {classifyCategory}=await import('../shared/categoryRules.js');
+ for(const text of ['مالیات بر ارزش افزوده فصل تابستان رو بدون جریمه پرداخت کردم ۲۰ میلیون','مالیات عملکرد رو به موقع دادیم که جریمه نخوریم ۳۰ میلیون','مالیات رو دادیم، جریمه‌ای نخوردیم ۱۰ میلیون']) {
+  assert.notEqual(classifyCategory(text,'expense').category,'جرایم مالیاتی',text);
+  assert.equal(taxPenaltyProposal(text,20000000),null,text);
+ }
+ assert.equal(classifyCategory('جریمه مالیاتی دیرکرد ۵ میلیون پرداخت شد','expense').category,'جرایم مالیاتی');
+});
+
+test('اثرانگشت دانش بررسی با تغییر وضعیت تأیید سند عوض می‌شود',()=>run(()=>{
+ return import('../server/reviewAccountPreparation.js').then(({reviewKnowledgeFingerprint:fp})=>{
+  const before=fp(database());
+  const entry=database().prepare("SELECT id,approval_state FROM journal_entries ORDER BY rowid DESC LIMIT 1").get();
+  if(!entry) return;
+  database().prepare("UPDATE journal_entries SET approval_state='submitted',submitted_at=? WHERE id=?").run(new Date().toISOString(),entry.id);
+  assert.notEqual(fp(database()),before,'بازگشت سند از وضعیت تأییدشده باید پیشنهادهای قبلی را باطل کند');
+  database().prepare('UPDATE journal_entries SET approval_state=? WHERE id=?').run(entry.approval_state,entry.id);
+ });
+}));

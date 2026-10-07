@@ -102,7 +102,10 @@ export function reviewKnowledgeFingerprint(database) {
     identity('contacts') ? database.prepare('SELECT id,name FROM contacts ORDER BY id').all() : [],
     identity('accounts') ? database.prepare('SELECT id,name,active,kind,bank_id FROM accounts ORDER BY id').all() : [],
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_entries').get(),
-    database.prepare('SELECT id,approval_state,occurred_at FROM journal_entries ORDER BY id').all(),
+    // تاریخ سند پس از ثبت عوض نمی‌شود؛ فقط وضعیت تأیید. چند جمع کافی است و
+    // سریال‌کردن همهٔ اسناد در هر بار باز شدن صف، با بزرگ شدن دفتر کند می‌شد.
+    database.prepare(`SELECT SUM(CASE WHEN approval_state='approved' THEN rowid ELSE 0 END) approved,
+      MAX(COALESCE(reviewed_at,'')) reviewed,MAX(COALESCE(submitted_at,'')) submitted FROM journal_entries`).get(),
     database.prepare('SELECT count(*) n,MAX(rowid) last FROM journal_lines').get(),
     identity('accounting_review_ai') ? database.prepare("SELECT id,state,feedback_reason,reviewed_at FROM accounting_review_ai WHERE state!='proposed' ORDER BY id").all() : [],
     identity('products') ? database.prepare('SELECT id,name,unit,stock,average_cost,inventory_value,track_inventory FROM products ORDER BY id').all() : [],

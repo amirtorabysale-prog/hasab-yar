@@ -5,7 +5,9 @@ export const isTaxPenaltyCategory = value => /^(?:جرایم|جرائم|جریم
 
 export function taxPenaltyFacts(text) {
   const t = normalizePersian(String(text || '')).replace(/\s+/g, ' ');
-  const penalty = /جریمه|جرایم|جرائم/.test(t) && /مالیات|ارزش افزوده/.test(t);
+  // «بدون جریمه» و «که جریمه نخوریم» یعنی جریمه‌ای در کار نیست؛ پرداخت همان اصل مالیات است.
+  const noPenalty = /(?:بدون|بی|معاف(?:یت)? از)\s*(?:جریمه|جرایم|جرائم)|(?:جریمه|جرایم|جرائم)\s*(?:ای\s*)?(?:نخور|نشو|نشد|نداشت|نگرفت|نخورد|نیامد|نیومد)/.test(t);
+  const penalty = !noPenalty && /جریمه|جرایم|جرائم/.test(t) && /مالیات|ارزش افزوده/.test(t);
   const noPrior=/(?:ثبت|شناسایی) نشده|(?:ثبت|شناسایی) نکرد/.test(t);
   const prior = !noPrior && /قبلا|پیش تر|دوره قبل|سال قبل/.test(t) && /ثبت|شناسایی|پرداختنی|بدهی/.test(t);
   const mixed = /اصل مالیات|مالیات و جریمه|جریمه و مالیات|بخشی.*جریمه/.test(t);
