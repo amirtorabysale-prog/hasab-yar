@@ -155,7 +155,9 @@ test('confirmed imported T031 balance -> actual collection -> zero receivable, d
  database().prepare("UPDATE financial_events SET payload=? WHERE id=?").run(JSON.stringify({...JSON.parse(row(item).payload),amountReferenceOnly:false}),item.id);
  const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',counterpartyId:party.id},fetcher:noNetwork});
  assert.ok(prepared(item,p).priorBasis);assert.equal(prepared(item,p).canPost,false);
- const input={proposalId:p.id,amount:50000000,occurredAt:'2026-09-01',reference:'مانده مستند آزمایشی دفتر قبلی T031',confirmed:true};
+ // «منتقل‌شده» یعنی پیش از شروع ثبت در همین دفتر آزمون (۱۴۰۵/۰۶/۱۰).
+ const input={proposalId:p.id,amount:50000000,occurredAt:'2026-08-20',reference:'مانده مستند آزمایشی دفتر قبلی T031',confirmed:true};
+ assert.throws(()=>db.recordReviewPriorBasis(item.id,{...input,occurredAt:'2026-09-15'}),(error)=>error.code==='REVIEW_BASIS_INVALID' && error.message.includes('پیش از شروع ثبت'));
  assert.throws(()=>db.recordReviewPriorBasis(item.id,{...input,confirmed:false}),{code:'REVIEW_BASIS_INVALID'});
  const result=db.recordReviewPriorBasis(item.id,input);assert.ok(result.journal.id);assert.equal(row(item).status,'pending');
  assert.throws(()=>db.recordReviewPriorBasis(item.id,input),{code:'REVIEW_BASIS_INVALID'});
@@ -170,7 +172,7 @@ test('T079 imported tax receivable -> refund allocated to confirmed basis, no in
  const item=event('اداره دارایی ده میلیون از مالیات ارزش افزوده بابت اضافه پرداختی به حساب شرکت عودت داد',10000000);
  const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash'},fetcher:noNetwork});
  assert.ok(prepared(item,p).priorBasis);
- const basis=db.recordReviewPriorBasis(item.id,{proposalId:p.id,amount:10000000,occurredAt:'2026-09-01',reference:'پرونده مستند استرداد ارزش افزوده آزمایشی T079',confirmed:true}).journal;
+ const basis=db.recordReviewPriorBasis(item.id,{proposalId:p.id,amount:10000000,occurredAt:'2026-08-20',reference:'پرونده مستند استرداد ارزش افزوده آزمایشی T079',confirmed:true}).journal;
  const fresh=await ai.proposeReview(database(),item.id,{fetcher:noNetwork});assert.equal(prepared(item,fresh).canPost,true,prepared(item,fresh).postingBlockers.join(' / '));
  const posted=db.reviewAiFeedback(item.id,fresh.id,{accepted:true}).item;
  const allocated=database().prepare('SELECT * FROM accounting_review_tax_refunds WHERE event_id=?').get(item.id);
@@ -191,11 +193,11 @@ test('prior balance requires manager, prior date and absence of existing ledger 
 test('closed period atomically rejects basis, creating no receivable, journal or audit message',()=>run(async()=>{
  const party=db.saveContact({name:'مانده بسته آزمون'}),item=event('طلب مشتری وصول شد',10000000);
  const p=await ai.proposeReview(database(),item.id,{facts:{accountId:'cash',counterpartyId:party.id},fetcher:fake({summary:'وصول',missingFacts:[],inventoryItems:[],lines:[{role:'cash',debit:10000000,credit:0},{role:'receivable',debit:0,credit:10000000}]})});
- const period=accounting.periodForDate('2026-09-01');database().prepare("INSERT INTO accounting_periods(period,status) VALUES(?,'locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run(period);
+ const period=accounting.periodForDate('2026-08-20');database().prepare("INSERT INTO accounting_periods(period,status) VALUES(?,'locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run(period);
  const before=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
  const messages=assistant.reviewConversation(database(),item.id).length;
  try {
-  assert.throws(()=>db.recordReviewPriorBasis(item.id,{proposalId:p.id,amount:10000000,occurredAt:'2026-09-01',reference:'مانده مستند دوره بسته آزمایشی',confirmed:true}),{code:'ACCOUNTING_PERIOD_LOCKED'});
+  assert.throws(()=>db.recordReviewPriorBasis(item.id,{proposalId:p.id,amount:10000000,occurredAt:'2026-08-20',reference:'مانده مستند دوره بسته آزمایشی',confirmed:true}),{code:'ACCOUNTING_PERIOD_LOCKED'});
   assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,before);
   assert.equal(assistant.reviewConversation(database(),item.id).length,messages);
   assert.equal(database().prepare("SELECT 1 FROM ledger_accounts WHERE source_kind='customer-receivable' AND source_key=?").get(party.id),undefined);
