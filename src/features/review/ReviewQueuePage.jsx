@@ -251,6 +251,26 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
  * می‌شود؛ جای دیگری، حسابدار باید بین دو صفحه رفت‌وبرگشت کند تا اثر تغییرش را
  * ببیند.
  */
+/**
+ * حد سرمایه‌ای دارایی کم‌ارزش — سیاست مصوب همین دفتر.
+ *
+ * خالی یعنی تصویب نشده و صف حسابدار برای هر خرید تجهیز می‌پرسد. با عدد، خرید
+ * زیر آن هزینه است و دارایی ثابتِ کمتر از آن ثبت نمی‌شود.
+ */
+function CapitalizationThresholdField({ value, busy, onSave }) {
+  const [draft, setDraft] = useState(value ? String(value) : '');
+  const digits = (text) => String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[^\d]/g, '');
+  const next = digits(draft) ? Number(digits(draft)) : null;
+  return <div className="rounded-lg border border-line bg-surface p-3">
+    <p className="text-[12px] font-extrabold">حد سرمایه‌ای دارایی کم‌ارزش {value ? <span className="numbers">— {toPersianDigits(Number(value).toLocaleString('fa-IR'))} تومان</span> : '— تصویب نشده'}</p>
+    <p className="mt-1 text-[11px] leading-5 text-muted">خرید تجهیز و اموالِ کمتر از این مبلغ هزینهٔ دوره ثبت می‌شود و از آن به بالا دارایی ثابت. خالی بماند، برای هر خرید تجهیز سؤال پرسیده می‌شود.</p>
+    <div className="mt-2 flex gap-2">
+      <input inputMode="numeric" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="مثلاً ۲۰۰۰۰۰۰۰" aria-label="حد سرمایه‌ای به تومان" className="tap numbers min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
+      <button disabled={busy || next === (value || null)} onClick={() => onSave(next)} className="tap rounded-lg border border-accent px-3 text-[12px] font-bold text-accent disabled:opacity-40">{next ? 'ثبت' : 'برداشتن'}</button>
+    </div>
+  </div>;
+}
+
 function AutomationPolicyPanel({ canManage, notify, onChanged }) {
   const [policy, setPolicy] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -325,6 +345,8 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
           </button>
         </div>}
       </div>
+
+      <CapitalizationThresholdField value={policy.capitalizationThreshold} busy={busy} onSave={(capitalizationThreshold) => save({ capitalizationThreshold })} />
 
       <button disabled={busy} onClick={() => save({ manualOnly: !everythingReviewed })}
         className={`tap w-full rounded-lg border px-3 text-[12px] font-bold ${everythingReviewed ? 'border-line bg-surface' : 'border-accent bg-accent/5 text-accent'}`}>

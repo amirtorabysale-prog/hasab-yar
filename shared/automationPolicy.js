@@ -59,6 +59,13 @@ export const DEFAULT_AUTOMATION_POLICY = Object.freeze({
    * بعد می‌شود پرسید موتور کجا با حسابدار اختلاف داشت.
    */
   shadowMode: false,
+  /**
+   * حد سرمایه‌ای دارایی کم‌ارزش (تومان) — سیاست مصوب هر دفتر.
+   *
+   * خرید تجهیزِ کمتر از این مبلغ هزینهٔ دوره است و از آن به بالا دارایی ثابت.
+   * پیش‌فرض ندارد: بدون عددی که دفتر خودش تصویب کرده، سیستم می‌پرسد، فرض نمی‌کند.
+   */
+  capitalizationThreshold: null,
 });
 
 const clamp01 = (value, fallback) => {
@@ -70,6 +77,13 @@ const clamp01 = (value, fallback) => {
  * سیاست را از تنظیمات دفتر می‌سازد و هر مقدار نامعتبر را به پیش‌فرض برمی‌گرداند.
  * سیاستِ خراب نباید دروازه را باز کند؛ باید بی‌صدا به حالت امن برگردد.
  */
+/** فقط عدد صحیح مثبت؛ خالی یا خراب یعنی «تصویب نشده»، نه صفر. */
+function capitalizationThreshold(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 export function resolveAutomationPolicy(overrides = {}) {
   const autoThreshold = clamp01(overrides.autoThreshold, DEFAULT_AUTOMATION_POLICY.autoThreshold);
   const confirmThreshold = clamp01(overrides.confirmThreshold, DEFAULT_AUTOMATION_POLICY.confirmThreshold);
@@ -88,5 +102,6 @@ export function resolveAutomationPolicy(overrides = {}) {
     // نباید دروازه را باز کند.
     engineV2: overrides.engineV2 === true,
     shadowMode: overrides.shadowMode === true,
+    capitalizationThreshold: capitalizationThreshold(overrides.capitalizationThreshold),
   });
 }

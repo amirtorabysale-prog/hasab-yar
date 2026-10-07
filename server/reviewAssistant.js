@@ -1,3 +1,4 @@
+import { capitalizationIssues, reviewCapitalizationThreshold, withoutPolicyAnsweredQuestions } from './reviewCapitalization.js';
 import { isTaxPenaltyCategory } from '../shared/reviewTaxPenalty.js';
 import { reviewPriorBasis } from './reviewPriorBasis.js';
 import { tradeSettlementValidation } from './reviewTradeSettlement.js';
@@ -205,7 +206,8 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const taxRefund=taxRefundValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const insurance=insuranceSettlementValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const trade=tradeSettlementValidation(database,event,proposal.lines);
-  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,initial),...taxRefund.issues,...insurance.issues];
+  const threshold=reviewCapitalizationThreshold(database);
+  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,{...initial,capitalizationThreshold:threshold}),...taxRefund.issues,...insurance.issues,...capitalizationIssues(threshold,proposal.lines)];
   const blockers = [...(proposal.missingFacts || []),...(proposal.workflowBlockers || []),...natureIssues.map(q=>q.text)];
   const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
   if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');
@@ -305,6 +307,6 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const useLockedPlan = (!cash.length || anchor?.type==='transaction') && !proposal.missingFacts?.length && !proposal.lines.some(l=>l.accountId) && !Object.keys(reviewContext(database,row.id).facts).length && !JSON.parse(row.confidence || '{}').guardBlocked && decided && proposal.lines.length>0 && shape(proposal.lines)===shape(locked?.lines);
   const unique = [...new Set(blockers)].filter(b=>!useLockedPlan || !b.includes('این ثبت نقدی چندبخشی یا تخصصی') && !b.includes('اثر نقدی این سرفصل')); 
   return { ...proposal,lines,postingBlockers:unique,canPost:proposal.state==='proposed' && unique.length===0,contextRevision:proposal.contextRevision || 0,useLockedPlan,
-    priorBasis:reviewPriorBasis(database,row,{...event,evidence:reviewEvidence(database,row)},proposal.lines),tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),
+    priorBasis:reviewPriorBasis(database,row,{...event,evidence:reviewEvidence(database,row)},proposal.lines),tradeSettlement:trade.settlement,taxRefundClaim:taxRefund.claim,taxRefundCandidates:taxRefund.candidates || [],insuranceRun:insurance.run,mappingRepairs,newCounterparty:resources.newCounterparty,inventoryItems:event.reviewInventoryItems,questions:withoutPolicyAnsweredQuestions(reviewQuestions({...proposal,questions:[...(cashQuestion?[cashQuestion]:[]),...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}),threshold,row.amount),
     context:{occurredAt:event.occurredAt?.slice(0,10),dueAt:event.dueAt?.slice(0,10),counterpartyId:event.counterpartyId,accountId:event.accountId,...reviewContext(database,row.id).facts},conversation:reviewConversation(database,row.id) };
 }

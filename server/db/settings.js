@@ -33,12 +33,13 @@ export function saveAutomationPolicy(values = {}) {
     // ریخته می‌شود و موتور تصمیم هیچ‌وقت روشن نمی‌شود.
     engineV2: values.engineV2,
     shadowMode: values.shadowMode,
+    capitalizationThreshold: values.capitalizationThreshold,
   });
   db.prepare("INSERT INTO settings (key,value) VALUES ('automationPolicy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     .run(JSON.stringify(next));
   audit('update', 'automation-policy', 'automationPolicy', {
-    from: { autoThreshold: previous.autoThreshold, confirmThreshold: previous.confirmThreshold },
-    to: { autoThreshold: next.autoThreshold, confirmThreshold: next.confirmThreshold },
+    from: { autoThreshold: previous.autoThreshold, confirmThreshold: previous.confirmThreshold, capitalizationThreshold: previous.capitalizationThreshold },
+    to: { autoThreshold: next.autoThreshold, confirmThreshold: next.confirmThreshold, capitalizationThreshold: next.capitalizationThreshold },
   });
   return next;
 }

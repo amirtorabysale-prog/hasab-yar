@@ -1,3 +1,4 @@
+import { capitalizationIssues, capitalizationPromptLine, reviewCapitalizationThreshold, withoutPolicyAnsweredQuestions } from './reviewCapitalization.js';
 import { taxPenaltyProposal } from '../shared/reviewTaxPenalty.js';
 import { simpleReviewCashProposal } from '../shared/reviewSimpleCash.js';
 import { conditionalPaymentProposal } from '../shared/reviewSettlement.js';
@@ -145,6 +146,7 @@ async function proposeReviewOnce(database, eventId, { fetcher = fetch, message =
 استرداد مالیات درآمد تازه نیست؛ به طلب مالیاتی قبلی ارجاع بده. پرداخت بیمه کارکنان تسویه بدهی است؛ کل لیست را هزینه سهم کارفرما نکن. انتقال شریک بدون سند آورده قطعی افزایش سرمایه نیست. تسویه طلب/بدهی قبلی شناسایی دوباره درآمد/هزینه نیست. بانک مفقود را صندوق فرض نکن. تعهد پرداخت، پرداخت انجام‌شده نیست. بخشودگی مشروط به پرداخت آینده را تا تحقق شرط شناسایی نکن؛ پرداخت انجام‌شده را جدا ثبت کن. مشتری تجاری با نقش receivable و تأمین‌کننده با payable ثبت می‌شود؛ صرف نبود حساب تجاری مجوز استفاده از جاری شریک نیست. نام حساب یا ساخت حساب را به عنوان سؤال کسب‌وکار مطرح نکن؛ سیستم حساب مرتبط را با تأیید ایجاد می‌کند.
 سپرده مزایده یا ودیعه صریحاً قابل استرداد نقش refundable-deposit دارد و پیش‌پرداخت اجاره نیست. عودت پیش‌دریافت مشتری خروج وجه و کاهش customer-advance است و به مانده واقعی دریافت اولیه نیاز دارد؛ نبود مانده را با ایجاد بدهی فرضی جبران نکن. حق استفاده چندساله و علامت تجاری هزینه جاری یا fixed-asset مشهود نیست؛ اگر نقش دارایی نامشهود در فهرست مجاز نیست lines خالی بماند و قرارداد و مسیر تخصصی خواسته شود. بهسازی چندساله دفتر استیجاری قبض برق نیست؛ مدت اجاره و شرایط منفعت آینده را بررسی کن. اصل وام دریافت‌شده نقش loan-payable دارد و درآمد یا بدهی تجاری نیست. پیش‌دریافت مشتری customer-advance است. پیش‌پرداخت بیمه prepaid-asset است و برنامه هزینه‌کردن آن جدا از ثبت پرداخت بررسی می‌شود. اگر سال پوشش معلوم نیست فقط یک سؤال درباره شروع پوشش بپرس؛ تاریخ پرداخت موجود را دوباره نپرس.
 طلبی که قبلاً از دفاتر حذف یا سوخت‌شده ثبت شده، طلب باز نیست؛ receivable یا افتتاحیه فرضی برای وصول آن نساز. سند حذف و روش شناسایی بازیافت باید در مسیر تخصصی بررسی شود. بهسازی ملک استیجاری حتی با عمر استفاده معلوم، برای سرمایه‌ای شدن به مدت باقی‌مانده قطعی اجاره و سیاست مصوب شرکت نیاز دارد؛ اگر معلوم نیست، سؤال‌های مستقل با id های leasehold.lease-term و leasehold.capitalization-policy بپرس، نه انتخاب حساب. فقط پاسخ محفوظ در questionAnswers را به‌عنوان تأیید حسابدار مصرف کن.
+${capitalizationPromptLine(reviewCapitalizationThreshold(database))}
 پیش از ارسال JSON کنترل کن: اگر سؤال مؤثر ندارید باید حداقل دو سطر معتبر بدهید؛ جمع بدهکار و بستانکار مساوی و مبلغ هر سطر دقیقاً از رویداد باشد. پاسخ با lines و questions هر دو خالی ممنوع است.
 ماهِیت رویداد و حساب بدهکار/بستانکار را بر اساس شواهد پیشنهاد بده؛ از قوانین، نرخ یا دادهٔ ناموجود حدس نزن. اگر اطلاعات کافی نیست missingFacts بنویس. هر مبلغ عدد صحیح به تومان است.
 نقش‌های مجاز: ${[...roles].join(', ')}.
@@ -189,10 +191,11 @@ ${event.amountReferenceOnly ? `بزرگ‌ترین مبلغ گفته‌شده ${
   // حین انتظار شبکه ممکن است حسابدار دیگری ثبت یا رد کرده باشد.
   if (database.prepare('SELECT status FROM financial_events WHERE id=?').get(eventId)?.status !== 'pending' || requestFingerprint !== conversationFingerprint(database,eventId) || sourceHash(database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId)) !== sourceHash(row) || reviewKnowledgeFingerprint(database)!==knowledgeFingerprint) throw fail('این رویداد پیش‌تر بررسی شده است.', 'EVENT_NOT_PENDING');
   proposal=bindReviewProposal(proposal,catalog,event);
-  const natureIssues=reviewNatureViolations(fullUtterance,proposal.lines,event);
+  const threshold=reviewCapitalizationThreshold(database);
+  const natureIssues=[...reviewNatureViolations(fullUtterance,proposal.lines,{...event,capitalizationThreshold:threshold}),...capitalizationIssues(threshold,proposal.lines)];
   const cashQuestion=proposal.lines.some(l=>l.role==='cash') && !event.accountId ? [{id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'}] : [];
   proposal.workflowBlockers=[...(proposal.workflowBlockers || []),...natureIssues.filter(q=>q.action).map(q=>q.text)];
-  proposal.questions=reviewQuestions({...proposal,questions:[...cashQuestion,...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}).filter(q=>!proposal.lines.length || !isReviewAccountSetupQuestion(q));
+  proposal.questions=withoutPolicyAnsweredQuestions(reviewQuestions({...proposal,questions:[...cashQuestion,...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}).filter(q=>!proposal.lines.length || !isReviewAccountSetupQuestion(q)),threshold,row.amount);
   proposal.missingFacts=proposal.questions.map(q=>q.text);
   proposal.knowledgeFingerprint=knowledgeFingerprint;
   proposal.contextRevision = reviewContext(database,eventId).revision;
