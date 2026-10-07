@@ -1,4 +1,5 @@
 import { queueUnquantifiedReview, resolveUnquantifiedReview } from './db/reviewIntakes.js';
+import { queueUnmatchedSettlement } from './db/transactions.js';
 import 'node:process';
 import express from 'express';
 import multer from 'multer';
@@ -385,6 +386,10 @@ app.post('/api/transactions', (request, response, next) => {
 app.post('/api/transactions/unquantified-review', (request, response, next) => {
   try { return response.status(201).json({ item: queueUnquantifiedReview(request.body?.transcript, request.body || {}) }); }
   catch (error) { return next(error); }
+});
+app.post('/api/transactions/unmatched-settlement-review', (request,response,next)=>{
+  try {return response.status(201).json({item:queueUnmatchedSettlement(request.body?.transcript,request.body || {})});}
+  catch(error){return next(error);}
 });
 app.post('/api/financial-events/intakes/:id/resolve', (request, response, next) => {
   try { return response.json({ item: resolveUnquantifiedReview(request.params.id, request.body || {}) }); }

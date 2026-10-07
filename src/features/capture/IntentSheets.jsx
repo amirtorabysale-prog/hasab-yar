@@ -251,7 +251,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
  * اشتباه جابه‌جا می‌شود و یک سند باز، بسته اعلام می‌شود. پس هیچ سندی خودکار
  * تسویه نمی‌شود — حتی وقتی فقط یک گزینه بخورد، کاربر باید همان یکی را تأیید کند.
  */
-export function SettleSheet({ draft, obligations = [], close, confirm }) {
+export function SettleSheet({ draft, obligations = [], close, confirm, queueReview }) {
   const [invoices, setInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(true);
   const [selectedId, setSelectedId] = useState('');
@@ -293,6 +293,7 @@ export function SettleSheet({ draft, obligations = [], close, confirm }) {
           سند بازی که با این توضیح بخورد پیدا نشد. شاید نام یا مبلغ فرق دارد، یا سند هنوز صادر نشده است
           — پیش‌نویس تسویه نمی‌شود. تعهدهای قدیمیِ بدون سند اولیه هم تا بررسی حسابدار قابل تسویه نیستند؛ وضعیتشان در «طلب و بدهی» نمایش داده می‌شود.
         </p>}
+        {!loadingInvoices && !targets.length && queueReview && <button disabled={busy} className="tap mt-3 w-full rounded-lg border border-accent p-3 font-bold text-accent" onClick={async()=>{setBusy(true);try{await queueReview(draft);}finally{setBusy(false);}}}>ارسال گفته به صف حسابدار</button>}
 
         {targets.length > 1 && <p className="mt-4 text-[12px] leading-6 text-expense">
           {toPersianDigits(targets.length)} سند با این توضیح می‌خورد. خودت انتخاب کن؛ حساب‌یار حدس نمی‌زند

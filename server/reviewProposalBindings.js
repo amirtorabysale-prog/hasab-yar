@@ -1,3 +1,4 @@
+import { taxPenaltyFacts, TAX_PENALTY_CATEGORY } from '../shared/reviewTaxPenalty.js';
 import { suggestChartAccount } from './chartOfAccounts.js';
 import { classifyCategory } from '../shared/categoryRules.js';
 import { REVIEW_ACCOUNT_TYPES, reviewNormalSide } from './reviewAccountPreparation.js';
@@ -9,6 +10,10 @@ export function bindReviewProposal(proposal,catalog,event) {
   const charts=catalog.chart.map(a=>({id:a[0],code:a[1],name:a[2],type:a[3],normalSide:a[4],role:a[5],level:'subsidiary',postable:true,active:true}));
   const lines=proposal.lines.map(original=>{
     const line={...original}, role=line.role;
+    const fine=taxPenaltyFacts(event.evidence || event.utterance || '');
+    if(role==='expense-category' && fine.penalty && !fine.prior && !fine.mixed) {
+      line.key=TAX_PENALTY_CATEGORY;delete line.accountId;delete line.chartAccountId;
+    }
     if(role==='expense-category' && /^(سایر هزینه‌ها|سایر هزینه های عملیاتی|سایر هزینه‌های عملیاتی)$/.test(line.key || '')) {
       const meaning=classifyCategory(event.evidence || event.utterance || '', 'expense');
       if(meaning.matched && !meaning.ambiguous && meaning.confidence>=.86 && meaning.category===event.category) {

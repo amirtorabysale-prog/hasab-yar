@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, listChartAccounts, mapLedgerAccountToChart,
+  analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, ensureOpeningEquityMapping, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart,
   resolveLineDimensions, saveAnalyticAccount, suggestChartAccount,
 } from './chartOfAccounts.js';
 import { ensurePayrollSchema, payrollJournalLines } from './payroll.js';
@@ -71,6 +71,8 @@ export function ensureAccountingSchema(database) {
   seed.run('ledger-opening-equity', '3000', 'سرمایه و ماندهٔ افتتاحیه', 'equity', 'credit', 'system', 'opening-equity');
   // ستون‌های بعد (تفصیلی و مرکز هزینه) و نگاشت کدینگ روی همین جدول‌ها می‌نشینند.
   ensureChartSchema(database);
+  ensureTaxPenaltyTemplate(database);
+  ensureOpeningEquityMapping(database);
   ensureJournalWorkflowSchema(database);
 }
 

@@ -58,7 +58,7 @@ test('future opening journal cannot justify an earlier payment',()=>run(()=>{
 }));
 test('T076 explicit category repairs generic expense binding, preserving amounts',()=>{
  const p=bindReviewProposal({lines:[{role:'expense-category',key:'سایر هزینه‌های عملیاتی',debit:20000000,credit:0},{role:'cash',debit:0,credit:20000000}],inventoryItems:[]},{ledger:[],chart:[]},{evidence:'ممیز مالیاتی بیست میلیون تومن جریمه عدم تسلیم اظهارنامه برید مجبور شدیم بدیم',category:'مالیات و عوارض'});
- assert.equal(p.lines[0].key,'مالیات و عوارض');assert.equal(p.lines[0].debit,20000000);
+ assert.equal(p.lines[0].key,'جرایم مالیاتی');assert.equal(p.lines[0].debit,20000000);
 });
 test('account creation is not a business question, but real source/balance questions remain',()=>{
  assert.equal(isReviewAccountSetupQuestion('حساب دفترکل/سرفصل مناسب برای ثبت پیش‌پرداخت خرید به تأمین‌کننده در این پرونده موجود نیست و باید توسط سیستم ایجاد یا تطبیق شود.'),true);

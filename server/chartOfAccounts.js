@@ -1,3 +1,4 @@
+import { isTaxPenaltyCategory } from '../shared/reviewTaxPenalty.js';
 // فاز ۲ — کدینگ استاندارد، تفصیلی شناور و مرکز هزینه.
 //
 // حساب‌یار تا پیش از این کد حساب را خودش می‌ساخت (accounting.js:nextCode). هیچ دفتر
@@ -29,7 +30,7 @@ export const CHART_ROLES = Object.freeze([
   'cash', 'bank', 'receivable', 'payable', 'inventory', 'cogs',
   'sales', 'service-income', 'other-income', 'operating-expense',
   'output-tax', 'input-tax', 'equity', 'inventory-gain', 'inventory-shrinkage',
-  'tax-receivable', 'partner-payable', 'partner-receivable',
+  'tax-penalty-expense', 'tax-receivable', 'partner-payable', 'partner-receivable',
   'fixed-asset', 'owner-capital', 'refundable-deposit', 'loan-payable',
   // حقوق و دستمزد سه بدهی جدا می‌سازد و هر سه به گیرندهٔ متفاوتی پرداخت
   // می‌شوند: خالص به خودِ پرسنل، بیمه به تأمین اجتماعی و مالیات به سازمان
@@ -473,6 +474,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['8116', 'آموزش', 'subsidiary', '81', 'expense', ''],
   ['8117', 'هزینهٔ استهلاک', 'subsidiary', '81', 'expense', 'depreciation-expense'],
   ['8118', 'سوخت و ایاب‌وذهاب', 'subsidiary', '81', 'expense', ''],
+  ['8120', 'جرایم مالیاتی', 'subsidiary', '81', 'expense', 'tax-penalty-expense'],
   ['8119', 'بیمهٔ دارایی و مسئولیت', 'subsidiary', '81', 'expense', ''],
 ].map(([code, name, level, parentCode, type, role]) => Object.freeze({ code, name, level, parentCode, type, role })));
 
@@ -518,9 +520,28 @@ export function importChartOfAccounts(database, rows = [], { source = 'import', 
       insert.run(existing?.id || randomUUID(), account.code, account.name, account.level, parentId, account.type, account.normalSide, account.role, source, account.levelCode || account.code, account.requiresAnalytic ? 1 : 0);
       if (existing) updated += 1; else created += 1;
     }
+    ensureOpeningEquityMapping(database);
     database.exec('COMMIT');
     return { created, updated, total: accounts.length, source };
   } catch (error) { database.exec('ROLLBACK'); throw error; }
+}
+
+/** Repairs only an unmapped system opening ledger; never changes an explicit mapping. */
+export function ensureOpeningEquityMapping(database) {
+  const columns=database.prepare('PRAGMA table_info(ledger_accounts)').all().map(c=>c.name);
+  if(!['source_kind','source_key','active','chart_account_id'].every(c=>columns.includes(c))) return;
+  const ledger=database.prepare("SELECT id,chart_account_id FROM ledger_accounts WHERE source_kind='system' AND source_key='opening-equity' AND active=1").get();
+  if(!ledger || ledger.chart_account_id) return;
+  const matches=database.prepare("SELECT id FROM chart_accounts WHERE role='equity' AND level='subsidiary' AND type='equity' AND normal_side='credit' AND active=1").all();
+  if(matches.length===1) mapLedgerAccountToChart(database,ledger.id,matches[0].id);
+}
+
+/** Add the new subsidiary to our installed template only, not a custom chart. */
+export function ensureTaxPenaltyTemplate(database) {
+  const parent=database.prepare("SELECT id FROM chart_accounts WHERE code='81' AND source='template' AND type='expense' AND level='general' AND active=1").get();
+  const tax=database.prepare("SELECT id FROM chart_accounts WHERE code='8114' AND source='template' AND name='مالیات و عوارض' AND active=1").get();
+  if(!parent || !tax || database.prepare("SELECT 1 FROM chart_accounts WHERE code='8120' OR role='tax-penalty-expense'").get()) return;
+  database.prepare("INSERT INTO chart_accounts(id,code,name,level,parent_id,type,normal_side,role,source,level_code) VALUES(?,'8120','جرایم مالیاتی','subsidiary',?,'expense','debit','tax-penalty-expense','template','8120')").run(randomUUID(),parent.id);
 }
 
 export function installDefaultChartTemplate(database) {
@@ -695,7 +716,11 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
 
   const sourceKey = ledgerAccount.sourceKey || ledgerAccount.source_key;
   const keyRole = ROLE_BY_SOURCE_KEY[sourceKey];
-  if (keyRole) return byRole(keyRole);
+  if (keyRole) {
+    const matches=postable.filter(item=>item.role===keyRole);
+    if(sourceKey==='opening-equity') return matches.length===1?matches[0]:null;
+    return byRole(keyRole);
+  }
 
   const sourceKind = ledgerAccount.sourceKind || ledgerAccount.source_kind;
   if(['partner-payable','partner-receivable','refundable-deposit','loan-payable'].includes(sourceKind)) return byRole(sourceKind);
@@ -707,6 +732,10 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
   // `specific: false` عمداً همان پیشنهادِ عمومیِ قبلی را برمی‌گرداند تا بشود
   // تشخیص داد یک نگاشت موجود، خودکارِ عمومی بوده یا انتخاب آگاهانهٔ حسابدار.
   if (['income-category', 'expense-category'].includes(sourceKind)) {
+    if(sourceKind==='expense-category' && isTaxPenaltyCategory(sourceKey || ledgerAccount.name)) {
+      const matches=postable.filter(item=>item.role==='tax-penalty-expense' || isTaxPenaltyCategory(item.name));
+      return matches.length===1?matches[0]:null;
+    }
     const code = specific ? chartCodeForCategory(sourceKey) : null;
     const exact = code ? postable.find((item) => normalizeChartCode(item.code) === code) : null;
     if (exact) return exact;

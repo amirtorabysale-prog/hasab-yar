@@ -86,11 +86,10 @@ test('suggested mappings connect every internal account to the office chart', ()
       transactions: [{ amount: 4_000_000, type: 'income', category: 'فروش', rawText: 'فروش نقدی' }],
     });
     const before = database.chartOverview().mapping;
-    assert.ok(before.unmappedCount > 0);
-    assert.ok(before.suggestionsAvailable > 0);
+    assert.equal(before.unmappedCount, 0, 'opening equity and newly used accounts map automatically');
 
     const applied = database.applyChartSuggestions();
-    assert.ok(applied.applied > 0);
+    assert.equal(applied.applied, 0);
     assert.equal(applied.unmappedCount, 0);
     assert.equal(applied.complete, true);
 

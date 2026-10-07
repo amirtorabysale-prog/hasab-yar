@@ -1,3 +1,4 @@
+import { isTaxPenaltyCategory } from '../shared/reviewTaxPenalty.js';
 import { reviewPriorBasis } from './reviewPriorBasis.js';
 import { tradeSettlementValidation } from './reviewTradeSettlement.js';
 import { ensureTaxRefundSchema, taxRefundValidation } from './reviewTaxRefund.js';
@@ -246,7 +247,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
     if(['expense-category','income-category'].includes(role)) {
       const type=role==='expense-category'?'expense':'income';
       const meaning=classifyCategory(reviewEvidence(database,row),type);
-      if(meaning.matched && !meaning.ambiguous && meaning.confidence>=.86 && meaning.category===event.category) {
+      if(!isTaxPenaltyCategory(key) && meaning.matched && !meaning.ambiguous && meaning.confidence>=.86 && meaning.category===event.category) {
         const expected=suggestChartAccount({name:meaning.category,type,sourceKind:role,sourceKey:meaning.category},listChartAccounts(database),{confidentOnly:true});
         if(expected && mappedId && mappedId!==expected.id) blockers.push(`معین سطر با متن اصلی و دستهٔ «${meaning.category}» سازگار نیست؛ پیشنهاد باید بازبینی شود.`);
       }
@@ -273,7 +274,13 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   if ((proposal.contextRevision || 0) !== reviewContext(database,row.id).revision || proposal.sourceFingerprint !== createHash('sha256').update(`${row.payload}|${row.posting_plan}|${row.decision_id}`).digest('hex')) blockers.push('اطلاعات یا گفت‌وگو تغییر کرده؛ پیشنهاد را دوباره بررسی کن.');
   if (cash.length===1 && other.length===1 && cashCounterparts.includes(other[0].role)) {
     const creditCash=cash[0].credit>0;
-    if (!['partner-payable','partner-receivable'].includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+    const advanceRefund=reviewNature(reviewEvidence(database,row)).advanceRefund && ['customer-advance','deferred-revenue'].includes(other[0].role);
+    if (advanceRefund) {
+      if(!creditCash || other[0].debit<=0) blockers.push('عودت پیش‌دریافت باید بدهی مشتری را کم کند و خروج وجه باشد.');
+      const prior=event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(other[0].role,event.counterpartyId) : null;
+      const balance=prior ? database.prepare('SELECT COALESCE(SUM(credit-debit),0) balance FROM journal_lines WHERE account_id=?').get(prior.id).balance : 0;
+      if(balance<row.amount) blockers.push('مانده واقعی پیش‌دریافت این مشتری برای عودت کافی نیست؛ سند دریافت اولیه یا مانده مستند لازم است.');
+    } else if (!['partner-payable','partner-receivable'].includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
   }
   const partnerMode=partnerTreatment(reviewEvidence(database,row),initial);
   const settlementRole=partnerMode===PARTNER_TREATMENTS.repayCompany?'partner-payable':partnerMode===PARTNER_TREATMENTS.repayPartner?'partner-receivable':null;
