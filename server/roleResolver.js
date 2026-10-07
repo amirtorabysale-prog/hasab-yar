@@ -137,6 +137,17 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');
 
+    // کاهندهٔ حقوق صاحبان سهام: نوعش سرمایه است ولی ماهیتش بدهکار.
+    case ROLES.OWNER_DRAWING:
+      return linkedAccount(database, 'system', 'owner-drawing', 'برداشت مالک', 'equity', 'debit');
+
+    // همان حسابی که بررسی حسابدار برای پیش‌پرداخت خرید می‌سازد.
+    case ROLES.SUPPLIER_ADVANCE:
+      return counterpartyRoleAccount(database, 'prepaid-asset', event, key || 'تأمین‌کننده متفرقه', 'پیش‌پرداخت خرید', 'asset');
+
+    case ROLES.INVENTORY_UNSPLIT:
+      return linkedAccount(database, 'inventory-unsplit', 'unsplit', 'موجودی کالا — تفکیک‌نشده', 'asset');
+
     case ROLES.FIXED_ASSET: {
       if (!String(key || '').trim()) throw resolverError('نام دارایی ثابت برای ساخت حساب لازم است.', 'ASSET_NAME_MISSING');
       return linkedAccount(database, 'fixed-asset', key, `دارایی ثابت — ${key}`, 'asset');
@@ -180,6 +191,7 @@ export function resolveEventRole(database, role, key, event = {}) {
 const COUNTERPARTY_ROLES = new Set([
   ROLES.PARTNER_PAYABLE,ROLES.PARTNER_RECEIVABLE,
   ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE, ROLES.CUSTOMER_ADVANCE, ROLES.DEFERRED_REVENUE, ROLES.REFUNDABLE_DEPOSIT, ROLES.LOAN_PAYABLE,
+  ROLES.SUPPLIER_ADVANCE,
 ]);
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {

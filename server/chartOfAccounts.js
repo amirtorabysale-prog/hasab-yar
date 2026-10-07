@@ -618,6 +618,8 @@ const ROLE_BY_SOURCE_KIND = {
   'customer-receivable': ['receivable'],
   'vendor-payable': ['payable'],
   'inventory-product': ['inventory'],
+  // موجودی‌ای که هنوز به کارت کالا تفکیک نشده؛ همان معین موجودی کالا.
+  'inventory-unsplit': ['inventory'],
   'cogs-product': ['cogs'],
   'income-category': ['sales', 'service-income', 'other-income'],
   'expense-category': ['operating-expense'],
@@ -644,6 +646,8 @@ const ROLE_BY_SOURCE_KEY = {
   'input-tax': 'input-tax',
   'opening-equity': 'equity',
   'owner-capital': 'owner-capital',
+  // برداشت مالک زیر همان معین سرمایه می‌نشیند و ماهیت بدهکارش آن را کم می‌کند.
+  'owner-drawing': 'owner-capital',
   'inventory-gain': 'inventory-gain',
   'inventory-shrinkage': 'inventory-shrinkage',
   'depreciation-expense': 'depreciation-expense',

@@ -13,6 +13,7 @@ import { parseFinancialText } from './parser.js';
 import { detectTaxMention, parseInvoiceLines, wantsImmediateIssue } from './invoiceSpeech.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from './financialEvent.js';
 import { EVENT_NATURES, readEventNature } from './eventNature.js';
+import { detectBank } from './banks.js';
 
 /**
  * نیت گفته را تشخیص می‌دهد.
@@ -193,6 +194,12 @@ function dateAfter(text, marker, now, preferPast) {
  */
 export function splitDateRoles(input, { now, isCheque = false } = {}) {
   const text = normalizePersian(input);
+  // «چک … به تاریخ ۲۰ آذر» یعنی تاریخِ خودِ چک، که همان سررسید است. با نشانهٔ
+  // عمومیِ «تاریخ» تاریخ رویداد خوانده می‌شد و با ترجیح گذشته به آذرِ پارسال
+  // می‌رفت: فروش امسال در سال بسته‌شده ثبت می‌شد و چک سررسید نداشت.
+  if (isCheque && /به\s*تاریخ|تاریخ\s*چک/.test(text) && !DUE_MARKERS.test(text)) {
+    return { occurredAt: null, dueAt: dateAfter(text, /به\s*تاریخ|تاریخ\s*چک/, now, false) };
+  }
   const dueAt = dateAfter(text, DUE_MARKERS, now, false);
   const occurredAt = dateAfter(text, OCCURRED_MARKERS, now, true);
   if (dueAt || occurredAt) return { occurredAt, dueAt };
@@ -270,7 +277,9 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
       intent: 'capital',
       amount,
       title: 'آورده و افزایش سرمایه',
-      accountId: 'cash',
+      // «به حساب بانک ملت واریز کرد» یعنی پول در بانک ملت نشسته، نه صندوق.
+      // آزمون مهر ۱۴۰۵ صد میلیون آورده را در صندوق نشان داد.
+      ...accountOf(input),
       occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
       transcript: text,
     };
@@ -282,7 +291,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
       intent: 'fixed-asset',
       amount,
       title: extractAssetTitle(input),
-      accountId: 'cash',
+      ...accountOf(input),
       occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
       transcript: text,
     };
@@ -378,6 +387,12 @@ export function invoiceLinesTotal(intent = {}) {
  * حرکتشان را ببیند — ولی هیچ‌کدام درآمد یا هزینهٔ دوره نیستند. سمت دیگر سند،
  * حساب سرمایه یا حساب همان دارایی است، نه یک دستهٔ درآمد/هزینه.
  */
+/** حسابی که جمله نام برده: بانکِ گفته‌شده، وگرنه صندوق. */
+function accountOf(input) {
+  const bank = detectBank(input);
+  return bank?.bankId ? { accountId: null, bankId: bank.bankId } : { accountId: 'cash', bankId: null };
+}
+
 export function capitalEntryPayload(draft = {}) {
   const amount = Math.round(Number(draft.amount) || 0);
   const title = String(draft.title || '').trim().slice(0, 100);
@@ -387,7 +402,8 @@ export function capitalEntryPayload(draft = {}) {
     kind: draft.intent === 'capital' ? 'capital-in' : 'fixed-asset',
     amount,
     title,
-    accountId: draft.accountId || 'cash',
+    accountId: draft.accountId || (draft.bankId ? null : 'cash'),
+    ...(draft.bankId ? { bankId: draft.bankId } : {}),
     occurredAt: draft.occurredAt || null,
     note: String(draft.transcript || '').slice(0, 300),
   };

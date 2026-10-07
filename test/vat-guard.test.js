@@ -286,6 +286,10 @@ function record(sentence) {
 // می‌رود و فقط با دلیل ثبت می‌شود — همان کاری که حسابدار واقعی می‌کند.
 const settle = (event) => {
   if (event.status !== 'pending') return event;
+  // فروش از مهر ۱۴۰۵ تصمیم قطعی دارد (درآمد همان لحظه) و تفکیک نگهبان روی تصمیم
+  // قطعی دلیل جدا نمی‌خواهد. نقشهٔ بازنویسی‌شده روی تصمیم ناقص هنوز می‌خواهد.
+  const decided = store.decisionForEvent(database.activeWorkspaceDatabase(), event.id)?.decisionStatus === 'decided';
+  if (decided) return database.approveEvent(event.id);
   assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_OVERRIDE_REASON_REQUIRED' }, 'تأیید بی‌دلیل نباید ممکن باشد');
   return database.approveEvent(event.id, { reason: 'حسابدار: ماهیت بررسی و تأیید شد.' });
 };

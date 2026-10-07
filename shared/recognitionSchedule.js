@@ -44,6 +44,26 @@ function persianMonthIndex(iso) {
   return (parts.year * 12) + (parts.month - 1);
 }
 
+/**
+ * طول دوره به ماه — نه تعداد ماه‌های تقویمی که لمس می‌کند.
+ *
+ * اجارهٔ شش ماهه‌ای که ۱۵ مهر شروع شده تا ۱۴ فروردین است و هفت ماه تقویمی را
+ * لمس می‌کند؛ شمردن ماه‌های لمس‌شده آن را هفت قسط ۵٫۱۴ میلیونی می‌کرد، به‌جای
+ * شش قسط شش میلیونی. تصمیم مهر ۱۴۰۵: N قسط مساوی، از همان ماه شروع.
+ *
+ * پایان دوره روز آخرِ آن است، پس یک روز جلو می‌رود تا «تا ۱۴ فروردین» با «از
+ * ۱۵ مهر» شش ماه کامل شود. اختلاف روزِ باقی‌مانده به نزدیک‌ترین ماه گرد
+ * می‌شود: «تا ۲۸ فروردین» برای شروعِ ۳۰ مهر هم شش ماه است.
+ */
+function periodMonths(periodStart, periodEnd) {
+  // پایان پیش از شروع یعنی دادهٔ خراب؛ برنامه‌ای از آن ساخته نمی‌شود.
+  if (!(Date.parse(periodEnd) >= Date.parse(periodStart))) return 0;
+  const start = todayPersian(new Date(periodStart));
+  const end = todayPersian(new Date(new Date(periodEnd).getTime() + 86_400_000));
+  const months = ((end.year * 12) + end.month) - ((start.year * 12) + start.month);
+  return Math.max(1, months + Math.round((end.day - start.day) / 30));
+}
+
 function persianMonthKey(index) {
   const year = Math.floor(index / 12);
   const month = (index % 12) + 1;
@@ -67,16 +87,16 @@ export function scheduleItemKey(sourceId, periodKey) {
  * ورودی: مبلغ کل، شروع و پایان دوره، و شناسهٔ منبع.
  * خروجی: آرایه‌ای از اقلام، هرکدام با `periodKey` یکتا، مبلغ، و وضعیت اولیه.
  *
- * دورهٔ ناقص اول یا آخر به همان ماه تعلق می‌گیرد؛ خرده‌ریز روزانه محاسبه
- * نمی‌شود (تصمیم ۲، `docs/wp0-open-decisions.md`).
+ * تعداد اقساط، طول دوره به ماه است و اقساط مساوی از ماهِ شروع پشت سر هم
+ * می‌آیند؛ خرده‌ریز روزانه محاسبه نمی‌شود (تصمیم ۲، `docs/wp0-open-decisions.md`؛
+ * دورهٔ وسط ماه: تصمیم مهر ۱۴۰۵).
  */
 export function buildMonthlySchedule({ amount, periodStart, periodEnd, sourceId } = {}) {
   const total = Math.round(Number(amount) || 0);
   if (!(total > 0) || !periodStart || !periodEnd) return [];
 
   const firstMonth = persianMonthIndex(periodStart);
-  const lastMonth = persianMonthIndex(periodEnd);
-  const count = lastMonth - firstMonth + 1;
+  const count = periodMonths(periodStart, periodEnd);
   if (!(count > 0)) return [];
 
   // ته‌ماندهٔ گرد کردن روی قلم آخر می‌نشیند، نه پخش‌شده روی همه: پخش کردنش

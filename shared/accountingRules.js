@@ -50,6 +50,15 @@ export const ROLES = Object.freeze({
   VAT_INPUT: 'vat-input',
   ACCUMULATED_DEPRECIATION: 'accumulated-depreciation',
   DEPRECIATION_EXPENSE: 'depreciation-expense',
+  // برداشت شخصی مالک: از حقوق صاحبان سهام کم می‌کند، ولی جدا از آورده نگه
+  // داشته می‌شود تا مانده‌ها قابل خواندن بمانند. هزینه نیست.
+  OWNER_DRAWING: 'owner-drawing',
+  // پیش‌پرداخت خرید به تفکیک تأمین‌کننده؛ همان حسابی که مسیر بررسی حسابدار
+  // می‌سازد، تا یک تأمین‌کننده دو حساب پیش‌پرداخت پیدا نکند.
+  SUPPLIER_ADVANCE: 'supplier-advance',
+  // موجودی کالایی که نام و تعدادش هنوز گفته نشده. ارزشش درست می‌نشیند و
+  // تفکیکش به کارت کالا بعداً انجام می‌شود؛ بهتر از اینکه کل خرید منتظر بماند.
+  INVENTORY_UNSPLIT: 'inventory-unsplit',
 });
 
 function ruleError(message, code = 'RULE_UNSUPPORTED') {
@@ -122,7 +131,46 @@ const TREATMENT_PLANS = Object.freeze({
   'prepaid-expense': (event, amount) => plan(event.kind,
     { role: ROLES.PREPAID_ASSET, key: event.category },
     { role: ROLES.CASH, key: event.accountId }, amount, event.category),
+
+  // وام دریافتی بدهی است؛ درآمد کردنش سود دوره را به اندازهٔ کل وام باد می‌کرد.
+  'loan-received': (event, amount) => plan(event.kind,
+    { role: ROLES.CASH, key: event.accountId },
+    { role: ROLES.LOAN_PAYABLE, key: event.counterparty }, amount, event.counterparty || 'وام دریافتی'),
+
+  // واریزی که منشأش معلوم نیست تا تعیین تکلیف بدهی موقت است، نه درآمد.
+  'unidentified-receipt': (event, amount) => plan(event.kind,
+    { role: ROLES.CASH, key: event.accountId },
+    { role: ROLES.UNIDENTIFIED_RECEIPT, key: null }, amount, 'واریز با منشأ نامعلوم'),
+
+  'owner-capital': (event, amount) => plan(event.kind,
+    { role: ROLES.CASH, key: event.accountId },
+    { role: ROLES.OWNER_CAPITAL, key: null }, amount, 'آوردهٔ مالک'),
+
+  'owner-drawing': (event, amount) => plan(event.kind,
+    { role: ROLES.OWNER_DRAWING, key: null },
+    { role: ROLES.CASH, key: event.accountId }, amount, 'برداشت شخصی مالک'),
+
+  // پول رفته و کالا یا خدمت هنوز نرسیده: دارایی است، نه هزینه و نه موجودی.
+  'supplier-advance': (event, amount) => plan(event.kind,
+    { role: ROLES.SUPPLIER_ADVANCE, key: event.counterparty },
+    { role: ROLES.CASH, key: event.accountId }, amount, event.counterparty),
+
+  'refundable-deposit': (event, amount) => plan(event.kind,
+    { role: ROLES.REFUNDABLE_DEPOSIT, key: event.counterparty },
+    { role: ROLES.CASH, key: event.accountId }, amount, event.counterparty),
+
+  // کالای خریده‌شده برای فروش یا تولید موجودی است. طرف بستانکار از خودِ
+  // رویداد می‌آید: نقد، نسیه یا چک — همان خرید، سه شکل پرداخت.
+  'inventory-purchase': (event, amount) => plan(event.kind,
+    { role: ROLES.INVENTORY_UNSPLIT, key: null },
+    purchaseCreditSide(event), amount, event.counterparty || event.description || event.category),
 });
+
+function purchaseCreditSide(event) {
+  if (event.kind === EVENT_KINDS.PAYABLE_OPENED) return { role: ROLES.PAYABLE, key: event.counterparty };
+  if (event.kind === EVENT_KINDS.CHEQUE_ISSUED) return { role: ROLES.CHEQUE_PAYABLE, key: event.counterparty };
+  return { role: ROLES.CASH, key: event.accountId };
+}
 
 /**
  * آیا این برخورد نقشهٔ مخصوص خودش را دارد؟

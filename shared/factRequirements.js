@@ -53,6 +53,8 @@ export const FACT_KEYS = Object.freeze({
   CORRECTION_REASON: 'correctionReason',
   CHEQUE_AGAINST: 'chequeAgainst',
   AMOUNT_SCALE: 'amountScale',
+  RECEIPT_PURPOSE: 'receiptPurpose',
+  PAYMENT_PURPOSE: 'paymentPurpose',
 });
 
 const FACT_VALUES = Object.freeze(Object.values(FACT_KEYS));
@@ -85,6 +87,8 @@ export const FACT_LABELS = Object.freeze({
   [FACT_KEYS.CORRECTION_REASON]: 'علت اصلاح',
   [FACT_KEYS.CHEQUE_AGAINST]: 'بابت چه چیزی',
   [FACT_KEYS.AMOUNT_SCALE]: 'مقیاس مبلغ',
+  [FACT_KEYS.RECEIPT_PURPOSE]: 'بابت دریافت',
+  [FACT_KEYS.PAYMENT_PURPOSE]: 'بابت پرداخت',
 });
 
 /**
@@ -128,9 +132,12 @@ export const FACT_REQUIREMENTS = Object.freeze({
     required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.SETTLEMENT_REFERENCE]),
     optional: Object.freeze([FACT_KEYS.COUNTERPARTY]),
   }),
+  // تاریخ تحویل پایهٔ خانواده نیست: در فروش نقدی، تحویل و دریافت همان لحظه‌اند
+  // و پرسیدن «کِی تحویل شد؟» از «امروز فروش نقدی داشتیم» فقط اصطکاک است.
+  // وقتی گفته شده، تاریخ شناسایی همان است.
   [ECONOMIC_FAMILIES.REVENUE_RECOGNITION]: Object.freeze({
-    required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.DELIVERY_DATE]),
-    optional: Object.freeze([FACT_KEYS.COUNTERPARTY, FACT_KEYS.CATEGORY, FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.CONTRACT_REFERENCE]),
+    required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT]),
+    optional: Object.freeze([FACT_KEYS.DELIVERY_DATE, FACT_KEYS.COUNTERPARTY, FACT_KEYS.CATEGORY, FACT_KEYS.CASH_ACCOUNT, FACT_KEYS.CONTRACT_REFERENCE]),
   }),
   [ECONOMIC_FAMILIES.ADVANCE_RECEIVED]: Object.freeze({
     required: Object.freeze([FACT_KEYS.AMOUNT, FACT_KEYS.OCCURRED_AT, FACT_KEYS.COUNTERPARTY, FACT_KEYS.CASH_ACCOUNT]),
@@ -193,6 +200,10 @@ export const TREATMENTS = Object.freeze({
   ACCRUED_REVENUE: 'accrued-revenue',
   // پیش‌دریافت بدون دورهٔ مشخص: بدهی، بدون برنامهٔ پخش.
   CUSTOMER_ADVANCE: 'customer-advance',
+  // وام دریافتی: پول آمده ولی مال ما نیست؛ بدهی است، نه درآمد.
+  LOAN_RECEIVED: 'loan-received',
+  // واریزی که منشأش معلوم نیست: در «وجوه تعیین‌تکلیف‌نشده» می‌ماند تا روشن شود.
+  UNIDENTIFIED_RECEIPT: 'unidentified-receipt',
 });
 
 /**
@@ -206,8 +217,14 @@ export const TREATMENT_EXTRA_REQUIREMENTS = Object.freeze({
   [TREATMENTS.PREPAID_EXPENSE]: Object.freeze([FACT_KEYS.SERVICE_PERIOD_START, FACT_KEYS.SERVICE_PERIOD_END]),
   [TREATMENTS.DEFERRED_REVENUE]: Object.freeze([FACT_KEYS.SERVICE_PERIOD_START, FACT_KEYS.SERVICE_PERIOD_END]),
   [TREATMENTS.FIXED_ASSET]: Object.freeze([FACT_KEYS.ASSET_NAME, FACT_KEYS.READY_FOR_USE_DATE, FACT_KEYS.USEFUL_LIFE_MONTHS]),
-  [TREATMENTS.REFUNDABLE_DEPOSIT]: Object.freeze([FACT_KEYS.COUNTERPARTY, FACT_KEYS.CONTRACT_REFERENCE]),
-  [TREATMENTS.INVENTORY_PURCHASE]: Object.freeze([FACT_KEYS.DESCRIPTION]),
+  // شمارهٔ قرارداد ودیعه را صاحب کسب‌وکار معمولاً سرِ ثبت نمی‌داند؛ لازم‌کردنش
+  // ساده‌ترین ودیعه را به صف حسابدار می‌فرستاد. طرف حساب کافی است تا مانده
+  // به تفکیک صاحبخانه دیده شود.
+  [TREATMENTS.REFUNDABLE_DEPOSIT]: Object.freeze([FACT_KEYS.COUNTERPARTY]),
+  [TREATMENTS.SUPPLIER_ADVANCE]: Object.freeze([FACT_KEYS.COUNTERPARTY]),
+  // نام و تعداد اقلام شرط ثبت موجودی نیست: ارزش خرید در «موجودی کالا —
+  // تفکیک‌نشده» می‌نشیند و تفکیکش به کارت کالا بعداً انجام می‌شود (تصمیم مهر ۱۴۰۵).
+  [TREATMENTS.INVENTORY_PURCHASE]: Object.freeze([]),
   [TREATMENTS.SCHEDULED_ALLOCATION]: Object.freeze([FACT_KEYS.ORIGINAL_EVENT_REFERENCE]),
 });
 
@@ -301,6 +318,38 @@ export const FACT_QUESTIONS = Object.freeze({
     options: Object.freeze([
       Object.freeze({ value: 'income', label: 'بابت فروش یا خرید تازه' }),
       Object.freeze({ value: 'receivable', label: 'بابت طلب یا بدهی قبلی' }),
+    ]),
+  }),
+  /**
+   * «این پول بابت چه بود؟» — جای صف حسابدار برای ساده‌ترین دریافت‌ها.
+   *
+   * دستهٔ «سایر درآمدها» هم فروش است، هم وام، هم واریزی که معلوم نیست از
+   * کیست. حدس زدن میانشان یعنی وام درآمد شود؛ فرستادنشان به حسابدار یعنی
+   * ساده‌ترین دریافت روز کار حسابدار شود. یک سؤال گزینه‌ای هر دو را حل می‌کند.
+   */
+  [FACT_KEYS.RECEIPT_PURPOSE]: Object.freeze({
+    kind: QUESTION_KINDS.OPTIONS,
+    text: 'این پول بابت چه بود؟',
+    options: Object.freeze([
+      Object.freeze({ value: 'sale', label: 'فروش کالا یا خدمتی که انجام شد' }),
+      Object.freeze({ value: 'advance', label: 'پیش‌دریافت؛ کار یا کالا هنوز تحویل نشده' }),
+      Object.freeze({ value: 'loan', label: 'وام یا قرض؛ باید پس داده شود' }),
+      Object.freeze({ value: 'owner', label: 'آوردهٔ مالک یا شریک' }),
+      Object.freeze({ value: 'other-income', label: 'سود بانکی یا درآمد متفرقه' }),
+      Object.freeze({ value: 'unknown', label: 'معلوم نیست از کیست' }),
+      Object.freeze({ value: 'other', label: 'هیچ‌کدام؛ حسابدار بررسی کند' }),
+    ]),
+  }),
+  [FACT_KEYS.PAYMENT_PURPOSE]: Object.freeze({
+    kind: QUESTION_KINDS.OPTIONS,
+    text: 'این پرداخت بابت چه بود؟',
+    options: Object.freeze([
+      Object.freeze({ value: 'expense', label: 'هزینهٔ جاری کسب‌وکار' }),
+      Object.freeze({ value: 'goods', label: 'خرید کالا یا تجهیزات' }),
+      Object.freeze({ value: 'owner-drawing', label: 'برداشت شخصی مالک یا شریک' }),
+      Object.freeze({ value: 'advance', label: 'پیش‌پرداخت؛ کالا یا خدمت هنوز نرسیده' }),
+      Object.freeze({ value: 'deposit', label: 'ودیعه یا سپرده‌ای که برمی‌گردد' }),
+      Object.freeze({ value: 'other', label: 'هیچ‌کدام؛ حسابدار بررسی کند' }),
     ]),
   }),
   [FACT_KEYS.AMOUNT]: Object.freeze({ kind: QUESTION_KINDS.FREE_INPUT, text: 'مبلغ چقدر بود؟' }),

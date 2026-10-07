@@ -33,7 +33,8 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   if(fine.penalty && lines.length && (fine.prior || fine.mixed || !fine.paid)) add('nature.tax-penalty-basis','جریمه ثبت‌شده یا همراه اصل مالیات به سند مبنا و تفکیک مبلغ نیاز دارد؛ هزینه دوباره مجاز نیست.');
   if(fine.penalty && lines.some(l=>l.role==='expense-category' && !isTaxPenaltyCategory(l.key))) add('nature.tax-penalty-category','جریمه مالیاتی را در حساب مستقل جرایم مالیاتی ثبت کن؛ مالیات و عوارض عمومی جای آن نیست.');
   if(n.unknownReceipt && (roles.has('income-category') || !roles.has('unidentified-receipt')) && lines.length) add('nature.unknown-receipt','منشأ وجه معلوم نیست؛ واریز باید در وجوه دریافتی تعیین‌تکلیف‌نشده نگهداری شود، نه درآمد.');
-  if(!n.unknownReceipt && roles.has('unidentified-receipt')) add('nature.receipt-origin','برای استفاده از وجوه تعیین‌تکلیف‌نشده، ابهام واقعی منشأ واریز باید در متن رویداد مشخص باشد.');
+  // جواب صریح ثبت‌کننده («معلوم نیست از کیست») همان شاهدی است که متن باید می‌داد.
+  if(!n.unknownReceipt && roles.has('unidentified-receipt') && facts.receiptPurpose!=='unknown') add('nature.receipt-origin','برای استفاده از وجوه تعیین‌تکلیف‌نشده، ابهام واقعی منشأ واریز باید در متن رویداد مشخص باشد.');
   if(n.vatRefund && lines.length && (!roles.has('tax-receivable') || lines.some(l=>!['cash','tax-receivable'].includes(l.role)))) add('nature.vat-refund','استرداد مالیات درآمد یا هزینه تازه نیست؛ طلب مالیاتی قبلی و سند ایجاد آن باید تطبیق داده شود.');
   if(n.partner && /به حساب شرکت/.test(normalizePersian(text)) && lines.some(l=>l.role==='cash' && l.credit>0)) add('nature.partner-direction','متن از ورود وجه به حساب شرکت می‌گوید؛ پیشنهاد خروج وجه با آن سازگار نیست.');
   const partnerRoles=lines.some(l=>['partner-payable','partner-receivable'].includes(l.role));

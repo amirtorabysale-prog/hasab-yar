@@ -846,6 +846,13 @@ export default function App() {
     await finalizeOfflineAudio(offlineAudioId);
     // اصلاحِ ثبت قبلی تراکنش تازه نمی‌سازد؛ کاربر باید بداند کجا رفت.
     if (result.queuedForAccountant) notify(`ردیف نقدی ساخته نشد و به صف حسابدار رفت: ${result.queuedReasons?.[0] || 'این جمله تراکنش نقدی تازه نیست.'}`);
+    // «نسیه»، «هنوز پرداخت نکردیم»: پولی جابه‌جا نشد ولی طلب یا بدهی ساخته شد.
+    else if (result.nonCash?.length) {
+      const [first] = result.nonCash;
+      notify(first.status === 'posted'
+        ? 'پولی جابه‌جا نشد؛ طلب یا بدهی ثبت شد و ماندهٔ صندوق و بانک دست نخورد.'
+        : `پولی جابه‌جا نشد؛ طلب یا بدهی ساخته شد${first.question ? ` و یک سؤال مانده: «${first.question}» — از برگهٔ بررسی جواب بده.` : '.'}`);
+    }
     setUndoSave(result.ids?.length ? { ids: result.ids, count: result.ids.length } : null);
     setRedoSave(null);
     setDuplicatePrompt(null);

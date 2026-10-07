@@ -101,7 +101,9 @@ test('تصمیمی که اجازهٔ ثبت نمی‌دهد هم ذخیره می
     });
     const stored = store.decisionForEvent(db(), result.id);
     assert.ok(stored, 'تصمیم باید ذخیره شود حتی وقتی سند نمی‌سازد');
-    assert.equal(stored.decisionStatus, DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW);
+    // «پذیرایی» دسته‌ای است که موتور نمی‌شناسد: یک سؤال از ثبت‌کننده، نه سند.
+    assert.equal(stored.decisionStatus, DECISION_STATUS.NEEDS_USER_INPUT);
+    assert.equal(result.status, 'pending');
   });
 });
 

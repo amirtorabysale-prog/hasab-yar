@@ -72,13 +72,17 @@ test('و به‌عنوان پیش‌پرداخت تأمین‌کننده نام�
   assert.equal(decision.treatment, TREATMENTS.SUPPLIER_ADVANCE);
 });
 
-test('ولی هنوز سند نمی‌سازد — قاعده‌اش در این فاز نیست', () => {
-  // ارزشش این است که ماهیت درست نام‌گذاری شود؛ ساختن قاعدهٔ ثبتش کار فاز بعد
-  // است. نام درست، همان دادهٔ خامی است که گزارش اختلاف لازم دارد.
+test('و با نام تأمین‌کننده، پیش‌پرداخت خرید ثبت می‌شود — هرگز هزینه', () => {
+  // از مهر ۱۴۰۵ قاعدهٔ ثبت دارد: دارایی به تفکیک تأمین‌کننده در برابر بانک.
   const decision = decide(factsFromEvent(advanceOut()), { today: TODAY });
-  assert.equal(decision.decisionStatus, DECISION_STATUS.UNSUPPORTED);
-  assert.equal(decisionAuthorizesPosting(decision), false);
-  assert.ok(decision.explanation?.trim());
+  assert.equal(decision.decisionStatus, DECISION_STATUS.DECIDED);
+  assert.equal(decisionAuthorizesPosting(decision), true);
+  const plan = planJournal(advanceOut(), decision);
+  assert.deepEqual(plan.lines.map((line) => `${line.debit ? 'Dr' : 'Cr'} ${line.role}`), [`Dr ${ROLES.SUPPLIER_ADVANCE}`, `Cr ${ROLES.CASH}`]);
+  assert.equal(plan.lines[0].key, 'فولاد مبارکه');
+  // بی‌نام ثبت نمی‌شود؛ نام تأمین‌کننده پرسیده می‌شود.
+  const anonymous = decide(factsFromEvent(advanceOut({ counterparty: '' })), { today: TODAY });
+  assert.equal(anonymous.question?.fact, 'counterparty');
 });
 
 test('بیعانهٔ دریافتی، دریافت پیش از انجام تعهد است', () => {

@@ -91,6 +91,9 @@ export function factsFromEvent(event = {}) {
     eventNature: event.eventNature && event.eventNature !== 'new' ? event.eventNature : undefined,
     prepaymentSignal: event.prepaymentSignal || undefined,
     amountScaleAmbiguous: event.amountScaleAmbiguous || undefined,
+    [FACT_KEYS.RECEIPT_PURPOSE]: event.receiptPurpose,
+    [FACT_KEYS.PAYMENT_PURPOSE]: event.paymentPurpose,
+    needsJudgment: event.needsJudgment || undefined,
     evidence: event.evidence,
     utterance: event.utterance,
   };

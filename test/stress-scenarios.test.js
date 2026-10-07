@@ -23,7 +23,7 @@ import { ROLES } from '../shared/accountingRules.js';
 const all = JSON.parse(readFileSync(new URL('./fixtures/stress-scenarios-v1.json', import.meta.url), 'utf8'));
 const scenario = (id) => all.find((item) => item.id === id);
 
-const { CASH, EXPENSE_CATEGORY, PAYABLE, PREPAID_ASSET } = ROLES;
+const { CASH, EXPENSE_CATEGORY, PAYABLE, PREPAID_ASSET, SUPPLIER_ADVANCE } = ROLES;
 const lines = (plan) => (plan?.lines || []).map((line) => `${line.debit ? 'Dr' : 'Cr'} ${line.role}`).sort();
 const post = (roles, amount) => ({ outcome: 'post', roles: [...roles].sort(), amount });
 const ask = (...facts) => ({ outcome: 'ask', facts });
@@ -42,11 +42,14 @@ const EXPECTED = {
   T001: { allow: [post([`Dr ${EXPENSE_CATEGORY}`, `Cr ${CASH}`], 12_000_000), ask('servicePeriodStart')] },
   T002: { allow: [post([`Dr ${PREPAID_ASSET}`, `Cr ${CASH}`], 50_000_000), ACCOUNTANT] },
   T004: { allow: [ask('amountScale'), ACCOUNTANT] },
-  T006: { allow: [ACCOUNTANT] },
+  // پیش‌پرداخت به تأمین‌کننده از مهر ۱۴۰۵ قاعدهٔ ثبت دارد: دارایی به تفکیک
+  // تأمین‌کننده، هرگز هزینه. نام کارخانه از جمله درنمی‌آید و پرسیده می‌شود.
+  T006: { allow: [ask('counterparty'), post([`Dr ${SUPPLIER_ADVANCE}`, `Cr ${CASH}`], 120_000_000), ACCOUNTANT] },
   T008: { allow: [ask('counterparty'), post([`Dr ${EXPENSE_CATEGORY}`, `Cr ${PAYABLE}`], 9_000_000)] },
   T009: { allow: [post([`Dr ${PREPAID_ASSET}`, `Cr ${CASH}`], 15_000_000), ACCOUNTANT] },
   T010: { allow: [ACCOUNTANT] },
-  T016: { allow: [ACCOUNTANT] },
+  // بیعانهٔ زمین نزد بنگاه، تا قطعی شدن معامله پیش‌پرداخت خرید است — دارایی.
+  T016: { allow: [post([`Dr ${SUPPLIER_ADVANCE}`, `Cr ${CASH}`], 20_000_000), ask('counterparty'), ACCOUNTANT] },
   T062: { allow: [ACCOUNTANT] },
   // ---- بدهی تحقق‌یافته
   T055: { allow: [ACCOUNTANT] },
@@ -136,6 +139,11 @@ const APPROVED_POSTINGS = {
   // است نه مبلغ و ردیفی نمی‌سازد.
   T049: 'Dr expense-category 200000 / Cr cash 200000',
   T059: 'Dr expense-category 6500000 / Cr cash 6500000',
+  // بیعانهٔ زمین نزد بنگاه: پیش‌پرداخت خرید، نه هزینه (بازبینی مهر ۱۴۰۵).
+  T016: 'Dr supplier-advance 20000000 / Cr cash 20000000',
+  // بیمهٔ مسئولیت یک‌ساله، فروردین تا اسفند: همان پیش‌پرداخت مورد انتظار سناریو.
+  // تا مهر ۱۴۰۵ «بیمه مسئولیت» دستهٔ بیمه نمی‌گرفت و به حسابدار می‌رفت.
+  T002: 'Dr prepaid-asset 50000000 / Cr cash 50000000',
 };
 
 test('در کل ۱۲۰ سناریو، هیچ سندی بدون بررسی و بیرون از فهرست تأییدشده ساخته نمی‌شود', () => {

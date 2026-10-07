@@ -17,6 +17,17 @@
  */
 
 /**
+ * «این پول بابت چه بود؟» — مقدارهای مجاز.
+ *
+ * دریافت: فروش یا خدمتی که همین حالا انجام شد، درآمد متفرقه (سود بانکی)،
+ * پیش‌دریافت، وام، آوردهٔ مالک، واریزی که منشأش معلوم نیست، یا «هیچ‌کدام».
+ * پرداخت: هزینهٔ جاری، خرید کالا یا تجهیزات، برداشت شخصی مالک، پیش‌پرداخت،
+ * ودیعهٔ برگشت‌پذیر، یا «هیچ‌کدام».
+ */
+export const RECEIPT_PURPOSES = Object.freeze(['sale', 'other-income', 'advance', 'loan', 'owner', 'unknown', 'other']);
+export const PAYMENT_PURPOSES = Object.freeze(['expense', 'goods', 'owner-drawing', 'advance', 'deposit', 'other']);
+
+/**
  * انواع رویداد.
  *
  * هر نوع یک اتفاق واقعی در کسب‌وکار است، نه یک الگوی سند. «چک دریافتی» و «طلب»
@@ -160,6 +171,14 @@ export function normalizeFinancialEvent(raw = {}) {
     amountScaleAmbiguous: raw.amountScaleAmbiguous === true,
     chequeAgainst: ['income', 'receivable'].includes(raw.chequeAgainst) ? raw.chequeAgainst : null,
     counterpartyRole: ['owner', 'supplier', 'customer', 'employee', 'authority'].includes(raw.counterpartyRole) ? raw.counterpartyRole : null,
+    // پولی که آمد یا رفت «بابت چه بود». دسته این را نمی‌گوید: «سایر درآمدها»
+    // هم فروش است، هم وام، هم واریزی که معلوم نیست از کیست. جوابش یا از خود
+    // جمله درمی‌آید یا با یک سؤال گزینه‌ای از ثبت‌کننده پرسیده می‌شود.
+    receiptPurpose: RECEIPT_PURPOSES.includes(raw.receiptPurpose) ? raw.receiptPurpose : null,
+    // جمله‌ای که خودش می‌گوید قضاوت لازم است — تردید، شریک، تسویهٔ قبلی، مبلغ
+    // مشکوک. دلیل کوتاه نگه داشته می‌شود تا حسابدار ببیند چرا به او رسید.
+    needsJudgment: cleanText(raw.needsJudgment, 200) || null,
+    paymentPurpose: PAYMENT_PURPOSES.includes(raw.paymentPurpose) ? raw.paymentPurpose : null,
   });
 }
 

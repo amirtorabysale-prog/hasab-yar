@@ -6,6 +6,7 @@ import { DECISION_STATUS, decide } from './accountingDecision.js';
 import { factsFromEvent } from './eventFacts.js';
 import { FACT_LABELS } from './factRequirements.js';
 import { purchasePurposeFromSpeech } from './purchasePurpose.js';
+import { judgmentReason, lenderFromSpeech, paymentPurposeFromSpeech, receiptPurposeFromSpeech, saysRefundable } from './moneyPurpose.js';
 
 /**
  * پل میان ردیف تراکنش و لایهٔ رویداد مالی.
@@ -108,6 +109,12 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
   if (!baseKind) return null;
   const settlementDirection = settlementDirectionFor(item, counterpartyBalance);
   const kind = settlementDirection ? EVENT_KINDS.OBLIGATION_SETTLED : baseKind;
+  const said = String(item.rawText || sentence || transcript || '');
+  // «بابت چه بود» وقتی خودِ جمله گفته، سؤالش پرسیده نمی‌شود.
+  const receiptPurpose = item.type === 'income' ? (item.receiptPurpose || receiptPurposeFromSpeech(said)) : null;
+  const paymentPurpose = item.type === 'expense' ? (item.paymentPurpose || paymentPurposeFromSpeech(said)) : null;
+  // وام‌دهنده همان بانکی است که جمله نام برده؛ نامِ حدسی دیگر جایش را نمی‌گیرد.
+  const lender = receiptPurpose === 'loan' ? lenderFromSpeech(said) : null;
   const event = normalizeFinancialEvent({
     kind,
     ...(settlementDirection ? { settlementDirection, reference: item.contactName || '' } : {}),
@@ -115,7 +122,7 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     occurredAt: item.occurredAt,
     category: item.category,
     description: item.category,
-    counterparty: item.contactName || '',
+    counterparty: lender || item.contactName || '',
     counterpartyId: item.contactId || null,
     accountId: item.accountId || null,
     source: item.source === 'voice' ? 'voice' : 'text',
@@ -126,13 +133,19 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     eventNature: item.eventNature || 'new',
     // هدف خرید وقتی خودِ کاربر گفته («جنس خریدم برای فروش»)، سؤالش پرسیده نمی‌شود.
     intendedUse: item.intendedUse || purchasePurposeFromSpeech(item.rawText || sentence || transcript) || null,
+    // کار تحویل شده یا جنس فروخته شده: زمان شناسایی درآمدی که هنوز پولش نیامده.
+    deliveryDate: item.deliveryDate || null,
     servicePeriodStart: item.servicePeriodStart || null,
     servicePeriodEnd: item.servicePeriodEnd || null,
-    refundable: typeof item.refundable==='boolean' ? item.refundable : (() => {
-      const text=String(item.rawText || sentence || transcript || '');
-      if(/غیر\s*قابل\s*استرداد|قابل\s*استرداد\s*نیست/.test(text)) return false;
-      return /قابل\s*استرداد/.test(text) ? true : null;
-    })(),
+    // آورده و برداشت شخصی برنمی‌گردند؛ «آخر قرارداد پس می‌گیریم» یعنی برمی‌گردد.
+    refundable: typeof item.refundable==='boolean' ? item.refundable
+      : (receiptPurpose === 'owner' || paymentPurpose === 'owner-drawing') ? false
+      : saysRefundable(said),
+    receiptPurpose,
+    paymentPurpose,
+    // کل گفته، نه تکهٔ کنار مبلغ: «وانت شرکت که قیمت دفتریش چهل بود رو صد و ده
+    // فروختیم» دو ردیف می‌سازد و نشانه در هیچ‌کدام از دو تکه کامل نیست.
+    needsJudgment: item.needsJudgment || judgmentReason(transcript || said),
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(item.rawText || sentence || transcript || '').slice(0, 1000),
@@ -168,9 +181,22 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
   // هزینه، و پیش‌پرداخت به تأمین‌کننده هزینهٔ همان ماه — دقیقاً همان‌جایی که
   // موتور گفته بود ماهیت را نمی‌داند. صاحب کسب‌وکار نمی‌تواند ماهیتی را تأیید
   // کند که موتور هم نمی‌داند.
+  //
+  // برعکسش هم برقرار است: وقتی تنها کمبود یک سؤال گزینه‌ای از ثبت‌کننده است —
+  // «سی تومن یعنی سی هزار یا سی میلیون؟»، «این پول بابت چه بود؟» — جایش برگهٔ
+  // خود ثبت‌کننده است، حتی اگر اطمینان برداشت پایین بوده. جوابِ او همان ابهام
+  // را برطرف می‌کند و فرستادنش به حسابدار، ساده‌ترین ثبت روز را کار حسابدار
+  // می‌کرد.
   const decision = accountingDecision && needsAccountant(accountingDecision)
     ? { ...routed, route: ROUTES.ACCOUNTANT_REVIEW }
-    : routed;
+    : accountingDecision?.decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT && accountingDecision.question
+      ? { ...routed, route: ROUTES.CONFIRM }
+      // موتور ماهیت را قطعی کرده و ثبت‌کننده برگه را — با همان هشدارهای برداشت —
+      // دیده و تأیید کرده. تردیدِ برداشت را خودِ او برطرف کرده؛ جای مورد برگهٔ
+      // خودِ اوست، نه صف حسابدار. ثبت همچنان با یک «تأیید» آگاهانه است.
+      : accountingDecision?.decisionStatus === DECISION_STATUS.DECIDED && item.userConfirmed === true && routed.route === ROUTES.ACCOUNTANT_REVIEW
+        ? { ...routed, route: ROUTES.CONFIRM }
+        : routed;
   return { event, decision, accountingDecision };
 }
 

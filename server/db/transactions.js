@@ -288,6 +288,52 @@ function queueCorrectionForAccountant(item, transcript, nature) {
   });
 }
 
+/**
+ * «نسیه فروختیم»، «قبض اومده ولی هنوز پرداخت نکردیم»، «تحویل دادیم ولی پولی
+ * نگرفتیم» — پولی جابه‌جا نشده، ولی طلب یا بدهی همین حالا ساخته شده.
+ *
+ * تا امروز این‌ها یک پروندهٔ مسدود در صف حسابدار می‌ساختند، حتی ساده‌ترین‌شان.
+ * با موتور روشن، همان طلب یا بدهی با دستهٔ واقعی جمله ساخته می‌شود و از
+ * موتور تصمیم می‌گذرد: قطعی باشد همان‌جا ثبت می‌شود، یک واقعیت کم داشته باشد
+ * از ثبت‌کننده پرسیده می‌شود، و فقط قضاوت واقعی به حسابدار می‌رسد.
+ *
+ * ردیف نقدی ساخته نمی‌شود — هیچ پولی جابه‌جا نشده. به‌جایش یک تعهد باز ساخته
+ * می‌شود تا وصول یا پرداخت بعدی از همان مسیر همیشگیِ تسویه برود.
+ */
+const DELIVERED = /تحویل\s*(?:دادیم|دادم|شد)|انجام\s*(?:دادیم|دادم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|فروختیم|فروختم/;
+
+function openNonCashStatement(item, transcript, sentence) {
+  const amount = Math.round(Number(item.amount));
+  const direction = item.type === 'income' ? 'receivable' : 'payable';
+  const occurredAt = item.occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
+  const said = String(sentence || item.rawText || transcript || '');
+  const contactId = item.linkContact === false ? null : item.contactId || counterpartyFromSentence(item, transcript, '');
+  const contactName = contactId ? db.prepare('SELECT name FROM contacts WHERE id=?').get(contactId)?.name || item.contactName || '' : item.contactName || '';
+  const draft = transactionEventDecision({
+    ...item, amount, occurredAt, accountId: null, contactId, contactName, unpaidSignal: true,
+    deliveryDate: direction === 'receivable' && (DELIVERED.test(said) || ['فروش', 'خدمات'].includes(String(item.category || '').trim())) ? occurredAt : null,
+  }, { transcript, sentence, policy: automationPolicy() });
+  if (!draft?.accountingDecision) return null;
+  const id = randomUUID();
+  const title = String(contactName || item.category || (direction === 'receivable' ? 'طلب' : 'بدهی')).slice(0, 120);
+  db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,occurred_at,status,note) VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(id, contactId || null, title, amount, direction, item.dueAt || null, occurredAt, 'open', said.slice(0, 500));
+  audit('create', 'obligation', id, { amount, direction, title, fromStatement: true });
+  let result = recordFinancialEvent(db, draft.event, {
+    sourceEventId: `obligation:${id}`, decision: draft.decision,
+    actor: currentWorkspace()?.userId || null, transcript, rawInput: said,
+    timeZone: currentTimeZone(), withinTransaction: true,
+    accountingDecision: draft.accountingDecision, vat: vatGuardContext(db),
+  });
+  // برگهٔ تأیید را ثبت‌کننده دیده و تأیید کرده؛ تصمیم قطعی همان‌جا ثبت می‌شود.
+  if (item.userConfirmed === true && result.status === 'pending' && result.route === ROUTES.CONFIRM
+    && draft.accountingDecision.decisionStatus === 'decided' && !draft.decision.reasons.length) {
+    result = approveFinancialEvent(db, result.id, { actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), withinTransaction: true });
+  }
+  return { obligationId: id, ...result, question: draft.accountingDecision.question || null };
+}
+
 /** یک گفتهٔ «جمع و اجزا» یک پروندهٔ بررسی است، حتی اگر سه عدد گفته شده باشد. */
 export function queueCompositeUtterance(transcript, { clientId = '', source = 'text' } = {}) {
   const text = String(transcript || '').trim().slice(0, 1000);
@@ -336,6 +382,8 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
   const ids = [];
   let queuedForAccountant = 0;
   const queuedReasons = [];
+  // طلب و بدهی‌هایی که از جملهٔ بدون جابه‌جایی پول ساخته شدند.
+  const nonCash = [];
   // «اشتباه ۲۱ میلیون ثبت شد، درست ۱۲ میلیون است» دو مبلغ است اما فقط یک
   // درخواست اصلاح. چند ردیف صف با مبالغ متناقض می‌تواند دو اصلاح مستقل بسازد.
   const correction = fromUtterance && transactions.length > 1 && correctionNature(transactions[0], transcript);
@@ -352,6 +400,17 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
     if (nature) {
       const amount = Math.round(Number(item.amount));
       if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
+      if (nature === 'explicit-non-cash' && automationPolicy().engineV2 && ['income', 'expense'].includes(item.type)) {
+        const opened = openNonCashStatement(item, transcript, transactions.length === 1 ? transcript : '');
+        if (opened) {
+          nonCash.push({ obligationId: opened.obligationId, eventId: opened.id, status: opened.status, route: opened.route, question: opened.question?.text || null });
+          if (opened.route === ROUTES.ACCOUNTANT_REVIEW && opened.status !== 'posted') {
+            queuedForAccountant += 1;
+            queuedReasons.push('وجهی جابه‌جا نشده؛ طلب یا بدهی ساخته شد و ثبتش با حسابدار است.');
+          }
+          continue;
+        }
+      }
       queueCorrectionForAccountant(item, transcript, nature);
       queuedForAccountant += 1;
       queuedReasons.push(nature === 'mixed-settlement' ? MIXED_SETTLEMENT_REASON : nature === 'non-cash-instrument' ? NON_CASH_REASON : nature === 'explicit-non-cash' ? 'وجهی جابه‌جا نشده؛ ثبت نقدی ساخته نشد.' : (NATURE_EXPLANATIONS[nature] || ''));
@@ -414,7 +473,7 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
     }
   }
   // تعداد اصلاح‌هایی که به‌جای ردیف نقدی به صف حسابدار رفتند، کنار شناسه‌ها.
-  return Object.assign(ids, { queuedForAccountant, queuedReasons });
+  return Object.assign(ids, { queuedForAccountant, queuedReasons, nonCash });
 }
 
 /**

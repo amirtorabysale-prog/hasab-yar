@@ -47,7 +47,10 @@ test('هزینهٔ جاری بی‌سؤال تصمیم می‌گیرد؛ خری�
   assert.equal(laptop.question.fact, 'intendedUse');
   assert.deepEqual(laptop.question.options.map((option) => option.value), ['resale', 'production', 'long-term-use', 'current-consumption']);
   // بدون فعل خرید معلوم نیست اصلاً خرید بوده؛ پرسیدن هدف خرید سؤال غلط است.
-  assert.equal(decide(facts({ amount: 10_000_000, category: 'سایر هزینه‌ها', evidence: 'ده میلیون دادم' })).decisionStatus, DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW);
+  // سؤال درست «این پرداخت بابت چه بود؟» است، از خودِ ثبت‌کننده.
+  const vague = decide(facts({ amount: 10_000_000, category: 'سایر هزینه‌ها', evidence: 'ده میلیون دادم' }));
+  assert.equal(vague.decisionStatus, DECISION_STATUS.NEEDS_USER_INPUT);
+  assert.equal(vague.question.fact, 'paymentPurpose');
   // نشانهٔ قضاوت، هر دسته‌ای که باشد، به حسابدار می‌برد: کرایهٔ محمولهٔ
   // وارداتی جزو بهای کالاست، خرید شخصی شریک برداشت است، پول به شخص نام‌برده
   // شاید تسویه باشد.
@@ -82,10 +85,12 @@ test('جواب هدف خرید و حد سرمایه‌ای شدن دفتر بر�
   // بدون حد، هیچ مبلغی خودکار هزینه نمی‌شود.
   assert.equal(laptop('long-term-use', 8_000_000).treatment, 'fixed-asset');
 
+  // موجودی با ارزش درست همین حالا می‌نشیند؛ تفکیک اقلام بعداً در کارت کالا.
   for (const purpose of ['resale', 'production']) {
     const goods = laptop(purpose, 45_000_000, 20_000_000);
     assert.equal(goods.treatment, 'inventory-purchase');
-    assert.equal(goods.decisionStatus, DECISION_STATUS.UNSUPPORTED);
+    assert.equal(goods.decisionStatus, DECISION_STATUS.DECIDED);
+    assert.match(goods.assumptions[0], /تفکیک/);
   }
   // ملزومات زیر حد، بی‌سؤال هزینه‌اند؛ بالای حد یا بی‌حد، پرسیده می‌شوند.
   const supplies = (amount, threshold) => decide(facts({ amount, category: 'ملزومات اداری', evidence: 'خریدم' }), { capitalizationThreshold: threshold });

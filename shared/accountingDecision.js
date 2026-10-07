@@ -23,7 +23,8 @@ import {
 import {
   EVENT_NATURES, NATURE_EXPLANATIONS, natureAffectsPast, natureNeedsAccountant,
 } from './eventNature.js';
-import { needsPurchasePurpose } from './purchasePurpose.js';
+import { needsJudgment as purchaseNeedsJudgment, needsPurchasePurpose } from './purchasePurpose.js';
+import { judgmentReason } from './moneyPurpose.js';
 
 /**
  * پنج وضعیت.
@@ -136,6 +137,41 @@ export function decisionAuthorizesPosting(decision) {
  */
 export const DEFAULT_POLICIES = Object.freeze([
   /**
+   * خرید نسیهٔ کالا.
+   *
+   * «سی میلیون کالا برای فروش نسیه خریدیم» پولی جابه‌جا نکرده ولی هم موجودی
+   * ساخته و هم بدهی. تا امروز به صف حسابدار می‌رفت چون قاعدهٔ بدهی فقط قبض و
+   * خدمت می‌شناخت. هدف خرید همان سؤالی است که خرید نقدی هم می‌پرسد.
+   *
+   * پیش از قاعدهٔ هزینهٔ تعهدی می‌نشیند: هر دو خانوادهٔ «ایجاد بدهی»اند و در
+   * نسخهٔ برابر، اولی برنده است.
+   */
+  Object.freeze({
+    policyKey: 'goods-on-credit',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.INVENTORY_PURCHASE, TREATMENTS.ACCRUED_EXPENSE]),
+    appliesTo(facts) {
+      return facts?.moneyDirection === 'none' && facts?.obligationDirection === 'payable' && !facts?.chequeDirection
+        && (isFactPresent(facts?.intendedUse) || String(facts?.category || '').trim() === 'مواد و کالا');
+    },
+    resolve(facts) {
+      if (!isFactPresent(facts?.intendedUse)) return { treatment: TREATMENTS.INVENTORY_PURCHASE, extraFacts: [FACT_KEYS.INTENDED_USE] };
+      if (['resale', 'production'].includes(facts.intendedUse)) {
+        return {
+          treatment: TREATMENTS.INVENTORY_PURCHASE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null,
+          assumptions: ['نام و تعداد اقلام در کارت کالا بعداً تفکیک می‌شود؛ ارزش خرید همین حالا در موجودی می‌نشیند.'],
+        };
+      }
+      const threshold = facts?.capitalizationThreshold;
+      if (facts.intendedUse === 'long-term-use' && !(Number.isSafeInteger(threshold) && Number(facts?.amount) < threshold)) {
+        return { treatment: TREATMENTS.FIXED_ASSET, reviewNote: 'کالای ماندگار و هم‌اندازه یا بالاتر از حد سرمایه‌ای شدن دفتر است؛ دارایی ثابت با عمر مفید را حسابدار ثبت می‌کند.' };
+      }
+      return { treatment: TREATMENTS.ACCRUED_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
+    },
+  }),
+  /**
    * جهت ب — مصرف پیش از پرداخت.
    *
    * قبض اسفند در **اسفند** هزینه است، نه در فروردین که پرداخت می‌شود. بدون
@@ -177,6 +213,81 @@ export const DEFAULT_POLICIES = Object.freeze([
     },
   }),
 
+  /**
+   * وام دریافتی — بدهی، نه درآمد.
+   *
+   * دستهٔ «سایر درآمدها» همان دسته‌ای است که وام هم می‌گیرد؛ بدون این قاعده،
+   * دویست میلیون وام یا به صف حسابدار می‌رفت یا — بدتر — درآمد می‌شد.
+   */
+  Object.freeze({
+    policyKey: 'loan-received',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.LOAN_RECEIVED]),
+    appliesTo(facts) { return facts?.moneyDirection === 'in' && facts?.receiptPurpose === 'loan'; },
+    resolve(facts) {
+      return { treatment: TREATMENTS.LOAN_RECEIVED, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null };
+    },
+  }),
+  /**
+   * واریزی که منشأش معلوم نیست.
+   *
+   * نبودِ طرف حساب اینجا کمبود نیست، تعریفِ همین رویداد است؛ پرسیدن «طرف
+   * حساب کیست؟» از کسی که همین حالا گفته نمی‌داند، سؤال بی‌جواب است.
+   */
+  Object.freeze({
+    policyKey: 'unidentified-receipt',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.UNIDENTIFIED_RECEIPT]),
+    waivesFamilyFacts: Object.freeze([FACT_KEYS.COUNTERPARTY]),
+    appliesTo(facts) { return facts?.moneyDirection === 'in' && facts?.receiptPurpose === 'unknown'; },
+    resolve(facts) {
+      return { treatment: TREATMENTS.UNIDENTIFIED_RECEIPT, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null };
+    },
+  }),
+  /**
+   * فروش یا خدمتی که همین حالا انجام شد و پولش آمد.
+   *
+   * ساده‌ترین دریافت روز. تا امروز به صف حسابدار می‌رفت چون تنها قاعدهٔ درآمد
+   * تاریخ تحویل جدا می‌خواست. نقشهٔ سندش همان نقشهٔ همیشگیِ دریافت است.
+   */
+  Object.freeze({
+    policyKey: 'revenue-at-receipt',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,
+    riskLevel: RISK_LEVELS.GREEN,
+    supportedTreatments: Object.freeze([TREATMENTS.RECOGNIZED_REVENUE]),
+    appliesTo(facts) { return facts?.moneyDirection === 'in'; },
+    resolve(facts) {
+      return { treatment: TREATMENTS.RECOGNIZED_REVENUE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.deliveryDate || facts?.occurredAt || null };
+    },
+  }),
+  /**
+   * آورده و برداشت مالک.
+   *
+   * پولی که مالک می‌گذارد و برنمی‌دارد سرمایه است؛ پولی که برای خودش برمی‌دارد
+   * و برنمی‌گرداند برداشت. هیچ‌کدام درآمد یا هزینه نیست. اگر قرار است پس داده
+   * شود، قرض شریک است و جای آن جاری شرکاست — که حسابدار ثبت می‌کند.
+   */
+  Object.freeze({
+    policyKey: 'owner-capital-movement',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.OWNER_CAPITAL_MOVEMENT,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.OWNER_CAPITAL, TREATMENTS.OWNER_DRAWING]),
+    appliesTo(facts) { return ['in', 'out'].includes(facts?.moneyDirection); },
+    resolve(facts) {
+      if (facts?.refundable === true) {
+        return { treatment: null, reviewNote: 'پول مالک یا شریک که برمی‌گردد، قرض است و در جاری شرکا ثبت می‌شود؛ حسابدار ثبتش می‌کند.' };
+      }
+      return facts.moneyDirection === 'in'
+        ? { treatment: TREATMENTS.OWNER_CAPITAL, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null }
+        : { treatment: TREATMENTS.OWNER_DRAWING, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null };
+    },
+  }),
   /**
    * جهت ج — دریافت پیش از انجام تعهد.
    *
@@ -233,20 +344,19 @@ export const DEFAULT_POLICIES = Object.freeze([
    * «صد و بیست میلیون پیش‌پیش ریختیم واسه خرید ورق» تا امروز ماهیتش «نامشخص»
    * می‌شد. پول رفته، ولی هیچ چیزی بابتش نگرفته‌ایم — این دارایی است نه هزینه.
    *
-   * قاعدهٔ ثبتش در این فاز ساخته نشده و عمداً هم ساخته نمی‌شود: تسویه‌اش با
-   * فاکتوری که بعداً می‌آید، کار نگهبان تسویه و فاز خرید است. ارزش این سیاست
-   * فقط **نام‌گذاری درست** است، و همان دادهٔ خامی است که گزارش اختلاف لازم
-   * دارد: موتور فهمید این پیش‌پرداخت است، ولی هنوز بلد نیست ثبتش کند.
+   * ثبتش ساده است — پیش‌پرداخت خرید به تفکیک تأمین‌کننده در برابر بانک — و
+   * فقط نام تأمین‌کننده را لازم دارد. تسویه‌اش با فاکتوری که بعداً می‌آید، کار
+   * نگهبان تسویه است و این سند را دست نمی‌زند.
    */
   Object.freeze({
     policyKey: 'supplier-advance',
     version: '1.0.0',
     family: ECONOMIC_FAMILIES.ASSET_CREATION,
-    riskLevel: RISK_LEVELS.RED,
-    supportedTreatments: Object.freeze([]),
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.SUPPLIER_ADVANCE]),
     appliesTo(facts) {
       // خدمت دوره‌دار سیاست خودش را دارد و آنجا قاعدهٔ ثبت هم هست.
-      return facts?.prepaymentSignal === true
+      return (facts?.prepaymentSignal === true || facts?.paymentPurpose === 'advance')
         && !TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
     },
     resolve() { return { treatment: TREATMENTS.SUPPLIER_ADVANCE }; },
@@ -297,9 +407,11 @@ export const DEFAULT_POLICIES = Object.freeze([
      */
     ambiguousRefundability: Object.freeze(['اجاره']),
     /** برخوردهایی که در این فاز قاعدهٔ ثبت دارند. بقیه به حسابدار می‌روند. */
-    supportedTreatments: Object.freeze([TREATMENTS.PREPAID_EXPENSE, TREATMENTS.PERIOD_EXPENSE]),
+    supportedTreatments: Object.freeze([TREATMENTS.PREPAID_EXPENSE, TREATMENTS.PERIOD_EXPENSE, TREATMENTS.REFUNDABLE_DEPOSIT]),
     /**
      * دسته یکی از دو راه ورود است، نه تنها راه.
+     *
+     * ودیعه‌ای که ثبت‌کننده خودش گفته برمی‌گردد هم همین‌جا می‌رسد، با هر دسته‌ای.
      *
      * «پونزده میلیون شارژ ساختمان رو برای شش ماه جلوتر تسویه کردم» دسته‌اش
      * «قبوض» است و در فهرست خدمات دوره‌دار نیست — ولی خودِ جمله دوره را گفته.
@@ -307,6 +419,7 @@ export const DEFAULT_POLICIES = Object.freeze([
      */
     appliesTo(facts) {
       if (isTimeBoundService(facts)) return true;
+      if (facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
       return isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
     },
     /**
@@ -330,9 +443,8 @@ export const DEFAULT_POLICIES = Object.freeze([
         return { treatment: TREATMENTS.PREPAID_EXPENSE, extraFacts: [FACT_KEYS.REFUNDABLE] };
       }
       if (facts?.refundable === true) {
-        // پولی که برمی‌گردد هیچ‌وقت هزینه نمی‌شود. قاعدهٔ ثبتش در این فاز
-        // ساخته نشده، پس به حسابدار می‌رود — نه اینکه هزینه ثبت شود.
-        return { treatment: TREATMENTS.REFUNDABLE_DEPOSIT };
+        // پولی که برمی‌گردد هیچ‌وقت هزینه نمی‌شود: ودیعه به تفکیک طرف حساب.
+        return { treatment: TREATMENTS.REFUNDABLE_DEPOSIT, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null };
       }
       const end = facts?.servicePeriodEnd;
       // `<=` و نه `<`: وقتی کاربر می‌گوید «دوره‌اش گذشته»، دوره روی خودِ تاریخ
@@ -382,15 +494,21 @@ export const DEFAULT_POLICIES = Object.freeze([
     version: '1.0.0',
     family: ECONOMIC_FAMILIES.ASSET_CREATION,
     riskLevel: RISK_LEVELS.YELLOW,
-    supportedTreatments: Object.freeze([TREATMENTS.PERIOD_EXPENSE]),
+    supportedTreatments: Object.freeze([TREATMENTS.PERIOD_EXPENSE, TREATMENTS.INVENTORY_PURCHASE]),
     appliesTo(facts) {
       return ['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)
         && facts?.prepaymentSignal !== true && !isTimeBoundService(facts)
         && !isFactPresent(facts?.servicePeriodStart) && !isFactPresent(facts?.servicePeriodEnd);
     },
     resolve(facts) {
+      // موجودی همین حالا با ارزش درست می‌نشیند؛ نام و تعداد اقلام اگر گفته نشده،
+      // بعداً به کارت کالا تفکیک می‌شود. منتظر ماندن کل خرید برای آن، ساده‌ترین
+      // خرید روز را کار حسابدار می‌کرد.
       if (facts.intendedUse !== 'long-term-use') {
-        return { treatment: TREATMENTS.INVENTORY_PURCHASE, reviewNote: 'کالا برای فروش یا تولید خریده شده و موجودی است، نه هزینه؛ کارت کالا و بهای تمام‌شده‌اش را حسابدار ثبت می‌کند.' };
+        return {
+          treatment: TREATMENTS.INVENTORY_PURCHASE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null,
+          assumptions: ['نام و تعداد اقلام در کارت کالا بعداً تفکیک می‌شود؛ ارزش خرید همین حالا در موجودی می‌نشیند.'],
+        };
       }
       const threshold = facts?.capitalizationThreshold;
       if (Number.isSafeInteger(threshold) && Number(facts?.amount) < threshold) {
@@ -489,6 +607,9 @@ export function simulatePolicyChange(factsList = [], currentPolicies = [], candi
  * اطمینان مدل در هیچ‌کدام از این پنج گام دخالت ندارد. یک برداشت با اطمینان
  * کامل، جای دورهٔ پوشش نامعلوم را نمی‌گیرد.
  */
+/** دسته‌هایی که پرسیدن «بابت چه بود؟» از ثبت‌کننده برایشان بی‌معناست. */
+const JUDGMENT_CATEGORIES = Object.freeze(['بیمه', 'مالیات و عوارض', 'جرایم مالیاتی', 'بهای تمام‌شدهٔ فروش', 'کسری و ضایعات موجودی']);
+
 export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, capitalizationThreshold = null } = {}) {
   // حد سرمایه‌ای شدن سیاست دفتر است، نه واقعیت رویداد؛ ولی قاعده‌ها و طبقه‌بند
   // آن را کنار واقعیت‌ها می‌خوانند تا تابع خالص بماند.
@@ -531,22 +652,69 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
     });
   }
 
+  // جمله خودش گفته قضاوت لازم است. هیچ قاعده‌ای — نه قاعدهٔ تازه و نه سؤالی
+  // از ثبت‌کننده — جای حسابدار را نمی‌گیرد.
+  if (isFactPresent(facts?.needsJudgment)) {
+    return createDecision({
+      family: FAMILY_UNKNOWN,
+      riskLevel: RISK_LEVELS.RED,
+      sourceReferences: facts?.evidence ? [facts.evidence] : [],
+      decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+      explanation: facts.needsJudgment,
+    });
+  }
+
   const classified = classifyFamily(facts);
   const family = classified.family;
   const riskLevel = FAMILY_DEFAULT_RISK[family] || RISK_LEVELS.RED;
   const sourceReferences = facts?.evidence ? [facts.evidence] : [];
 
   if (family === FAMILY_UNKNOWN) {
-    // خرید کالا بدون هدف: ماهیتش با یک سؤال روشن می‌شود، نه با قضاوت حسابدار.
-    if (facts?.moneyDirection === 'out' && isFactPresent(facts?.amount) && needsPurchasePurpose(facts, { capitalizationThreshold: facts?.capitalizationThreshold ?? null })) {
+    const ask = (fact, explanation) => createDecision({
+      family, riskLevel: RISK_LEVELS.YELLOW, sourceReferences,
+      requiredFacts: [fact], missingFacts: [fact],
+      decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
+      explanation, question: nextQuestionFor([fact], facts),
+    });
+    // حقوق کسور بیمه و مالیات دارد که در یک جملهٔ صوتی نیست؛ ثبت خالص پرداختی
+    // به‌عنوان کل هزینهٔ حقوق، بدهی بیمه و مالیات را جا می‌اندازد.
+    if (facts?.moneyDirection === 'out' && String(facts?.category || '').trim() === 'حقوق و دستمزد') {
       return createDecision({
         family, riskLevel: RISK_LEVELS.YELLOW, sourceReferences,
-        requiredFacts: [FACT_KEYS.INTENDED_USE],
-        missingFacts: [FACT_KEYS.INTENDED_USE],
-        decisionStatus: DECISION_STATUS.NEEDS_USER_INPUT,
-        explanation: 'خرید کالاست؛ اینکه هزینه است، موجودی یا دارایی ثابت، به هدف خرید بستگی دارد.',
-        question: nextQuestionFor([FACT_KEYS.INTENDED_USE], facts),
+        decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+        explanation: 'پرداخت حقوق، کسور بیمه و مالیات دارد؛ حسابدار ناخالص، کسور و خالص پرداختی را ثبت می‌کند.',
       });
+    }
+    // خرید کالا بدون هدف: ماهیتش با یک سؤال روشن می‌شود، نه با قضاوت حسابدار.
+    if (facts?.moneyDirection === 'out' && isFactPresent(facts?.amount)
+      && (needsPurchasePurpose(facts, { capitalizationThreshold: facts?.capitalizationThreshold ?? null })
+        || (facts?.paymentPurpose === 'goods' && !isFactPresent(facts?.intendedUse)))) {
+      return ask(FACT_KEYS.INTENDED_USE, 'خرید کالاست؛ اینکه هزینه است، موجودی یا دارایی ثابت، به هدف خرید بستگی دارد.');
+    }
+    // «این پول بابت چه بود؟» — یک سؤال گزینه‌ای از ثبت‌کننده، به‌جای صف
+    // حسابدار. فقط وقتی هنوز پرسیده نشده؛ «هیچ‌کدام» یعنی واقعاً قضاوت لازم است.
+    // دسته‌هایی که ذاتاً تسویهٔ بدهی یا تفکیک مبلغ‌اند — مالیات، جریمه، لیست
+    // بیمه، بهای تمام‌شده — این سؤال را نمی‌گیرند: هیچ گزینه‌ای درستشان نیست.
+    if (JUDGMENT_CATEGORIES.includes(String(facts?.category || '').trim())) {
+      return createDecision({ family, riskLevel, sourceReferences, decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW, explanation: classified.reason });
+    }
+    // جمله‌ای که خودش نشانهٔ قضاوت دارد — «چطور ثبت کنیم؟»، محمولهٔ وارداتی،
+    // شریک، تسویهٔ قبلی — سؤال گزینه‌ای نمی‌گیرد؛ هیچ گزینه‌ای درستش نیست.
+    const judged = judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`)
+      || (purchaseNeedsJudgment(facts) ? 'جمله نشانه‌ای دارد که ساده دیدنش را ناامن می‌کند؛ حسابدار ماهیتش را تعیین می‌کند.' : null);
+    if (judged) {
+      return createDecision({ family, riskLevel, sourceReferences, decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW, explanation: judged });
+    }
+    // پول کالا به شخص نام‌برده، بی‌آنکه هدفش گفته شود، ممکن است تسویهٔ بدهی
+    // قبلی همان شخص باشد؛ «خرید کالا» گزینهٔ امنی برایش نیست.
+    if (facts?.moneyDirection === 'out' && isFactPresent(facts?.counterparty) && ['مواد و کالا', 'ملزومات اداری'].includes(String(facts?.category || '').trim())) {
+      return createDecision({ family, riskLevel, sourceReferences, decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW, explanation: 'پول کالا به شخص نام‌برده رفته؛ خرید تازه است یا تسویهٔ بدهی قبلی، با حسابدار است.' });
+    }
+    if (facts?.moneyDirection === 'in' && isFactPresent(facts?.amount) && !isFactPresent(facts?.receiptPurpose)) {
+      return ask(FACT_KEYS.RECEIPT_PURPOSE, 'از جمله معلوم نیست این دریافت فروش است، پیش‌دریافت، وام یا آورده.');
+    }
+    if (facts?.moneyDirection === 'out' && isFactPresent(facts?.amount) && !isFactPresent(facts?.paymentPurpose)) {
+      return ask(FACT_KEYS.PAYMENT_PURPOSE, 'از جمله معلوم نیست این پرداخت هزینه است، خرید، پیش‌پرداخت یا برداشت مالک.');
     }
     return createDecision({
       family, riskLevel, sourceReferences,
@@ -555,7 +723,10 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
     });
   }
 
-  const baseMissing = missingFactsFor(family, null, facts);
+  // قاعده‌ای که یک واقعیت پایهٔ خانواده را عمداً لازم ندارد — مثل طرف حسابِ
+  // واریز ناشناس، که نبودنش تعریف همان رویداد است.
+  const waived = selectPolicy(policies, family, facts, facts?.occurredAt || today)?.waivesFamilyFacts || [];
+  const baseMissing = missingFactsFor(family, null, facts).filter((key) => !waived.includes(key));
   if (baseMissing.length) {
     return createDecision({
       family, riskLevel, sourceReferences,
@@ -582,7 +753,8 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
   const resolved = policy.resolve(facts, { today });
   // `extraFacts` وقتی می‌آید که قاعده بگوید «تا این را ندانم نمی‌توانم برخورد
   // را قطعی کنم». اول می‌نشیند تا همان اول پرسیده شود.
-  const requiredFacts = [...new Set([...(resolved.extraFacts || []), ...requiredFactsFor(family, resolved.treatment)])];
+  const requiredFacts = [...new Set([...(resolved.extraFacts || []), ...requiredFactsFor(family, resolved.treatment)])]
+    .filter((key) => !(policy.waivesFamilyFacts || []).includes(key));
   const missingFacts = requiredFacts.filter((key) => !isFactPresent(facts?.[key]));
 
   // برخوردی که قاعدهٔ ثبت ندارد، تصمیمش ثبت می‌شود ولی سند نمی‌سازد. ودیعه

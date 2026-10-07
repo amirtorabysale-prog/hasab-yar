@@ -159,8 +159,12 @@ test('ودیعه، سؤال استرداد می‌گیرد — نه سؤال د�
   // پولی که برمی‌گردد هیچ‌وقت هزینه نمی‌شود — نه امسال، نه سال بعد.
   const refundable = decide({ ...deposit, [FACT_KEYS.REFUNDABLE]: true }, { today: TODAY });
   assert.equal(refundable.treatment, TREATMENTS.REFUNDABLE_DEPOSIT);
-  assert.equal(refundable.decisionStatus, DECISION_STATUS.UNSUPPORTED, 'قاعدهٔ ثبتش در این فاز نیست، پس حسابدار');
+  // ودیعه به تفکیک صاحبخانه نگه داشته می‌شود؛ بی‌نام ثبت نمی‌شود.
+  assert.equal(refundable.question?.fact, FACT_KEYS.COUNTERPARTY);
   assert.equal(decisionAuthorizesPosting(refundable), false);
+  const named = decide({ ...deposit, [FACT_KEYS.REFUNDABLE]: true, [FACT_KEYS.COUNTERPARTY]: 'صاحبخانه' }, { today: TODAY });
+  assert.equal(named.decisionStatus, DECISION_STATUS.DECIDED, 'از مهر ۱۴۰۵ ودیعه قاعدهٔ ثبت دارد');
+  assert.equal(named.treatment, TREATMENTS.REFUNDABLE_DEPOSIT);
 
   // همان دسته، جواب دیگر: حالا دوره پرسیده می‌شود.
   const consumable = decide({ ...deposit, [FACT_KEYS.REFUNDABLE]: false }, { today: TODAY });

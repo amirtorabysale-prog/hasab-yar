@@ -380,7 +380,7 @@ app.post('/api/transactions', (request, response, next) => {
       if (duplicates.length) throw Object.assign(new Error('یک ثبت بسیار مشابه در چند دقیقهٔ اخیر پیدا شد.'), { code: 'POSSIBLE_DUPLICATE', status: 409, details: { duplicates } });
     }
     const ids = insertTransactions({ transcript: request.body.transcript, transactions, counterpartyResolution: request.body.counterpartyResolution });
-    return response.status(201).json({ ids, queuedForAccountant: ids.queuedForAccountant || 0, queuedReasons: ids.queuedReasons || [], ...getToday() });
+    return response.status(201).json({ ids, queuedForAccountant: ids.queuedForAccountant || 0, queuedReasons: ids.queuedReasons || [], nonCash: ids.nonCash || [], ...getToday() });
   } catch (error) { return next(error); }
 });
 app.post('/api/transactions/unquantified-review', (request, response, next) => {

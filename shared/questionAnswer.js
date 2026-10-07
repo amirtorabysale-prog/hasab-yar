@@ -78,6 +78,11 @@ export function applyAnswer(event, { fact, value, freeText = '' } = {}, { today 
     // جواب مقیاس مبلغ، خودِ مبلغ را می‌نشاند و ابهام را می‌بندد؛ وگرنه همان
     // سؤال دوباره پرسیده می‌شود.
     if (fact === FACT_KEYS.AMOUNT_SCALE) return { amount: chosen.value, amountScaleAmbiguous: false };
+    // گزینهٔ «بابت چه بود» خودش استرداد را هم می‌گوید: آورده و برداشت شخصی
+    // برنمی‌گردند و ودیعه برمی‌گردد. پرسیدن دوباره‌اش فقط یک سؤال اضافه است.
+    if (fact === FACT_KEYS.RECEIPT_PURPOSE && chosen.value === 'owner') return { receiptPurpose: 'owner', refundable: false };
+    if (fact === FACT_KEYS.PAYMENT_PURPOSE && chosen.value === 'owner-drawing') return { paymentPurpose: 'owner-drawing', refundable: false };
+    if (fact === FACT_KEYS.PAYMENT_PURPOSE && chosen.value === 'deposit') return { paymentPurpose: 'deposit', refundable: true };
     return { [fact]: chosen.value };
   }
 

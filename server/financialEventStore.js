@@ -441,7 +441,32 @@ function postEventJournal(database, eventId, event, plan, { actor = null, timeZo
   }, { createdBy: actor, timeZone });
 
   markEventPosted(database, eventId, posted, lines, actor);
+  markTransactionAccountingRole(database, journalSource, plan.lines);
   return posted;
+}
+
+/**
+ * ردیف نقدیِ پشت یک سند تخصصی، در جمع درآمد و هزینه نمی‌آید.
+ *
+ * وام، ودیعه، پیش‌پرداخت، پیش‌دریافت و آورده پول جابه‌جا می‌کنند ولی سود و
+ * زیان نیستند. مسیر بررسی حسابدار همین علامت را می‌زند؛ موتور هم باید بزند،
+ * وگرنه دویست میلیون وام در داشبورد «درآمد این ماه» دیده می‌شد.
+ */
+//
+// فقط تأمین مالی: وام، واریز ناشناس و برداشت مالک (آورده با `capital_flow`).
+// پیش‌پرداخت، ودیعه و خرید کالا پرداخت نقدی‌اند و در کارت «پرداخت امروز»
+// می‌مانند؛ دفتر کل جداگانه نشان می‌دهد که هزینه نیستند.
+const SPECIAL_COUNTERPART_ROLES = new Set(['loan-payable', 'unidentified-receipt', 'owner-drawing']);
+function markTransactionAccountingRole(database, journalSource, planLines = []) {
+  if (journalSource?.type !== 'transaction' || planLines.length !== 2) return;
+  const counterpart = planLines.find((line) => line.role !== 'cash');
+  if (!counterpart || !planLines.some((line) => line.role === 'cash')) return;
+  if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'").get()) return;
+  if (counterpart.role === 'owner-capital') {
+    database.prepare("UPDATE transactions SET capital_flow='capital-in' WHERE id=?").run(journalSource.id);
+  } else if (SPECIAL_COUNTERPART_ROLES.has(counterpart.role)) {
+    database.prepare('UPDATE transactions SET accounting_role=? WHERE id=?').run(counterpart.role, journalSource.id);
+  }
 }
 
 /** وضعیت «ثبت شد» و ردپایش — مستقل از اینکه کدام لایه سند را زده است. */

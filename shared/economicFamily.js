@@ -189,12 +189,35 @@ export function isTimeBoundService(facts) {
  * می‌پرسد؛ تا آن‌وقت «نمی‌دانم» صادقانه‌تر از یک برچسب مطمئنِ غلط است.
  */
 function signalsFutureBenefit(facts) {
+  // ثبت‌کننده خودش گفته پیش‌پرداخت یا ودیعه است، یا گفته پول برمی‌گردد.
+  if (['advance', 'deposit'].includes(facts?.paymentPurpose) || facts?.refundable === true) return true;
   if (has(facts, 'servicePeriodStart') || has(facts, 'servicePeriodEnd') || has(facts, 'contractReference')) return true;
   if (has(facts, 'assetName') || has(facts, 'readyForUseDate')) return true;
   if (['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)) return true;
   // «پیش‌پیش»، «بیعانه»، «علی‌الحساب»: پول رفته و هنوز هیچ چیزی مصرف نشده.
   if (facts?.prepaymentSignal === true) return true;
   return isTimeBoundService(facts);
+}
+
+/**
+ * دریافتی که درآمدِ همان لحظه است.
+ *
+ * «امروز هشت میلیون فروش نقدی داشتیم» تا امروز ماهیت «نامعلوم» می‌گرفت، چون
+ * تنها قاعدهٔ درآمد تاریخ تحویل جدا می‌خواست. در فروش و خدمت نقدی، تحویل و
+ * دریافت همان لحظه‌اند. دستهٔ عمومیِ «سایر درآمدها» عمداً بیرون است: همان
+ * دسته‌ای است که وام و واریز ناشناس هم می‌گیرند؛ آن‌ها با یک سؤال روشن
+ * می‌شوند. سود بانکی تنها استثناست، چون خودِ جمله آن را می‌گوید.
+ */
+export const REVENUE_AT_RECEIPT_CATEGORIES = Object.freeze(['فروش', 'خدمات', 'پروژه و دستمزد']);
+const INTEREST_INCOME = /سود\s*(?:بانکی|سپرده|حساب)/;
+
+export function isRevenueAtReceipt(facts) {
+  if (direction(facts) !== 'in') return false;
+  if (['sale', 'other-income'].includes(facts?.receiptPurpose)) return true;
+  if (facts?.receiptPurpose) return false;
+  if (facts?.prepaymentSignal === true || has(facts, 'servicePeriodStart') || has(facts, 'contractReference')) return false;
+  if (REVENUE_AT_RECEIPT_CATEGORIES.includes(String(facts?.category || '').trim())) return true;
+  return INTEREST_INCOME.test(String(facts?.evidence || ''));
 }
 
 export const FAMILY_RULES = Object.freeze([
@@ -230,7 +253,22 @@ export const FAMILY_RULES = Object.freeze([
     family: ECONOMIC_FAMILIES.OWNER_CAPITAL_MOVEMENT,
     weight: 84,
     reason: 'طرف حساب، خودِ مالک یا شریک است.',
-    test: (facts) => facts?.counterpartyRole === 'owner',
+    test: (facts) => facts?.counterpartyRole === 'owner' || facts?.receiptPurpose === 'owner' || facts?.paymentPurpose === 'owner-drawing',
+  }),
+  // وام دریافتی بدهی است، نه درآمد؛ وزنش بالای قاعده‌های عمومی دریافت است
+  // تا دستهٔ «سایر درآمدها» هرگز آن را درآمد نکند.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    weight: 83,
+    reason: 'پول وام یا قرض آمده و باید پس داده شود.',
+    test: (facts) => direction(facts) === 'in' && facts?.receiptPurpose === 'loan',
+  }),
+  // واریزی که منشأش معلوم نیست، تا روشن شدن در اختیار ماست ولی مال ما نیست.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    weight: 82,
+    reason: 'پول آمده ولی معلوم نیست از کیست؛ تا تعیین تکلیف، بدهی موقت است.',
+    test: (facts) => direction(facts) === 'in' && facts?.receiptPurpose === 'unknown',
   }),
   // ارجاع به سند باز یعنی این پول تعهد موجود را می‌بندد، نه اینکه درآمد یا
   // هزینهٔ تازه بسازد. نگهبان کاملش در WP-1 می‌آید؛ اینجا فقط ماهیت است.
@@ -280,13 +318,19 @@ export const FAMILY_RULES = Object.freeze([
     weight: 70,
     reason: 'پول پیش از انجام تعهد دریافت شده است.',
     test: (facts) => direction(facts) === 'in' && !has(facts, 'deliveryDate')
-      && (has(facts, 'contractReference') || has(facts, 'servicePeriodStart') || facts?.prepaymentSignal === true),
+      && (has(facts, 'contractReference') || has(facts, 'servicePeriodStart') || facts?.prepaymentSignal === true || facts?.receiptPurpose === 'advance'),
   }),
   Object.freeze({
     family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,
     weight: 65,
     reason: 'تعهد انجام شده و پول هم دریافت شده است.',
     test: (facts) => has(facts, 'deliveryDate') && direction(facts) === 'in',
+  }),
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,
+    weight: 60,
+    reason: 'فروش یا خدمتی که همین حالا انجام شد و پولش هم آمد.',
+    test: (facts) => isRevenueAtReceipt(facts),
   }),
   Object.freeze({
     family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
@@ -321,7 +365,7 @@ export const FAMILY_RULES = Object.freeze([
     weight: 30,
     reason: 'پول خارج شد و آنچه بابتش گرفته شد، در همین دوره مصرف می‌شود.',
     test: (facts) => direction(facts) === 'out' && has(facts, 'amount') && !signalsFutureBenefit(facts)
-      && (facts?.intendedUse === 'current-consumption'
+      && (facts?.intendedUse === 'current-consumption' || facts?.paymentPurpose === 'expense'
         || isRoutineExpense(facts, { capitalizationThreshold: facts?.capitalizationThreshold ?? null })),
   }),
 ]);

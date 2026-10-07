@@ -69,18 +69,28 @@ test('T050 — چک دستی که وصول نشده، پول نیست', () => {
   });
 });
 
-test('خرید نسیهٔ آزمون واقعی، نه ماندهٔ نقدی می‌سازد نه با تأیید ساده سند نقدی', () => {
+/** سطرهای سند یک رویداد، با نوع حساب. */
+const eventLines = (eventId) => db().prepare(`SELECT ledger_accounts.source_kind AS kind,journal_lines.debit,journal_lines.credit
+  FROM financial_events JOIN journal_lines ON journal_lines.entry_id=financial_events.journal_entry_id
+  JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id WHERE financial_events.id=?`).all(eventId);
+
+test('خرید نسیهٔ آزمون واقعی: هدف خرید پرسیده می‌شود، موجودی و بدهی می‌سازد، هیچ اثر نقدی ندارد', () => {
   inPrimary(() => {
     const text = 'امروز 15 میلیون تومان کالا نسیه از شرکت اپسیلون خریدیم و پولی ندادیم';
     const transactions = parseFinancialText(text, { source: 'voice' }).transactions.map((item) => ({ ...item, source: 'voice' }));
     const before = db().prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted'").get().count;
     const ids = database.insertTransactions({ transcript: text, transactions });
-    assert.ok(ids.queuedForAccountant >= 1);
-    assert.equal(db().prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted'").get().count, before);
-    const event = store.listReviewQueue(db(), { route: 'accountant-review' }).find((item) => item.event.evidence === text);
-    assert.ok(event);
-    assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
-    assert.equal(db().prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status, 'pending');
+    assert.equal(db().prepare("SELECT COUNT(*) AS count FROM transactions WHERE status!='deleted'").get().count, before, 'ردیف نقدی ساخته نمی‌شود');
+    const [opened] = ids.nonCash;
+    assert.ok(opened, 'یک بدهی باز ساخته می‌شود');
+    assert.equal(opened.question, 'این خرید برای چیست؟');
+    assert.deepEqual(eventLines(opened.eventId), [], 'پیش از جواب سندی نمی‌خورد');
+    database.answerEvent(opened.eventId, { fact: 'intendedUse', value: 'resale' });
+    database.approveEvent(opened.eventId);
+    const lines = eventLines(opened.eventId);
+    assert.ok(lines.some((line) => line.kind === 'inventory-unsplit' && line.debit === 15_000_000), JSON.stringify(lines));
+    assert.ok(lines.some((line) => line.kind === 'vendor-payable' && line.credit === 15_000_000), JSON.stringify(lines));
+    assert.equal(lines.some((line) => line.kind === 'operational-account'), false, 'هیچ سطر نقدی');
   });
 });
 
@@ -163,10 +173,13 @@ test('رویداد معلق تا زمان تصمیم، موجودی حساب و 
     const transactions = parseFinancialText(text, { source: 'text' }).transactions;
     const ids = database.insertTransactions({ transcript: text, transactions });
     assert.equal(ids.length, 0, 'رویداد غیرنقدی ردیف نقدی نمی‌سازد');
-    assert.ok(ids.queuedForAccountant > 0, 'شاهد در صف حسابدار حفظ می‌شود');
-    const event = store.listReviewQueue(db(), { route: 'accountant-review' }).find((item) => item.event.evidence === text);
-    assert.ok(event);
-    assert.throws(() => database.approveEvent(event.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+    const [opened] = ids.nonCash;
+    assert.ok(opened, 'طلب باز ساخته می‌شود');
+    if (opened.status !== 'posted') database.approveEvent(opened.eventId);
+    const lines = eventLines(opened.eventId);
+    assert.ok(lines.some((line) => line.kind === 'customer-receivable' && line.debit === 20_000_000), JSON.stringify(lines));
+    assert.ok(lines.some((line) => line.kind === 'income-category' && line.credit === 20_000_000), JSON.stringify(lines));
+    assert.equal(lines.some((line) => line.kind === 'operational-account'), false, 'هیچ سطر نقدی');
     assert.equal(database.listAccounts().find((account) => account.id === 'cash').balance, before);
     assert.equal(database.getToday().summary.netCashFlow, beforeToday);
     assert.equal(database.report('month').summary.netCashFlow, beforeReport);
@@ -174,11 +187,16 @@ test('رویداد معلق تا زمان تصمیم، موجودی حساب و 
   });
 });
 
-test('T006 — پیش‌پرداخت به تأمین‌کننده هزینهٔ ماه نمی‌شود', () => {
+test('T006 — پیش‌پرداخت به تأمین‌کننده هزینهٔ ماه نمی‌شود؛ پیش‌پرداخت خرید همان تأمین‌کننده است', () => {
   inPrimary(() => {
     const { ids, events } = say('T006');
-    assert.equal(events[0].route, 'accountant-review');
-    assert.equal(journalFor(ids[0]).some((line) => line.kind === 'expense-category'), false);
+    assert.notEqual(events[0].status, 'posted', 'بدون نام تأمین‌کننده ثبت نمی‌شود');
+    assert.equal(store.decisionForEvent(db(), events[0].id).question?.fact, 'counterparty');
+    database.answerEvent(events[0].id, { fact: 'counterparty', value: 'custom', freeText: 'فولاد مبارکه' });
+    database.approveEvent(events[0].id);
+    const lines = journalFor(ids[0]);
+    assert.equal(lines.some((line) => line.kind === 'expense-category'), false, JSON.stringify(lines));
+    assert.ok(lines.some((line) => line.kind === 'prepaid-asset' && line.debit === 120_000_000), JSON.stringify(lines));
   });
 });
 

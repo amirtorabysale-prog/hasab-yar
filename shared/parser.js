@@ -42,13 +42,13 @@ const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS),
 // می‌شد — ردیف تراکنش هم با همان جهت غلط ماندهٔ بانک را جابه‌جا می‌کرد.
 const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'فروختیم', 'دخل', 'وصول', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد',
   'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد'];
-const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
+const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'خریدیم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'دادیم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
 // فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
 // هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و نوع بی‌دلیل
 // هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
 const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'فروختیم', 'واریز', 'واریزی', 'دریافت',
   'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد']);
-const EXPENSE_VERBS = new Set(['دادم', 'خریدم', 'برداشت']);
+const EXPENSE_VERBS = new Set(['دادم', 'دادیم', 'خریدم', 'خریدیم', 'برداشت']);
 const LEARNING_STOP_WORDS = new Set(['امروز', 'دیروز', 'تومان', 'تومن', 'تومنی', 'ریال', 'بابت', 'برای', 'از', 'به', 'را', 'رو', 'کردم', 'دادم', 'گرفتم', 'داشتم', 'خریدم', 'فروختم', 'پرداخت', 'هزینه', 'درآمد', 'فروش', 'حقوق', 'و']);
 
 export const FINANCIAL_SPEECH_PHRASES = [
@@ -316,19 +316,50 @@ function signalScore(text, words, verbs) {
  */
 const ROLE_NOUNS = /فروشنده|فروشگاه|خریدار/g;
 
+/**
+ * هدف خرید، نشانهٔ فروش نیست.
+ *
+ * «سی کارتن روغن موتور برای فروش در مغازه… از بانک ملت خریدیم» درآمد ثبت
+ * می‌شد: «فروش» واژهٔ دستهٔ درآمد است و فعل «خریدیم» شمرده نمی‌شد. «برای
+ * فروش» می‌گوید کالا چرا خریده شده، نه اینکه پولی آمده.
+ */
+const PURPOSE_PHRASES = /(?:برای|واسه|جهت)\s*(?:فروش|فروختن)(?:\s*مجدد)?/g;
+/** فعل خرید یا پرداختِ اول‌شخص: جهت پول را صریح می‌گوید و دسته نقضش نمی‌کند. */
+const FIRST_PERSON_OUT = /خرید(?:م|یم)(?![آ-ی])|پرداخت\s*کرد(?:م|یم)|(?<!تحویل\s)داد(?:م|یم)(?![آ-ی])/;
+/** فعل گذشتهٔ جابه‌جایی پول — «دادیم»، «گرفتیم»، «واریز شد» — نه اسم «خرید». */
+const PAST_MONEY_VERB = /(?:داد(?:یم|م)?|گرفت(?:یم|م)?|خرید(?:یم|م)|ریخت(?:یم|م)?)(?![آ-ی])|(?:واریز|پرداخت|کارت\s*به\s*کارت)\s*(?:شد|کرد(?:یم|م)?)(?![آ-ی])/;
+
 const MONEY_IN_PHRASE = /اومده?\s*تو\s*حساب|به\s*حساب\s*(?:\S+\s*)?اومد|عودت\s*(?:داد|دادن|کرد)|به\s*حساب\s*شرکت\s*(?:انتقال\s*داد|واریز\s*کرد|ریخت)|واریز\s*شد\s*به\s*حساب/;
+/**
+ * کسی دیگر به حساب ما ریخت — فعل سوم‌شخص، مقصد حساب خودمان.
+ *
+ * «خانم رضایی… بیعانه به بانک ملت کارت به کارت کرد» پرداخت ما خوانده می‌شد
+ * چون «کارت به کارت» واژهٔ عمومی پرداخت است. فعل سوم‌شخصِ بی‌پسوند («کرد» نه
+ * «کردم») و مقصدی که حساب خودِ ماست، جهت را صریح می‌کنند.
+ */
+const THIRD_PERSON_IN = /(?:به|تو|توی)\s*(?:حساب\s*)?(?:بانک\s*\S+|حسابمون|حساب\s*(?:ما|شرکت))\s*(?:\S+\s*){0,3}?(?:کارت\s*به\s*کارت\s*کرد|واریز\s*کرد|انتقال\s*داد|ریخت)(?![آ-ی])/;
+/** طلبی که هنوز وصول نشده: «قراره بدن ولی هنوز پولی نگرفتیم». */
+const RECEIVABLE_STATEMENT = /قرار(?:ه)?\s*(?:بدن|بده|بدهند|پرداخت\s*کنن)|(?:پولش|پولی|پولشو)\s*(?:رو\s*)?(?:هنوز\s*)?نگرفتیم|هنوز\s*(?:پولش|پولی)\s*(?:رو\s*)?نگرفتیم/;
 // فعل پرداختِ اول‌شخص. «برای خرید مواد اولیه» اسم است، نه فعل؛ جلوی تشخیص
 // ورود را نمی‌گیرد.
 const MONEY_OUT_VERB = /(?:دادم|دادیم|ریختم|ریختیم|زدم|زدیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم)|برداشت\s*کرد)/;
 
 function sentenceMoneyIn(input) {
   const text = normalizePersian(input);
-  return MONEY_IN_PHRASE.test(text) && !MONEY_OUT_VERB.test(text);
+  // «تحویل دادیم» و «انجام دادیم» دربارهٔ کار است، نه پول.
+  const payments = text.replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
+  return (MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments);
+}
+
+/** نشانهٔ ورودِ صریح، نه حدسی: اطمینانش پایین نمی‌آید. */
+function explicitMoneyIn(input) {
+  const text = normalizePersian(input);
+  return THIRD_PERSON_IN.test(text) || RECEIVABLE_STATEMENT.test(text);
 }
 
 function classify(context, learnings = [], categoryContext = '') {
-  const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ');
-  const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ');
+  const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
+  const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword)));
   const incomeScore = signalScore(normalizedContext, INCOME_WORDS, INCOME_VERBS);
   const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
@@ -371,7 +402,7 @@ function classify(context, learnings = [], categoryContext = '') {
      * شرط عمداً سخت است: سمت فعلی باید هیچ واژه‌ای نداشته باشد و سمت مقابل
      * تطابق روشن. «از مشتری گرفتم» هیچ‌کدام را ندارد و دست‌نخورده می‌ماند.
      */
-    if (!suggestion.matched) {
+    if (!suggestion.matched && !(type === 'expense' && FIRST_PERSON_OUT.test(normalizedContext))) {
       const oppositeType = type === 'income' ? 'expense' : 'income';
       const opposite = classifyCategory(normalizedCategoryContext, oppositeType);
       if (opposite.matched && opposite.confidence >= 0.86) {
@@ -473,7 +504,14 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   // A due-date clause is not the occurrence date of an unpaid bill.
   const occurrenceSource = normalizePersian(dateSource).replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
   const mentionedDate = extractOccurrenceDate(occurrenceSource, { now, preferPast: true });
-  const occurredAt = mentionedDate?.iso || null;
+  // تاریخِ آینده در جمله‌ای که پول را با فعل گذشته گفته، تاریخ وقوع نیست.
+  //
+  // «ده میلیون پیش‌پرداخت دادیم که جنس رو هفته بعد تحویل بده» و «دویست میلیون
+  // وام گرفتیم؛ قسط‌هاش از ماه بعد شروع می‌شه» پرداخت و دریافت را به هفته و ماه
+  // بعد می‌بردند: آن تاریخ مال تحویل و قسط است. پولی که «دادیم» امروز رفته.
+  const futureOfPast = mentionedDate?.iso && Date.parse(mentionedDate.iso) > now.getTime() + 43_200_000
+    && PAST_MONEY_VERB.test(occurrenceSource);
+  const occurredAt = futureOfPast ? null : mentionedDate?.iso || null;
   // بانک روی متن اصلی خوانده می‌شود، پیش از هر ماسکی، تا جای تطبیق جابه‌جا نشود.
   const bank = detectBank(input);
   // جابه‌جایی بین دو حساب خودِ دفتر. تا امروز این جمله هزینه ثبت می‌شد و یک
@@ -546,8 +584,10 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       const incomeCategory = classifyCategory(normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' '), 'income');
       classified = {
         ...classified, type: 'income', category: incomeCategory.category, chartCode: chartCodeForCategory(incomeCategory.category),
-        confidence: Math.min(classified.confidence, 0.68),
-        typeReason: 'جمله صریح می‌گوید پول به حساب آمده؛ جهت از کل جمله برداشت شد و باید کنترل شود.',
+        confidence: explicitMoneyIn(input) ? 0.86 : Math.min(classified.confidence, 0.68),
+        typeReason: explicitMoneyIn(input)
+          ? 'جمله صریح می‌گوید طرف مقابل به حساب ما ریخته یا باید بدهد؛ جهت از کل جمله برداشت شد.'
+          : 'جمله صریح می‌گوید پول به حساب آمده؛ جهت از کل جمله برداشت شد و باید کنترل شود.',
       };
     }
     let amount = span.amount;
