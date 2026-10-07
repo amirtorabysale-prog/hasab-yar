@@ -58,8 +58,11 @@ export function saveReviewFacts(database, eventId, facts = {}) {
     if(!submitted || typeof submitted!=='object' || Array.isArray(submitted) || Object.keys(submitted).length>40) throw fail('پاسخ سؤال‌ها معتبر نیست.');
     const latest=database.prepare('SELECT proposal FROM accounting_review_ai WHERE event_id=? ORDER BY rowid DESC LIMIT 1').get(eventId);
     // سؤال نام طرف حساب را خودِ سیستم از مانع می‌سازد، نه AI؛ همیشه پذیرفته است.
+    // شناسهٔ نمایشیِ همان سؤال («fact.counterparty-name») هم پذیرفته است؛ رابط با
+    // همان شناسه جواب می‌دهد.
+    const nameQuestion={id:'counterparty.name',text:'نام طرف حساب این سند چیست؟',field:'counterpartyName'};
     const allowed=new Map([...reviewQuestions(latest?JSON.parse(latest.proposal):{}).map(q=>[q.id,q]),
-      ['counterparty.name',{id:'counterparty.name',text:'نام طرف حساب این سند چیست؟',field:'counterpartyName'}]]);
+      [nameQuestion.id,nameQuestion],...reviewQuestions({questions:[nameQuestion]}).map(q=>[q.id,{...nameQuestion,id:q.id}])]);
     const answers=reviewSavedAnswers(old.facts.questionAnswers || {});
     for(const [id,answer] of Object.entries(submitted)) {
       if(!allowed.has(id) && !Object.hasOwn(answers,id)) throw fail('این سؤال مربوط به پیشنهاد فعلی این پرونده نیست.');

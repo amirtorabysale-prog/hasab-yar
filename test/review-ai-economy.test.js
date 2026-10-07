@@ -129,6 +129,10 @@ test('طرف‌حساب تازه از انتخابگر شخص پذیرفته م�
   const { facts } = assistant.reviewContext(database(), item.id);
   assert.equal(facts.counterpartyName, 'فروشگاه آرمان');
   assert.equal(facts.counterpartyId, null);
+  // سؤال نامی که خودِ سیستم از مانع ساخته، با شناسهٔ نمایشی‌اش هم جواب می‌گیرد.
+  const other = queued('قبض پرداخت‌نشده', { amount: 500_000 });
+  assistant.saveReviewFacts(database(), other.id, { questionAnswers: { 'fact.counterparty-name': { value: 'شرکت گاز' } } });
+  assert.equal(assistant.reviewContext(database(), other.id).facts.counterpartyName, 'شرکت گاز');
   assert.equal(isHeadingChoiceQuestion({ text: 'این پیش‌پرداخت به تأمین‌کننده را با چه سرفصلی می‌خواهید ثبت کنیم؟' }), true);
   assert.equal(isHeadingChoiceQuestion({ text: 'وجه از کدام بانک یا صندوق پرداخت شد؟', field: 'accountId' }), false);
 }));
