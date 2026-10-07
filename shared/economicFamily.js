@@ -1,3 +1,5 @@
+import { isRoutineExpense } from './purchasePurpose.js';
+
 /**
  * خانوادهٔ اقتصادی — ماهیت رویداد، نه شکل تراکنش.
  *
@@ -310,6 +312,17 @@ export const FAMILY_RULES = Object.freeze([
     weight: 40,
     reason: 'پول خارج شد، به سند بازی ارجاع ندارد، و نشانهٔ منفعت آینده دارد.',
     test: (facts) => direction(facts) === 'out' && has(facts, 'amount') && signalsFutureBenefit(facts),
+  }),
+  // مصرف همین دوره: قبض، سوخت، کارمزد — یا خریدی که کاربر گفته مصرف جاری
+  // است. پایین‌تر از ایجاد دارایی، چون هر نشانهٔ منفعت آینده (دورهٔ پوشش،
+  // پیش‌پرداخت، هدف ماندگار) باید بر برچسب «هزینه» برنده شود.
+  Object.freeze({
+    family: ECONOMIC_FAMILIES.ASSET_CONSUMPTION,
+    weight: 30,
+    reason: 'پول خارج شد و آنچه بابتش گرفته شد، در همین دوره مصرف می‌شود.',
+    test: (facts) => direction(facts) === 'out' && has(facts, 'amount') && !signalsFutureBenefit(facts)
+      && (facts?.intendedUse === 'current-consumption'
+        || isRoutineExpense(facts, { capitalizationThreshold: facts?.capitalizationThreshold ?? null })),
   }),
 ]);
 

@@ -132,6 +132,10 @@ for (const [id, expected] of Object.entries(EXPECTED)) {
 const APPROVED_POSTINGS = {
   T001: 'Dr expense-category 12000000 / Cr cash 12000000',
   T009: 'Dr prepaid-asset 15000000 / Cr cash 15000000',
+  // کارمزد بانکی هزینهٔ همان دوره است و سؤالی لازم ندارد؛ «پنجاه برگه» شمارش
+  // است نه مبلغ و ردیفی نمی‌سازد.
+  T049: 'Dr expense-category 200000 / Cr cash 200000',
+  T059: 'Dr expense-category 6500000 / Cr cash 6500000',
 };
 
 test('در کل ۱۲۰ سناریو، هیچ سندی بدون بررسی و بیرون از فهرست تأییدشده ساخته نمی‌شود', () => {
