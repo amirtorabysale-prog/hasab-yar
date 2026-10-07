@@ -3,7 +3,10 @@ import { ensureInsuranceSettlementSchema } from '../reviewInsurance.js';
 import { ensureUnidentifiedSchema } from '../unidentifiedReceipts.js';
 import { ensureChequeSchema } from './cheques.js';
 import { randomUUID } from 'node:crypto';
-import { OPTIONAL_BACKUP_TABLES } from '../backup.js';
+import { OPTIONAL_BACKUP_TABLES, PRESERVED_WHEN_ABSENT_TABLES } from '../backup.js';
+import { ensureAccountingSchema } from '../accounting.js';
+import { ensurePayrollSchema } from '../payroll.js';
+import { ensureDepreciationSchema } from '../depreciationLedger.js';
 import { currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { ensureTaxSchema } from '../tax.js';
 import { insertTransactions } from './transactions.js';
@@ -17,7 +20,10 @@ export const FINANCIAL_BACKUP_TABLES = [
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
   'tax_knowledge_sources', 'tax_assistant_questions',
   'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
+  // کدینگ، تفصیلی و مرکز هزینه پیش از حساب‌ها و سطرهای سند که به آن‌ها ارجاع می‌دهند.
+  'chart_accounts', 'analytic_accounts', 'cost_centers',
   'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'financial_alert_feedback',
+  'payroll_runs', 'payroll_lines', 'fixed_asset_settings', 'journal_templates',
   'accountant_intakes', 'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai', 'accounting_review_tax_refunds', 'accounting_review_insurance', 'unidentified_receipt_resolutions', 'accounting_review_messages', 'accounting_review_context', 'cheques',
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
 ];
@@ -25,12 +31,20 @@ export const FINANCIAL_BACKUP_TABLES = [
 const BACKUP_DELETE_ORDER = [
   'accounting_review_tax_refunds', 'accounting_review_insurance', 'unidentified_receipt_resolutions', 'accounting_review_messages', 'accounting_review_context', 'cheques', 'accountant_intakes', 'accounting_review_ai', 'financial_event_audit', 'recognition_schedule_items', 'accounting_decisions', 'financial_events',
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
-  'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
+  'payroll_lines', 'payroll_runs', 'fixed_asset_settings', 'journal_templates',
+  'provider_usage', 'collaboration_requests', 'pilot_checkins', 'financial_alert_feedback', 'journal_lines', 'journal_entries', 'accounting_periods', 'ledger_accounts',
+  'cost_centers', 'analytic_accounts', 'chart_accounts', 'bank_statement_lines', 'bank_statement_imports', 'invoice_payments',
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'tax_document_mirrors', 'tax_document_relations', 'tax_provisions', 'tax_document_versions', 'tax_documents',
   'tax_assistant_questions', 'tax_knowledge_sources', 'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
   'accounts', 'categories', 'settings',
 ];
+
+function ensureStructureSchemas(database) {
+  ensureAccountingSchema(database);
+  ensurePayrollSchema(database);
+  ensureDepreciationSchema(database);
+}
 
 export function financialBackupSnapshot(workspace = currentWorkspace()) {
   // جدول پیشنهادهای AI و بازخورد حسابدار جزئی از سابقهٔ همان دفتر است.
@@ -39,6 +53,7 @@ export function financialBackupSnapshot(workspace = currentWorkspace()) {
   ensureInsuranceSettlementSchema(db);
   ensureUnidentifiedSchema(db);
   ensureChequeSchema(db);
+  ensureStructureSchemas(db);
   const tables = {};
   for (const table of FINANCIAL_BACKUP_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table}`).all();
   return {
@@ -54,11 +69,15 @@ export function restoreFinancialSnapshot(snapshot) {
   ensureInsuranceSettlementSchema(db);
   ensureUnidentifiedSchema(db);
   ensureChequeSchema(db);
+  ensureStructureSchemas(db);
   db.exec('PRAGMA defer_foreign_keys = ON');
   db.exec('BEGIN IMMEDIATE');
   try {
-    for (const table of BACKUP_DELETE_ORDER) db.prepare(`DELETE FROM ${table}`).run();
+    // پشتیبان قدیمی که ساختار دفتر را ندارد، همان ساختار فعلی را نگه می‌دارد.
+    const kept = (table) => PRESERVED_WHEN_ABSENT_TABLES.has(table) && snapshot.tables[table] === undefined;
+    for (const table of BACKUP_DELETE_ORDER) if (!kept(table)) db.prepare(`DELETE FROM ${table}`).run();
     for (const table of FINANCIAL_BACKUP_TABLES) {
+      if (kept(table)) continue;
       // جدولی که بعد از ساخت آن پشتیبان به محصول اضافه شده، خالی بازیابی می‌شود؛
       // پشتیبان قدیمی نباید به‌خاطر قابلیتی که آن روز وجود نداشته رد شود.
       const rows = snapshot.tables[table] ?? (OPTIONAL_BACKUP_TABLES.has(table) ? [] : undefined);
