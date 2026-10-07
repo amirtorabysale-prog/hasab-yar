@@ -9,7 +9,17 @@ const FORMAT = 'hesab-yar-encrypted-backup';
 const AAD = Buffer.from('hesab-yar-backup:v1', 'utf8');
 const MAX_BACKUP_BYTES = 30 * 1024 * 1024;
 const MAX_BACKUP_ROWS = 500_000;
+/**
+ * ساختار دفتر که بعداً به پشتیبان اضافه شد. پشتیبانی که آن‌ها را ندارد، روی
+ * همان ساختار فعلی دفتر بازیابی می‌شود: خالی کردن کدینگ یعنی حساب‌ها و سطرهای
+ * سندِ پشتیبان به کدینگ و تفصیلیِ ناموجود اشاره کنند و بازیابی بشکند.
+ */
+export const PRESERVED_WHEN_ABSENT_TABLES = new Set([
+  'chart_accounts', 'analytic_accounts', 'cost_centers', 'payroll_runs', 'payroll_lines', 'fixed_asset_settings', 'journal_templates',
+]);
+
 export const OPTIONAL_BACKUP_TABLES = new Set([
+  ...PRESERVED_WHEN_ABSENT_TABLES,
   'accounting_review_tax_refunds','accounting_review_insurance','unidentified_receipt_resolutions','accountant_intakes', 'ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'invoice_payments', 'bank_statement_imports', 'bank_statement_lines', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations',
   'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai', 'accounting_review_messages', 'accounting_review_context', 'cheques',
   // هستهٔ منابع نسخه‌دار بعد از این جدول‌ها اضافه شد؛ پشتیبان‌های پیش از آن
@@ -42,6 +52,7 @@ export function validateFinancialBackup(snapshot) {
   if (!snapshot.tables || typeof snapshot.tables !== 'object') throw backupError('جدول‌های پشتیبان پیدا نشد.');
   let rows = 0;
   for (const table of FINANCIAL_BACKUP_TABLES) {
+    if (snapshot.tables[table] === undefined && PRESERVED_WHEN_ABSENT_TABLES.has(table)) continue;
     if (!Array.isArray(snapshot.tables[table]) && OPTIONAL_BACKUP_TABLES.has(table)) snapshot.tables[table] = [];
     if (!Array.isArray(snapshot.tables[table])) throw backupError(`جدول ${table} در پشتیبان ناقص است.`);
     rows += snapshot.tables[table].length;
