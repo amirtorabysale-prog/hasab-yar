@@ -242,5 +242,8 @@ function explainBlock(accountingDecision) {
   // حسابدار گفته می‌شود، نه جملهٔ عمومی.
   if (decisionStatus === DECISION_STATUS.UNSUPPORTED) return policyKey === 'goods-purchase' && explanation ? explanation : 'برای این ماهیت هنوز قاعدهٔ ثبتی تعریف نشده است.';
   if (decisionStatus === DECISION_STATUS.BLOCKED) return 'یک مانع ساختاری جلوی ثبت را گرفته است.';
+  // دلیلِ مشخص — شریک، حقوق، تسویهٔ قبلی، مبلغ مشکوک — بهتر از جملهٔ عمومی است؛
+  // حسابدار باید ببیند چرا این پرونده به او رسید. پیام فنیِ طبقه‌بند اینجا نمی‌آید.
+  if (explanation && !/دوازده خانواده/.test(explanation)) return explanation;
   return 'ماهیت این رویداد برای ثبت خودکار روشن نیست.';
 }
