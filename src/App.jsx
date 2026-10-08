@@ -19,11 +19,11 @@ import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
 import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
-import { detectCaptureTransfer } from '../shared/bankSpeech.js';
+import { detectCaptureTransfer, detectPettyCashFunding } from '../shared/bankSpeech.js';
 import { isNetworkQueueError, isPermanentQueueError } from './lib/offlineScope.js';
 import { realtimeWorthTrying } from './lib/voiceStatus.js';
 import { selectVoiceSnapshot } from './lib/voiceArbitration.js';
-import { toPersianDigits } from './lib/format.js';
+import { formatAmount, toPersianDigits } from './lib/format.js';
 import { withCounterpartyConfirmation } from './lib/counterpartyPrompt.js';
 
 /**
@@ -61,6 +61,7 @@ const ReviewQueuePage = namedLazy(() => import('./features/review/ReviewQueuePag
 const SessionsPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SessionsPanel');
 const SettingsPage = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SettingsPage');
 const TaxPage = namedLazy(() => import('./features/tax/TaxPage.jsx'), 'TaxPage');
+const PettyCashPage = namedLazy(() => import('./features/pettyCash/PettyCashPage.jsx'), 'PettyCashPage');
 const WorkspacePanel = lazy(() => import('./features/settings/WorkspacePanel.jsx'));
 
 /** تا رسیدن قطعهٔ صفحه، همان چرخندهٔ آشنای برنامه — نه یک پرش به سفیدی. */
@@ -718,6 +719,11 @@ export default function App() {
    */
   const routeIntent = (transcript, source = 'voice') => {
     if (!canWrite) return false;
+    // پرداخت یا شارژ تنخواه پیش از همه: «تنخواه رو شارژ کردیم» مبلغ ندارد ولی
+    // مبلغش معلوم است (همان خرج‌شده)، و «از ملت به تنخواه منتقل کردیم» مقصدش
+    // در حساب‌های عادی نیست. هیچ‌کدام هزینه نیست.
+    const pettyFunding = detectPettyCashFunding(transcript, { accounts: data.accounts || [] });
+    if (pettyFunding) { setIntentDraft(pettyFunding); return true; }
     if (needsUnquantifiedReview(transcript)) {
       if (!online) { setFailure({ transcript, message: 'برای ذخیره درخواست بررسی حسابدار اتصال اینترنت لازم است.' }); return true; }
       void api.queueUnquantifiedReview({ transcript, source, clientId: crypto.randomUUID() })
@@ -770,6 +776,16 @@ export default function App() {
 
   const saveIntentDraft = async (draft) => {
     try {
+      if (draft.intent === 'petty-fund') {
+        const result = await api.fundPettyCashByVoice({ holderName: draft.holder, amount: draft.amount,
+          fromAccountId: draft.fromAccountId, occurredAt: draft.occurredAt || undefined });
+        setIntentDraft(null);
+        await load();
+        notify(result.action === 'opened'
+          ? `تنخواهِ «${result.item.holderName}» با سقف ${formatAmount(result.item.ceiling)} تومان پرداخت شد؛ هزینه‌ای ثبت نشد.`
+          : `تنخواهِ «${result.item.holderName}» شارژ شد؛ هزینه‌ای ثبت نشد.`);
+        return;
+      }
       if (draft.intent === 'transfer') {
         await api.transferBetweenAccounts({ fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId,
           amount: draft.amount, note: draft.transcript, occurredAt: draft.occurredAt || undefined });
@@ -1070,6 +1086,7 @@ export default function App() {
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} />}
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
+          {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} />}
           {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
           {screen === 'settings' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
           </Suspense>

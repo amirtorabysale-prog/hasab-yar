@@ -46,6 +46,8 @@ export const CHART_ROLES = Object.freeze([
   // درآمد انتقالی، وجوه تعیین‌تکلیف‌نشده و استهلاک.
   'prepaid-asset', 'customer-advance', 'deferred-revenue', 'unidentified-receipt',
   'accumulated-depreciation', 'depreciation-expense',
+  // تنخواه پولِ شرکت است که دست یک نفر است؛ نه صندوق اصلی است و نه بانک.
+  'petty-cash',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({
@@ -405,7 +407,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['11', 'موجودی نقد و بانک', 'general', '1', 'asset', ''],
   ['1101', 'صندوق', 'subsidiary', '11', 'asset', 'cash'],
   ['1102', 'بانک', 'subsidiary', '11', 'asset', 'bank'],
-  ['1103', 'تنخواه‌گردان', 'subsidiary', '11', 'asset', ''],
+  ['1103', 'تنخواه‌گردان', 'subsidiary', '11', 'asset', 'petty-cash'],
   ['12', 'حساب‌ها و اسناد دریافتنی', 'general', '1', 'asset', ''],
   ['1201', 'حساب‌های دریافتنی تجاری', 'subsidiary', '12', 'asset', 'receivable'],
   ['1204', 'جاری شرکا — طلب شرکت', 'subsidiary', '12', 'asset', 'partner-receivable'],
@@ -542,6 +544,16 @@ export function ensureTaxPenaltyTemplate(database) {
   const tax=database.prepare("SELECT id FROM chart_accounts WHERE code='8114' AND source='template' AND name='مالیات و عوارض' AND active=1").get();
   if(!parent || !tax || database.prepare("SELECT 1 FROM chart_accounts WHERE code='8120' OR role='tax-penalty-expense'").get()) return;
   database.prepare("INSERT INTO chart_accounts(id,code,name,level,parent_id,type,normal_side,role,source,level_code) VALUES(?,'8120','جرایم مالیاتی','subsidiary',?,'expense','debit','tax-penalty-expense','template','8120')").run(randomUUID(),parent.id);
+}
+
+/**
+ * کدینگ پیشنهادی که پیش از مهر ۱۴۰۵ نصب شده، معین «تنخواه‌گردان» را بی‌نقش
+ * دارد؛ نقشش فقط روی همان کدینگِ خودمان داده می‌شود، نه روی کدینگ وارد‌شدهٔ دفتر.
+ */
+export function ensurePettyCashChartRole(database) {
+  if (database.prepare("SELECT 1 FROM chart_accounts WHERE role='petty-cash'").get()) return;
+  database.prepare(`UPDATE chart_accounts SET role='petty-cash'
+    WHERE code='1103' AND source='template' AND role='' AND level='subsidiary' AND type='asset' AND name LIKE '%تنخواه%'`).run();
 }
 
 export function installDefaultChartTemplate(database) {
@@ -762,6 +774,14 @@ export function suggestChartAccount(ledgerAccount, chartAccounts = [], { specifi
   }
   if (sourceKind === 'operational-account') {
     const name = String(ledgerAccount.name || '');
+    // تنخواه زیر معین «تنخواه‌گردان» می‌نشیند. کدینگی که نقش ندارد ولی معینی
+    // به این نام دارد — کدینگ‌های واقعی دفترها تقریباً همیشه دارند — همان را
+    // می‌گیرد؛ و اگر هیچ‌کدام نبود، بی‌نگاشت می‌ماند. نشاندنِ بی‌صدای تنخواه روی
+    // صندوق یعنی ماندهٔ صندوق در پارسیان با شمارش صندوق نمی‌خواند.
+    if (ledgerAccount.operationalKind === 'petty' || /تنخواه/.test(name)) {
+      const named = postable.filter((item) => /تنخواه/.test(item.name));
+      return byRole('petty-cash') || (named.length === 1 ? named[0] : null);
+    }
     const wantsBank = ledgerAccount.operationalKind === 'bank' || Boolean(ledgerAccount.bankId) || /بانک|کارت|شبا|حساب جاری/.test(name);
     return byRole(wantsBank ? 'bank' : 'cash');
   }

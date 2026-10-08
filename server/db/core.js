@@ -453,6 +453,27 @@ function ensureFirmConsoleSchema(database) {
   `);
 }
 
+/**
+ * تنخواه‌گردان: حسابِ دارندهٔ تنخواه، با سقف ثابت.
+ *
+ * خودِ حساب یک ردیف عادی در `accounts` است (نوع «سایر») تا مانده، انتقال و سند
+ * دفتر کل از همان مسیرهای آزموده بیایند؛ این جدول فقط می‌گوید کدام حساب تنخواه
+ * است، دست کیست و سقفش چقدر. نوع «تنخواه» به قید ستون `kind` اضافه نشد چون
+ * تغییر CHECK در SQLite یعنی بازسازی جدولی که همهٔ تراکنش‌ها به آن ارجاع دارند.
+ */
+export function ensurePettyCashSchema(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS petty_cash_funds (
+    account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE RESTRICT,
+    holder_name TEXT NOT NULL,
+    ceiling INTEGER NOT NULL CHECK(ceiling>0),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')),
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at TEXT
+  )`);
+  return database;
+}
+
 function ensureAccountingTransferSchema(database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS accounting_transfer_settings (
@@ -601,6 +622,8 @@ ensureFirmConsoleSchema(controlDb);
 
 ensureAccountingTransferSchema(controlDb);
 
+ensurePettyCashSchema(controlDb);
+
 ensureInventorySchema(controlDb);
 
 ensureTaxSchema(controlDb);
@@ -715,6 +738,7 @@ export function workspaceDatabase(workspaceId) {
   ensureFinancialAlertSchema(database);
   ensureCollaborationSchema(database);
   ensureAccountingTransferSchema(database);
+  ensurePettyCashSchema(database);
   ensureInventorySchema(database);
   ensureDepreciationSchema(database);
   ensureFinancialEventSchema(database);

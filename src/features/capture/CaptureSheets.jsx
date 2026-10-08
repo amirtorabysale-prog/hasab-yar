@@ -6,6 +6,7 @@ import { CONFIDENCE_COMPONENT_LABELS } from '../../../shared/confidenceEngine.js
 import { REVIEW_FIELD_LABELS, assessTransactionReview, reviewBatchSummary } from '../../../shared/review.js';
 import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { pickBankAccount } from '../../../shared/banks.js';
+import { pickPettyCashAccount } from '../../../shared/pettyCashSpeech.js';
 import { counterpartyChoice, settlementPreview } from '../../../shared/counterpartySettlement.js';
 
 
@@ -20,7 +21,10 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
    *
    * دو حساب از یک بانک یعنی جمله روشن نیست؛ همان قاعدهٔ سرور، اینجا هم.
    */
-  const accountFor = (item) => item.accountId || pickBankAccount(accounts, item.bankId)?.id || (item.bankId ? '' : defaultAccountId);
+  // «از تنخواه» هم همین‌طور: حساب تنخواهِ همان دارنده، و اگر روشن نبود هیچ‌کدام —
+  // نه صندوق اصلی که پیش از تنخواه‌گردان پیش‌فرض بود.
+  const accountFor = (item) => item.accountId || pickPettyCashAccount(accounts, item.pettyCash)?.id || pickBankAccount(accounts, item.bankId)?.id
+    || (item.bankId || item.pettyCash ? '' : defaultAccountId);
   const [items, setItems] = useState(() => result.transactions.map((item) => ({ ...item, accountId: accountFor(item), originalCategory: item.category })));
   const [index, setIndex] = useState(0);
   const [editAmount, setEditAmount] = useState(false);
@@ -65,6 +69,10 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
     : [];
   const bankGap = item.bankId && bankMatches.length !== 1
     ? { bankId: item.bankId, bankName: item.bankName || 'این بانک', many: bankMatches.length > 1 }
+    : null;
+  const pettyFunds = accounts.filter((account) => account.active && account.kind === 'petty');
+  const pettyGap = item.pettyCash && !pickPettyCashAccount(accounts, item.pettyCash)
+    ? { holder: item.pettyCash.holder, none: pettyFunds.length === 0 }
     : null;
   const [creatingBank, setCreatingBank] = useState(false);
   const createBank = async () => {
@@ -194,6 +202,14 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
               onClick={createBank}
               className="tap mt-2 rounded-lg bg-accent px-4 py-1.5 text-[12px] font-bold text-white disabled:opacity-45"
             >{creatingBank ? 'در حال ساخت…' : `ساخت حساب «${bankGap.bankName}»`}</button>}
+          </div>}
+          {pettyGap && !item.accountId && <div className="mt-2 rounded-lg border border-accent/50 bg-warn-bg px-3 py-3">
+            <p className="text-[13px] font-extrabold text-accent">{pettyGap.none ? 'در این دفتر تنخواهی تعریف نشده است' : pettyGap.holder ? `تنخواهِ «${pettyGap.holder}» پیدا نشد` : 'چند تنخواه باز هست'}</p>
+            <p className="mt-1 text-[12px] leading-6 text-muted">
+              {pettyGap.none
+                ? 'از منوی «تنخواه‌گردان» یک تنخواه بساز، یا اگر پول از صندوق یا بانک رفته همان را از فهرست بالا انتخاب کن.'
+                : 'معلوم نیست این خرج از کدام تنخواه بوده؛ خودت از فهرست بالا انتخاب کن.'}
+            </p>
           </div>}
           {missingPaymentDate(item) && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
             <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>

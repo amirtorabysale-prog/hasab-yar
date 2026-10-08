@@ -17,6 +17,7 @@ import {
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
   bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferBetweenAccounts,
+  closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling,
   listUnidentifiedReceipts, resolveUnidentifiedReceipt, reverseUnidentifiedReceiptResolution,
   saveAccountingTransferTemplate,
   createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
@@ -481,6 +482,23 @@ app.post('/api/import/chart', chartUpload.single('file'), (request, response, ne
 });
 // تسویهٔ دورهٔ ارزش افزوده — از ماندهٔ دفتر، نه دوبارهٔ فاکتورها.
 // انتقال پول میان حساب‌های خودمان — نه درآمد، نه هزینه.
+// تنخواه‌گردان: پرداخت، شارژ و بستن، هر سه انتقال میان حساب‌های خود شرکت‌اند.
+app.get('/api/petty-cash', (request, response) => response.json({ items: listPettyCashFunds({ includeClosed: request.query.closed === '1' }) }));
+app.post('/api/petty-cash', (request, response, next) => {
+  try { return response.status(201).json({ item: openPettyCashFund(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/petty-cash/voice', (request, response, next) => {
+  try { return response.status(201).json(fundPettyCashFromSpeech(request.body || {})); } catch (error) { return next(error); }
+});
+app.post('/api/petty-cash/:id/replenish', (request, response, next) => {
+  try { return response.json({ item: replenishPettyCashFund(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.put('/api/petty-cash/:id', (request, response, next) => {
+  try { return response.json({ item: updatePettyCashCeiling(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/petty-cash/:id/close', (request, response, next) => {
+  try { return response.json({ item: closePettyCashFund(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
 app.post('/api/accounts/transfer', (request, response, next) => {
   try { return response.status(201).json({ item: transferBetweenAccounts(request.body || {}) }); } catch (error) { return next(error); }
 });

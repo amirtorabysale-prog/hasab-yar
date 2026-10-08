@@ -51,14 +51,15 @@ export function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
         return <li key={account.id} className="flex flex-wrap items-center gap-2 py-2">
           <span className="min-w-0 flex-1 truncate">
             <b>{account.name}</b>
-            <span className="mr-2 text-[11px] text-muted">· {ACCOUNT_KINDS.find(([id]) => id === account.kind)?.[1]}</span>
+            <span className="mr-2 text-[11px] text-muted">· {account.kind === 'petty' ? 'تنخواه' : ACCOUNT_KINDS.find(([id]) => id === account.kind)?.[1]}</span>
             {/* حساب بانکی بی‌هویت، همانی است که گفتار هیچ‌وقت پیدایش نمی‌کند. */}
             {account.kind === 'bank' && <span className={`mr-2 text-[11px] ${bank ? 'text-muted' : 'text-expense'}`}>
               {bank ? bank.name : 'بانکش مشخص نیست'}
             </span>}
           </span>
           <span className="numbers text-[12px] text-muted">{formatAmount(account.balance || 0)}</span>
-          {canManage && <button onClick={() => setDraft({ ...account, bankId: account.bankId || '' })} className="tap grid place-items-center text-muted" aria-label={`ویرایش ${account.name}`}><Pencil size={16} /></button>}
+          {/* تنخواه از صفحهٔ خودش اداره می‌شود: بستنش باید باقی‌مانده را برگرداند. */}
+          {canManage && account.kind !== 'petty' && <button onClick={() => setDraft({ ...account, bankId: account.bankId || '' })} className="tap grid place-items-center text-muted" aria-label={`ویرایش ${account.name}`}><Pencil size={16} /></button>}
         </li>;
       })}
       {!accounts.length && <li className="py-3 text-muted">هنوز حسابی تعریف نشده است.</li>}

@@ -15,7 +15,7 @@ import { migrateInventory } from '../inventory.js';
 import { ensureReviewAiSchema } from '../accountingReviewAi.js';
 
 export const FINANCIAL_BACKUP_TABLES = [
-  'categories', 'accounts', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
+  'categories', 'accounts', 'petty_cash_funds', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
   'invoice_items', 'invoice_payments', 'daily_closings', 'receipts', 'products', 'stock_movements', 'learnings',
   'automation_rules', 'settings', 'voice_metrics', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'tax_rates',
   'tax_knowledge_sources', 'tax_assistant_questions',
@@ -37,7 +37,7 @@ const BACKUP_DELETE_ORDER = [
   'stock_movements', 'invoice_items', 'obligations', 'transactions', 'receipts', 'daily_closings',
   'tax_document_mirrors', 'tax_document_relations', 'tax_provisions', 'tax_document_versions', 'tax_documents',
   'tax_assistant_questions', 'tax_knowledge_sources', 'automation_rules', 'recurring_rules', 'invoices', 'products', 'contacts', 'learnings', 'voice_metrics', 'tax_rates',
-  'accounts', 'categories', 'settings',
+  'petty_cash_funds', 'accounts', 'categories', 'settings',
 ];
 
 function ensureStructureSchemas(database) {

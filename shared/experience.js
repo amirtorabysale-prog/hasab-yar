@@ -74,6 +74,11 @@ export const SCREENS = Object.freeze([
     id: 'report', label: 'گزارش', icon: 'chart', primary: true,
     experiences: [EXPERIENCES.SIMPLE, EXPERIENCES.PROFESSIONAL], minimumRole: 'viewer',
   }),
+  // تنخواه‌گردان در هر کسب‌وکاری هست، ساده یا حرفه‌ای؛ فقط پروندهٔ شخصی ندارد.
+  Object.freeze({
+    id: 'petty-cash', label: 'تنخواه‌گردان', icon: 'petty',
+    experiences: [EXPERIENCES.SIMPLE, EXPERIENCES.PROFESSIONAL], minimumRole: 'viewer',
+  }),
   Object.freeze({
     id: 'settings', label: 'تنظیمات', icon: 'settings',
     experiences: [EXPERIENCES.SIMPLE, EXPERIENCES.PROFESSIONAL], minimumRole: 'viewer',
@@ -128,7 +133,7 @@ function rankAllows(role, minimum) {
  * مالیات ندارد.
  */
 export function screensFor({ role = 'viewer', experience = EXPERIENCES.SIMPLE, profileType = 'business' } = {}) {
-  const businessOnly = new Set(['accounting', 'chart', 'tax', 'collaboration']);
+  const businessOnly = new Set(['accounting', 'chart', 'tax', 'collaboration', 'petty-cash']);
   return SCREENS.filter((screen) => {
     // صفحهٔ پنهان از ناوبری و از دروازهٔ سرور بیرون است، ولی تعریفش می‌ماند.
     if (screen.hidden) return false;

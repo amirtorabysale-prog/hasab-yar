@@ -59,6 +59,7 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath.startsWith('/tax-assistant/')) return 'viewer';
   if (normalizedPath === '/backups/restore' || normalizedPath === '/backups/preview') return 'owner';
   if (normalizedPath.startsWith('/backups/')) return 'manager';
-  if (normalizedPath === '/settings' || normalizedPath.startsWith('/accounts')) return 'manager';
+  // تنخواه پول را میان حساب‌های خود شرکت جابه‌جا می‌کند؛ هم‌سطحِ انتقال بین حساب‌ها.
+  if (normalizedPath === '/settings' || normalizedPath.startsWith('/accounts') || normalizedPath.startsWith('/petty-cash')) return 'manager';
   return 'accountant';
 }

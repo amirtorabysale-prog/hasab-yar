@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, ensureOpeningEquityMapping, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart,
+  analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart,
   resolveLineDimensions, saveAnalyticAccount, suggestChartAccount,
 } from './chartOfAccounts.js';
 import { ensurePayrollSchema, payrollJournalLines } from './payroll.js';
@@ -72,6 +72,7 @@ export function ensureAccountingSchema(database) {
   // ستون‌های بعد (تفصیلی و مرکز هزینه) و نگاشت کدینگ روی همین جدول‌ها می‌نشینند.
   ensureChartSchema(database);
   ensureTaxPenaltyTemplate(database);
+  ensurePettyCashChartRole(database);
   ensureOpeningEquityMapping(database);
   ensureJournalWorkflowSchema(database);
 }
@@ -132,10 +133,16 @@ function autoMapNewAccount(database, ledgerAccount) {
   } catch { /* کدینگ هنوز آمادهٔ نگاشت نیست. */ }
 }
 
+/** حسابِ تنخواه، نوعِ ستون «سایر» دارد؛ جدول تنخواه است که می‌گوید تنخواه است. */
+function isPettyCashAccount(database, accountId) {
+  try { return Boolean(database.prepare('SELECT 1 FROM petty_cash_funds WHERE account_id=?').get(accountId)); }
+  catch { return false; }
+}
+
 function operationalLedgerAccount(database, accountId) {
   const account = database.prepare('SELECT id,name,kind,bank_id FROM accounts WHERE id=?').get(accountId);
   if (!account) throw accountingError('حساب مالی تراکنش برای دفتر کل پیدا نشد.', 'LEDGER_ACCOUNT_MISSING');
-  return linkedLedgerAccount(database, 'operational-account', account.id, account.name, 'asset', null, { operationalKind: account.kind, bankId: account.bank_id });
+  return linkedLedgerAccount(database, 'operational-account', account.id, account.name, 'asset', null, { operationalKind: isPettyCashAccount(database, account.id) ? 'petty' : account.kind, bankId: account.bank_id });
 }
 
 function categoryLedgerAccount(database, type, category) {

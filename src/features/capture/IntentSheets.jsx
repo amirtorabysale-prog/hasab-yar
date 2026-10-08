@@ -32,6 +32,11 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
   const linesTotal = invoiceLinesTotal(draft);
   const isCheque = draft.intent === 'cheque';
   const isTransfer = draft.intent === 'transfer';
+  const isPetty = draft.intent === 'petty-fund';
+  // تنخواهِ باز همین دارنده؛ اگر نیست، همین مبلغ سقف تنخواهِ تازه می‌شود.
+  const pettyFund = isPetty ? accounts.find((account) => account.kind === 'petty' && account.active
+    && (draft.fundId ? account.id === draft.fundId : account.holderName === String(draft.holder || '').trim())) : null;
+  const pettySources = accounts.filter((account) => account.active && account.kind !== 'petty');
   const isInvoice = draft.intent === 'invoice';
   const isCapital = draft.intent === 'capital';
   const isAsset = draft.intent === 'fixed-asset';
@@ -40,11 +45,12 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
   // چک بدون پاسخ «بابت چه؟» ثبت نمی‌شود: پیش‌فرض «معاملهٔ تازه» همان فروش را
   // دو بار در درآمد می‌آورد وقتی چک بابت طلب قبلی بود.
   const chequeReady = !isCheque || (['income', 'receivable'].includes(draft.against) && Boolean(String(draft.contactName || '').trim()));
-  const ready = isTransfer ? hasAmount && Boolean(draft.fromAccountId && draft.toAccountId && draft.fromAccountId!==draft.toAccountId)
+  const ready = isPetty ? hasAmount && Boolean(draft.fromAccountId) && String(draft.holder || '').trim().length >= 2
+    : isTransfer ? hasAmount && Boolean(draft.fromAccountId && draft.toAccountId && draft.fromAccountId!==draft.toAccountId)
     : isInvoice ? true
     : isEquityMove ? Boolean(String(draft.title || '').trim())
       : Boolean(draft.direction) && hasAmount && chequeReady;
-  const label = isTransfer ? 'انتقال بین حساب‌ها' : isInvoice ? 'فاکتور' : isCapital ? 'سرمایه' : isAsset ? 'دارایی ثابت' : isCheque ? 'چک' : 'طلب و بدهی';
+  const label = isPetty ? 'تنخواه‌گردان' : isTransfer ? 'انتقال بین حساب‌ها' : isInvoice ? 'فاکتور' : isCapital ? 'سرمایه' : isAsset ? 'دارایی ثابت' : isCheque ? 'چک' : 'طلب و بدهی';
   const submit = async () => {
     if (!ready) return;
     setBusy(true);
@@ -52,11 +58,12 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
     setBusy(false);
   };
   return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
-    <section role="dialog" aria-modal="true" aria-label={isTransfer ? 'تأیید انتقال بین حساب‌ها' : isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
+    <section role="dialog" aria-modal="true" aria-label={isPetty ? 'تأیید پرداخت تنخواه' : isTransfer ? 'تأیید انتقال بین حساب‌ها' : isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">{label}</span>
       <h2 className="mt-3 text-xl font-extrabold">
-        {isTransfer ? 'این مبلغ بین حساب‌های شرکت منتقل شود؟' : isInvoice ? 'پیش‌نویس فاکتور ساخته شود؟'
+        {isPetty ? (pettyFund ? `تنخواه ${pettyFund.holderName} شارژ شود؟` : 'تنخواه تازه پرداخت شود؟')
+          : isTransfer ? 'این مبلغ بین حساب‌های شرکت منتقل شود؟' : isInvoice ? 'پیش‌نویس فاکتور ساخته شود؟'
           : isCapital ? 'این آورده به حساب سرمایه برود؟'
             : isAsset ? 'این خرید دارایی ثابت است؟'
               : isCheque ? 'این چک ثبت شود؟' : 'این مورد ثبت شود؟'}
@@ -71,12 +78,31 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             onChange={(event) => setDraft({ ...draft, amount: Number(String(event.target.value).replace(/[^\d]/g, '')) || 0 })}
             className="tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-lg numbers" />
           <p className="mt-1 text-[11px] leading-5 text-expense">
-            {draft.amountHint ? 'جمله بیش از یک مبلغ داشت؛ مبلغ همین سند را خودت بنویس.' : 'مبلغ از جمله برداشت نشد؛ خودت بنویس.'}
+            {isPetty && pettyFund && draft.amount ? 'مبلغی گفته نشد؛ همان مبلغ خرج‌شده پیشنهاد شد تا تنخواه به سقفش برگردد.'
+              : draft.amountHint ? 'جمله بیش از یک مبلغ داشت؛ مبلغ همین سند را خودت بنویس.' : 'مبلغ از جمله برداشت نشد؛ خودت بنویس.'}
           </p>
         </> : <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>}
       </div>
 
-      {isTransfer ? <>
+      {isPetty ? <>
+        <label className="mt-3 block text-xs font-bold text-muted">دارندهٔ تنخواه
+          <input value={draft.holder || ''} onChange={(event) => setDraft({ ...draft, holder: event.target.value, fundId: null })}
+            placeholder="مثلاً رضایی" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+        </label>
+        <label className="mt-3 block text-xs font-bold text-muted">از کدام حساب پرداخت شد؟
+          <select value={draft.fromAccountId || ''} onChange={(event) => setDraft({ ...draft, fromAccountId: event.target.value })}
+            className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink">
+            <option value="">انتخاب حساب</option>
+            {pettySources.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+          </select>
+        </label>
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">
+          {pettyFund
+            ? `تنخواه ${pettyFund.holderName} با سقف ${formatAmount(pettyFund.pettyCeiling)} تومان باز است؛ این مبلغ به آن اضافه می‌شود.`
+            : 'برای این نفر تنخواه بازی نیست؛ تنخواه تازه با همین مبلغ به‌عنوان سقف ساخته می‌شود.'}
+          {' '}پرداخت تنخواه هزینه نیست؛ فقط پول شرکت از این حساب به دست او می‌رود.
+        </p>
+      </> : isTransfer ? <>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {[['fromAccountId','از حساب'],['toAccountId','به حساب']].map(([field,title])=><label key={field} className="text-xs font-bold text-muted">{title}
             <select value={draft[field] || ''} onChange={event=>setDraft({...draft,[field]:event.target.value})} className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink">

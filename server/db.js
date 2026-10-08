@@ -13,6 +13,7 @@ export * from './db/workspaces.js';
 export * from './db/commercial.js';
 export * from './db/settings.js';
 export * from './db/accounts.js';
+export * from './db/pettyCash.js';
 export * from './db/transactions.js';
 export * from './db/learnings.js';
 export * from './db/collaboration.js';

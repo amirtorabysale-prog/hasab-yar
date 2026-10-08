@@ -15,6 +15,35 @@
 import { normalizePersian } from './normalize.js';
 import { BANKS, detectBank, detectTransferBanks } from './banks.js';
 import { parseFinancialText } from './parser.js';
+import { pickPettyCashAccount, readPettyCash } from './pettyCashSpeech.js';
+
+/**
+ * «پنج میلیون تنخواه به رضایی دادیم»، «تنخواه رضایی رو از ملت شارژ کردیم».
+ *
+ * پرداخت یا شارژ تنخواه هزینه نیست؛ پیش از مسیر انتقال سنجیده می‌شود چون «از
+ * بانک ملت به تنخواه منتقل کردیم» هم فعل انتقال دارد و مقصدش در حساب‌های عادی
+ * پیدا نمی‌شود. اگر دارنده تنخواهِ باز دارد، شارژ است؛ وگرنه تنخواهِ تازه با
+ * همان مبلغ به‌عنوان سقف. مبدأ فقط وقتی پر می‌شود که جمله آن را روشن گفته باشد.
+ */
+export function detectPettyCashFunding(input, { accounts = [], now } = {}) {
+  const petty = readPettyCash(input);
+  if (petty?.action !== 'fund') return null;
+  const parsed = parseFinancialText(input, { source: 'voice', now });
+  const amounts = parsed.transactions.map((item) => Number(item.amount) || 0).filter(Boolean);
+  const amount = amounts.length === 1 ? amounts[0] : 0;
+  const active = accounts.filter((account) => account.active !== false && account.active !== 0 && account.kind !== 'petty');
+  const bank = detectBank(input);
+  const single = (matches) => (matches.length === 1 ? matches[0].id : '');
+  const fromAccountId = bank
+    ? single(active.filter((account) => account.kind === 'bank' && account.bankId === bank.bankId))
+    : /(?<![آ-ی])(?:صندوق|نقد|نقدی)(?![آ-ی])/.test(normalizePersian(input)) ? single(active.filter((account) => account.kind === 'cash')) : '';
+  const fund = pickPettyCashAccount(accounts, { holder: petty.holder });
+  return {
+    intent: 'petty-fund', holder: petty.holder || fund?.holderName || '', fundId: fund?.id || null,
+    amount: amount || (fund ? Math.max(0, Number(fund.pettyCeiling || 0) - Number(fund.balance || 0)) : 0),
+    needsAmount: !amount, fromAccountId, transcript: String(input), occurredAt: parsed.transactions[0]?.occurredAt || null,
+  };
+}
 
 /** Main capture only accepts an explicit internal transfer. An ordinary
  * customer payment mentioning a bank must stay on the income/expense path. */

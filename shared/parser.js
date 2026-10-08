@@ -10,6 +10,7 @@ import { readUnpaidSignal } from './accrualSpeech.js';
 import { EVENT_NATURES, natureNeedsAccountant, readEventNature } from './eventNature.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
+import { readPettyCash } from './pettyCashSpeech.js';
 
 const DIGITS = {
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
@@ -571,6 +572,8 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   // زیان جعلی می‌ساخت که — برخلاف خطای پیش‌پرداخت — هیچ‌وقت خودش را اصلاح
   // نمی‌کند. تشخیصش از قبل نوشته شده بود و هیچ‌کس صدایش نمی‌زد.
   const transferPair = detectTransferBanks(input);
+  // «از تنخواه پذیرایی خریدیم»: پول از حساب تنخواه رفته، نه از صندوق اصلی.
+  const petty = readPettyCash(input);
   // یک بار برای کل جمله، نه برای هر تراکنش: تایپ زنده بودجهٔ میلی‌ثانیه‌ای
   // دارد و همین اشتباه یک بار با تشخیص انتقال تکرار شده بود.
   const prepayment = readPrepaymentMention(input);
@@ -596,9 +599,15 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
   //
   // اینجا فقط نام برداشته می‌شود. اینکه این پرداخت تسویهٔ بدهی اوست یا هزینه،
   // به ماندهٔ همان شخص در دفتر بستگی دارد و تصمیمش با سرور است.
-  const counterparty = extractContactCandidate(input);
+  //
+  // دارندهٔ تنخواه طرف حساب نیست: در «آقای رضایی از تنخواه به آقای کریمی بابت
+  // تعمیر داد» پول را کریمی گرفته و رضایی فقط از تنخواه پرداخته است.
+  const contactSource = petty?.holder
+    ? input.replace(new RegExp(`(?:(?:آقای|اقای|خانم|مهندس|دکتر|حاج|حاجی)[\\s\\u200c]*)?${petty.holder}`), (match) => ' '.repeat(match.length))
+    : input;
+  const counterparty = extractContactCandidate(contactSource);
   const counterpartyName = counterparty.name;
-  const moneyDirection = counterpartyName ? counterpartyMoneyDirection(input) : '';
+  const moneyDirection = counterpartyName ? counterpartyMoneyDirection(contactSource) : '';
   const categoryWords = CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word));
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...categoryWords];
   const transactions = spans.map((span, index) => {
@@ -697,6 +706,8 @@ export function parseFinancialText(input, { learnings = [], averages = {}, sourc
       // این کاربر کدام حساب را به کدام بانک بسته است. نگاشت کار سرور است.
       ...(bank ? { bankId: bank.bankId, bankName: bank.bankName } : {}),
       // شناسهٔ بانک می‌رود نه شناسهٔ حساب، به همان دلیل بالا: نگاشت کار سرور است.
+      // نام دارنده می‌رود نه شناسهٔ حساب، به همان دلیل: پارسر حساب‌های دفتر را نمی‌شناسد.
+      ...(petty?.action === 'spend' && classified.type === 'expense' ? { pettyCash: { action: 'spend', holder: petty.holder } } : {}),
       ...(transferPair ? { transfer: { fromId: transferPair.from.id, fromName: transferPair.from.name, toId: transferPair.to.id, toName: transferPair.to.name } } : {}),
       confidenceDetails: {
         amount: {

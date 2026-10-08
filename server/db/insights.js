@@ -25,8 +25,11 @@ function financialTransactionRows(window, filters = {}) {
     WHERE ${clauses.join(' AND ')} ORDER BY transactions.occurred_at DESC`).all(...values);
 }
 
+// تنخواه پولِ خود شرکت است که دست یک نفر است؛ پرداختش موجودی نقد را کم نمی‌کند.
+const LIQUID_KINDS = ['cash', 'bank', 'wallet', 'petty'];
+
 function accountSources(accounts) {
-  return accounts.filter((item) => item.active && ['cash', 'bank', 'wallet'].includes(item.kind)).map((item) => ({
+  return accounts.filter((item) => item.active && LIQUID_KINDS.includes(item.kind)).map((item) => ({
     kind: 'account', id: item.id, label: item.name, amount: Number(item.balance || 0), openingBalance: Number(item.openingBalance || 0), createdAt: item.createdAt || null,
   }));
 }
@@ -99,7 +102,7 @@ export function dnaProfiles({ months = 6, now = new Date() } = {}) {
 export function financialOverview(now = new Date()) {
   const settings = getSettings();
   const accounts = listAccounts();
-  const liquidAccounts = accounts.filter((item) => item.active && ['cash', 'bank', 'wallet'].includes(item.kind));
+  const liquidAccounts = accounts.filter((item) => item.active && LIQUID_KINDS.includes(item.kind));
   const cash = liquidAccounts.reduce((sum, item) => sum + Number(item.balance || 0), 0);
   const monthWindow = exactWindow(now, 30);
   const monthScope = financialScope(monthWindow, '۳۰ روز اخیر');

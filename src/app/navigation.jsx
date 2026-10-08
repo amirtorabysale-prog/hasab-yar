@@ -1,4 +1,4 @@
-import { BarChart3, BookOpenCheck, ChevronLeft, HandCoins, Home, Landmark, LayoutGrid, ReceiptText, Settings, Users, WalletCards, X } from 'lucide-react';
+import { BarChart3, BookOpenCheck, ChevronLeft, HandCoins, Home, Landmark, LayoutGrid, PiggyBank, ReceiptText, Settings, Users, WalletCards, X } from 'lucide-react';
 import { formatAmount, toPersianDigits } from '../lib/format.js';
 import { profileDefinition } from '../../shared/product.js';
 
@@ -11,7 +11,7 @@ import { profileDefinition } from '../../shared/product.js';
 const SCREEN_ICONS = {
   home: Home, wallet: WalletCards, chart: BarChart3, settings: Settings,
   grid: LayoutGrid, inbox: ReceiptText, book: BookOpenCheck, landmark: Landmark,
-  coins: HandCoins, users: Users,
+  coins: HandCoins, users: Users, petty: PiggyBank,
 };
 
 /** صفحه‌های مجاز این کاربر؛ تا وقتی دسترسی نرسیده، ناوبری خالی می‌ماند نه حدسی. */

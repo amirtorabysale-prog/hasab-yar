@@ -38,7 +38,13 @@ const proAccountant = { role: 'accountant', experience: EXPERIENCES.PROFESSIONAL
 
 test('کاربر ساده فقط چند صفحهٔ روزمره می‌بیند', () => {
   const ids = screensFor(simpleOwner).map((screen) => screen.id);
-  assert.deepEqual(ids.sort(), ['ledger', 'report', 'settings', 'today'].sort());
+  // تنخواه‌گردان کار روزمرهٔ هر کسب‌وکار است، نه ابزار حسابدار (مهر ۱۴۰۵).
+  assert.deepEqual(ids.sort(), ['ledger', 'petty-cash', 'report', 'settings', 'today'].sort());
+});
+
+test('تنخواه‌گردان فقط در پروندهٔ کسب‌وکار است', () => {
+  assert.equal(canSeeScreen('petty-cash', simpleOwner), true);
+  assert.equal(canSeeScreen('petty-cash', { ...simpleOwner, profileType: 'personal' }), false);
 });
 
 // این‌ها همان چیزهایی‌اند که کاربر عادی نباید ببیند.

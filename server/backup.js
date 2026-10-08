@@ -24,7 +24,9 @@ export const OPTIONAL_BACKUP_TABLES = new Set([
   'financial_events', 'accounting_decisions', 'recognition_schedule_items', 'financial_event_audit', 'accounting_review_ai', 'accounting_review_messages', 'accounting_review_context', 'cheques',
   // هستهٔ منابع نسخه‌دار بعد از این جدول‌ها اضافه شد؛ پشتیبان‌های پیش از آن
   // بدونشان ساخته شده‌اند و باید همچنان قابل بازیابی بمانند.
-  'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors']);
+  'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
+  // تنخواه‌گردان، مهر ۱۴۰۵.
+  'petty_cash_funds']);
 
 function backupError(message, code = 'BACKUP_INVALID') {
   return Object.assign(new Error(message), { status: 400, code });

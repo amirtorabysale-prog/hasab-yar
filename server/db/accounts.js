@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { assertAccountingPeriodOpen, periodForDate, postAccountTransferJournal, syncOpeningBalanceJournal } from '../accounting.js';
 import { audit, cleanAmount, currentTimeZone, currentWorkspace, db, insertSetting, invalidInput } from './core.js';
 import { bankById, detectBank } from '../../shared/banks.js';
+import { pickPettyCashAccount } from '../../shared/pettyCashSpeech.js';
 
 export function listAccounts() {
-  return db.prepare(`SELECT accounts.id,accounts.name,accounts.kind,accounts.opening_balance AS openingBalance,accounts.active,
+  // حساب تنخواه در ستون نوع «سایر» است؛ بیرون از این تابع با نوع «تنخواه»
+  // دیده می‌شود تا برگهٔ تأیید و صفحهٔ تنخواه آن را از صندوق و بانک جدا کنند.
+  return db.prepare(`SELECT accounts.id,accounts.name,CASE WHEN petty.account_id IS NULL THEN accounts.kind ELSE 'petty' END AS kind,
+    accounts.opening_balance AS openingBalance,accounts.active,petty.holder_name AS holderName,petty.ceiling AS pettyCeiling,
     accounts.created_at AS createdAt,accounts.bank_id AS bankId,
     accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' AND COALESCE(transactions.journal_deferred,0)=0 THEN
       CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0)
@@ -14,13 +18,19 @@ export function listAccounts() {
         WHERE a.source_kind='operational-account' AND a.source_key=accounts.id
           AND (j.source_type='account_transfer' OR original.source_type='account_transfer')),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
+    LEFT JOIN petty_cash_funds petty ON petty.account_id=accounts.id
     GROUP BY accounts.id ORDER BY accounts.active DESC,accounts.sort_order,accounts.name`).all();
 }
 
 export function saveAccount(values = {}) {
   const id = String(values.id || randomUUID()).trim().slice(0, 80);
   const name = String(values.name || '').trim().slice(0, 100);
-  const kind = ['cash', 'bank', 'wallet', 'other'].includes(values.kind) ? values.kind : 'other';
+  const petty = db.prepare('SELECT status FROM petty_cash_funds WHERE account_id=?').get(id);
+  // تنخواه از صفحهٔ خودش بسته می‌شود تا باقی‌مانده‌اش به صندوق یا بانک برگردد؛
+  // غیرفعال‌کردنش از این‌جا پولِ دست دارنده را از دفتر گم می‌کرد.
+  if (petty?.status === 'open' && values.active === false) throw invalidInput('تنخواه را از صفحهٔ «تنخواه‌گردان» ببند تا باقی‌مانده‌اش به صندوق یا بانک برگردد.');
+  if (petty && Math.round(Number(values.openingBalance) || 0) !== 0) throw invalidInput('تنخواه ماندهٔ اول دوره ندارد؛ پولش با پرداخت تنخواه از صندوق یا بانک می‌آید.');
+  const kind = petty ? 'other' : ['cash', 'bank', 'wallet', 'other'].includes(values.kind) ? values.kind : 'other';
   const openingBalance = Math.round(Number(values.openingBalance) || 0);
   if (!name) throw invalidInput('نام حساب را وارد کن.');
   // بانک فقط روی حساب بانکی معنی دارد. اگر کاربر بانکی انتخاب نکرده، از نام
@@ -69,6 +79,12 @@ export function accountForBank(bankId) {
 export function resolveAccountId(item = {}) {
   // نام بانکِ گفته‌شده بر پیش‌فرض مقدم است، ولی بر انتخاب صریح کاربر نه:
   // اگر در فرم تأیید حسابی انتخاب شده، همان حرف آخر است.
+  // «از تنخواه پذیرایی خریدیم»: خرج از حساب تنخواه، نه از صندوق اصلی. فقط وقتی
+  // تنخواهِ همین جمله یکی است؛ وگرنه ثبت‌کننده روی برگه انتخاب می‌کند.
+  if (!item.accountId && !item.account && item.pettyCash) {
+    const fund = pickPettyCashAccount(listAccounts(), item.pettyCash);
+    if (fund) return fund.id;
+  }
   if (!item.accountId && !item.account && item.bankId) {
     const matched = accountForBank(item.bankId);
     if (matched) return matched.id;
