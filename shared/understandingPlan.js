@@ -36,6 +36,19 @@ const CHEQUE_CUE = /(?:^|[\s«(،])چک(?=$|[\s.،؛!؟»)ِ‌]|ی\s)/;
 const CHEQUE_CLEARED = /پاس\s*شد|وصول\s*شد|نقد\s*شد/;
 const UNIDENTIFIED_DEPOSIT = /معلوم\s*نیس(?:ت)?\s*(?:از\s*طرف\s*)?(?:کی|چه\s*کسی)|بدون\s*مشخصات|ناشناس|مشکوک/;
 const TAX_RETURN = /اظهارنامه[^.،؛!؟]{0,30}(?:ارسال|تسلیم)\s*شد|تهاتر/;
+/** «بعداً می‌گم چی بود»: بابتِ پول گفته نشده. */
+const PURPOSE_UNSAID = /بعد(?:ا|اً)?\s*(?:بهت\s*)?(?:می\s*گم|میگم|می\s*گویم)\s*(?:چی|بابت|برای)/;
+/** بیمهٔ پرسنل: سهم کارفرما و کارگر، بدهیِ لیست بیمه است، نه هزینهٔ تازه. */
+const PAYROLL_CUE = /ت[اأ]مین\s*اجتماعی|لیست\s*بیمه|سهم\s*کارفرما|بیمه\s*(?:پرسنل|کارکنان|کارگران)/;
+/** «سرمایه از پانصد میلیون به یک میلیارد افزایش یافت»: مبلغ، تفاوتِ دو عدد است. */
+const CAPITAL_CHANGE = /سرمایه[^.؛]{0,80}از\s[^.،؛]{1,40}\sبه\s[^.،؛]{1,60}(?:افزایش|کاهش)/;
+/** حساب جاری شریک یا سهامدار؛ «افزایش سرمایه»ی صریح سرمایه است. */
+const PARTNER_CUE = /سهامدار|شریک|شرکا/;
+/** ثبت تعدیلی پایان دوره: ذخیره، سودِ تحقق‌یافتهٔ سررسیدنشده. */
+const ADJUSTING_CUE = /ذخیره\s*(?:مرخصی|سنوات|مزایا|مطالبات|کاهش)|سررسید\s*نشده|تحقق\s*(?:پیدا\s*کرده|یافته)|در\s*دفاتر\s*منظور/;
+/** پولِ خدمتی که پیشاپیش آمده. */
+const UPFRONT = /از\s*اول|یک\s*جا|یکجا|پیش\s*پیش|پیشاپیش|جلوتر|کل\s*مبلغ/;
+const SERVICE_DONE = /انجام\s*(?:دادیم|دادم|شد)|(?:تموم|تمام)\s*(?:کردیم|شد)|تحویل\s*دادیم/;
 
 /**
  * نوع رویداد → هدف دریافت یا پرداخت، همان واژگان موتور تصمیم.
@@ -199,6 +212,14 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   if (CHEQUE_CUE.test(said) && !CHEQUE_CLEARED.test(said)) toAccountant(ACCOUNTANT_KINDS.cheque);
   if (UNIDENTIFIED_DEPOSIT.test(said)) toAccountant('واریزِ بی‌نام یا مشکوک درآمد نیست؛ تا شناختنِ واریزکننده، ثبتش با حسابدار است.');
   if (TAX_RETURN.test(said)) toAccountant('اظهارنامه و تهاتر مالیات با حسابدار است.');
+  // آزمون زنده با پاسخِ سادهٔ «کدام حساب»: «بعداً می‌گم چی بود» هزینهٔ بی‌بابت شد،
+  // بیمهٔ تأمین اجتماعی هزینه شد، «سرمایه از ۵۰۰ به یک میلیارد» یک میلیارد سرمایه
+  // شد، و پولِ سهامدار سرمایه و برداشتِ شریک برداشتِ مالک.
+  if (PURPOSE_UNSAID.test(said)) toAccountant('بابتِ این پول گفته نشده؛ بی‌بابت سندی ساخته نمی‌شود.');
+  if (PAYROLL_CUE.test(said)) toAccountant(ACCOUNTANT_KINDS.payroll);
+  if (CAPITAL_CHANGE.test(said)) toAccountant('تغییرِ سرمایهٔ ثبت‌شده سند حقوقی دارد و مبلغش تفاوتِ دو عدد است؛ با حسابدار است.');
+  if (PARTNER_CUE.test(said) && !/افزایش\s*سرمایه/.test(said)) toAccountant('حساب جاری شریک یا سهامدار با حسابدار است.');
+  if (ADJUSTING_CUE.test(said)) toAccountant('ثبتِ تعدیلیِ پایان دوره (ذخیره یا سودِ تحقق‌یافته) قضاوت حسابدار است.');
   // «۱۲ میلیون، نه ببخشید ۱۵»: اصلاحِ همان گفته است، نه اصلاح یک ثبت قبلی.
   // مبلغِ پس‌گرفته‌شده کنار می‌رود و یادداشت می‌شود؛ اصلاح سند قبلی (نوع رویداد
   // `correction`) همچنان با حسابدار است.
@@ -368,8 +389,16 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const type = movement.direction === 'in' ? 'income' : movement.direction === 'out' ? 'expense'
       : ['sale', 'income', 'advance-received'].includes(facts.event.kind) ? 'income' : 'expense';
     // کارمزد خودش هزینهٔ جاری است، هر رویدادی که کنارش آمده باشد.
-    const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' } : PURPOSE_BY_KIND[facts.event.kind] || {};
-    const intendedUse = SUBJECT_USE_TO_INTENT[facts.subject.use] || purposes.intendedUse || null;
+    // «قرارداد پشتیبانی سه‌ماهه بستیم و کل مبلغش را از اول واریز کرد»: پولِ خدمتی که
+    // هنوز انجام نشده پیش‌دریافت است، نه درآمد. آزمون زنده (V13): ۹ میلیون یک‌جا
+    // درآمد شد. آغاز دوره حدس زده نمی‌شود؛ پخشش با حسابدار است.
+    const serviceUpfront = type === 'income' && facts.subject.kind === 'service' && !coverageStart
+      && (facts.nonAmountNumbers || []).some((item) => item.role === 'duration') && UPFRONT.test(said) && !SERVICE_DONE.test(said);
+    const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' } : serviceUpfront ? { receiptPurpose: 'advance' } : PURPOSE_BY_KIND[facts.event.kind] || {};
+    // کالای ماندگار برای استفادهٔ خودمان، استفادهٔ بلندمدت است؛ حد سرمایه‌ای دفتر
+    // می‌گوید دارایی است یا هزینه. آزمون زنده (V26): دستگاه کپی ۴۵ میلیونی هزینه شد.
+    const intendedUse = (facts.subject.kind === 'asset' && facts.subject.use === 'internal' ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use])
+      || purposes.intendedUse || null;
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
     const answeredAccount = answers[`movements.${movement.id}.account`]?.valueId;

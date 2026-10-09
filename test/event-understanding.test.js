@@ -549,6 +549,50 @@ test('زنده: چکِ وصول‌نشده، واریزِ بی‌نام و اظ�
   assert.ok(!cleared.reasons.some((reason) => /چک/.test(reason)));
 });
 
+test('زنده، پس از پاسخِ «کدام حساب»: بابتِ نگفته، بیمهٔ پرسنل، تغییر سرمایه، شریک و ثبت تعدیلی با حسابدار است', () => {
+  const route = (text, kind = 'expense', direction = 'out') => plan({
+    ...blank(), event: { kind, description: '', status: 'done' },
+    amounts: [amount('a1', 7_000_000, 'هفت میلیون', { role: direction === 'in' ? 'received-now' : 'paid-now' })],
+    movements: [movement('m1', 'a1', direction, party(direction === 'in' ? 'counterparty' : 'bank', direction === 'in' ? null : 'بانک ملت'), party(direction === 'in' ? 'bank' : 'counterparty', direction === 'in' ? 'بانک ملت' : null), '')],
+  }, text, { endpoints: { [`m1.${direction === 'in' ? 'to' : 'from'}`]: { status: 'resolved', accountId: 'mellat-1' } } }).plan;
+  assert.equal(route('امروز هفت میلیون هزینه کردیم، بعدا بهت میگم چی بود فقط تو سیستم تراز بخوره به هم نریزه!').route, 'accountant');
+  assert.equal(route('هفت میلیون تومن بیمه تامین اجتماعی پرسنل (سهم کارفرما، بیکاری و کارگر) به تامین اجتماعی پرداخت شد.').route, 'accountant');
+  assert.equal(route('سرمایه نقدی شرکت از پانصد میلیون به یک میلیارد تومن با واریز نقدی سهامداران افزایش یافت؛ هفت میلیون واریز شد.', 'capital-in', 'in').route, 'accountant');
+  assert.equal(route('آقای یوسفی سهامدار عمده، هفت میلیون از حساب شخصیش برای خرید مواد اولیه به حساب شرکت انتقال داد.', 'capital-in', 'in').route, 'accountant');
+  assert.equal(route('پایان سال، ذخیره مرخصی و ذخیره سنوات کل کارکنان به مبلغ هفت میلیون تومن شناسایی و در دفاتر منظور شد.').route, 'accountant');
+  // صاحبِ کسب‌وکار با «افزایش سرمایه»ی صریح، همان سرمایه است.
+  assert.equal(route('آقای محمدی، صاحب شرکت، هفت میلیون تومان به عنوان افزایش سرمایه به حساب بانک ملت واریز کرد.', 'capital-in', 'in').route, 'ready');
+});
+
+test('زنده: دارایی برای استفادهٔ خودمان بلندمدت است، بیعانهٔ ورودی پیش‌دریافت، و خدمتِ پیشاپیش‌پرداخته درآمد نیست', () => {
+  const copier = 'یک دستگاه کپی بزرگ برای استفاده در دفتر به مبلغ چهل و پنج میلیون تومان از بانک ملت خریدیم.';
+  const asset = plan({
+    ...blank(), event: { kind: 'purchase', description: '', status: 'done' },
+    amounts: [amount('a1', 45_000_000, 'چهل و پنج میلیون تومان')],
+    movements: [movement('m1', 'a1', 'out', party('bank', 'بانک ملت'), party('counterparty'), 'از بانک ملت خریدیم')],
+    subject: { ...blank().subject, what: 'یک دستگاه کپی بزرگ', kind: 'asset', use: 'internal', evidence: 'یک دستگاه کپی بزرگ برای استفاده در دفتر' },
+  }, copier, { endpoints: { 'm1.from': { status: 'resolved', accountId: 'mellat-1' } } }).plan;
+  assert.equal(asset.components[0].item.intendedUse, 'long-term-use');
+
+  const deposit = 'خانم رضایی برای سفارش یک میز کنفرانس پنج میلیون تومان بیعانه به بانک ملت کارت به کارت کرد.';
+  const received = validateUnderstanding({
+    ...blank(), event: { kind: 'advance-paid', description: '', status: 'done' },
+    amounts: [amount('a1', 5_000_000, 'پنج میلیون تومان', { role: 'deposit' })],
+    movements: [movement('m1', 'a1', 'in', party('counterparty', 'خانم رضایی'), party('bank', 'بانک ملت'), 'به بانک ملت کارت به کارت کرد')],
+  }, { text: deposit, now: NOW }).understanding;
+  assert.equal(received.event.kind, 'advance-received');
+
+  const support = 'با یک مشتری قرارداد پشتیبانی سه‌ماهه بستیم و کل مبلغش، نه میلیون تومان، رو از اول به بانک ملت واریز کرد.';
+  const advance = plan({
+    ...blank(), event: { kind: 'other', description: '', status: 'done' },
+    amounts: [amount('a1', 9_000_000, 'نه میلیون تومان', { role: 'received-now' })],
+    nonAmountNumbers: [{ value: 'سه‌ماهه', role: 'duration', evidence: 'قرارداد پشتیبانی سه‌ماهه' }],
+    movements: [movement('m1', 'a1', 'in', party('counterparty'), party('bank', 'بانک ملت'), 'به بانک ملت واریز کرد')],
+    subject: { ...blank().subject, what: 'قرارداد پشتیبانی', kind: 'service', evidence: 'قرارداد پشتیبانی سه‌ماهه' },
+  }, support, { endpoints: { 'm1.to': { status: 'resolved', accountId: 'mellat-1' } } }).plan;
+  assert.equal(advance.components[0].item.receiptPurpose, 'advance');
+});
+
 test('زنده: سفارش یا قرارِ آینده بدهی نمی‌سازد، حتی با «هنوز پرداخت نکردیم»', () => {
   const text = '۱۲۰ میلیون تومان کالا از شرکت آلفا سفارش دادیم ولی هنوز پرداخت نکردیم';
   const { understanding } = validateUnderstanding({

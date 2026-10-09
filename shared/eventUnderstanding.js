@@ -850,6 +850,14 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (!ok) violations.push('conditions:evidence-not-found');
     return ok;
   });
+  // جهتِ پول بر نامِ مدل مقدم است: بیعانه‌ای که به حساب ما آمد پیش‌دریافت است، نه
+  // پیش‌پرداختِ ما. آزمون زنده (V18): مدل «پیش‌پرداخت» گفت و پول ورودی بود.
+  const flows = movements.filter((item) => ['in', 'out'].includes(item.direction)).map((item) => item.direction);
+  const advanceBy = { in: 'advance-received', out: 'advance-paid' };
+  if (flows.length && new Set(flows).size === 1 && ['advance-paid', 'advance-received'].includes(eventKind) && advanceBy[flows[0]] !== eventKind) {
+    violations.push(`event:${eventKind}-is-${advanceBy[flows[0]]}`);
+    eventKind = advanceBy[flows[0]];
+  }
   // قبض یا فاکتوری که آمده و هنوز پرداخت نشده، بدهیِ همین امروز است.
   //
   // آزمون زنده: مدل مبلغ قبض را «آینده» یا «پرداخت‌نشده» نامید — درست دربارهٔ
