@@ -26,7 +26,7 @@
  */
 import { extractAmounts } from './parser.js';
 import { normalizePersian } from './normalize.js';
-import { extractDateMention, persianToISO, todayPersian } from './persianDate.js';
+import { extractDateMention, persianToISO, readJalaliExpression, todayPersian } from './persianDate.js';
 import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
@@ -360,6 +360,22 @@ const dayKey = (iso, timeZone) => {
  * اگر دو منبع با هم نخوانند تاریخ پذیرفته نمی‌شود و سؤال می‌شود.
  */
 function resolveDate(date, { now, timeZone }) {
+  // عبارتی که نام ماه دارد، ماه و روز و سالش را از واژه‌های خودش می‌گیرد؛ شمارهٔ
+  // ماهِ مدل کنار گذاشته می‌شود (آزمون زنده: «آبان» = ۱۱، «مهر» = ۱۰ از مدل).
+  const spoken = date.expression ? readJalaliExpression(date.expression) : null;
+  if (spoken) {
+    const today = todayPersian(now, timeZone);
+    const end = spoken.end || (spoken.day == null && date.role === 'coverage-end');
+    const lastDay = (year) => {
+      const next = spoken.month === 12 ? persianToISO(year + 1, 1, 1, timeZone) : persianToISO(year, spoken.month + 1, 1, timeZone);
+      return next ? new Date(Date.parse(next) - 86_400_000).toISOString() : null;
+    };
+    const year = spoken.year ?? (spoken.yearOffset != null ? today.year + spoken.yearOffset : null);
+    const iso = year != null
+      ? (end ? lastDay(year) : persianToISO(year, spoken.month, spoken.day ?? 1, timeZone))
+      : jalaliIso({ year: null, month: spoken.month, day: end ? null : (spoken.day ?? 1) }, end ? 'coverage-end' : date.role, now, timeZone);
+    return { iso, issue: iso ? null : 'unresolved' };
+  }
   const fromRelative = date.relative ? relativeIso(date.relative, now, timeZone) : null;
   const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone) : null;
   const mention = date.expression ? extractDateMention(date.expression, { now, timeZone, preferPast: PAST_DATE_ROLES.has(date.role) }) : null;

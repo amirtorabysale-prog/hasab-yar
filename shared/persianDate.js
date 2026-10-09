@@ -101,6 +101,45 @@ export function normalizeSpokenYears(text) {
   });
 }
 
+/**
+ * ماه، روز و سالِ یک عبارت تاریخ، فقط از واژه‌های خودِ عبارت.
+ *
+ * برای «فهم رویداد»: مدل واقعی شمارهٔ ماه شمسی را غلط می‌داد — «آبان» را ۱۱ و
+ * «مهر» را ۱۰ — و پایان پوشش بیمه را سه ماه جابه‌جا می‌کرد. وقتی عبارت نام ماه
+ * دارد، شمارهٔ ماه از همین جدول می‌آید، نه از مدل.
+ *
+ * خروجی `null` یعنی عبارت نام ماه ندارد. `end` یعنی «آخر/پایان ماه»؛
+ * `yearOffset` یعنی «سال بعد» (۱+)، «امسال» (۰) یا «پارسال» (۱-).
+ */
+export function readJalaliExpression(input) {
+  const text = normalizeSpokenYears(normalizePersian(input));
+  if (!text) return null;
+  const names = PERSIAN_MONTHS.map(([name]) => name).sort((left, right) => right.length - left.length).join('|');
+  const match = new RegExp(`(?:^|\\s)(${names})(?=$|\\s|[،,.؛])`).exec(text);
+  if (!match) return null;
+  const month = PERSIAN_MONTHS.find(([name]) => name === match[1])[1];
+  const before = text.slice(0, match.index + match[0].indexOf(match[1])).trim().split(/\s+/).filter(Boolean);
+  const after = text.slice(match.index + match[0].length);
+  let day = null;
+  let end = false;
+  const last = before.at(-1) || '';
+  if (/^\d{1,2}$/.test(last)) day = Number(last);
+  else if (/^(?:آخر|اخر|پایان|انتهای|آخرین)$/.test(last)) end = true;
+  else {
+    for (const size of [3, 2, 1]) {
+      const phrase = before.slice(-size).join(' ');
+      if (DAY_WORDS.has(phrase)) { day = DAY_WORDS.get(phrase); break; }
+    }
+  }
+  if (day != null && (day < 1 || day > 31)) day = null;
+  const yearMatch = /^\s*(?:ماه\s*)?(?:سال\s*)?(\d{4})/.exec(after);
+  const year = yearMatch ? Number(yearMatch[1]) : null;
+  const yearOffset = /سال\s*(?:بعد|آینده|دیگه|دیگر)/.test(text) ? 1
+    : /(?:سال\s*(?:قبل|گذشته|پیش)|پارسال)/.test(text) ? -1
+      : /امسال|همین\s*سال/.test(text) ? 0 : null;
+  return { month, day, end, year, yearOffset };
+}
+
 export function todayPersian(now = new Date(), timeZone = 'Asia/Tehran') {
   return persianParts(now instanceof Date ? now : new Date(now), timeZone);
 }
