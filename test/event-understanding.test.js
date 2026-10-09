@@ -313,10 +313,52 @@ test('نقشه: نفیِ «هنوز پرداخت نکردیم» خروج وجه 
   };
   const { understanding } = validateUnderstanding(output, { text, now: NOW });
   const plan = buildUnderstandingPlan(understanding, { transcript: text, now: NOW });
-  assert.equal(plan.components.length, 0);
-  assert.ok(plan.questions.some((item) => item.id === 'movements.m1.done'));
-  const answered = buildUnderstandingPlan(understanding, { transcript: text, now: NOW, answers: { 'movements.m1.done': { value: 'not-yet' } } });
+  // «قبض اومده ولی هنوز پرداخت نکردیم»: همان قاعدهٔ قطعیِ مسیر فعلی — بدهیِ امروز، بی‌سؤال.
+  assert.deepEqual(plan.components.map((item) => [item.kind, item.amount]), [['obligation', 3_000_000]]);
+  assert.ok(!plan.questions.some((item) => item.id === 'movements.m1.done'));
+  // ولی وقتی جمله نشانهٔ روشنِ «پرداخت‌نشده» ندارد، پرسیده می‌شود و پاسخ «هنوز نه» همان بدهی است.
+  const vague = validateUnderstanding({ ...output, conditions: [{ kind: 'negation', text: 'پرداخت نشده', affects: ['a1'], evidence: 'قبض برق سه میلیون' }] },
+    { text: 'قبض برق سه میلیون', now: NOW }).understanding;
+  const asked = buildUnderstandingPlan(vague, { transcript: text, now: NOW });
+  assert.ok(asked.questions.some((item) => item.id === 'movements.m1.done'));
+  const answered = buildUnderstandingPlan(vague, { transcript: text, now: NOW, answers: { 'movements.m1.done': { value: 'not-yet' } } });
   assert.ok(answered.components.every((item) => item.kind !== 'cash'), 'پاسخ «هنوز نه» یعنی پولی جابه‌جا نشده');
+});
+
+test('زنده: «به مبلغ ۹۵ میلیون» و «نقدی از صندوق» همان پول است؛ «حسابرس» در جملهٔ اضافی طرف حساب نیست', () => {
+  const text = 'یک دستگاه چاپ به مبلغ ۹۵ میلیون تومان نقدی از صندوق خریدیم که سه سال کار می‌کند.';
+  const { understanding, plan: result } = plan({
+    ...blank(), event: { kind: 'asset-purchase', description: '', status: 'done' },
+    amounts: [amount('a1', 95, 'به مبلغ ۹۵ میلیون تومان'), amount('a2', 95, 'نقدی از صندوق', { role: 'paid-now' })],
+    movements: [movement('m1', 'a2', 'out', party('cash', 'صندوق'), party('counterparty'), 'نقدی از صندوق خریدیم')],
+  }, text, { endpoints: { 'm1.from': { status: 'resolved', accountId: 'cash' } } });
+  assert.equal(understanding.ambiguities.length, 0, 'سؤالِ «مبلغِ نقدی از صندوق چقدر است؟» نمی‌سازد');
+  assert.deepEqual(result.components.map((item) => [item.kind, item.amount, item.item.accountId]), [['cash', 95_000_000, 'cash']]);
+
+  const settlementText = '۸۰ میلیون به شرکت قیاسی بدهکار بودیم، امروز ۵۰ میلیون از بانک سامان دادیم، گفت اگر ۱۰ میلیون دیگر بدهید، ۲۰ میلیون باقی‌مانده را می‌بخشم. راستی جلسهٔ فردا با حسابرس ساعت ده است.';
+  const settled = plan({
+    ...blank(), event: { kind: 'settlement', description: '', status: 'mixed' },
+    amounts: [amount('a1', 80_000_000, '۸۰ میلیون به شرکت قیاسی بدهکار بودیم', { role: 'prior-balance', status: 'context' }),
+      amount('a2', 50_000_000, 'امروز ۵۰ میلیون از بانک سامان دادیم', { role: 'paid-now' })],
+    counterparties: [{ id: 'c1', name: 'شرکت قیاسی', role: 'supplier', evidence: 'به شرکت قیاسی' }, { id: 'c2', name: 'بانک سامان', role: 'bank', evidence: 'از بانک سامان' }, { id: 'c3', name: 'حسابرس', role: 'other', evidence: 'با حسابرس' }],
+    movements: [movement('m1', 'a2', 'out', party('us'), party('counterparty', 'بانک سامان'), 'امروز ۵۰ میلیون از بانک سامان دادیم')],
+  }, settlementText, {
+    counterparties: { c1: { status: 'exact', contactId: 'k-qiasi', name: 'شرکت قیاسی', candidates: [], balance: -80_000_000 } },
+    endpoints: { 'm1.from': { status: 'resolved', accountId: 'saman-1' } }, documents: { 'k-qiasi': [{ kind: 'obligation', id: 'o1', direction: 'payable', remaining: 80_000_000, reference: 'بدهی' }] },
+  }).plan;
+  assert.equal(settled.route, 'ready', JSON.stringify(settled.reasons));
+  assert.deepEqual(settled.components.map((item) => [item.kind, item.amount, item.contactId]), [['settlement', 50_000_000, 'k-qiasi']]);
+});
+
+test('زنده: سفارش یا قرارِ آینده بدهی نمی‌سازد، حتی با «هنوز پرداخت نکردیم»', () => {
+  const text = '۱۲۰ میلیون تومان کالا از شرکت آلفا سفارش دادیم ولی هنوز پرداخت نکردیم';
+  const { understanding } = validateUnderstanding({
+    ...blank(), event: { kind: 'purchase', description: '', status: 'future' },
+    amounts: [amount('a1', 120_000_000, '۱۲۰ میلیون تومان', { status: 'future' })],
+    conditions: [{ kind: 'negation', text: 'پرداخت نشده', affects: ['a1'], evidence: 'هنوز پرداخت نکردیم' }],
+  }, { text, now: NOW });
+  const result = buildUnderstandingPlan(understanding, { transcript: text, now: NOW });
+  assert.equal(result.components.length, 0);
 });
 
 test('نقشه: خرید دارایی با عمر مفید، تغییر برآورد نیست', () => {

@@ -29,6 +29,7 @@ import { normalizePersian } from './normalize.js';
 import { extractDateMention, persianToISO, readJalaliExpression, todayPersian } from './persianDate.js';
 import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
 import { detectBank } from './banks.js';
+import { readUnpaidSignal } from './accrualSpeech.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
@@ -568,6 +569,19 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     }
   }
   const otherDone = amounts.some((item) => item.accepted && item.status === 'done');
+  // همان پول، دو بار توصیف‌شده: «به مبلغ ۹۵ میلیون» و «نقدی از صندوق» (آزمون زنده).
+  // مبلغی که شاهدش عددی ندارد ولی عددِ ادعاشده‌اش با مبلغِ پذیرفته‌شده‌ای یکی است،
+  // همان مبلغ است؛ جابه‌جایی‌اش به آن منتقل می‌شود و سؤالی نمی‌سازد.
+  const sameAs = new Map();
+  for (const amount of amounts.filter((item) => !item.accepted && ['not-in-evidence', 'value-missing'].includes(item.issue) && item.status === 'done')) {
+    const claimed = Number(amount.raw.value);
+    if (!(claimed > 0)) continue;
+    const twin = amounts.find((item) => item !== amount && item.accepted && !isRetracted(item.id) && MODEL_UNITS.some((unit) => item.value === claimed * unit));
+    if (!twin) continue;
+    Object.assign(amount, { issue: 'same-mention', duplicateOf: twin.id });
+    sameAs.set(amount.id, twin.id);
+    violations.push(`amounts.${amount.id}:same-as-${twin.id}`);
+  }
   for (const amount of amounts) {
     if (amount.basis === 'inferred') amount.issue = 'inferred';
     // تکرارِ همان عدد سؤال نمی‌خواهد؛ عددش در مبلغِ نگه‌داشته‌شده هست.
@@ -575,8 +589,9 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     violations.push(`amounts.${amount.id}:${amount.issue}`);
     // فقط مبلغی که سند می‌سازد می‌پرسد. زمینه، آینده و مشروط ثبت نمی‌شوند؛
     // نامعلوم‌بودن عددشان هیچ سندی را غلط نمی‌کند و سؤالش فقط ثبت را معطل می‌کرد.
-    // کلِ نامعلوم وقتی اجزای انجام‌شده هست، مانع ثبت نیست: پول را اجزا جابه‌جا می‌کنند.
-    if (amount.status === 'done' && !(amount.role === 'total' && otherDone)) {
+    // کل یا «سایر»ِ نامعلوم وقتی مبلغ انجام‌شدهٔ دیگری هست مانع ثبت نیست: پول را
+    // همان‌ها جابه‌جا می‌کنند. آزمون زنده: «فاکتور ۱۴۰۵۷» مبلغِ خالی شد و پرسیده می‌شد.
+    if (amount.status === 'done' && !(['total', 'other'].includes(amount.role) && otherDone)) {
       ask(`amounts.${amount.id}.value`, 'information', amount.evidence
         ? `مبلغِ «${amount.evidence}» دقیقاً چقدر است؟`
         : 'مبلغ این بخش دقیقاً چقدر است؟');
@@ -656,6 +671,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     to: { kind: pick(item.to?.kind, ENDPOINT_KINDS, 'unknown'), name: item.to?.name ? cleanLabel(item.to.name, 80) : null },
     evidence: cleanLabel(item.evidence, 300),
   })).filter((item) => {
+    if (sameAs.has(item.amountRef)) item.amountRef = sameAs.get(item.amountRef);
     if (!byId.has(item.amountRef)) { violations.push(`movements.${item.id}:amount-missing`); return false; }
     // نام بانک یا شخصی که در متن نیست، مقصد ساختگی است؛ نامش حذف می‌شود و
     // انتخاب حساب پرسیده می‌شود.
@@ -697,17 +713,6 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       violations.push(`movements.${movement.id}:bank-is-the-account`);
     }
   }
-  // برای هر مبلغ یک جابه‌جایی: آن‌که جهت روشن و حساب مشخص دارد.
-  const clarity = (movement) => {
-    const cash = movement.direction === 'out' ? movement.from : movement.direction === 'in' ? movement.to : null;
-    return (['in', 'out'].includes(movement.direction) ? 2 : movement.direction === 'transfer' ? 1 : 0) + (cash && ACCOUNT_SIDES.has(cash.kind) && cash.name ? 1 : 0);
-  };
-  const chosen = new Map();
-  for (const movement of movements) {
-    const previous = chosen.get(movement.amountRef);
-    if (!previous || clarity(movement) > clarity(previous)) chosen.set(movement.amountRef, movement);
-  }
-  const uniqueMovements = movements.filter((movement) => chosen.get(movement.amountRef) === movement);
 
   const subject = {
     what: raw.subject?.what ? cleanLabel(raw.subject.what, 120) : null,
@@ -739,10 +744,37 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (!ok) violations.push('conditions:evidence-not-found');
     return ok;
   });
+  // قبض یا فاکتوری که آمده و هنوز پرداخت نشده، بدهیِ همین امروز است.
+  //
+  // آزمون زنده: مدل مبلغ قبض را «آینده» یا «پرداخت‌نشده» نامید — درست دربارهٔ
+  // پول — و هیچ سندی ساخته نشد؛ بدهی به ادارهٔ برق گم شد. همان قاعدهٔ قطعیِ مسیر
+  // فعلی (`readUnpaidSignal`) این‌جا هم داور است، و سفارش، پیش‌فاکتور یا قرار
+  // آینده («قرار است») هرگز بدهی نمی‌سازد.
+  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته)|(?:دریافت|واریز)\s*ن(?:شده|کرده|کردیم))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
+  const notYetReal = /سفارش|پیش\s*فاکتور|قرار\s*(?:است|بود)|قراره/.test(spoken) || subject.delivered === 'no';
+  const accrues = ['expense', 'purchase', 'asset-purchase', 'sale', 'income'].includes(eventKind) && !notYetReal;
+  const becameObligation = new Set();
+  for (const condition of conditions.filter((item) => item.kind === 'negation')) {
+    for (const ref of condition.affects) {
+      // نفیِ «پرداخت آینده»ای که جزء یک کل است، دربارهٔ همان کل است.
+      const target = byId.get(ref)?.role === 'future-payment' && byId.get(ref)?.partOf ? byId.get(byId.get(ref).partOf) : byId.get(ref);
+      if (!accrues || !target?.accepted) continue;
+      const own = movements.filter((item) => item.amountRef === target.id || item.amountRef === ref);
+      const direction = own.find((item) => ['in', 'out'].includes(item.direction))?.direction
+        || (['sale', 'income'].includes(eventKind) ? 'in' : 'out');
+      if (!unpaidHere[direction]) continue;
+      target.status = 'done';
+      for (const item of own) { item.direction = 'none'; item.amountRef = target.id; }
+      if (!own.length) movements.push({ id: `${target.id}-unpaid`, amountRef: target.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: condition.evidence });
+      becameObligation.add(target.id);
+      violations.push(`amounts.${target.id}:unpaid-obligation`);
+    }
+  }
   // نفی‌ای که مبلغی را «پرداخت‌نشده» می‌کند بر جابه‌جاییِ همان مبلغ مقدم است:
   // «خریدیم ولی هنوز پولش رو ندادیم» خروج وجه نیست.
   for (const condition of conditions.filter((item) => item.kind === 'negation')) {
     for (const ref of condition.affects) {
+      if (becameObligation.has(ref)) continue;
       for (const movement of movements.filter((item) => item.amountRef === ref && ['in', 'out'].includes(item.direction))) {
         const amount = byId.get(ref);
         if (amount?.status === 'done') {
@@ -760,6 +792,20 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (!field || !question) continue;
     ask(field, pick(item.kind, AMBIGUITY_KINDS, 'judgment'), question, (item.options || []).slice(0, 5).map((option) => cleanLabel(option, 60)).filter(Boolean), 'model');
   }
+
+  // برای هر مبلغ یک جابه‌جایی: آن‌که جهت روشن و حساب مشخص دارد. بدهیِ
+  // پرداخت‌نشده (جهت «هیچ») عمداً بر خروجِ نفی‌شده مقدم است.
+  const clarity = (movement) => {
+    if (becameObligation.has(movement.amountRef)) return movement.direction === 'none' ? 9 : 0;
+    const cash = movement.direction === 'out' ? movement.from : movement.direction === 'in' ? movement.to : null;
+    return (['in', 'out'].includes(movement.direction) ? 2 : movement.direction === 'transfer' ? 1 : 0) + (cash && ACCOUNT_SIDES.has(cash.kind) && cash.name ? 1 : 0);
+  };
+  const chosen = new Map();
+  for (const movement of movements) {
+    const previous = chosen.get(movement.amountRef);
+    if (!previous || clarity(movement) > clarity(previous)) chosen.set(movement.amountRef, movement);
+  }
+  const uniqueMovements = movements.filter((movement) => chosen.get(movement.amountRef) === movement);
 
   return {
     ok: true,

@@ -119,8 +119,15 @@ function counterpartyFor(understanding, movement, amount) {
   const side = movement ? (movement.direction === 'in' ? movement.from : movement.to) : null;
   const bySide = side?.name ? named(side.name) : null;
   if (bySide) return bySide;
-  const fromEvidence = pool.find((item) => amount?.evidence?.includes(item.name));
-  return fromEvidence || (pool.length === 1 ? pool[0] : null);
+  // شاهدهای همین پول: خودِ مبلغ، جابه‌جایی‌اش، و کل یا بدهیِ قبلی‌ای که این مبلغ
+  // جزء آن است. «جلسه با حسابرس» در جملهٔ اضافی، طرف حسابِ پرداخت به قیاسی نیست.
+  const parent = understanding.amounts.find((item) => item.id === amount?.partOf);
+  const prior = understanding.amounts.find((item) => item.role === 'prior-balance');
+  for (const evidence of [amount?.evidence, movement?.evidence, parent?.evidence, prior?.evidence]) {
+    const matches = evidence ? pool.filter((item) => evidence.includes(item.name)) : [];
+    if (matches.length === 1) return matches[0];
+  }
+  return pool.length === 1 ? pool[0] : null;
 }
 
 /**
