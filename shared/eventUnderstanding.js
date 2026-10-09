@@ -275,17 +275,34 @@ function readEvidenceAmounts(evidence) {
  * چون همهٔ دفتر به تومان است. «هشتصد تومن» پذیرفته می‌شود ولی با ابهام مقیاس،
  * همان رفتار پارسر قطعی.
  */
+/**
+ * عددِ مبلغ از خودِ شاهد خوانده می‌شود؛ عددِ مدل فقط انتخاب می‌کند کدام.
+ *
+ * آزمون زنده روی سایت (۱۷ مهر ۱۴۰۵): مدل واقعی برای «۱۵ میلیون تومان» نوشت
+ * `value: 15` — به میلیون، نه تومان. شاهد درست بود و خواندنِ قطعیِ همان شاهد
+ * ۱۵٬۰۰۰٬۰۰۰ می‌داد. پس مبلغ همیشه همان خواندنِ شاهد است، و عدد مدل فقط وقتی
+ * شاهد چند مبلغ دارد یکی را برمی‌گزیند — به تومان، یا به هزار، میلیون یا
+ * میلیارد. شاهدی که فقط یک مبلغِ پولی دارد، همان است. هیچ عددی بیرون از شاهد
+ * ساخته نمی‌شود.
+ */
+const MODEL_UNITS = [1, 1_000, 1_000_000, 1_000_000_000];
 function verifyExplicitAmount(amount, evidence) {
-  const value = Number(amount.value);
-  if (!Number.isSafeInteger(value) || value <= 0) return null;
-  for (const read of readEvidenceAmounts(evidence)) {
-    if (read.colloquial && (value === read.amount * 1_000 || value === read.amount)) return { value: read.amount * 1_000, scaleAmbiguous: true };
-    if (!read.cue) continue;
+  const claimed = Number(amount.value);
+  const reads = readEvidenceAmounts(evidence);
+  const candidates = reads.filter((read) => read.cue || read.colloquial).map((read) => {
     const rial = read.rial || amount.currency === 'rial';
-    if (rial && value === Math.round(read.amount / 10)) return { value, scaleAmbiguous: false };
-    if (!rial && value === read.amount) return { value, scaleAmbiguous: false };
+    return { value: read.colloquial ? read.amount * 1_000 : rial ? Math.round(read.amount / 10) : read.amount, raw: read.amount, scaleAmbiguous: read.colloquial };
+  });
+  if (!candidates.length) return null;
+  if (Number.isFinite(claimed) && claimed > 0) {
+    const matched = candidates.find((candidate) => MODEL_UNITS.some((unit) => candidate.value === claimed * unit || candidate.raw === claimed * unit));
+    // عددی که مدل گفته با شاهدِ خودش در هیچ مقیاسی نمی‌خواند: تناقض است و
+    // پرسیده می‌شود. پذیرفتنِ عددِ شاهد این‌جا یعنی نقشی که مدل برای عدد دیگری
+    // گفته بود — «نسیه ۷۰» — روی ۱۰۰ بنشیند.
+    return matched ? { value: matched.value, scaleAmbiguous: matched.scaleAmbiguous } : null;
   }
-  return null;
+  // مدل عدد نگفته ولی شاهدش فقط یک مبلغ پولی دارد: همان.
+  return candidates.length === 1 ? { value: candidates[0].value, scaleAmbiguous: candidates[0].scaleAmbiguous } : null;
 }
 
 function compute(op, values) {
@@ -435,8 +452,11 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       // «سه قسط»، «ده کارتن»: عددِ شمارنده مقیاس پول نمی‌گیرد.
       const bare = read.spans.filter((span) => !span.bareScale && span.amount < 1_000 && !/\d|هزار|میلیون|میلیارد/.test(span.raw)
         && !COUNT_NOUN.test(read.text.slice(span.end)));
-      if (bare.some((span) => span.amount * scale === Number(amount.raw.value)) && !readEvidenceAmounts(amount.evidence).some((read) => read.cue)) {
-        Object.assign(amount, { value: Number(amount.raw.value), accepted: true, provenance: 'explicit-scale-from-sentence', issue: null });
+      // عدد مدل ممکن است تومانِ کامل باشد یا خودِ «چهل» به میلیون.
+      const claimed = Number(amount.raw.value);
+      const span = bare.find((item) => item.amount * scale === claimed || item.amount === claimed);
+      if (span && !readEvidenceAmounts(amount.evidence).some((read) => read.cue)) {
+        Object.assign(amount, { value: span.amount * scale, accepted: true, provenance: 'explicit-scale-from-sentence', issue: null });
       }
     }
   }
@@ -473,7 +493,10 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const sources = (amount.computedFrom?.of || []).map((ref) => byId.get(ref));
     if (!amount.computedFrom?.op || !sources.length || sources.some((source) => !source?.accepted)) { amount.issue = 'computation-unsupported'; continue; }
     const value = compute(amount.computedFrom.op, sources.map((source) => source.value));
-    if (!Number.isSafeInteger(value) || value <= 0 || (amount.raw.value != null && Number(amount.raw.value) !== value)) { amount.issue = 'computation-mismatch'; continue; }
+    // عدد مدل برای محاسبه‌شده هم ممکن است به میلیون باشد؛ مقدار، محاسبهٔ خود سرور است.
+    const claimed = Number(amount.raw.value);
+    const agrees = amount.raw.value == null || MODEL_UNITS.some((unit) => claimed * unit === value);
+    if (!Number.isSafeInteger(value) || value <= 0 || !agrees) { amount.issue = 'computation-mismatch'; continue; }
     Object.assign(amount, { value, accepted: true, provenance: 'computed' });
   }
   for (const amount of amounts) {

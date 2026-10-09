@@ -131,6 +131,16 @@ test('آزمون زنده: یک عددِ گفته‌شده دو مبلغ نمی�
   }, { text, now: NOW }).understanding;
   assert.equal(elided.subject.use, 'resale');
   assert.equal(elided.amounts[0].accepted, true);
+  // مدل واقعی عدد را به میلیون نوشت (۱۵ به‌جای ۱۵٬۰۰۰٬۰۰۰)؛ مبلغ از خودِ شاهد خوانده می‌شود.
+  const millions = validateUnderstanding({ ...blank(), amounts: [amount('a1', 15, '۱۵ میلیون تومان')],
+    ambiguities: [{ field: 'currency', kind: 'information', question: 'واحد پول چیست؟', options: [] }] },
+  { text: 'اجارهٔ مهر دفتر را ۱۵ میلیون تومان از بانک ملت پرداخت کردیم.', now: NOW }).understanding;
+  assert.equal(millions.amounts[0].value, 15_000_000);
+  const millionsPlan = buildUnderstandingPlan(millions, { transcript: 'x', now: NOW });
+  assert.ok(!millionsPlan.questions.some((item) => item.id === 'currency'), 'سؤالِ خودِ مدل مانع ثبت نیست');
+  assert.ok(millionsPlan.notes.some((note) => note.kind === 'model-note'));
+  // ولی عددی که با شاهدِ خودش در هیچ مقیاسی نمی‌خواند، پذیرفته نمی‌شود.
+  assert.equal(validateUnderstanding({ ...blank(), amounts: [amount('a1', 70_000_000, '۱۰۰ میلیون')] }, { text: '۱۰۰ میلیون دادیم', now: NOW }).understanding.amounts[0].accepted, false);
   // ولی شاهدِ مبلغ و نام همچنان عین متن است: تکه‌های دور از هم عدد نمی‌سازند.
   const stitched = validateUnderstanding({ ...blank(), amounts: [amount('a1', 50_000_000, 'پنجاه میلیون')] },
     { text: 'پنجاه کارتن خریدیم و ۲ میلیون دادیم', now: NOW }).understanding;

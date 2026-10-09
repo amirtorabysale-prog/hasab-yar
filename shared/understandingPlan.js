@@ -139,6 +139,14 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   // ابهام‌های اعتبارسنجی و مدل: اطلاعاتی پرسیده می‌شود، قضاوتی به حسابدار.
   for (const ambiguity of facts.ambiguities || []) {
     if (answers[ambiguity.field]) continue;
+    // سؤال‌های خودِ مدل یادداشت پرونده‌اند، نه مانع ثبت.
+    //
+    // آزمون زندهٔ ۱۷ مهر ۱۴۰۵: مدل برای جمله‌هایی که همه‌چیزشان روشن بود
+    // می‌پرسید «واحد پول؟»، «مقایسهٔ قیمت؟»، «مدت پوشش؟» و ثبت را معطل می‌کرد.
+    // اختیار توقف با اعتبارسنجی سرور، نقشه و موتور قاعده است — همان‌ها که مبلغِ
+    // نامعلوم، حساب، تاریخ پرداخت، طرف حساب، سند تسویه و کاربرد کالا را خودشان
+    // می‌پرسند — نه با برداشت آماری مدل از «چه چیزی مبهم است».
+    if (ambiguity.source === 'model') { notes.push({ kind: 'model-note', text: ambiguity.question }); continue; }
     if (ambiguity.kind === 'judgment') { toAccountant(ambiguity.question); continue; }
     const amountValue = /^amounts\.[^.]+\.(?:value|parts)$/.test(ambiguity.field);
     const scale = /^amounts\.[^.]+\.scale$/.test(ambiguity.field);
