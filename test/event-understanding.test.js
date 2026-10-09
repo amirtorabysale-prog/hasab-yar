@@ -381,6 +381,14 @@ test('زنده: اصلاحِ گفته بر حدسِ مدل مقدم است؛ ج�
     movements: [movement('m1', 'a2', 'out', party('bank', 'بانک ملت'), party('counterparty', 'دفتر'), 'از بانک ملت پرداخت کردیم')],
   }, 'اجارهٔ مهر دفتر را ۱۲ میلیون، نه ببخشید ۱۵ میلیون، از بانک ملت پرداخت کردیم.', { endpoints: { 'm1.from': { status: 'resolved', accountId: 'mellat-1' } } }).plan;
   assert.deepEqual(rent.components.map((item) => [item.kind, item.amount]), [['cash', 15_000_000]]);
+  // همان گفته وقتی مدل هم ۱۲ را اصلاح‌شده نامید: اصلاحِ جمله نباید همراه اصلاحِ مدل کنار برود.
+  const rentWithModelCorrection = plan({
+    ...blank(), event: { kind: 'expense', description: '', status: 'done' },
+    amounts: [amount('a1', 12, '۱۲ میلیون', { role: 'part', partOf: 'a2' }), amount('a2', 15, '۱۵ میلیون', { role: 'part' })],
+    movements: [movement('m1', 'a2', 'out', party('bank', 'بانک ملت'), party('counterparty', 'دفتر'), 'از بانک ملت پرداخت کردیم')],
+    conditions: [{ kind: 'correction', text: 'اصلاح', affects: ['a1'], evidence: 'نه ببخشید' }],
+  }, 'اجارهٔ مهر دفتر را ۱۲ میلیون، نه ببخشید ۱۵ میلیون، از بانک ملت پرداخت کردیم.', { endpoints: { 'm1.from': { status: 'resolved', accountId: 'mellat-1' } } }).plan;
+  assert.deepEqual(rentWithModelCorrection.components.map((item) => [item.kind, item.amount]), [['cash', 15_000_000]]);
   // «۱۶، نه ۱۸ میلیون»: مدل ۱۸ را پس‌گرفته دانست؛ خودِ جمله می‌گوید ۱۶.
   const invoice = validateUnderstanding({
     ...blank(), event: { kind: 'purchase', description: '', status: 'done' },

@@ -832,6 +832,10 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   }
   const uniqueMovements = movements.filter((movement) => chosen.get(movement.amountRef) === movement);
 
+  // اصلاح‌هایی که می‌مانند: اگر جمله خودش تصمیم گرفته، فقط اصلاحِ برآمده از جمله.
+  // آزمون زنده: اصلاحِ مدل کنار می‌رفت و اصلاحِ جمله هم، چون مدل همان عدد را
+  // گفته بود، کنار گذاشته می‌شد؛ «۱۲، نه ببخشید ۱۵» هر دو را ثبت کرد.
+  const keptConditions = conditions.filter((item) => trustModelCorrections || item.kind !== 'correction');
   return {
     ok: true,
     violations,
@@ -844,8 +848,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       },
       amounts: amounts.map(({ raw: _raw, ...amount }) => amount),
       nonAmountNumbers, dates, counterparties, movements: uniqueMovements, subject,
-      conditions: [...conditions.filter((item) => trustModelCorrections || item.kind !== 'correction'), ...retracted
-        .filter((id) => !conditions.some((item) => item.kind === 'correction' && item.affects.includes(id)))
+      conditions: [...keptConditions, ...retracted
+        .filter((id) => !keptConditions.some((item) => item.kind === 'correction' && item.affects.includes(id)))
         .map((id) => ({ kind: 'correction', text: 'اصلاحِ همان گفته', affects: [id], evidence: '', source: 'validator' }))],
       ambiguities,
     },
