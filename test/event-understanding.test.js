@@ -147,6 +147,101 @@ test('آزمون زنده: یک عددِ گفته‌شده دو مبلغ نمی�
   assert.equal(stitched.amounts[0].accepted, false);
 });
 
+// ---------------------------------------------------------------------------
+// الگوهای واقعیِ خطای مدل در آزمون زندهٔ سایت (۱۷ مهر ۱۴۰۵)
+// ---------------------------------------------------------------------------
+
+const plan = (output, text, resolution = {}) => {
+  const { understanding } = validateUnderstanding(output, { text, now: NOW });
+  return { understanding, plan: buildUnderstandingPlan(understanding, { transcript: text, now: NOW, resolution }) };
+};
+
+test('زنده: بانکی که مدل گیرنده نوشت، حسابِ پرداخت است و طرف حساب همان شرکت', () => {
+  const text = 'امروز از بانک سامان ۵۰ میلیون به شرکت قیاسی پرداخت کردیم. از ۸۰ میلیون بدهی ما، گفته اگر ۱۰ میلیون دیگر پرداخت کنیم ۲۰ میلیون باقی را می‌بخشد.';
+  const { understanding, plan: result } = plan({
+    ...blank(), event: { kind: 'settlement', description: '', status: 'mixed' },
+    amounts: [amount('a1', 50, '۵۰ میلیون', { role: 'paid-now', partOf: 'a2' }), amount('a2', 80, 'از ۸۰ میلیون بدهی ما', { role: 'prior-balance', status: 'context' })],
+    counterparties: [{ id: 'c1', name: 'بانک سامان', role: 'bank', evidence: 'از بانک سامان' }, { id: 'c2', name: 'شرکت قیاسی', role: 'other', evidence: 'به شرکت قیاسی' }],
+    movements: [movement('m1', 'a1', 'out', party('us'), party('counterparty', 'بانک سامان'), '۵۰ میلیون به شرکت قیاسی پرداخت کردیم')],
+  }, text, {
+    counterparties: { c2: { status: 'exact', contactId: 'k-qiasi', name: 'شرکت قیاسی', candidates: [], balance: -80_000_000 } },
+    endpoints: {}, documents: { 'k-qiasi': [{ kind: 'obligation', id: 'o1', direction: 'payable', remaining: 80_000_000, reference: 'بدهی' }] },
+  });
+  assert.deepEqual(understanding.movements[0].from, { kind: 'bank', name: 'بانک سامان' });
+  assert.deepEqual(understanding.movements[0].to, { kind: 'counterparty', name: 'شرکت قیاسی' });
+  assert.ok(!result.questions.some((item) => item.id.startsWith('counterparties.')), 'دربارهٔ «بانک سامان» به‌عنوان شخص نمی‌پرسد');
+});
+
+test('زنده: اجزای بی‌پیوند به کلِ تنها وصل می‌شوند و کل، پرداختِ جدا نمی‌شود', () => {
+  const text = '۱۲۰ میلیون تومان کالا برای فروش از شرکت آلفا خریدیم و تحویل گرفتیم؛ ۴۰ میلیون نقد از صندوق پرداخت شد و ۸۰ میلیون باقی‌مانده نسیه است.';
+  const { plan: result } = plan({
+    ...blank(), event: { kind: 'purchase', description: '', status: 'done' },
+    amounts: [amount('a1', 120, '۱۲۰ میلیون تومان'), amount('a2', 40, '۴۰ میلیون نقد', { role: 'paid-now' }), amount('a3', 80, '۸۰ میلیون باقی‌مانده نسیه', { role: 'credit-part' })],
+    counterparties: [{ id: 'c1', name: 'شرکت آلفا', role: 'supplier', evidence: 'از شرکت آلفا' }],
+    movements: [movement('m1', 'a2', 'out', party('cash', 'صندوق'), party('counterparty', 'شرکت آلفا'), '۴۰ میلیون نقد از صندوق'), movement('m2', 'a3', 'none', party('counterparty', 'شرکت آلفا'), party('us'), 'نسیه')],
+    subject: { what: 'کالا', kind: 'goods', use: 'resale', delivered: 'yes', usefulLifeMonths: null, evidence: 'کالا برای فروش' },
+  }, text, { counterparties: { c1: { status: 'exact', contactId: 'k-alpha', name: 'شرکت آلفا', candidates: [], balance: 0 } }, endpoints: { 'm1.from': { status: 'resolved', accountId: 'cash' } } });
+  assert.equal(result.route, 'ready', JSON.stringify(result.questions));
+  assert.deepEqual(result.components.map((item) => [item.kind, item.amount]), [['cash', 40_000_000], ['obligation', 80_000_000]]);
+});
+
+test('زنده: «۱۵۰ میلیون، نه، ۲۰۰ میلیون» بی‌کمک مدل اصلاح گفته شناخته می‌شود؛ وامِ «انتقال» دریافت است', () => {
+  const text = 'امروز ۱۵۰ میلیون، نه، ۲۰۰ میلیون وام از بانک ملت گرفتیم و به حساب ملت واریز شد.';
+  const { understanding, plan: result } = plan({
+    ...blank(), event: { kind: 'loan-received', description: '', status: 'done' },
+    amounts: [amount('a1', 150, '۱۵۰ میلیون', { role: 'loan-principal' }), amount('a2', 200, '۲۰۰ میلیون', { role: 'loan-principal' })],
+    counterparties: [{ id: 'c1', name: 'بانک ملت', role: 'bank', evidence: 'وام از بانک ملت' }],
+    movements: [movement('m1', 'a2', 'transfer', party('bank', 'بانک ملت'), party('bank', 'حساب ملت'), 'به حساب ملت واریز شد')],
+  }, text, { counterparties: { c1: { status: 'new', contactId: null, name: 'بانک ملت', candidates: [] } }, endpoints: { 'm1.to': { status: 'resolved', accountId: 'mellat-1' } } });
+  assert.ok(understanding.conditions.some((item) => item.kind === 'correction' && item.affects.includes('a1')));
+  assert.equal(understanding.movements[0].direction, 'in');
+  assert.deepEqual(result.components.map((item) => [item.amount, item.item.receiptPurpose]), [[200_000_000, 'loan']]);
+});
+
+test('زنده: «به حساب ملت» در سمت ما حساب بانک است؛ نوعِ بی‌نشانه مسیر حسابدار را باز نمی‌کند', () => {
+  const loan = validateUnderstanding({
+    ...blank(), event: { kind: 'loan-received', description: '', status: 'done' },
+    amounts: [amount('a1', 200, '۲۰۰ میلیون وام', { role: 'loan-principal' })],
+    movements: [movement('m1', 'a1', 'in', party('bank', 'بانک ملت'), party('us', 'به حساب ملت'), 'به حساب ملت واریز شد')],
+  }, { text: 'امروز ۲۰۰ میلیون وام بانک ملت به حساب ملت واریز شد.', now: NOW }).understanding;
+  assert.deepEqual(loan.movements[0].to, { kind: 'bank', name: 'به حساب ملت' });
+  const settlement = validateUnderstanding({
+    ...blank(), event: { kind: 'loan-repayment', description: '', status: 'done' },
+    amounts: [amount('a1', 80, '۸۰ میلیون', { role: 'prior-balance', status: 'context' })],
+  }, { text: QIASI, now: NOW }).understanding;
+  assert.equal(settlement.event.kind, 'settlement', 'در جمله نه وام هست نه قسط');
+});
+
+test('زنده: فروشِ تحویل‌شده با دریافت بخشی، باقی را طلب امروز ثبت می‌کند', () => {
+  const text = '۶۰ میلیون تومان کالا به شرکت بتا فروختیم و تحویل دادیم؛ ۲۵ میلیون آن به حساب ملت واریز شد و ۳۵ میلیون باقی را آخر ماه می‌پردازند.';
+  const { plan: result } = plan({
+    ...blank(), event: { kind: 'sale', description: '', status: 'mixed' },
+    amounts: [amount('a1', 60, '۶۰ میلیون تومان'), amount('a2', 25, '۲۵ میلیون آن به حساب ملت واریز شد', { role: 'received-now', partOf: 'a1' }),
+      amount('a3', 35, '۳۵ میلیون باقی را آخر ماه می‌پردازند', { role: 'future-payment', status: 'future', partOf: 'a1' })],
+    counterparties: [{ id: 'c1', name: 'شرکت بتا', role: 'customer', evidence: 'به شرکت بتا' }],
+    movements: [movement('m1', 'a2', 'in', party('counterparty', 'شرکت بتا'), party('bank', 'ملت'), 'به حساب ملت واریز شد')],
+    subject: { what: 'کالا', kind: 'goods', use: 'unknown', delivered: 'yes', usefulLifeMonths: null, evidence: null },
+  }, text, { counterparties: { c1: { status: 'exact', contactId: 'k-beta', name: 'شرکت بتا', candidates: [], balance: 0 } }, endpoints: { 'm1.to': { status: 'resolved', accountId: 'mellat-1' } } });
+  assert.deepEqual(result.components.map((item) => [item.kind, item.amount]), [['cash', 25_000_000], ['obligation', 35_000_000]]);
+  assert.equal(result.components[1].item.type, 'income');
+  // ولی فروشی که تحویل نشده، طلب نمی‌سازد.
+  const notDelivered = plan({
+    ...blank(), event: { kind: 'sale', description: '', status: 'mixed' },
+    amounts: [amount('a1', 60, '۶۰ میلیون تومان'), amount('a2', 25, '۲۵ میلیون آن به حساب ملت واریز شد', { role: 'received-now', partOf: 'a1' })],
+    movements: [movement('m1', 'a2', 'in', party('unknown'), party('bank', 'ملت'), 'به حساب ملت واریز شد')],
+    subject: { what: 'کالا', kind: 'goods', use: 'unknown', delivered: 'no', usefulLifeMonths: null, evidence: null },
+  }, text, { endpoints: { 'm1.to': { status: 'resolved', accountId: 'mellat-1' } } }).plan;
+  assert.ok(!notDelivered.components.some((item) => item.kind === 'obligation'));
+});
+
+test('زنده: شمارهٔ ماهِ مدل کنار گذاشته می‌شود؛ ماه از نام خودِ عبارت', () => {
+  const { understanding } = validateUnderstanding({ ...blank(), dates: [
+    { id: 'd1', role: 'coverage-start', expression: 'از اول آبان', relative: null, jalali: { year: null, month: 11, day: 1 } },
+    { id: 'd2', role: 'coverage-end', expression: 'تا آخر مهر سال بعد', relative: null, jalali: { year: null, month: 10, day: null } },
+  ] }, { text: 'امروز سی و شش میلیون بیمه آتش‌سوزی انبار رو از ملت دادیم، از اول آبان تا آخر مهر سال بعد پوشش میده.', now: NOW });
+  assert.deepEqual(understanding.dates.map((item) => fa(item.iso)), ['1405/8/1', '1406/7/30']);
+});
+
 test('فیلد حسابداری در خروجی مدل کل پاسخ را رد می‌کند', () => {
   assert.equal(validateUnderstanding({ ...blank(), journalEntry: {} }, { text: 'x', now: NOW }).ok, false);
   assert.equal(validateUnderstanding({ ...blank(), amounts: [{ ...amount('a1', 1, 'x'), debitAccount: '1101' }] }, { text: 'x', now: NOW }).ok, false);

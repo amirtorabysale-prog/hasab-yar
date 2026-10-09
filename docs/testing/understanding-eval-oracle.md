@@ -1,6 +1,6 @@
 # ارزیابی فهم رویداد — oracle
 
-اجرا: 2026-10-09T06:25:19.264Z · مجموعه: `understanding-acceptance-v1` · 10 گفته
+اجرا: 2026-10-09T10:43:59.925Z · مجموعه: `understanding-acceptance-v1` · 10 گفته
 
 | شاخص | مقدار |
 |---|---|
@@ -18,7 +18,7 @@
 | wrongAccount | 0 |
 | aiCalls | 10 |
 | tokens | {"input":0,"output":0} |
-| latencyMs | {"median":59,"max":75} |
+| latencyMs | {"median":54,"max":66} |
 
 | گفته | مسیر | داوری | جزئیات |
 |---|---|---|---|

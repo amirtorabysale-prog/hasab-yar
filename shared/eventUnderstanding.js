@@ -28,6 +28,7 @@ import { extractAmounts } from './parser.js';
 import { normalizePersian } from './normalize.js';
 import { extractDateMention, persianToISO, readJalaliExpression, todayPersian } from './persianDate.js';
 import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
+import { detectBank } from './banks.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
@@ -88,6 +89,27 @@ const STATUS_BY_ROLE = Object.freeze({
 });
 
 const PAST_DATE_ROLES = new Set(['payment', 'occurrence', 'invoice']);
+
+/**
+ * نوع‌هایی که مسیر حسابدار را باز می‌کنند، فقط وقتی واژه‌اش در جمله هست.
+ *
+ * آزمون زنده: مدل یک تسویهٔ بدهی را «قسط وام» نامید و پرونده بی‌دلیل به
+ * حسابدار رفت. نوع رویداد حدس مدل است؛ وقتی حدسش مسیر را عوض می‌کند، باید
+ * دست‌کم یک نشانهٔ صریح در خود جمله داشته باشد.
+ */
+const KIND_CUES = Object.freeze({
+  'loan-received': /وام|تسهیلات|قرض/,
+  'loan-repayment': /وام|تسهیلات|قسط/,
+  payroll: /حقوق|دستمزد|لیست\s*بیمه|کارکنان|پرسنل/,
+  correction: /اشتباه|اصلاح|تصحیح|غلط/,
+  refund: /برگشت|مرجوع|استرداد|عودت|پس\s*(?:دادیم|گرفتیم|دادن|داد)/,
+  cheque: /چک/,
+});
+
+/** «نه»، «ببخشید»، «منظورم» میان دو عدد: عدد اول پس گرفته شد. */
+const RETRACT = /[،,]?\s*(?:نه\s*[،,]?\s*ببخشید|نه|ببخشید|منظورم)\s*[،,]?\s*/g;
+const SPLIT_PART_ROLES = new Set(['cash-part', 'credit-part', 'paid-now', 'received-now', 'part', 'future-payment']);
+const ACCOUNT_SIDES = new Set(['bank', 'cash', 'petty-cash']);
 const POSTING_DATE_ROLES = new Set(['payment', 'occurrence', 'coverage-start', 'coverage-end']);
 
 /** اسم شمارشیِ پس از عدد: آن عدد تعداد است، نه پول. */
@@ -515,6 +537,37 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (!Number.isSafeInteger(value) || value <= 0 || !agrees) { amount.issue = 'computation-mismatch'; continue; }
     Object.assign(amount, { value, accepted: true, provenance: 'computed' });
   }
+  // اصلاحِ همان گفته، بی‌نیاز به مدل: عددی که درست پیش از «نه/ببخشید» آمده و
+  // عدد دیگری درست بعدش، پس گرفته شده است. آزمون زنده: مدل در «۱۵۰ میلیون، نه،
+  // ۲۰۰ میلیون وام گرفتیم» هر دو را وام دانست.
+  const retracted = [];
+  const spoken = normalizePersian(text);
+  for (const marker of spoken.matchAll(RETRACT)) {
+    const left = extractAmounts(spoken.slice(0, marker.index));
+    const last = left.spans.at(-1);
+    if (!last || left.text.slice(last.end).trim()) continue;
+    const right = extractAmounts(spoken.slice(marker.index + marker[0].length));
+    const first = right.spans[0];
+    if (!first || right.text.slice(0, first.start).trim()) continue;
+    const scale = /میلیارد/.test(first.raw) ? 1_000_000_000 : /میلیون/.test(first.raw) ? 1_000_000 : /هزار/.test(first.raw) ? 1_000 : 1;
+    const value = /هزار|میلیون|میلیارد/.test(last.raw) ? last.amount : last.amount * scale;
+    const target = amounts.find((item) => item.accepted && item.value === value && !retracted.includes(item.id));
+    if (target) { retracted.push(target.id); violations.push(`amounts.${target.id}:retracted-in-speech`); }
+  }
+  const modelRetracted = raw.conditions.filter((item) => item?.kind === 'correction').flatMap((item) => item.affects || []);
+  const isRetracted = (id) => retracted.includes(id) || modelRetracted.includes(id);
+  // اجزایی که مدل به کلِ تنها وصل نکرده بود، به همان وصل می‌شوند؛ بدون این، کل
+  // خودش پرداختِ جدا دیده می‌شد و «۱۲۰ از کدام حساب رفت؟» پرسیده می‌شد.
+  const totals = amounts.filter((item) => item.accepted && item.role === 'total' && item.status === 'done' && !isRetracted(item.id));
+  if (totals.length === 1) {
+    const [total] = totals;
+    const loose = amounts.filter((item) => item !== total && item.accepted && !item.partOf && !isRetracted(item.id)
+      && SPLIT_PART_ROLES.has(item.role) && item.value < total.value);
+    if (loose.length && loose.reduce((sum, item) => sum + item.value, 0) <= total.value) {
+      for (const item of loose) { item.partOf = total.id; violations.push(`amounts.${item.id}:linked-to-total`); }
+    }
+  }
+  const otherDone = amounts.some((item) => item.accepted && item.status === 'done');
   for (const amount of amounts) {
     if (amount.basis === 'inferred') amount.issue = 'inferred';
     // تکرارِ همان عدد سؤال نمی‌خواهد؛ عددش در مبلغِ نگه‌داشته‌شده هست.
@@ -522,7 +575,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     violations.push(`amounts.${amount.id}:${amount.issue}`);
     // فقط مبلغی که سند می‌سازد می‌پرسد. زمینه، آینده و مشروط ثبت نمی‌شوند؛
     // نامعلوم‌بودن عددشان هیچ سندی را غلط نمی‌کند و سؤالش فقط ثبت را معطل می‌کرد.
-    if (amount.status === 'done') {
+    // کلِ نامعلوم وقتی اجزای انجام‌شده هست، مانع ثبت نیست: پول را اجزا جابه‌جا می‌کنند.
+    if (amount.status === 'done' && !(amount.role === 'total' && otherDone)) {
       ask(`amounts.${amount.id}.value`, 'information', amount.evidence
         ? `مبلغِ «${amount.evidence}» دقیقاً چقدر است؟`
         : 'مبلغ این بخش دقیقاً چقدر است؟');
@@ -535,7 +589,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // کل و اجزا: جمعِ اجزای پذیرفته‌شده نباید از کل بیشتر شود، و نقد + نسیه
   // باید دقیقاً همان کل باشد.
   for (const total of amounts.filter((amount) => amount.accepted)) {
-    const parts = amounts.filter((amount) => amount.partOf === total.id && amount.accepted);
+    const parts = amounts.filter((amount) => amount.partOf === total.id && amount.accepted && !isRetracted(amount.id));
     if (!parts.length) continue;
     const sum = parts.reduce((value, part) => value + part.value, 0);
     const split = parts.some((part) => part.role === 'cash-part') && parts.some((part) => part.role === 'credit-part');
@@ -611,6 +665,50 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     return true;
   });
 
+  // --- نوع رویداد و جهت جابه‌جایی ---------------------------------------------
+  let eventKind = pick(raw.event?.kind, UNDERSTANDING_EVENT_KINDS, 'other');
+  if (KIND_CUES[eventKind] && !KIND_CUES[eventKind].test(spoken)) {
+    violations.push(`event:${eventKind}-without-cue`);
+    eventKind = amounts.some((item) => item.role === 'prior-balance') ? 'settlement' : 'other';
+  }
+  const loanEvent = ['loan-received', 'loan-repayment'].includes(eventKind);
+  const isBank = (name) => Boolean(name && detectBank(name));
+  const people = counterparties.filter((item) => !isBank(item.name));
+  for (const movement of movements) {
+    // پولِ وام از بانک وام‌دهنده به حساب ما «انتقال بین حساب‌های خودمان» نیست.
+    if (eventKind === 'loan-received' && movement.direction === 'transfer') {
+      Object.assign(movement, { direction: 'in', from: { kind: 'counterparty', name: movement.from.name } });
+      violations.push(`movements.${movement.id}:loan-is-not-a-transfer`);
+    }
+    if (!['in', 'out'].includes(movement.direction)) continue;
+    const cashKey = movement.direction === 'out' ? 'from' : 'to';
+    const otherKey = cashKey === 'from' ? 'to' : 'from';
+    const cash = movement[cashKey];
+    if (!ACCOUNT_SIDES.has(cash.kind) && cash.name) {
+      if (isBank(cash.name)) movement[cashKey] = { kind: 'bank', name: cash.name };
+      else if (/صندوق/.test(cash.name)) movement[cashKey] = { kind: 'cash', name: cash.name };
+    }
+    // «از بانک سامان به شرکت قیاسی پرداخت کردیم»: مدل بانک را گیرنده نوشت. وقتی
+    // سمتِ حساب خالی است و سمتِ دیگر نام بانک دارد، آن بانک حسابِ ماست — جز در
+    // وام، که بانک واقعاً طرف حساب است.
+    if (!ACCOUNT_SIDES.has(movement[cashKey].kind) && !loanEvent && isBank(movement[otherKey].name)) {
+      movement[cashKey] = { kind: 'bank', name: movement[otherKey].name };
+      movement[otherKey] = people.length === 1 ? { kind: 'counterparty', name: people[0].name } : { kind: 'unknown', name: null };
+      violations.push(`movements.${movement.id}:bank-is-the-account`);
+    }
+  }
+  // برای هر مبلغ یک جابه‌جایی: آن‌که جهت روشن و حساب مشخص دارد.
+  const clarity = (movement) => {
+    const cash = movement.direction === 'out' ? movement.from : movement.direction === 'in' ? movement.to : null;
+    return (['in', 'out'].includes(movement.direction) ? 2 : movement.direction === 'transfer' ? 1 : 0) + (cash && ACCOUNT_SIDES.has(cash.kind) && cash.name ? 1 : 0);
+  };
+  const chosen = new Map();
+  for (const movement of movements) {
+    const previous = chosen.get(movement.amountRef);
+    if (!previous || clarity(movement) > clarity(previous)) chosen.set(movement.amountRef, movement);
+  }
+  const uniqueMovements = movements.filter((movement) => chosen.get(movement.amountRef) === movement);
+
   const subject = {
     what: raw.subject?.what ? cleanLabel(raw.subject.what, 120) : null,
     kind: pick(raw.subject?.kind, SUBJECT_KINDS, null),
@@ -669,12 +767,15 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     understanding: {
       version: UNDERSTANDING_VERSION,
       event: {
-        kind: pick(raw.event?.kind, UNDERSTANDING_EVENT_KINDS, 'other'),
+        kind: eventKind,
         description: cleanLabel(raw.event?.description, 200),
         status: pick(raw.event?.status, EVENT_STATUSES, 'done'),
       },
       amounts: amounts.map(({ raw: _raw, ...amount }) => amount),
-      nonAmountNumbers, dates, counterparties, movements, subject, conditions,
+      nonAmountNumbers, dates, counterparties, movements: uniqueMovements, subject,
+      conditions: [...conditions, ...retracted
+        .filter((id) => !conditions.some((item) => item.kind === 'correction' && item.affects.includes(id)))
+        .map((id) => ({ kind: 'correction', text: 'اصلاحِ همان گفته', affects: [id], evidence: '', source: 'validator' }))],
       ambiguities,
     },
   };

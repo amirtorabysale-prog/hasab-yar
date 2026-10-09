@@ -21,6 +21,7 @@
  * داده می‌شود.
  */
 import { classifyCategory } from './categoryRules.js';
+import { detectBank } from './banks.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -104,12 +105,22 @@ function dateFor(understanding, roles) {
   return understanding.dates.find((date) => date.accepted && roles.includes(date.role))?.iso || null;
 }
 
+/**
+ * طرف حسابِ یک جزء.
+ *
+ * بانک فقط در وام طرف حساب است؛ در بقیه، بانکی که مدل در فهرست طرف حساب‌ها
+ * آورده حسابِ خودِ ماست و کارت شخص برایش ساخته نمی‌شود. نامِ سمتِ دیگرِ
+ * جابه‌جایی — هر نوعی که مدل گفته باشد — اولین نشانه است.
+ */
 function counterpartyFor(understanding, movement, amount) {
-  const named = (name) => name && understanding.counterparties.find((item) => item.name === name || name.includes(item.name) || item.name.includes(name));
+  const loan = ['loan-received', 'loan-repayment'].includes(understanding.event.kind);
+  const pool = loan ? understanding.counterparties : understanding.counterparties.filter((item) => !detectBank(item.name));
+  const named = (name) => name && pool.find((item) => item.name === name || name.includes(item.name) || item.name.includes(name));
   const side = movement ? (movement.direction === 'in' ? movement.from : movement.to) : null;
-  if (side?.kind === 'counterparty') return named(side.name) || understanding.counterparties[0] || null;
-  const fromEvidence = understanding.counterparties.find((item) => amount?.evidence?.includes(item.name));
-  return fromEvidence || (understanding.counterparties.length === 1 ? understanding.counterparties[0] : null);
+  const bySide = side?.name ? named(side.name) : null;
+  if (bySide) return bySide;
+  const fromEvidence = pool.find((item) => amount?.evidence?.includes(item.name));
+  return fromEvidence || (pool.length === 1 ? pool[0] : null);
 }
 
 /**
@@ -189,6 +200,24 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   const paymentDate = occurredAt || (unresolvedPaymentDate ? null : new Date(now).toISOString());
 
   const amounts = facts.amounts;
+  // ماندهٔ پرداخت‌نشدهٔ یک خرید یا فروشِ انجام‌شده، طلب یا بدهیِ همین امروز است.
+  //
+  // آزمون زنده: در «۶۰ میلیون فروختیم و تحویل دادیم، ۲۵ واریز شد، بقیه آخر ماه»
+  // مدل ۳۵ را «پرداخت آینده» نامید — درست از نظر زمانِ پول — و فقط ۲۵ ثبت شد؛
+  // طلبِ ۳۵ و درآمدش گم شد. کالا تحویل شده، پس طلب امروز هست؛ آینده فقط
+  // دریافتش است. مانده از اعداد صریح محاسبه می‌شود — کل منهای پرداخت‌شده.
+  if (['purchase', 'sale', 'asset-purchase'].includes(facts.event.kind) && facts.subject.delivered !== 'no') {
+    for (const total of amounts.filter((item) => item.accepted && item.role === 'total' && item.status === 'done' && !retracted.has(item.id))) {
+      const parts = amounts.filter((item) => item.partOf === total.id && item.accepted && !retracted.has(item.id));
+      const paid = parts.filter((item) => item.status === 'done' && SPLIT_ROLES.has(item.role));
+      if (!paid.length) continue;
+      const remainder = total.value - paid.reduce((sum, item) => sum + item.value, 0);
+      if (remainder <= 0) continue;
+      const pending = parts.find((item) => item.role === 'future-payment' && item.value === remainder);
+      if (pending) Object.assign(pending, { role: 'credit-part', status: 'done' });
+      else amounts.push({ id: `${total.id}-remainder`, value: remainder, role: 'credit-part', status: 'done', partOf: total.id, accepted: true, provenance: 'computed-remainder', evidence: total.evidence });
+    }
+  }
   const byId = new Map(amounts.map((amount) => [amount.id, amount]));
   const movementOf = (id) => facts.movements.find((movement) => movement.amountRef === id) || null;
   const priorBalance = amounts.find((amount) => amount.role === 'prior-balance');
@@ -263,8 +292,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       });
       continue;
     }
-    if (needsCounterparty && !counterparty) {
-      toAccountant(`برای «${label}» طرف حساب در جمله نیست؛ تسویه یا تعهد بدون طرف حساب ثبت نمی‌شود.`);
+    // تسویه بدون طرف حساب معنا ندارد. وام و پیش‌پرداختِ بی‌نام از همان مسیر
+    // همیشگی می‌روند؛ اگر موتور طرف حساب بخواهد، خودش از ثبت‌کننده می‌پرسد.
+    if (isSettlement && !counterparty) {
+      toAccountant(`برای «${label}» طرف حساب در جمله نیست؛ تسویه بدون طرف حساب ثبت نمی‌شود.`);
       continue;
     }
 

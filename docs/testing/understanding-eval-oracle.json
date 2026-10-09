@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-09T06:25:19.263Z",
+  "generatedAt": "2026-10-09T10:43:59.924Z",
   "fixtureVersion": 1,
   "summary": {
     "provider": "oracle",
@@ -28,8 +28,8 @@
       "output": 0
     },
     "latencyMs": {
-      "median": 59,
-      "max": 75
+      "median": 54,
+      "max": 66
     }
   },
   "results": [
@@ -42,7 +42,7 @@
         [
           "settlement-payable",
           50000000,
-          "8114eb1c-c7a6-4961-ab28-c1509257e320"
+          "a7f8e2e3-dc39-43a6-8b7d-4cc91f90b46e"
         ]
       ],
       "questions": [],
@@ -79,7 +79,7 @@
         "latencyMs": 1,
         "trigger": "extraction"
       },
-      "latencyMs": 59,
+      "latencyMs": 63,
       "violations": []
     },
     {
@@ -141,7 +141,7 @@
         "latencyMs": 1,
         "trigger": "extraction"
       },
-      "latencyMs": 75,
+      "latencyMs": 66,
       "violations": []
     },
     {
@@ -153,7 +153,7 @@
         [
           "cash-in",
           200000000,
-          "9b6c1c75-edf7-44c4-bdb7-6fd2bf70e44b"
+          "f348eca2-a82e-4133-bcd6-0ada84244909"
         ]
       ],
       "questions": [],
@@ -187,10 +187,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 1,
+        "latencyMs": 0,
         "trigger": "extraction"
       },
-      "latencyMs": 65,
+      "latencyMs": 54,
       "violations": []
     },
     {
@@ -202,7 +202,7 @@
         [
           "cash-out",
           36000000,
-          "60bfd9f8-455d-4e45-a57e-b146e38a563e"
+          "a439f959-e6ee-4f66-b4b1-5febe66b9183"
         ]
       ],
       "questions": [],
@@ -236,10 +236,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 1,
+        "latencyMs": 0,
         "trigger": "extraction"
       },
-      "latencyMs": 63,
+      "latencyMs": 54,
       "violations": []
     },
     {
@@ -251,7 +251,7 @@
         [
           "cash-out",
           18000000,
-          "e7229c15-efab-47a7-bd96-3f827b7e38e0"
+          "1dcc5cc6-8b43-4f05-85a2-c32c825fd7e6"
         ]
       ],
       "questions": [],
@@ -285,10 +285,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 1,
+        "latencyMs": 0,
         "trigger": "extraction"
       },
-      "latencyMs": 57,
+      "latencyMs": 65,
       "violations": []
     },
     {
@@ -321,10 +321,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 0,
+        "latencyMs": 1,
         "trigger": "extraction"
       },
-      "latencyMs": 54,
+      "latencyMs": 48,
       "violations": []
     },
     {
@@ -357,10 +357,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 1,
+        "latencyMs": 0,
         "trigger": "extraction"
       },
-      "latencyMs": 60,
+      "latencyMs": 48,
       "violations": []
     },
     {
@@ -372,7 +372,7 @@
         [
           "cash-in",
           25000000,
-          "bb17ea69-a4a3-457b-8f4d-ea1f78b4b0cd"
+          "6a1c2a23-5afb-4e8e-b3da-c63b601727f0"
         ],
         [
           "obligation-receivable",
@@ -419,10 +419,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 0,
+        "latencyMs": 1,
         "trigger": "extraction"
       },
-      "latencyMs": 57,
+      "latencyMs": 62,
       "violations": []
     },
     {
@@ -434,7 +434,7 @@
         [
           "cash-out",
           15000000,
-          "8ed312f4-65c8-4838-9261-43847eee4ffd"
+          "0f3a5ec1-da34-4541-81f0-fe2daab5259e"
         ]
       ],
       "questions": [],
@@ -471,7 +471,7 @@
         "latencyMs": 0,
         "trigger": "extraction"
       },
-      "latencyMs": 51,
+      "latencyMs": 53,
       "violations": []
     },
     {
@@ -488,7 +488,7 @@
         [
           "cash-out",
           20000,
-          "694245b5-2e93-4b54-9d53-539265402d86"
+          "2c285f60-bae8-4cd5-abeb-7da5256e1b7a"
         ]
       ],
       "questions": [],
@@ -530,10 +530,10 @@
           "inputTokens": 0,
           "outputTokens": 0
         },
-        "latencyMs": 1,
+        "latencyMs": 0,
         "trigger": "extraction"
       },
-      "latencyMs": 59,
+      "latencyMs": 47,
       "violations": []
     }
   ]
