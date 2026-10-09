@@ -172,16 +172,16 @@ export function SummaryCard({ summary, loading, profileType = 'business', contex
 function TransactionList({ items, loading, examples = [], onExample, onSelect }) {
   if (loading) return <div className="space-y-2">{[1, 2, 3].map((x) => <div key={x} className="h-16 animate-pulse rounded-lg bg-line/45" />)}</div>;
   if (!items.length) return <div className="rounded-[12px] border border-dashed border-line bg-surface/55 px-4 py-6 text-center"><div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-warn-bg text-accent"><ReceiptText size={21} /></div><p className="mt-3 text-[15px] font-extrabold">اولین ثبت امروز را بساز</p><p className="mt-1 text-[12px] leading-6 text-muted">لازم نیست فرم حسابداری بلد باشی؛ یکی از جمله‌ها را انتخاب کن و مبلغش را تغییر بده.</p><div className="mt-3 flex flex-wrap justify-center gap-2">{examples.map((example) => <button key={example} onClick={() => onExample?.(example)} className="min-h-9 rounded-full border border-line bg-surface px-3 text-[11px] font-bold">{example}</button>)}</div></div>;
-  return <div className="border-y border-line bg-surface/50">{items.map((item) => {
+  return <div className="space-y-3">{items.map((item) => {
     const status = item.needsReview || item.reviewState === 'review'
       ? { label: 'نیازمند بررسی', classes: 'bg-warn-bg text-expense' }
       : ['reviewed', 'duplicate-confirmed'].includes(item.reviewState)
         ? { label: 'بررسی‌شده', classes: 'bg-accent/10 text-accent' }
-        : { label: 'آماده', classes: 'bg-income/10 text-income' };
+        : { label: 'دریافت/پرداخت ذخیره‌شده', classes: 'bg-income/10 text-income' };
     return (
-    <button type="button" key={item.id} onClick={() => onSelect?.(item)} className="flex min-h-[76px] w-full items-center justify-between gap-4 border-b border-line px-1 py-3 text-right last:border-b-0">
-      <div className="min-w-0"><div className="flex items-center gap-2"><p className={`numbers text-lg font-bold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)}</p><span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${status.classes}`}>{status.label}</span></div><p className="mt-1 truncate text-[13px] text-muted">{item.rawText}</p></div>
-      <div className="shrink-0 text-left"><span className="inline-block rounded-md border border-line bg-surface px-2 py-1 text-[12px]">{item.category}</span><p className="mt-1 text-[12px] text-muted">{clock(item.occurredAt)}</p></div>
+    <button type="button" key={item.id} onClick={() => onSelect?.(item)} className="flex min-h-[76px] w-full items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-4 text-right hover:border-accent">
+      <div className="min-w-0"><div className="flex items-center gap-2"><p className={`numbers text-lg font-bold ${item.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(item)}</p><span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${status.classes}`}>{status.label}</span></div><p className="mt-2 line-clamp-2 text-[13px] leading-7 text-muted">{item.rawText}</p></div>
+      <div className="shrink-0 text-left"><span className="inline-block rounded-md border border-line bg-surface px-2 py-1 text-[12px]">{item.category}</span><p className="mt-1 text-[12px] text-muted">{clock(item.occurredAt)}</p><p className="mt-2 text-xs font-bold text-accent">مسیر ثبت و سند ←</p></div>
     </button>
   ); })}</div>;
 }
