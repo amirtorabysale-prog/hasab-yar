@@ -9,7 +9,7 @@ import {
   accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
-  correctLatestTransaction, counterpartyCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
+  correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
@@ -805,6 +805,15 @@ app.post('/api/tax-assistant/questions/:id/resolve', (request, response, next) =
   } catch (error) { return next(error); }
 });
 app.get('/api/accounts', (_request, response) => response.json({ items: listAccounts() }));
+// کارت حساب یک بانک، صندوق یا تنخواه: گردشش از دفتر کل با مانده‌گیری تجمعی.
+app.get('/api/accounts/:id/card', (request, response, next) => {
+  try {
+    return response.json(moneyAccountCard(request.params.id, {
+      from: String(request.query.from || '').slice(0, 40),
+      to: String(request.query.to || '').slice(0, 40),
+    }));
+  } catch (error) { return next(error); }
+});
 app.post('/api/accounts', (request, response, next) => { try { response.status(201).json({ item: saveAccount(request.body) }); } catch (error) { next(error); } });
 app.put('/api/accounts/:id', (request, response, next) => { try { response.json({ item: saveAccount({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
 app.get('/api/transactions', (request, response) => response.json(listTransactions(request.query)));

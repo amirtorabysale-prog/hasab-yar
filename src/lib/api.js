@@ -270,6 +270,7 @@ export const api = {
   resolveTaxAssistantQuestion: (id, payload) => request(`/api/tax-assistant/questions/${id}/resolve`, { method: 'POST', body: JSON.stringify(payload) }),
   accounts: () => request('/api/accounts'),
   saveAccount: (payload) => request(payload.id ? `/api/accounts/${payload.id}` : '/api/accounts', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
+  accountCard: (id, { from = '', to = '' } = {}) => request(`/api/accounts/${encodeURIComponent(id)}/card?${new URLSearchParams({ from, to })}`),
   contacts: () => request('/api/contacts'),
   // کارت حساب یک طرف حساب: گردشش از دفتر کل با مانده‌گیری تجمعی.
   contactCard: (id, { from = '', to = '' } = {}) => request(`/api/contacts/${encodeURIComponent(id)}/card?${new URLSearchParams({ from, to })}`),

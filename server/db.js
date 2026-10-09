@@ -23,6 +23,7 @@ export * from './db/accountingTransfer.js';
 export * from './db/firm.js';
 export * from './db/contacts.js';
 export * from './db/counterpartyCard.js';
+export * from './db/accountCard.js';
 export * from './db/obligations.js';
 export * from './db/recurring.js';
 export * from './db/invoices.js';
