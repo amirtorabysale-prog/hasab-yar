@@ -1,0 +1,13 @@
+{"event":{"kind":"settlement","description":"پرداخت بخشی از بدهی به شرکت قیاسی","status":"mixed"},
+"amounts":[
+{"id":"a1","value":80000000,"currency":"toman","role":"prior-balance","status":"context","partOf":null,"basis":"explicit","computedFrom":{"op":null,"of":[]},"evidence":"۸۰ میلیون به شرکت قیاسی بدهکار بودیم"},
+{"id":"a2","value":50000000,"currency":"toman","role":"paid-now","status":"done","partOf":"a1","basis":"explicit","computedFrom":{"op":null,"of":[]},"evidence":"امروز ۵۰ میلیون از بانک سامان دادیم"},
+{"id":"a3","value":10000000,"currency":"toman","role":"future-payment","status":"future","partOf":"a1","basis":"explicit","computedFrom":{"op":null,"of":[]},"evidence":"اگر ۱۰ میلیون دیگر بدهید"},
+{"id":"a4","value":20000000,"currency":"toman","role":"conditional-waiver","status":"conditional","partOf":"a1","basis":"explicit","computedFrom":{"op":null,"of":[]},"evidence":"۲۰ میلیون باقی‌مانده را می‌بخشم"}],
+"nonAmountNumbers":[],
+"dates":[{"id":"d1","role":"payment","expression":"امروز","relative":"today","jalali":{"year":null,"month":null,"day":null}}],
+"counterparties":[{"id":"c1","name":"شرکت قیاسی","role":"supplier","evidence":"به شرکت قیاسی بدهکار بودیم"}],
+"movements":[{"id":"m1","amountRef":"a2","direction":"out","from":{"kind":"bank","name":"بانک سامان"},"to":{"kind":"counterparty","name":"شرکت قیاسی"},"evidence":"۵۰ میلیون از بانک سامان دادیم"}],
+"subject":{"what":null,"kind":"money","use":"unknown","delivered":"unknown","usefulLifeMonths":null,"evidence":null},
+"conditions":[{"kind":"condition","text":"بخشش ۲۰ میلیون به شرط پرداخت ۱۰ میلیون دیگر","affects":["a3","a4"],"evidence":"اگر ۱۰ میلیون دیگر بدهید، ۲۰ میلیون باقی‌مانده را می‌بخشم"}],
+"ambiguities":[]}

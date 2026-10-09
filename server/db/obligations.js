@@ -60,7 +60,8 @@ export function saveObligation(values = {}) {
  * هر پرداخت سند خودش را دارد و مبلغ خودش را می‌برد؛ تعهد وقتی «پرداخت‌شده»
  * می‌شود که ماندهٔ صفر داشته باشد، نه وقتی یک بار دستش زده‌اند.
  */
-export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested } = {}) {
+// `withinTransaction`: همان قاعدهٔ `recordInvoicePayment` — تراکنش تودرتو نه.
+export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested, withinTransaction = false } = {}) {
   const item = db.prepare("SELECT * FROM obligations WHERE id=? AND status='open'").get(id);
   if (!item) return null;
   // تعهدهای قدیمی ممکن است قبلاً در دفتر یا در فاکتور دیگری شناسایی شده باشند.
@@ -80,7 +81,7 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
     throw invalidInput(`مبلغ تسویه از ماندهٔ این تعهد بیشتر است؛ مانده ${remaining.toLocaleString('en-US')} تومان است.`);
   }
   let transactionId;
-  db.exec('BEGIN IMMEDIATE');
+  if (!withinTransaction) db.exec('BEGIN IMMEDIATE');
   try {
     // تعهدی که خودش سند خورده، درآمد یا هزینه‌اش همان موقع شناخته شده. اگر تسویه
     // دوباره به دستهٔ درآمد/هزینه بخورد، همان مبلغ دو بار در سود دوره می‌آید.
@@ -107,8 +108,8 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
       WHERE id=? AND status='open' AND COALESCE(paid_amount,0)+? <= amount`).run(amount, amount, transactionId, id, amount);
     if (!updated.changes) throw invalidInput('این طلب یا بدهی قبلاً تسویه شده است.');
     audit('settle', 'obligation', id, { transactionId, amount, partial: amount < remaining });
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    if (!withinTransaction) db.exec('COMMIT');
+  } catch (error) { if (!withinTransaction) db.exec('ROLLBACK'); throw error; }
   return { item: listObligations({ status: 'all' }).find((row) => row.id === id), transaction: transactionRow(transactionId) };
 }
 

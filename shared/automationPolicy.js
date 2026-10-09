@@ -66,7 +66,20 @@ export const DEFAULT_AUTOMATION_POLICY = Object.freeze({
    * پیش‌فرض ندارد: بدون عددی که دفتر خودش تصویب کرده، سیستم می‌پرسد، فرض نمی‌کند.
    */
   capitalizationThreshold: null,
+  /**
+   * فهم رویداد با AI پیش از موتور قاعده (`docs/ai-event-understanding.md`).
+   *
+   * `off` هیچ درخواستی نمی‌فرستد. `shadow` ثبت را از مسیر قدیمی می‌برد و فقط در
+   * پس‌زمینه می‌فهمد و مقایسه می‌کند — هیچ سندی از مسیر تازه ساخته نمی‌شود.
+   * `active` گفتهٔ داخل محدوده را به برگهٔ پرونده می‌برد. بازگشت یعنی همین کلید.
+   */
+  understandingMode: 'off',
+  /** `composite`: فقط گفته‌هایی که پارسر قطعی نمی‌تواند درست بفهمد. `all`: همه. */
+  understandingScope: 'composite',
 });
+
+export const UNDERSTANDING_MODES = Object.freeze(['off', 'shadow', 'active']);
+export const UNDERSTANDING_SCOPES = Object.freeze(['composite', 'all']);
 
 const clamp01 = (value, fallback) => {
   const parsed = Number(value);
@@ -103,5 +116,8 @@ export function resolveAutomationPolicy(overrides = {}) {
     engineV2: overrides.engineV2 === true,
     shadowMode: overrides.shadowMode === true,
     capitalizationThreshold: capitalizationThreshold(overrides.capitalizationThreshold),
+    // مقدار ناشناخته یعنی خاموش، نه فعال: کلید خراب نباید درخواست AI بفرستد.
+    understandingMode: UNDERSTANDING_MODES.includes(overrides.understandingMode) ? overrides.understandingMode : 'off',
+    understandingScope: UNDERSTANDING_SCOPES.includes(overrides.understandingScope) ? overrides.understandingScope : 'composite',
   });
 }

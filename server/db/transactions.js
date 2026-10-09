@@ -19,6 +19,7 @@ import { vatGuardContext } from '../tax.js';
 import { NATURE_EXPLANATIONS, natureNeedsAccountant, readEventNature, readNonCashInstrument, readExplicitNonCash, readMixedSettlement, MIXED_SETTLEMENT_REASON } from '../../shared/eventNature.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { decide } from '../../shared/accountingDecision.js';
+import { planJournal } from '../../shared/accountingRules.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
 
@@ -332,6 +333,14 @@ function openNonCashStatement(item, transcript, sentence) {
     result = approveFinancialEvent(db, result.id, { actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), withinTransaction: true });
   }
   return { obligationId: id, ...result, question: draft.accountingDecision.question || null };
+}
+
+/**
+ * بخش نسیهٔ یک رویداد فهمیده‌شده: همان مسیر «پولی جابه‌جا نشده» با واقعیت‌های صریح.
+ * فراخوان خودش تراکنش SQLite را باز کرده است.
+ */
+export function recordUnderstoodObligation(item, transcript) {
+  return openNonCashStatement(item, transcript, transcript);
 }
 
 /** یک گفتهٔ «جمع و اجزا» یک پروندهٔ بررسی است، حتی اگر سه عدد گفته شده باشد. */
@@ -793,13 +802,20 @@ export function redoTransaction(id) {
 }
 
 /** Read-only advisory preflight. Posting always recomputes against current state. */
+function safePlanLines(event, decision) {
+  try { return planJournal(event, decision).lines || []; } catch { return []; }
+}
+
 export function previewTransactions({ transcript = '', transactions } = {}) {
   if (!Array.isArray(transactions) || !transactions.length || transactions.length > 20) throw invalidInput('حداقل یک تراکنش معتبر لازم است.');
   const policy = automationPolicy();
   return transactions.map((item) => {
     const text = transcript || item.rawText || '';
-    if (readMixedSettlement(text)) return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [MIXED_SETTLEMENT_REASON] };
-    if (hasCompositeAmounts(text) || correctionNature(item, text) || nonCashInstrument(item, text) || readExplicitNonCash(text)) {
+    // جزئی از یک گفتهٔ فهمیده‌شده: جملهٔ کامل عمداً مرکب است و همین الگوها
+    // آن را به حسابدار می‌فرستادند. ماهیت هر جزء را فهم ساختاریافته روشن کرده.
+    const structured = item.factSource === 'understanding';
+    if (!structured && readMixedSettlement(text)) return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [MIXED_SETTLEMENT_REASON] };
+    if (!structured && (hasCompositeAmounts(text) || correctionNature(item, text) || nonCashInstrument(item, text) || readExplicitNonCash(text))) {
       return { route: ROUTES.ACCOUNTANT_REVIEW, reasons: ['این رویداد ثبت نقدی ساده نیست؛ برای تعیین سند به بررسی حسابداری نیاز دارد.'] };
     }
     if (item.bankId && !item.accountId && !item.account && !accountForBank(item.bankId)) {
@@ -826,6 +842,9 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
       reasons: [...(draft.decision.reasons || []), ...(blocked ? [guards.reason] : [])],
       question: decision?.question || null, eventKind: draft.event.kind,
       decisionStatus: decision?.decisionStatus || null, accountId, contactId: contact?.id || null,
+      // سطرهای پیشنهادی فقط برای نمایش؛ ثبت واقعی همان مسیر همیشگی است.
+      lines: decision?.decisionStatus === 'decided' ? safePlanLines(draft.event, decision) : [],
+      treatment: decision?.treatment || null, family: decision?.family || null,
     };
   });
 }

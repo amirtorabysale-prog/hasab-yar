@@ -110,11 +110,16 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
   const settlementDirection = settlementDirectionFor(item, counterpartyBalance);
   const kind = settlementDirection ? EVENT_KINDS.OBLIGATION_SETTLED : baseKind;
   const said = String(item.rawText || sentence || transcript || '');
+  // ردیفی که از «فهم رویداد» آمده، واقعیت‌هایش را صریح و سنجیده دارد. الگوهای
+  // متنی این‌جا دوباره روی همان جمله اجرا نمی‌شوند: «واریز» یا «بدهکار بودیم»
+  // در یک جملهٔ مرکب، نباید هدف پرداخت یا قضاوتی را برگرداند که فهم ساختاریافته
+  // جزءبه‌جزء روشن کرده است.
+  const structured = item.factSource === 'understanding';
   // «بابت چه بود» وقتی خودِ جمله گفته، سؤالش پرسیده نمی‌شود.
-  const receiptPurpose = item.type === 'income' ? (item.receiptPurpose || receiptPurposeFromSpeech(said)) : null;
-  const paymentPurpose = item.type === 'expense' ? (item.paymentPurpose || paymentPurposeFromSpeech(said)) : null;
+  const receiptPurpose = item.type === 'income' ? (item.receiptPurpose || (structured ? null : receiptPurposeFromSpeech(said))) : null;
+  const paymentPurpose = item.type === 'expense' ? (item.paymentPurpose || (structured ? null : paymentPurposeFromSpeech(said))) : null;
   // وام‌دهنده همان بانکی است که جمله نام برده؛ نامِ حدسی دیگر جایش را نمی‌گیرد.
-  const lender = receiptPurpose === 'loan' ? lenderFromSpeech(said) : null;
+  const lender = receiptPurpose === 'loan' && !structured ? lenderFromSpeech(said) : null;
   const event = normalizeFinancialEvent({
     kind,
     ...(settlementDirection ? { settlementDirection, reference: item.contactName || '' } : {}),
@@ -132,7 +137,7 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     prepaymentSignal: item.prepaymentSignal === true,
     eventNature: item.eventNature || 'new',
     // هدف خرید وقتی خودِ کاربر گفته («جنس خریدم برای فروش»)، سؤالش پرسیده نمی‌شود.
-    intendedUse: item.intendedUse || purchasePurposeFromSpeech(item.rawText || sentence || transcript) || null,
+    intendedUse: item.intendedUse || (structured ? null : purchasePurposeFromSpeech(item.rawText || sentence || transcript)) || null,
     // کار تحویل شده یا جنس فروخته شده: زمان شناسایی درآمدی که هنوز پولش نیامده.
     deliveryDate: item.deliveryDate || null,
     servicePeriodStart: item.servicePeriodStart || null,
@@ -140,12 +145,12 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     // آورده و برداشت شخصی برنمی‌گردند؛ «آخر قرارداد پس می‌گیریم» یعنی برمی‌گردد.
     refundable: typeof item.refundable==='boolean' ? item.refundable
       : (receiptPurpose === 'owner' || paymentPurpose === 'owner-drawing') ? false
-      : saysRefundable(said),
+      : structured ? null : saysRefundable(said),
     receiptPurpose,
     paymentPurpose,
     // کل گفته، نه تکهٔ کنار مبلغ: «وانت شرکت که قیمت دفتریش چهل بود رو صد و ده
     // فروختیم» دو ردیف می‌سازد و نشانه در هیچ‌کدام از دو تکه کامل نیست.
-    needsJudgment: item.needsJudgment || judgmentReason(transcript || said),
+    needsJudgment: item.needsJudgment || (structured ? null : judgmentReason(transcript || said)),
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(item.rawText || sentence || transcript || '').slice(0, 1000),

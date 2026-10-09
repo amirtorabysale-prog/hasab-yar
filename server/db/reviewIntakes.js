@@ -28,6 +28,23 @@ export function queueUnquantifiedReview(transcript, { clientId = '', source = 't
   audit('create', 'accountant-intake', id, { reason: UNQUANTIFIED_REVIEW_REASON });
   return describe(database.prepare('SELECT * FROM accountant_intakes WHERE id=?').get(id));
 }
+/**
+ * پروندهٔ «فهم رویداد» که مبلغ قابل ثبتی ندارد ولی قضاوت حسابدار می‌خواهد.
+ * همان صفِ درخواست‌های بی‌مبلغ؛ مبلغی ساخته نمی‌شود.
+ */
+export function queueUnderstoodIntake(transcript, { clientId, source = 'text' } = {}) {
+  const text = String(transcript || '').trim().slice(0, 1000);
+  if (!text || !clientId) throw invalid('متن و شناسهٔ پرونده لازم است.');
+  const database = activeWorkspaceDatabase(); ensure(database);
+  const old = database.prepare('SELECT * FROM accountant_intakes WHERE client_id=?').get(String(clientId).slice(0, 100));
+  if (old) return { ...describe(old), duplicate: true };
+  const id = `intake-${randomUUID()}`;
+  database.prepare('INSERT INTO accountant_intakes (id,client_id,transcript,source,created_by) VALUES (?,?,?,?,?)')
+    .run(id, String(clientId).slice(0, 100), text, source === 'voice' ? 'voice' : 'text', currentWorkspace()?.userId || null);
+  audit('create', 'accountant-intake', id, { reason: 'understanding-case' });
+  return describe(database.prepare('SELECT * FROM accountant_intakes WHERE id=?').get(id));
+}
+
 export function listUnquantifiedReviews({ limit = 50 } = {}) {
   const database = activeWorkspaceDatabase(); ensure(database);
   return database.prepare("SELECT * FROM accountant_intakes WHERE status='pending' ORDER BY created_at DESC LIMIT ?")

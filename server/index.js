@@ -17,6 +17,8 @@ import {
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
   bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferBetweenAccounts,
+  answerUnderstandingCase, commitUnderstandingCase, createUnderstandingCase, dismissUnderstandingCase, getUnderstandingCase, legacySnapshot,
+  listUnderstandingCases, retryUnderstandingCase, scheduleShadowUnderstanding, sendUnderstandingToAccountant, understandingReport,
   closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling,
   listUnidentifiedReceipts, resolveUnidentifiedReceipt, reverseUnidentifiedReceiptResolution,
   saveAccountingTransferTemplate,
@@ -35,6 +37,7 @@ import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { minimumRoleForRequest, roleAllows } from './access.js';
 import { EXPERIENCES, canChooseExperience, experienceForRole, pathNeedsProfessional, screensFor } from '../shared/experience.js';
 import { DEFAULT_AUTOMATION_POLICY } from '../shared/automationPolicy.js';
+import { understandingProvider } from './eventUnderstandingAi.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
   openEncryptedBackup, restorePortableBackup, writeServerBackup,
@@ -314,6 +317,8 @@ app.get('/api/bootstrap', (request, response) => {
     ...getToday(), categories: getCategories(), settings: getSettings(), learnings: getLearnings(),
     averages: typicalAmounts(), accounts: listAccounts(), contacts: listContacts(),
     obligations: listObligations({ status: 'open' }), recurring: listRecurringRules(), closings: listDailyClosings(), closingPreview: previewDayClosing(), access: accessPayload(request.user, request.workspace.id),
+    // رابط با همین تصمیم می‌گیرد گفتهٔ مرکب به برگهٔ پرونده برود یا مسیر قدیمی.
+    understanding: (() => { const policy = automationPolicy(); return { mode: policy.understandingMode, scope: policy.understandingScope, engineV2: policy.engineV2, available: Boolean(understandingProvider()) }; })(),
   });
 });
 app.get('/api/insights', (_request, response) => response.json({ overview: financialOverview(), dnaProfiles: dnaProfiles() }));
@@ -369,6 +374,41 @@ app.post('/api/voice/realtime/session', express.text({ type: ['application/sdp',
     return next(error);
   }
 });
+/**
+ * فهم رویداد در حالت مقایسه‌ای: پس از ثبتِ مسیر قدیمی و بی‌اثر بر پاسخ کاربر.
+ * شکستش فقط در خود پرونده می‌ماند؛ هیچ استثنایی به این درخواست برنمی‌گردد.
+ */
+function shadowUnderstanding(transcript, source, legacy, clientId) {
+  try {
+    if (!transcript || automationPolicy().understandingMode !== 'shadow') return;
+    scheduleShadowUnderstanding({ text: transcript, source, legacy: legacy(), clientId });
+  } catch (error) { console.error('shadow understanding failed', error?.code || error?.message); }
+}
+
+// فهم رویداد با AI — پرونده، پاسخ، ثبت. docs/ai-event-understanding.md
+app.get('/api/understanding/cases', (request, response) => response.json({ items: listUnderstandingCases(request.query || {}) }));
+app.get('/api/understanding/report', (_request, response) => response.json(understandingReport()));
+app.get('/api/understanding/cases/:id', (request, response, next) => {
+  try { return response.json({ item: getUnderstandingCase(request.params.id) }); } catch (error) { return next(error); }
+});
+app.post('/api/understanding/cases', async (request, response, next) => {
+  try { return response.status(201).json({ item: await createUnderstandingCase(request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/understanding/cases/:id/answers', async (request, response, next) => {
+  try { return response.json({ item: await answerUnderstandingCase(request.params.id, request.body?.answers || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/understanding/cases/:id/retry', async (request, response, next) => {
+  try { return response.json({ item: await retryUnderstandingCase(request.params.id) }); } catch (error) { return next(error); }
+});
+app.post('/api/understanding/cases/:id/commit', (request, response, next) => {
+  try { return response.json({ item: commitUnderstandingCase(request.params.id), ...getToday() }); } catch (error) { return next(error); }
+});
+app.post('/api/understanding/cases/:id/send-to-accountant', (request, response, next) => {
+  try { return response.json({ item: sendUnderstandingToAccountant(request.params.id) }); } catch (error) { return next(error); }
+});
+app.post('/api/understanding/cases/:id/dismiss', (request, response, next) => {
+  try { return response.json({ item: dismissUnderstandingCase(request.params.id) }); } catch (error) { return next(error); }
+});
 app.post('/api/transactions/preview', (request, response, next) => {
   try { return response.json({ previews: previewTransactions(request.body) }); } catch (error) { return next(error); }
 });
@@ -381,11 +421,16 @@ app.post('/api/transactions', (request, response, next) => {
       if (duplicates.length) throw Object.assign(new Error('یک ثبت بسیار مشابه در چند دقیقهٔ اخیر پیدا شد.'), { code: 'POSSIBLE_DUPLICATE', status: 409, details: { duplicates } });
     }
     const ids = insertTransactions({ transcript: request.body.transcript, transactions, counterpartyResolution: request.body.counterpartyResolution });
+    shadowUnderstanding(request.body.transcript, transactions[0]?.source, () => legacySnapshot('transactions', { ids, queued: ids.queuedForAccountant }), transactions[0]?.clientId);
     return response.status(201).json({ ids, queuedForAccountant: ids.queuedForAccountant || 0, queuedReasons: ids.queuedReasons || [], nonCash: ids.nonCash || [], ...getToday() });
   } catch (error) { return next(error); }
 });
 app.post('/api/transactions/unquantified-review', (request, response, next) => {
-  try { return response.status(201).json({ item: queueUnquantifiedReview(request.body?.transcript, request.body || {}) }); }
+  try {
+    const item = queueUnquantifiedReview(request.body?.transcript, request.body || {});
+    shadowUnderstanding(request.body?.transcript, request.body?.source, () => legacySnapshot('unquantified-review'), request.body?.clientId);
+    return response.status(201).json({ item });
+  }
   catch (error) { return next(error); }
 });
 app.post('/api/transactions/unmatched-settlement-review', (request,response,next)=>{
@@ -401,6 +446,7 @@ app.post('/api/transactions/composite-review', (request, response, next) => {
     const item = queueCompositeUtterance(request.body?.transcript, {
       clientId: request.body?.clientId, source: request.body?.source,
     });
+    shadowUnderstanding(request.body?.transcript, request.body?.source, () => legacySnapshot('composite-review', { queued: 1 }), request.body?.clientId);
     return response.status(201).json({ item });
   } catch (error) { return next(error); }
 });

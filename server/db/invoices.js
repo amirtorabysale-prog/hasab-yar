@@ -127,7 +127,9 @@ export function issueInvoice(id, { issuedAt } = {}) {
   return getInvoice(id);
 }
 
-export function recordInvoicePayment(id, { amount, occurredAt, account = 'cash', accountId, note = '' } = {}) {
+// `withinTransaction`: فراخوانی که خودش تراکنش باز کرده (ثبتِ همه‌یا‌هیچِ پروندهٔ
+// فهم رویداد)، تراکنش تودرتو نمی‌سازد؛ SQLite آن را نمی‌پذیرد.
+export function recordInvoicePayment(id, { amount, occurredAt, account = 'cash', accountId, note = '', withinTransaction = false } = {}) {
   let invoice = getInvoice(id);
   if (!invoice || ['draft', 'cancelled'].includes(invoice.status)) return null;
   const paymentAmount = cleanAmount(amount == null ? invoice.balanceDue : amount);
@@ -136,7 +138,7 @@ export function recordInvoicePayment(id, { amount, occurredAt, account = 'cash',
   assertAccountingPeriodOpen(db, periodForDate(paymentAt, currentTimeZone()));
   const resolvedAccountId = resolveAccountId({ account, accountId });
   const paymentId = randomUUID();
-  db.exec('BEGIN IMMEDIATE');
+  if (!withinTransaction) db.exec('BEGIN IMMEDIATE');
   try {
     const [transactionId] = insertTransactionRows({ transcript: `${invoice.documentType === 'purchase' ? 'پرداخت' : 'وصول'} ${invoice.number}`, transactions: [{
       clientId: `invoice-payment:${paymentId}`, amount: paymentAmount, type: invoice.documentType === 'purchase' ? 'expense' : 'income',
@@ -150,8 +152,8 @@ export function recordInvoicePayment(id, { amount, occurredAt, account = 'cash',
     invoice = getInvoice(id);
     if (invoice.balanceDue === 0) db.prepare("UPDATE invoices SET status='paid',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
     audit('payment', 'invoice', id, { paymentId, amount: paymentAmount, transactionId });
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    if (!withinTransaction) db.exec('COMMIT');
+  } catch (error) { if (!withinTransaction) db.exec('ROLLBACK'); throw error; }
   return getInvoice(id);
 }
 

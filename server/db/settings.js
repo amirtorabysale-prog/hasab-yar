@@ -34,12 +34,15 @@ export function saveAutomationPolicy(values = {}) {
     engineV2: values.engineV2,
     shadowMode: values.shadowMode,
     capitalizationThreshold: values.capitalizationThreshold,
+    // مقدار نفرستاده یعنی همان قبلی؛ ذخیرهٔ آستانه نباید فهم AI را خاموش کند.
+    understandingMode: values.understandingMode ?? previous.understandingMode,
+    understandingScope: values.understandingScope ?? previous.understandingScope,
   });
   db.prepare("INSERT INTO settings (key,value) VALUES ('automationPolicy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     .run(JSON.stringify(next));
   audit('update', 'automation-policy', 'automationPolicy', {
-    from: { autoThreshold: previous.autoThreshold, confirmThreshold: previous.confirmThreshold, capitalizationThreshold: previous.capitalizationThreshold },
-    to: { autoThreshold: next.autoThreshold, confirmThreshold: next.confirmThreshold, capitalizationThreshold: next.capitalizationThreshold },
+    from: { autoThreshold: previous.autoThreshold, confirmThreshold: previous.confirmThreshold, capitalizationThreshold: previous.capitalizationThreshold, understandingMode: previous.understandingMode, understandingScope: previous.understandingScope },
+    to: { autoThreshold: next.autoThreshold, confirmThreshold: next.confirmThreshold, capitalizationThreshold: next.capitalizationThreshold, understandingMode: next.understandingMode, understandingScope: next.understandingScope },
   });
   return next;
 }

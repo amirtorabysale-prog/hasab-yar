@@ -1,0 +1,561 @@
+/**
+ * قرارداد «فهم رویداد مالی» — خروجی مدل زبانی پیش از موتور حسابداری.
+ *
+ * مرز همان مرز `shared/aiFactContract.js` است: مدل فقط می‌گوید چه گفته شده، نه
+ * سند چه باشد. تفاوت این قرارداد با آن یکی این است که **رابطه‌ها** را هم
+ * می‌خواهد: کدام مبلغ کل است و کدام جزء، کدام انجام شده و کدام آینده یا مشروط،
+ * کدام تاریخ پرداخت است و کدام شروع پوشش. پارسر قطعی همین‌ها را با الگو
+ * می‌فهمید و در جملهٔ مرکب یا تکه‌تکه می‌کرد یا کل گفته را به حسابدار می‌داد.
+ *
+ * سه چیز این‌جا از مدل گرفته **نمی‌شود** و سرور خودش حسابشان می‌کند:
+ *
+ * - **عدد مبلغ:** مدل عدد را می‌گوید، ولی فقط وقتی پذیرفته می‌شود که خواندنِ
+ *   قطعیِ همان شاهد (`extractAmounts`) همان عدد را بدهد. مدلی که عدد بسازد —
+ *   از شمارهٔ فاکتور، سال یا تعداد کارتن — رد می‌شود.
+ * - **تاریخ:** مدل فقط عبارت و نقش تاریخ را می‌دهد. تبدیل شمسی به لحظهٔ واقعی
+ *   کار `persianDate.js` است؛ مدل‌ها در این تبدیل غلط می‌کنند و غلطشان دیده
+ *   نمی‌شود.
+ * - **شناسه:** مدل نام می‌گوید. اینکه آن نام کدام شخص یا حساب دفتر است، کار
+ *   تطبیق سرور است و نتیجه‌اش شناسهٔ واقعی است.
+ *
+ * و یک چیز اصلاً در قرارداد نیست: اطمینانِ اعلام‌شدهٔ مدل. اجازهٔ ثبت فقط از
+ * اعتبارسنجی، موتور قاعده و تأیید انسان می‌آید؛ عددی که مدل دربارهٔ خودش
+ * می‌گوید هیچ‌کدام از این سه نیست.
+ *
+ * این ماژول وابستگی شبکه یا دیتابیس ندارد و در مرورگر هم اجرا می‌شود.
+ */
+import { extractAmounts } from './parser.js';
+import { normalizePersian } from './normalize.js';
+import { extractDateMention, persianToISO, todayPersian } from './persianDate.js';
+import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
+
+export const UNDERSTANDING_VERSION = 'event-understanding/v1';
+
+export const UNDERSTANDING_EVENT_KINDS = Object.freeze([
+  'purchase', 'sale', 'expense', 'income', 'settlement', 'loan-received', 'loan-repayment', 'capital-in',
+  'owner-drawing', 'transfer', 'payroll', 'asset-purchase', 'advance-paid', 'advance-received', 'deposit',
+  'refund', 'correction', 'obligation', 'cheque', 'other',
+]);
+export const EVENT_STATUSES = Object.freeze(['done', 'future', 'conditional', 'mixed']);
+
+/**
+ * نقش هر مبلغ در همان رویداد.
+ *
+ * `prior-balance` زمینه است و هرگز سند تازه نمی‌سازد: «۸۰ میلیون بدهکار
+ * بودیم» بدهی را دوباره ایجاد نمی‌کند. `future-payment` و `conditional-waiver`
+ * هم تا وقتی انجام نشده‌اند سند ندارند.
+ */
+export const AMOUNT_ROLES = Object.freeze([
+  'total', 'part', 'paid-now', 'received-now', 'cash-part', 'credit-part', 'prior-balance', 'future-payment',
+  'conditional-waiver', 'waiver', 'loan-principal', 'installment', 'interest', 'tax', 'discount', 'deposit',
+  'fee', 'unit-price', 'other',
+]);
+export const AMOUNT_STATUSES = Object.freeze(['done', 'future', 'conditional', 'context']);
+export const AMOUNT_BASES = Object.freeze(['explicit', 'computed', 'inferred']);
+export const CURRENCIES = Object.freeze(['toman', 'rial']);
+export const COMPUTE_OPS = Object.freeze(['sum', 'difference', 'product']);
+export const NON_AMOUNT_ROLES = Object.freeze([
+  'invoice-number', 'cheque-number', 'year', 'quantity', 'installment-count', 'day-of-month', 'percentage',
+  'phone', 'account-number', 'duration', 'other',
+]);
+export const DATE_ROLES = Object.freeze([
+  'payment', 'occurrence', 'coverage-start', 'coverage-end', 'delivery', 'due', 'invoice', 'installment-start', 'other',
+]);
+export const RELATIVE_DATES = Object.freeze(['today', 'yesterday', 'day-before-yesterday', 'tomorrow', 'day-after-tomorrow']);
+export const COUNTERPARTY_ROLES = Object.freeze([
+  'supplier', 'customer', 'lender', 'owner', 'partner', 'employee', 'authority', 'bank', 'landlord', 'other',
+]);
+export const MOVEMENT_DIRECTIONS = Object.freeze(['in', 'out', 'transfer', 'none']);
+export const ENDPOINT_KINDS = Object.freeze(['bank', 'cash', 'petty-cash', 'counterparty', 'us', 'unknown']);
+export const SUBJECT_KINDS = Object.freeze(['goods', 'service', 'asset', 'money', 'other']);
+export const SUBJECT_USES = Object.freeze(['internal', 'resale', 'production', 'long-term', 'unknown']);
+export const DELIVERY_STATES = Object.freeze(['yes', 'no', 'unknown']);
+export const CONDITION_KINDS = Object.freeze(['negation', 'condition', 'promise', 'correction']);
+export const AMBIGUITY_KINDS = Object.freeze(['information', 'judgment']);
+
+/**
+ * نقش‌هایی که وضعیتشان از خودشان معلوم است.
+ *
+ * اگر مدل «بدهی قبلی» را «انجام‌شده» علامت بزند، نتیجه‌اش ایجاد دوبارهٔ همان
+ * بدهی است. وضعیتی که نقش تعیین می‌کند، همیشه به سمتِ «سند نساز» اصلاح
+ * می‌شود — هیچ‌وقت برعکس.
+ */
+const STATUS_BY_ROLE = Object.freeze({
+  'prior-balance': 'context',
+  'future-payment': 'future',
+  'conditional-waiver': 'conditional',
+  'unit-price': 'context',
+});
+
+const PAST_DATE_ROLES = new Set(['payment', 'occurrence', 'invoice']);
+
+/** اسم شمارشیِ پس از عدد: آن عدد تعداد است، نه پول. */
+const COUNT_NOUN = /^\s*(?:تا|عدد|قسط|کارتن|بسته|نفر|ماه|سال|روز|هفته|کیلو|متر|دستگاه|قلم|فقره|برگ|چک|فاکتور|درصد|واحد|جلد|شاخه|تن)(?![آ-ی])/;
+
+// ---------------------------------------------------------------------------
+// schema
+// ---------------------------------------------------------------------------
+
+const object = (properties) => ({ type: 'object', additionalProperties: false, properties, required: Object.keys(properties) });
+const array = (items) => ({ type: 'array', items });
+const string = { type: 'string' };
+const nullableString = { type: ['string', 'null'] };
+const nullableInteger = { type: ['integer', 'null'] };
+const choice = (values) => ({ type: 'string', enum: [...values] });
+const nullableChoice = (values) => ({ type: ['string', 'null'], enum: [...values, null] });
+const endpoint = object({ kind: choice(ENDPOINT_KINDS), name: nullableString });
+
+/**
+ * schema سختِ خروجی، قابل استفاده با Structured Outputs.
+ *
+ * همهٔ فیلدها `required` اند و «نمی‌دانم» با `null` گفته می‌شود — همان قاعدهٔ
+ * قرارداد قبلی به زبان حالت سخت: مدلی که مجبور شود مبلغ بدهد، مبلغ می‌سازد؛
+ * مدلی که بتواند `null` بگذارد، نمی‌سازد.
+ */
+export function understandingSchema() {
+  return object({
+    event: object({ kind: choice(UNDERSTANDING_EVENT_KINDS), description: string, status: choice(EVENT_STATUSES) }),
+    amounts: array(object({
+      id: string,
+      value: nullableInteger,
+      currency: nullableChoice(CURRENCIES),
+      role: choice(AMOUNT_ROLES),
+      status: choice(AMOUNT_STATUSES),
+      partOf: nullableString,
+      basis: choice(AMOUNT_BASES),
+      computedFrom: object({ op: nullableChoice(COMPUTE_OPS), of: array(string) }),
+      evidence: string,
+    })),
+    nonAmountNumbers: array(object({ value: string, role: choice(NON_AMOUNT_ROLES), evidence: string })),
+    dates: array(object({
+      id: string,
+      role: choice(DATE_ROLES),
+      expression: string,
+      relative: nullableChoice(RELATIVE_DATES),
+      jalali: object({ year: nullableInteger, month: nullableInteger, day: nullableInteger }),
+    })),
+    counterparties: array(object({ id: string, name: string, role: nullableChoice(COUNTERPARTY_ROLES), evidence: string })),
+    movements: array(object({
+      id: string, amountRef: string, direction: choice(MOVEMENT_DIRECTIONS), from: endpoint, to: endpoint, evidence: string,
+    })),
+    subject: object({
+      what: nullableString, kind: nullableChoice(SUBJECT_KINDS), use: choice(SUBJECT_USES),
+      delivered: choice(DELIVERY_STATES), usefulLifeMonths: nullableInteger, evidence: nullableString,
+    }),
+    conditions: array(object({ kind: choice(CONDITION_KINDS), text: string, affects: array(string), evidence: string })),
+    ambiguities: array(object({ field: string, kind: choice(AMBIGUITY_KINDS), question: string, options: array(string) })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// اعتبارسنجی
+// ---------------------------------------------------------------------------
+
+const FORBIDDEN = new Set(FORBIDDEN_FACT_FIELDS.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, '')));
+// «type» در فهرست ممنوع قرارداد قبلی است چون طبقه‌بندی حسابداری بود. این‌جا
+// نامِ هیچ فیلدی نیست، پس هر جا دیده شود یعنی مدل از قالب بیرون زده.
+const ALLOWED_KEYS = new Set([
+  'event', 'kind', 'description', 'status', 'amounts', 'id', 'value', 'currency', 'role', 'partOf', 'basis',
+  'computedFrom', 'op', 'of', 'evidence', 'nonAmountNumbers', 'dates', 'expression', 'relative', 'jalali', 'year',
+  'month', 'day', 'counterparties', 'name', 'movements', 'amountRef', 'direction', 'from', 'to', 'subject', 'what',
+  'use', 'delivered', 'usefulLifeMonths', 'conditions', 'text', 'affects', 'ambiguities', 'field', 'question', 'options',
+]);
+
+function structuralViolations(value, path = '', found = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => structuralViolations(item, `${path}[${index}]`, found));
+    return found;
+  }
+  if (!value || typeof value !== 'object') return found;
+  for (const [key, child] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (FORBIDDEN.has(normalized) && key !== 'kind') found.push(`${path}.${key}:forbidden`);
+    else if (!ALLOWED_KEYS.has(key)) found.push(`${path}.${key}:unknown`);
+    structuralViolations(child, `${path}.${key}`, found);
+  }
+  return found;
+}
+
+/**
+ * متن برای مقایسهٔ شاهد: رقم لاتین، بدون نیم‌فاصله و نشانه، با فاصلهٔ یکسان.
+ *
+ * شاهد باید **عین** گفتهٔ کاربر باشد؛ این یکسان‌سازی فقط تفاوت‌های نوشتاری را
+ * برمی‌دارد — «۵۰» و «50»، «می‌دهیم» و «می دهیم» — نه تفاوت معنایی.
+ */
+export function evidenceKey(value) {
+  return normalizePersian(value).replace(/[«»"'“”()[\]{}،,؛;:!؟?.\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const found = (evidence, textKey) => {
+  const key = evidenceKey(evidence);
+  return key.length > 0 && textKey.includes(key);
+};
+
+const cleanLabel = (value, limit = 160) => String(value ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, limit);
+
+/**
+ * مبلغ‌هایی که خواندنِ قطعی از یک شاهد بیرون می‌آورد.
+ *
+ * `cue` یعنی آن عدد نشانهٔ پول دارد: واحد، مقیاس، یا عدد بزرگی که فقط مبلغ
+ * می‌تواند باشد. «ده کارتن» و «سه قسط» نشانهٔ پول ندارند؛ اگر مدل آن‌ها را
+ * مبلغ بداند، همین‌جا رد می‌شود.
+ */
+function readEvidenceAmounts(evidence) {
+  const { text, spans } = extractAmounts(evidence);
+  return spans.filter((span) => !span.bareScale).map((span) => {
+    const after = text.slice(span.end, span.end + 14);
+    const toman = /^\s*(?:تومان|تومن)/.test(after);
+    const rial = /^\s*ریال/.test(after);
+    const scaled = /هزار|میلیون|میلیارد/.test(span.raw);
+    const grouped = /^\d{1,3}(?:,\d{3})+$/.test(span.raw.replace(/\s/g, ''));
+    // «۱۰۰۰۰ عدد پیچ» عدد بزرگ است ولی تعداد است.
+    const counted = !toman && !rial && COUNT_NOUN.test(text.slice(span.end));
+    return {
+      amount: span.amount, rial,
+      colloquial: span.amount < 1_000 && !/\d|هزار|میلیون|میلیارد/.test(span.raw) && toman,
+      cue: !counted && (toman || rial || scaled || grouped || span.amount >= 10_000),
+    };
+  });
+}
+
+/**
+ * آیا عددی که مدل گفته، از همان شاهد درمی‌آید؟
+ *
+ * خروجی: `{ value, scaleAmbiguous }` یا `null`. ریال به تومان تقسیم می‌شود،
+ * چون همهٔ دفتر به تومان است. «هشتصد تومن» پذیرفته می‌شود ولی با ابهام مقیاس،
+ * همان رفتار پارسر قطعی.
+ */
+function verifyExplicitAmount(amount, evidence) {
+  const value = Number(amount.value);
+  if (!Number.isSafeInteger(value) || value <= 0) return null;
+  for (const read of readEvidenceAmounts(evidence)) {
+    if (read.colloquial && (value === read.amount * 1_000 || value === read.amount)) return { value: read.amount * 1_000, scaleAmbiguous: true };
+    if (!read.cue) continue;
+    const rial = read.rial || amount.currency === 'rial';
+    if (rial && value === Math.round(read.amount / 10)) return { value, scaleAmbiguous: false };
+    if (!rial && value === read.amount) return { value, scaleAmbiguous: false };
+  }
+  return null;
+}
+
+function compute(op, values) {
+  if (values.some((value) => !Number.isSafeInteger(value))) return null;
+  if (op === 'sum') return values.reduce((total, value) => total + value, 0);
+  if (op === 'difference') return values.length === 2 ? values[0] - values[1] : null;
+  if (op === 'product') return values.reduce((total, value) => total * value, 1);
+  return null;
+}
+
+const RELATIVE_OFFSETS = Object.freeze({ today: 0, yesterday: -1, 'day-before-yesterday': -2, tomorrow: 1, 'day-after-tomorrow': 2 });
+
+function relativeIso(relative, now, timeZone) {
+  const offset = RELATIVE_OFFSETS[relative];
+  if (offset === undefined) return null;
+  const today = todayPersian(now, timeZone);
+  const base = persianToISO(today.year, today.month, today.day, timeZone);
+  return base ? new Date(Date.parse(base) + offset * 86_400_000).toISOString() : null;
+}
+
+/**
+ * سالِ نگفته از نقش تاریخ فهمیده می‌شود: پرداخت و وقوع گذشته‌اند، سررسید و
+ * پایان پوشش آینده. «۲۰ آذر» برای سررسید چک یعنی آذرِ پیش رو، نه آذرِ پارسال.
+ */
+function jalaliIso({ year, month, day }, role, now, timeZone) {
+  if (!Number.isInteger(month) || month < 1 || month > 12) return null;
+  if (day != null && (!Number.isInteger(day) || day < 1 || day > 31)) return null;
+  const today = todayPersian(now, timeZone);
+  const atDay = (y) => {
+    if (day != null) return persianToISO(y, month, day, timeZone);
+    // «تا پایان مهر»: آخرین روز همان ماه، از روز اولِ ماه بعد.
+    if (role === 'coverage-end') {
+      const next = month === 12 ? persianToISO(y + 1, 1, 1, timeZone) : persianToISO(y, month + 1, 1, timeZone);
+      return next ? new Date(Date.parse(next) - 86_400_000).toISOString() : null;
+    }
+    return persianToISO(y, month, 1, timeZone);
+  };
+  if (Number.isInteger(year)) return atDay(year < 100 ? 1400 + year : year);
+  const thisYear = atDay(today.year);
+  if (!thisYear) return null;
+  const future = Date.parse(thisYear) > now.getTime() + 43_200_000;
+  if (PAST_DATE_ROLES.has(role) && future) return atDay(today.year - 1);
+  if (!PAST_DATE_ROLES.has(role) && !future && ['due', 'coverage-end', 'delivery', 'installment-start'].includes(role)
+    && Date.parse(thisYear) < now.getTime() - 43_200_000 * 60) return atDay(today.year + 1);
+  return thisYear;
+}
+
+const dayKey = (iso, timeZone) => {
+  const parts = todayPersian(new Date(iso), timeZone);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+/**
+ * تاریخ، از سه منبع: «امروز/دیروز»، اجزای شمسی، و خواندنِ قطعیِ خودِ عبارت.
+ * اگر دو منبع با هم نخوانند تاریخ پذیرفته نمی‌شود و سؤال می‌شود.
+ */
+function resolveDate(date, { now, timeZone }) {
+  const fromRelative = date.relative ? relativeIso(date.relative, now, timeZone) : null;
+  const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone) : null;
+  const mention = date.expression ? extractDateMention(date.expression, { now, timeZone, preferPast: PAST_DATE_ROLES.has(date.role) }) : null;
+  const candidates = [fromRelative, jalali].filter(Boolean);
+  // عبارت بی‌سال («اول آبان») از خواندن قطعی سالِ حدسی می‌گیرد؛ فقط ماه و روز
+  // قابل مقایسه است.
+  if (mention?.iso && !candidates.length) candidates.push(mention.iso);
+  if (!candidates.length) return { iso: null, issue: 'unresolved' };
+  const keys = new Set(candidates.map((iso) => dayKey(iso, timeZone)));
+  if (keys.size > 1) return { iso: null, issue: 'conflict' };
+  if (mention?.iso && jalali && date.jalali.day != null) {
+    const [, mentionMonth, mentionDay] = dayKey(mention.iso, timeZone).split('-');
+    const [, ownMonth, ownDay] = dayKey(jalali, timeZone).split('-');
+    if (mentionMonth !== ownMonth || mentionDay !== ownDay) return { iso: null, issue: 'conflict' };
+  }
+  return { iso: candidates[0], issue: null };
+}
+
+const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+
+/**
+ * خروجی مدل را می‌سنجد و شکل قطعی‌اش را می‌سازد.
+ *
+ * دو نوع خطا جداست:
+ *
+ * - **ساختاری** (فیلد ممنوع یا ناشناخته، شکل اشتباه): کل پاسخ رد می‌شود —
+ *   `ok: false`. حذف بی‌صدای فیلد ممنوع یعنی هیچ‌کس نمی‌فهمد مدل چند بار از
+ *   مرز رد شده.
+ * - **برداشتِ تکی** (شاهدی که در متن نیست، مبلغی که از شاهد درنمی‌آید، تاریخ
+ *   متناقض): همان برداشت پذیرفته نمی‌شود و یک ابهامِ «پرسیدنی» جایش می‌نشیند.
+ *   بقیهٔ فهم سالم می‌ماند، ولی ثبت تا جواب آن سؤال ممکن نیست.
+ */
+export function validateUnderstanding(raw, { text = '', now = new Date(), timeZone = 'Asia/Tehran' } = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, violations: ['payload'], understanding: null };
+  const structural = structuralViolations(raw);
+  const shape = ['event', 'amounts', 'nonAmountNumbers', 'dates', 'counterparties', 'movements', 'subject', 'conditions', 'ambiguities']
+    .filter((key) => raw[key] === undefined || (key !== 'event' && key !== 'subject' && !Array.isArray(raw[key])))
+    .map((key) => `${key}:shape`);
+  if (structural.length || shape.length) return { ok: false, violations: [...structural, ...shape], understanding: null };
+
+  const textKey = evidenceKey(text);
+  const violations = [];
+  const ambiguities = [];
+  const ask = (field, kind, question, options = [], source = 'validator') => {
+    if (!ambiguities.some((item) => item.field === field)) ambiguities.push({ field, kind, question: cleanLabel(question, 200), options, source });
+  };
+
+  // --- مبالغ ---------------------------------------------------------------
+  const seen = new Set();
+  const amounts = raw.amounts.slice(0, 12).map((item, index) => {
+    const id = cleanLabel(item.id, 20) || `a${index + 1}`;
+    if (seen.has(id)) violations.push(`amounts.${id}:duplicate-id`);
+    seen.add(id);
+    const role = pick(item.role, AMOUNT_ROLES, 'other');
+    const forced = STATUS_BY_ROLE[role];
+    const status = forced || pick(item.status, AMOUNT_STATUSES, 'done');
+    if (forced && item.status !== forced) violations.push(`amounts.${id}:status-forced-${forced}`);
+    return {
+      id, role, status, raw: item,
+      currency: pick(item.currency, CURRENCIES, null),
+      partOf: item.partOf ? cleanLabel(item.partOf, 20) : null,
+      basis: pick(item.basis, AMOUNT_BASES, 'inferred'),
+      computedFrom: item.computedFrom?.op ? { op: pick(item.computedFrom.op, COMPUTE_OPS, null), of: (item.computedFrom.of || []).map((ref) => cleanLabel(ref, 20)) } : null,
+      evidence: cleanLabel(item.evidence, 300),
+      value: null, accepted: false, scaleAmbiguous: false, provenance: null, issue: null,
+    };
+  });
+  const byId = new Map(amounts.map((amount) => [amount.id, amount]));
+
+  for (const amount of amounts) {
+    if (amount.basis === 'explicit') {
+      if (!found(amount.evidence, textKey)) { amount.issue = 'evidence-not-found'; continue; }
+      const verified = verifyExplicitAmount(amount.raw, amount.evidence);
+      if (!verified) { amount.issue = amount.raw.value == null ? 'value-missing' : 'not-in-evidence'; continue; }
+      Object.assign(amount, { value: verified.value, scaleAmbiguous: verified.scaleAmbiguous, accepted: true, provenance: 'explicit' });
+    }
+  }
+  // «صد میلیون خریدیم، چهل‌شو نقد دادیم»: «چهل» مقیاس ندارد و مقیاسش همان
+  // «میلیون» همین جمله است. فقط وقتی پذیرفته می‌شود که جمله یک مقیاس بیشتر
+  // نداشته باشد و عدد خودش هیچ نشانهٔ پولی نداشته باشد؛ منشأ جدا ثبت می‌شود
+  // تا برگهٔ تأیید بگوید مقیاس از کجا آمده.
+  const scales = new Set(readEvidenceAmounts(text).filter((read) => read.cue).map((read) => (
+    read.amount % 1_000_000_000 === 0 ? 1_000_000_000 : read.amount % 1_000_000 === 0 ? 1_000_000 : read.amount % 1_000 === 0 ? 1_000 : 1
+  )).filter((scale) => scale > 1));
+  if (scales.size === 1) {
+    const [scale] = scales;
+    for (const amount of amounts.filter((item) => item.issue === 'not-in-evidence')) {
+      const read = extractAmounts(amount.evidence);
+      // «سه قسط»، «ده کارتن»: عددِ شمارنده مقیاس پول نمی‌گیرد.
+      const bare = read.spans.filter((span) => !span.bareScale && span.amount < 1_000 && !/\d|هزار|میلیون|میلیارد/.test(span.raw)
+        && !COUNT_NOUN.test(read.text.slice(span.end)));
+      if (bare.some((span) => span.amount * scale === Number(amount.raw.value)) && !readEvidenceAmounts(amount.evidence).some((read) => read.cue)) {
+        Object.assign(amount, { value: Number(amount.raw.value), accepted: true, provenance: 'explicit-scale-from-sentence', issue: null });
+      }
+    }
+  }
+  // محاسبه‌شده‌ها بعد از صریح‌ها، و فقط از مبالغ پذیرفته‌شده: «بقیه‌اش» از
+  // اعداد صریح قابل محاسبه است، از عدد حدسی نه.
+  for (const amount of amounts) {
+    if (amount.basis !== 'computed') continue;
+    const sources = (amount.computedFrom?.of || []).map((ref) => byId.get(ref));
+    if (!amount.computedFrom?.op || !sources.length || sources.some((source) => !source?.accepted)) { amount.issue = 'computation-unsupported'; continue; }
+    const value = compute(amount.computedFrom.op, sources.map((source) => source.value));
+    if (!Number.isSafeInteger(value) || value <= 0 || (amount.raw.value != null && Number(amount.raw.value) !== value)) { amount.issue = 'computation-mismatch'; continue; }
+    Object.assign(amount, { value, accepted: true, provenance: 'computed' });
+  }
+  for (const amount of amounts) {
+    if (amount.basis === 'inferred') amount.issue = 'inferred';
+    if (amount.accepted) continue;
+    violations.push(`amounts.${amount.id}:${amount.issue}`);
+    // مبلغی که فقط زمینه است، اگر خوانده نشد، چیزی را مسدود نمی‌کند؛ بقیه می‌پرسند.
+    if (amount.status !== 'context') {
+      ask(`amounts.${amount.id}.value`, 'information', amount.evidence
+        ? `مبلغِ «${amount.evidence}» دقیقاً چقدر است؟`
+        : 'مبلغ این بخش دقیقاً چقدر است؟');
+    }
+  }
+  for (const amount of amounts) {
+    if (amount.scaleAmbiguous) ask(`amounts.${amount.id}.scale`, 'information', `«${amount.evidence}» یعنی ${amount.value.toLocaleString('fa-IR')} تومان؟`, ['بله', 'نه، مبلغ دیگری است']);
+    if (amount.partOf && !byId.has(amount.partOf)) { violations.push(`amounts.${amount.id}:partOf-missing`); amount.partOf = null; }
+  }
+  // کل و اجزا: جمعِ اجزای پذیرفته‌شده نباید از کل بیشتر شود، و نقد + نسیه
+  // باید دقیقاً همان کل باشد.
+  for (const total of amounts.filter((amount) => amount.accepted)) {
+    const parts = amounts.filter((amount) => amount.partOf === total.id && amount.accepted);
+    if (!parts.length) continue;
+    const sum = parts.reduce((value, part) => value + part.value, 0);
+    const split = parts.some((part) => part.role === 'cash-part') && parts.some((part) => part.role === 'credit-part');
+    if (sum > total.value || (split && sum !== total.value)) {
+      violations.push(`amounts.${total.id}:parts-mismatch`);
+      ask(`amounts.${total.id}.parts`, 'information', 'جمع اجزا با مبلغ کل نمی‌خواند؛ کدام عدد درست است؟');
+    }
+  }
+
+  // --- اعداد غیرمبلغ ---------------------------------------------------------
+  const nonAmountNumbers = raw.nonAmountNumbers.slice(0, 12).map((item) => ({
+    value: cleanLabel(item.value, 30), role: pick(item.role, NON_AMOUNT_ROLES, 'other'), evidence: cleanLabel(item.evidence, 200),
+  })).filter((item) => found(item.evidence, textKey));
+  // اگر مدل همان عدد را هم مبلغ دانسته و هم شماره یا تعداد، به هیچ‌کدام اعتماد
+  // نمی‌شود.
+  for (const amount of amounts.filter((item) => item.accepted && item.provenance === 'explicit')) {
+    const clash = nonAmountNumbers.find((number) => evidenceKey(number.evidence) === evidenceKey(amount.evidence) && Number(evidenceKey(number.value).replace(/[^\d]/g, '')) === amount.value);
+    if (clash) {
+      amount.accepted = false;
+      amount.issue = 'also-non-amount';
+      violations.push(`amounts.${amount.id}:also-non-amount`);
+      ask(`amounts.${amount.id}.value`, 'information', `«${amount.evidence}» مبلغ است یا ${clash.role === 'quantity' ? 'تعداد' : 'شماره'}؟`);
+    }
+  }
+
+  // --- تاریخ‌ها --------------------------------------------------------------
+  const dates = raw.dates.slice(0, 8).map((item, index) => {
+    const date = {
+      id: cleanLabel(item.id, 20) || `d${index + 1}`, role: pick(item.role, DATE_ROLES, 'other'),
+      expression: cleanLabel(item.expression, 120), relative: pick(item.relative, RELATIVE_DATES, null),
+      jalali: item.jalali && typeof item.jalali === 'object' ? {
+        year: Number.isInteger(item.jalali.year) ? item.jalali.year : null,
+        month: Number.isInteger(item.jalali.month) ? item.jalali.month : null,
+        day: Number.isInteger(item.jalali.day) ? item.jalali.day : null,
+      } : null,
+      iso: null, accepted: false, issue: null,
+    };
+    if (!found(date.expression, textKey)) { date.issue = 'evidence-not-found'; return date; }
+    const resolved = resolveDate(date, { now, timeZone });
+    return { ...date, iso: resolved.iso, accepted: Boolean(resolved.iso), issue: resolved.issue };
+  });
+  for (const date of dates.filter((item) => !item.accepted)) {
+    violations.push(`dates.${date.id}:${date.issue}`);
+    ask(`dates.${date.role}`, 'information', `تاریخِ «${date.expression || 'این بخش'}» دقیقاً چه روزی است؟`);
+  }
+
+  // --- طرف حساب، جابه‌جایی، موضوع -------------------------------------------
+  const counterparties = raw.counterparties.slice(0, 6).map((item, index) => ({
+    id: cleanLabel(item.id, 20) || `c${index + 1}`, name: cleanLabel(item.name, 100),
+    role: pick(item.role, COUNTERPARTY_ROLES, null), evidence: cleanLabel(item.evidence, 200),
+  })).filter((item) => {
+    // نامی که در متن نیست، ساختهٔ مدل است.
+    const ok = item.name && found(item.name, textKey);
+    if (!ok) violations.push(`counterparties.${item.id}:name-not-found`);
+    return ok;
+  });
+
+  const movements = raw.movements.slice(0, 12).map((item, index) => ({
+    id: cleanLabel(item.id, 20) || `m${index + 1}`, amountRef: cleanLabel(item.amountRef, 20),
+    direction: pick(item.direction, MOVEMENT_DIRECTIONS, 'none'),
+    from: { kind: pick(item.from?.kind, ENDPOINT_KINDS, 'unknown'), name: item.from?.name ? cleanLabel(item.from.name, 80) : null },
+    to: { kind: pick(item.to?.kind, ENDPOINT_KINDS, 'unknown'), name: item.to?.name ? cleanLabel(item.to.name, 80) : null },
+    evidence: cleanLabel(item.evidence, 300),
+  })).filter((item) => {
+    if (!byId.has(item.amountRef)) { violations.push(`movements.${item.id}:amount-missing`); return false; }
+    // نام بانک یا شخصی که در متن نیست، مقصد ساختگی است؛ نامش حذف می‌شود و
+    // انتخاب حساب پرسیده می‌شود.
+    for (const side of ['from', 'to']) {
+      if (item[side].name && !found(item[side].name, textKey)) { violations.push(`movements.${item.id}.${side}:name-not-found`); item[side].name = null; }
+    }
+    return true;
+  });
+
+  const subject = {
+    what: raw.subject?.what ? cleanLabel(raw.subject.what, 120) : null,
+    kind: pick(raw.subject?.kind, SUBJECT_KINDS, null),
+    use: pick(raw.subject?.use, SUBJECT_USES, 'unknown'),
+    delivered: pick(raw.subject?.delivered, DELIVERY_STATES, 'unknown'),
+    usefulLifeMonths: Number.isInteger(raw.subject?.usefulLifeMonths) && raw.subject.usefulLifeMonths > 0 ? raw.subject.usefulLifeMonths : null,
+    evidence: raw.subject?.evidence ? cleanLabel(raw.subject.evidence, 300) : null,
+  };
+  // «برای فروش نیست» یا «عمر مفیدش سه سال است» فقط با شاهد پذیرفته می‌شود.
+  if (subject.evidence && !found(subject.evidence, textKey)) {
+    violations.push('subject:evidence-not-found');
+    subject.use = 'unknown';
+    subject.usefulLifeMonths = null;
+    subject.evidence = null;
+  }
+  if (!subject.evidence && (subject.use !== 'unknown' || subject.usefulLifeMonths)) {
+    violations.push('subject:claims-without-evidence');
+    subject.use = 'unknown';
+    subject.usefulLifeMonths = null;
+  }
+
+  const conditions = raw.conditions.slice(0, 8).map((item) => ({
+    kind: pick(item.kind, CONDITION_KINDS, 'condition'), text: cleanLabel(item.text, 200),
+    affects: (item.affects || []).map((ref) => cleanLabel(ref, 20)).filter((ref) => byId.has(ref)),
+    evidence: cleanLabel(item.evidence, 300),
+  })).filter((item) => {
+    const ok = found(item.evidence, textKey);
+    if (!ok) violations.push('conditions:evidence-not-found');
+    return ok;
+  });
+  // نفی‌ای که مبلغی را «پرداخت‌نشده» می‌کند بر جابه‌جاییِ همان مبلغ مقدم است:
+  // «خریدیم ولی هنوز پولش رو ندادیم» خروج وجه نیست.
+  for (const condition of conditions.filter((item) => item.kind === 'negation')) {
+    for (const ref of condition.affects) {
+      for (const movement of movements.filter((item) => item.amountRef === ref && ['in', 'out'].includes(item.direction))) {
+        const amount = byId.get(ref);
+        if (amount?.status === 'done') {
+          violations.push(`movements.${movement.id}:negated`);
+          ask(`movements.${movement.id}.done`, 'information', `«${amount.evidence}» واقعاً پرداخت یا دریافت شده یا هنوز نه؟`, ['انجام شده', 'هنوز انجام نشده']);
+        }
+      }
+    }
+  }
+
+  // --- ابهام‌های خودِ مدل ----------------------------------------------------
+  for (const item of raw.ambiguities.slice(0, 8)) {
+    const field = cleanLabel(item.field, 80);
+    const question = cleanLabel(item.question, 200);
+    if (!field || !question) continue;
+    ask(field, pick(item.kind, AMBIGUITY_KINDS, 'judgment'), question, (item.options || []).slice(0, 5).map((option) => cleanLabel(option, 60)).filter(Boolean), 'model');
+  }
+
+  return {
+    ok: true,
+    violations,
+    understanding: {
+      version: UNDERSTANDING_VERSION,
+      event: {
+        kind: pick(raw.event?.kind, UNDERSTANDING_EVENT_KINDS, 'other'),
+        description: cleanLabel(raw.event?.description, 200),
+        status: pick(raw.event?.status, EVENT_STATUSES, 'done'),
+      },
+      amounts: amounts.map(({ raw: _raw, ...amount }) => amount),
+      nonAmountNumbers, dates, counterparties, movements, subject, conditions,
+      ambiguities,
+    },
+  };
+}
