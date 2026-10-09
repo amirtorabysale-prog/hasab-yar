@@ -341,7 +341,7 @@ export async function answerUnderstandingCase(id, incoming = {}, options = {}) {
     const reread = Boolean(question.needsReread);
     needsReread ||= reread && answers[field]?.value !== value;
     answers[field] = {
-      value: question.picker === 'amount' ? Number(value) : value, valueId, freeText: answer?.freeText ? String(answer.freeText).slice(0, 200) : undefined,
+      value: question.picker === 'amount' ? Number(value) : typeof value === 'string' ? value.slice(0, 500) : value, valueId, freeText: answer?.freeText ? String(answer.freeText).slice(0, 200) : undefined,
       question: question.text, picker: question.picker, reread, answeredAt: new Date().toISOString(), by: currentWorkspace()?.userId || null,
     };
   }

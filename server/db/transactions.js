@@ -531,8 +531,10 @@ export function insertTransactions(payload) {
   try {
     // Public transaction writes may describe review metadata, but cannot forge an
     // internal restore link, allocation status or bypass the accounting journal.
+    // `factSource` فقط از پروندهٔ فهم رویداد روی سرور می‌آید؛ از بیرون پذیرفته
+    // نمی‌شود، وگرنه یک درخواست می‌توانست کنترل‌های الگویی قضاوت را خاموش کند.
     const transactions = (payload.transactions || []).map((item) => ({
-      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false, capitalFlow: '',
+      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false, capitalFlow: '', factSource: undefined,
     }));
     const ids = insertTransactionRows({ ...payload, transactions, fromUtterance: true });
     db.exec('COMMIT');
