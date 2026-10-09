@@ -23,6 +23,7 @@
 import { classifyCategory } from './categoryRules.js';
 import { detectBank } from './banks.js';
 import { normalizePersian } from './normalize.js';
+import { persianMonthRange, todayPersian } from './persianDate.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -49,6 +50,11 @@ const ADJUSTING_CUE = /ذخیره\s*(?:مرخصی|سنوات|مزایا|مطال
 /** پولِ خدمتی که پیشاپیش آمده. */
 const UPFRONT = /از\s*اول|یک\s*جا|یکجا|پیش\s*پیش|پیشاپیش|جلوتر|کل\s*مبلغ/;
 const SERVICE_DONE = /انجام\s*(?:دادیم|دادم|شد)|(?:تموم|تمام)\s*(?:کردیم|شد)|تحویل\s*دادیم/;
+/** ماهیتِ هر مبلغ از شاهدِ خودش، نه از نوعِ کل رویداد. */
+const REFUNDABLE_WORDS = /ودیعه|رهن|سپرده|تضمین|حسن\s*انجام|قرض\s*الحسنه/;
+const ADVANCE_WORDS = /بیعانه|پیش\s*پرداخت|پیش\s*دریافت|علی[\s‌]*الحساب/;
+const THIS_MONTH_WORDS = /(?:این|همین)\s*ماه|ماه\s*جاری/;
+const PARTY_TITLE = /آقای|خانم|شرکت|دکتر|مهندس|حاج|فروشگاه|موسسه|مؤسسه|کارخانه/;
 
 /**
  * نوع رویداد → هدف دریافت یا پرداخت، همان واژگان موتور تصمیم.
@@ -131,13 +137,34 @@ function dateFor(understanding, roles) {
  * آورده حسابِ خودِ ماست و کارت شخص برایش ساخته نمی‌شود. نامِ سمتِ دیگرِ
  * جابه‌جایی — هر نوعی که مدل گفته باشد — اولین نشانه است.
  */
+/** بندِ یک شاهد در متنِ کامل: تکه‌ای میان دو نشانهٔ جداکننده. */
+function clauseOf(said, evidence) {
+  const key = normalizePersian(evidence || '').trim();
+  const at = key ? said.indexOf(key) : -1;
+  if (at < 0) return '';
+  const separator = /[.،,؛;!؟?\n:]/;
+  let start = at;
+  while (start > 0 && !separator.test(said[start - 1])) start -= 1;
+  let end = at + key.length;
+  while (end < said.length && !separator.test(said[end])) end += 1;
+  return said.slice(start, end);
+}
+
+function monthOf(iso) {
+  const day = todayPersian(new Date(iso));
+  return persianMonthRange(day.year, day.month);
+}
+
 function counterpartyFor(understanding, movement, amount) {
   const loan = ['loan-received', 'loan-repayment'].includes(understanding.event.kind);
-  const pool = loan ? understanding.counterparties : understanding.counterparties.filter((item) => !detectBank(item.name));
+  const pool = loan ? understanding.counterparties : understanding.counterparties.filter((item) => !detectBank(item.name) && item.role !== 'bank');
   const named = (name) => name && pool.find((item) => item.name === name || name.includes(item.name) || item.name.includes(name));
   const side = movement ? (movement.direction === 'in' ? movement.from : movement.to) : null;
   const bySide = side?.name ? named(side.name) : null;
   if (bySide) return bySide;
+  // «شرکت آفتاب ۶ میلیون واریز کرد … ۲ میلیون به شرکت پاکیزه دادیم»: وقتی جابه‌جایی
+  // نامِ خاصی دارد که در فهرست نیست، تنها نامِ فهرست جایش نمی‌نشیند.
+  if (side?.name && PARTY_TITLE.test(side.name)) return null;
   // شاهدهای همین پول: خودِ مبلغ، جابه‌جایی‌اش، و کل یا بدهیِ قبلی‌ای که این مبلغ
   // جزء آن است. «جلسه با حسابرس» در جملهٔ اضافی، طرف حسابِ پرداخت به قیاسی نیست.
   const parent = understanding.amounts.find((item) => item.id === amount?.partOf);
@@ -267,7 +294,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const label = amount.evidence || amount.role;
     if (retracted.has(amount.id)) { notes.push({ amountRef: amount.id, kind: 'retracted', text: `«${label}» در همان گفته اصلاح شد و کنار گذاشته شد.` }); continue; }
     if (amount.status === 'context') {
-      if (amount.role === 'prior-balance') notes.push({ amountRef: amount.id, kind: 'context', text: `${money(amount.value)} تومان بدهی یا طلبِ قبلی است؛ دوباره ثبت نمی‌شود.` });
+      if (amount.role === 'prior-balance' && amount.accepted) notes.push({ amountRef: amount.id, kind: 'context', text: `${money(amount.value)} تومان بدهی یا طلبِ قبلی است؛ دوباره ثبت نمی‌شود.` });
       continue;
     }
     if (amount.status === 'future') { notes.push({ amountRef: amount.id, kind: 'future', text: `«${label}» هنوز انجام نشده؛ تا انجام نشود سندی ندارد.` }); continue; }
@@ -394,7 +421,19 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // درآمد شد. آغاز دوره حدس زده نمی‌شود؛ پخشش با حسابدار است.
     const serviceUpfront = type === 'income' && facts.subject.kind === 'service' && !coverageStart
       && (facts.nonAmountNumbers || []).some((item) => item.role === 'duration') && UPFRONT.test(said) && !SERVICE_DONE.test(said);
-    const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' } : serviceUpfront ? { receiptPurpose: 'advance' } : PURPOSE_BY_KIND[facts.event.kind] || {};
+    // «۳۰ میلیون ودیعه … ۶ میلیون اجارهٔ همین ماه»: ماهیتِ هر مبلغ از شاهدِ خودش.
+    // نوعِ کل رویداد («ودیعه») به هر دو می‌رسید و اجاره ودیعه می‌شد؛ در گفتهٔ
+    // دیگری ودیعه اجاره می‌شد (آزمون بازبین و گزارش مالک محصول، مهر ۱۴۰۵).
+    const own = normalizePersian(amount.evidence || '');
+    const refundableHere = REFUNDABLE_WORDS.test(own) || (amount.role === 'deposit' && !ADVANCE_WORDS.test(own));
+    const depositSibling = amounts.some((other) => other !== amount && other.accepted && other.partOf === amount.partOf
+      && (other.role === 'deposit' || REFUNDABLE_WORDS.test(normalizePersian(other.evidence || ''))));
+    const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' }
+      : type === 'expense' && refundableHere ? { paymentPurpose: 'deposit', refundable: true }
+        : ADVANCE_WORDS.test(own) ? (type === 'expense' ? { paymentPurpose: 'advance' } : { receiptPurpose: 'advance' })
+          : serviceUpfront ? { receiptPurpose: 'advance' }
+            : type === 'expense' && depositSibling ? { paymentPurpose: 'expense', refundable: false }
+              : PURPOSE_BY_KIND[facts.event.kind] || {};
     // کالای ماندگار برای استفادهٔ خودمان، استفادهٔ بلندمدت است؛ حد سرمایه‌ای دفتر
     // می‌گوید دارایی است یا هزینه. آزمون زنده (V26): دستگاه کپی ۴۵ میلیونی هزینه شد.
     const intendedUse = (facts.subject.kind === 'asset' && facts.subject.use === 'internal' ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use])
@@ -412,8 +451,22 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       continue;
     }
 
+    // دسته هم اول از شاهدِ خودِ مبلغ و بندِ آن، و فقط اگر چیزی نگفتند از شرحِ کل.
+    const clause = clauseOf(said, amount.evidence);
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
-    const category = classifyCategory(describe, type).category;
+    const category = [amount.evidence, clause].map((part) => (part ? classifyCategory(part, type) : null)).find((result) => result?.matched)?.category
+      || classifyCategory(describe, type).category;
+    // «۶ میلیون اجارهٔ همین ماه»: پوششی که در ماهِ پرداخت تمام می‌شود هزینهٔ همین
+    // دوره است. برای درآمد، پوششِ درونِ همین ماه چیزی را به بعد نمی‌برد.
+    const paidMonth = paymentDate ? monthOf(paymentDate) : null;
+    const inPaidMonth = (iso) => Boolean(iso && paidMonth && Date.parse(iso) >= Date.parse(paidMonth.from) && Date.parse(iso) <= Date.parse(paidMonth.to));
+    let periodStart = coverageStart;
+    let periodEnd = coverageEnd;
+    if (!periodStart && !periodEnd && paidMonth && type === 'expense' && movement.direction !== 'none' && THIS_MONTH_WORDS.test(own + ' ' + clause)) {
+      periodStart = paidMonth.from;
+      periodEnd = paidMonth.to;
+    }
+    if (type === 'income' && inPaidMonth(periodStart) && (!periodEnd || inPaidMonth(periodEnd))) { periodStart = null; periodEnd = null; }
     const item = {
       amount: amount.value, type, category, rawText: transcript, source, occurredAt: paymentDate,
       accountId, contactId: contactId || null, contactName: counterparty?.name || '',
@@ -423,7 +476,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       unpaidSignal: movement.direction === 'none',
       dueAt: movement.direction === 'none' ? dueAt : null,
       intendedUse, ...purposes,
-      servicePeriodStart: coverageStart, servicePeriodEnd: coverageEnd,
+      servicePeriodStart: periodStart, servicePeriodEnd: periodEnd,
       deliveryDate: deliveryDate || (facts.subject.delivered === 'yes' ? paymentDate : null),
       amountScaleAmbiguous: Boolean(amount.scaleAmbiguous),
       eventNature: 'new', factSource: 'understanding', userConfirmed: true, needsReview: false, reviewReasons: [],

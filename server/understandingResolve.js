@@ -59,7 +59,8 @@ function resolveEndpoint(endpoint, accounts) {
     return fund ? { status: 'resolved', accountId: fund.id, label: fund.name } : { status: 'ambiguous', accountId: null };
   }
   if (endpoint.kind === 'bank') {
-    const bank = endpoint.name ? detectBank(endpoint.name) : null;
+    // مدل خودش گفته این سمت بانک است؛ همان نشانه برای نامِ کوتاهی مثل «سامان» کافی است.
+    const bank = endpoint.name ? detectBank(endpoint.name) || detectBank(`بانک ${endpoint.name}`) : null;
     const banks = operational.filter((account) => account.kind === 'bank');
     if (bank) {
       const matches = banks.filter((account) => account.bankId === bank.bankId);

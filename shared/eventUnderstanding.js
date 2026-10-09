@@ -124,6 +124,22 @@ const NOT_YET = /قرار|خواه|بعدا|بعداً|هنوز|اگر|اگه|م
  */
 const BOOK_CORRECTION = /اشتباه\S*[^.،؛!؟]{0,40}(?:ثبت|منظور|برده)\s*شده|جا\s*افتاده|تعدیل(?:ات)?\s*سنواتی|سند\s*(?:اصلاحی|تعدیل)|(?:کمتر|بیشتر)\s*محاسبه\s*شده|یادم\s*رفته\s*بود|(?:اصلاحش|درستش)\s*کن/;
 const THIS_MONTH = /^(?:این|همین)\s*ماه$|^ماه\s*جاری$/;
+/** واژهٔ نسبیِ خودِ عبارت؛ ترتیب مهم است: «پس‌فردا» پیش از «فردا». */
+const RELATIVE_WORDS = [
+  [/پس[\s‌]*فردا/, 'day-after-tomorrow'], [/پریروز/, 'day-before-yesterday'], [/دیروز/, 'yesterday'],
+  [/امروز/, 'today'], [/(?:^|[\s‌])فردا/, 'tomorrow'],
+];
+/** بندی که پرداختش هنوز نیامده: زمان آینده، قرار، یا شرط. */
+const FUTURE_CLAUSE = /فردا|(?:هفته|ماه|سال)\s*(?:بعد|آینده|دیگه|دیگر)|(?:^|\s)بعد(?:ا|اً)(?=$|\s)|قرار(?:ه|\s*است)|(?:^|\s)خواه(?:یم|ند|د)(?=$|\s)|(?:^|\s)می[\s‌]*(?:دهیم|دیم|دهند|دن|پردازیم|پردازند|ریزیم|ریزند|ریزن|گیریم|گیرند|کنیم|کنند|کنن)(?=$|[\s.،؛!؟])/;
+const CONDITION_CLAUSE = /(?:^|\s)(?:اگر|اگه)(?=$|\s)|در\s*صورت/;
+const DONE_CLAUSE = /(?:^|\s)(?:کردیم|کردم|کرد|کردند|کردن|شد|شده|دادیم|دادم|داد|دادند|دادن|گرفتیم|گرفتم|گرفت|گرفتند|ریختیم|ریختم|ریخت|ریختند|زدیم|زدم|زد|زدند|کشیدیم|کشیدن|خریدیم|خریدم|فروختیم|فروختم|رسید|آمد|اومد)(?=$|[\s.،؛!؟])/;
+/** فعلِ سوم‌شخصِ واریز: «شرکت آفتاب ... به ملت واریز کرد» یعنی پول آمد. */
+const THEIR_DEPOSIT = /(?:واریز|پرداخت)\s*(?:کرد|کردند|کردن)(?=$|[\s.،؛!؟])|(?:^|\s)(?:ریخت|ریختند|ریختن|زد|زدند|زدن|داد|دادند|دادن)(?=$|[\s.،؛!؟])/;
+const OUR_PAYMENT = /(?:^|\s)(?:کردیم|دادیم|ریختیم|زدیم|کردم|دادم|ریختم|زدم|پرداختیم)(?=$|[\s.،؛!؟])/;
+/** نفیِ پرداخت — نه نفیِ ماهیت. «ودیعه هزینه نیست» پرداخت را نفی نمی‌کند. */
+const PAYMENT_NEGATION = /(?:پرداخت|واریز|تسویه|دریافت)\s*ن(?:کرده|کردیم|کردم|کرد|کردند|شده|شد)|(?:^|\s)ن(?:دادیم|دادم|داده|دادن|دادند|گرفتیم|گرفتم|گرفته|گرفتن|ریختیم|ریخته|زدیم|زده)|هنوز[^.،؛]{0,25}(?:پول|پرداخت|واریز|نداد|نگرفت)|پولی\s*(?:هم\s*)?ن/;
+/** نامِ کسی یا جایی که بانک نیست، حتی اگر نامِ کوتاهِ یک بانک در آن باشد. */
+const PARTY_TITLE = /آقای|خانم|شرکت|دکتر|مهندس|حاج|فروشگاه|موسسه|مؤسسه|کارخانه/;
 
 function persianMonthEnd(year, month, timeZone) {
   const next = month === 12 ? persianToISO(year + 1, 1, 1, timeZone) : persianToISO(year, month + 1, 1, timeZone);
@@ -301,7 +317,7 @@ function readEvidenceAmounts(evidence) {
     // «۱۰۰۰۰ عدد پیچ» عدد بزرگ است ولی تعداد است.
     const counted = !toman && !rial && COUNT_NOUN.test(text.slice(span.end));
     return {
-      amount: span.amount, rial,
+      amount: span.amount, rial, toman,
       colloquial: span.amount < 1_000 && !/\d|هزار|میلیون|میلیارد/.test(span.raw) && toman,
       cue: !counted && (toman || rial || scaled || grouped || span.amount >= 10_000),
     };
@@ -326,11 +342,13 @@ function readEvidenceAmounts(evidence) {
  * ساخته نمی‌شود.
  */
 const MODEL_UNITS = [1, 1_000, 1_000_000, 1_000_000_000];
-function verifyExplicitAmount(amount, evidence) {
+function verifyExplicitAmount(amount, evidence, unitHint = null) {
   const claimed = Number(amount.value);
   const reads = readEvidenceAmounts(evidence);
   const candidates = reads.filter((read) => read.cue || read.colloquial).map((read) => {
-    const rial = read.rial || amount.currency === 'rial';
+    // واحد را متن می‌گوید، نه برچسبِ مدل: «۱۲ میلیون تومان» با برچسب ریال، ده برابر
+    // کوچک می‌شد (گزارش بازبین، مهر ۱۴۰۵).
+    const rial = read.rial || (!read.toman && unitHint === 'rial');
     return { value: read.colloquial ? read.amount * 1_000 : rial ? Math.round(read.amount / 10) : read.amount, raw: read.amount, scaleAmbiguous: read.colloquial };
   });
   if (!candidates.length) return null;
@@ -427,7 +445,11 @@ function resolveDate(date, { now, timeZone }) {
       : jalaliIso({ year: null, month: spoken.month, day: end ? null : (spoken.day ?? 1) }, end ? 'coverage-end' : date.role, now, timeZone);
     return { iso, issue: iso ? null : 'unresolved' };
   }
-  const fromRelative = date.relative ? relativeIso(date.relative, now, timeZone) : null;
+  // «دیروز» با برچسبِ «امروز»: واژهٔ خودِ عبارت حرف آخر است (گزارش بازبین، مهر ۱۴۰۵).
+  const expressed = normalizePersian(date.expression || '');
+  const saidRelative = RELATIVE_WORDS.find(([pattern]) => pattern.test(expressed))?.[1] || null;
+  const relative = saidRelative || date.relative;
+  const fromRelative = relative ? relativeIso(relative, now, timeZone) : null;
   const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone) : null;
   const mention = date.expression ? extractDateMention(date.expression, { now, timeZone, preferPast: PAST_DATE_ROLES.has(date.role) }) : null;
   const candidates = [fromRelative, jalali].filter(Boolean);
@@ -459,7 +481,7 @@ const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fa
  *   متناقض): همان برداشت پذیرفته نمی‌شود و یک ابهامِ «پرسیدنی» جایش می‌نشیند.
  *   بقیهٔ فهم سالم می‌ماند، ولی ثبت تا جواب آن سؤال ممکن نیست.
  */
-export function validateUnderstanding(raw, { text = '', now = new Date(), timeZone = 'Asia/Tehran' } = {}) {
+export function validateUnderstanding(raw, { text = '', now = new Date(), timeZone = 'Asia/Tehran', ledgerBanks = [] } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, violations: ['payload'], understanding: null };
   const structural = structuralViolations(raw);
   const shape = ['event', 'amounts', 'nonAmountNumbers', 'dates', 'counterparties', 'movements', 'subject', 'conditions', 'ambiguities']
@@ -468,6 +490,36 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   if (structural.length || shape.length) return { ok: false, violations: [...structural, ...shape], understanding: null };
 
   const textKey = evidenceKey(text);
+  // واحدِ پولِ هر شاهد: واژهٔ پس از آن در خودِ جمله، و اگر نبود، تنها واحدی که
+  // جمله گفته. برچسبِ ریالِ مدل فقط وقتی پذیرفته است که جمله جز ریال واحدی نگفته باشد.
+  const sentence = normalizePersian(text);
+  const sentenceUnits = { rial: /ریال/.test(sentence), toman: /تومان|تومن/.test(sentence) };
+  const unitAfter = (evidence) => {
+    const key = normalizePersian(evidence || '').trim();
+    const at = key ? sentence.indexOf(key) : -1;
+    if (at < 0) return null;
+    const after = sentence.slice(at + key.length, at + key.length + 14);
+    return /^\s*ریال/.test(after) ? 'rial' : /^\s*(?:تومان|تومن)/.test(after) ? 'toman' : null;
+  };
+  const unitHintFor = (part, rawAmount) => unitAfter(part)
+    || (rawAmount?.currency === 'rial' && sentenceUnits.rial && !sentenceUnits.toman ? 'rial' : null);
+  // بندِ یک شاهد: تکه‌ای از جمله میان دو مرز که شاهد در آن است. دونقطه مرز نیست —
+  // «پرداخت کردیم: ۳۰ ودیعه و ۶ اجاره» توضیحِ همان پرداخت است. «و» پیش از عدد مرز
+  // است: «۹ میلیون واریز کردند و ۱۸ میلیون را ماه بعد می‌دهند» دو بند است.
+  const boundedBy = (evidence, boundary) => {
+    const key = normalizePersian(evidence || '').trim();
+    const at = key ? sentence.indexOf(key) : -1;
+    if (at < 0) return '';
+    let start = 0;
+    let end = sentence.length;
+    for (const match of sentence.matchAll(boundary)) {
+      if (match.index + match[0].length <= at) start = match.index + match[0].length;
+      else if (match.index >= at + key.length) { end = match.index; break; }
+    }
+    return sentence.slice(start, end);
+  };
+  const clauseOf = (evidence) => boundedBy(evidence, /[.،,؛;!؟?\n]|\s+و\s+(?=\d)|\s+(?:ولی|اما)\s+/g);
+  const sentenceOf = (evidence) => boundedBy(evidence, /[.؛;!؟?\n]/g);
   const violations = [];
   const ambiguities = [];
   const ask = (field, kind, question, options = [], source = 'validator') => {
@@ -500,7 +552,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (amount.basis === 'explicit') {
       if (!found(amount.evidence, textKey)) { amount.issue = 'evidence-not-found'; continue; }
       // عدد از یک تکهٔ پیوسته خوانده می‌شود، نه از تکه‌های دوخته‌شده.
-      const verified = segments(amount.evidence).map((part) => verifyExplicitAmount(amount.raw, part)).find(Boolean) || null;
+      const verified = segments(amount.evidence).map((part) => verifyExplicitAmount(amount.raw, part, unitHintFor(part, amount.raw))).find(Boolean) || null;
       if (!verified) { amount.issue = amount.raw.value == null ? 'value-missing' : 'not-in-evidence'; continue; }
       Object.assign(amount, { value: verified.value, scaleAmbiguous: verified.scaleAmbiguous, accepted: true, provenance: 'explicit' });
     }
@@ -780,7 +832,52 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     eventKind = 'correction';
   }
   const loanEvent = ['loan-received', 'loan-repayment'].includes(eventKind);
-  const isBank = (name) => Boolean(name && detectBank(name));
+  // نامِ کوتاهِ بانکی که همین دفتر حسابش را دارد هم بانک است: «۹ میلیون به سامان
+  // واریز کردند». «سامان» نامِ آدم هم هست، پس فقط وقتی دفتر حسابِ سامان دارد و
+  // عنوانی مثل «آقای» یا «شرکت» کنارش نیست (آزمون بازبین، مهر ۱۴۰۵).
+  const isBank = (name) => {
+    if (!name) return false;
+    if (detectBank(name)) return true;
+    if (PARTY_TITLE.test(name)) return false;
+    const cued = detectBank(`بانک ${name}`);
+    return Boolean(cued && ledgerBanks.includes(cued.bankId));
+  };
+  // بانکِ خودمان طرف حساب نیست، جز در وام.
+  if (!loanEvent) {
+    for (const party of counterparties.filter((item) => isBank(item.name) && item.role !== 'bank')) {
+      party.role = 'bank';
+      violations.push(`counterparties.${party.id}:our-bank`);
+    }
+  }
+  // جهت از فعلِ جمله. «شرکت آفتاب ۶ میلیون به ملت واریز کرد»: مدل نوشت پول از
+  // شرکت آفتاب «رفت» به ملت. فعلِ سوم‌شخصِ واریز با مقصدِ بانکِ ما یعنی پول آمد؛
+  // فعلِ اول‌شخص («پرداخت کردیم») با مبدأ بانکِ ما یعنی پول رفت.
+  const isParty = (side) => Boolean(side?.name) && !isBank(side.name) && !/صندوق|تنخواه/.test(side.name);
+  for (const movement of movements.filter((item) => ['in', 'out'].includes(item.direction))) {
+    const clause = clauseOf(byId.get(movement.amountRef)?.evidence) || clauseOf(movement.evidence);
+    if (!clause) continue;
+    const theirs = THEIR_DEPOSIT.test(clause) && !OUR_PAYMENT.test(clause);
+    const ours = OUR_PAYMENT.test(clause) && !THEIR_DEPOSIT.test(clause);
+    if (movement.direction === 'out' && isParty(movement.from) && isBank(movement.to.name) && theirs) {
+      Object.assign(movement, { direction: 'in', from: { kind: 'counterparty', name: movement.from.name }, to: { kind: 'bank', name: movement.to.name } });
+      violations.push(`movements.${movement.id}:in-by-verb`);
+    } else if (movement.direction === 'in' && isParty(movement.to) && isBank(movement.from.name) && ours) {
+      Object.assign(movement, { direction: 'out', from: { kind: 'bank', name: movement.from.name }, to: { kind: 'counterparty', name: movement.to.name } });
+      violations.push(`movements.${movement.id}:out-by-verb`);
+    }
+  }
+  // طرف حسابی که مدل فقط در جابه‌جایی نام برد، در فهرست نام‌ها هم هست؛ بدونش تنها
+  // نامِ فهرست جای او می‌نشست و دو معاملهٔ جدا قاطی می‌شد (آزمون بازبین، مهر ۱۴۰۵).
+  for (const movement of movements) {
+    for (const side of ['from', 'to']) {
+      const name = movement[side]?.name;
+      // فقط نامِ خاص («شرکت آفتاب»، «آقای کریمی»)، نه نقشی مثل «صاحبخانه».
+      if (!isParty(movement[side]) || !PARTY_TITLE.test(name) || !found(name, textKey)) continue;
+      if (counterparties.some((item) => item.name === name || item.name.includes(name) || name.includes(item.name))) continue;
+      counterparties.push({ id: `c-${movement.id}-${side}`, name: cleanLabel(name, 100), role: 'other', evidence: cleanLabel(name, 200) });
+      violations.push(`counterparties:added-from-${movement.id}`);
+    }
+  }
   const people = counterparties.filter((item) => !isBank(item.name));
   for (const movement of movements) {
     // «تنخواه» فقط وقتی تنخواه است که در جمله گفته شده باشد؛ «صندوق» صندوق است.
@@ -916,9 +1013,21 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     amount.status = 'done';
     violations.push(`amounts.${amount.id}:done-in-speech`);
   }
+  // «اگر تأیید کنیم، فردا ۱۵ میلیون بیعانه می‌دهیم»: مبلغی که مدل «انجام‌شده»
+  // نامید ولی بندِ خودش آینده یا شرطی است و فعلِ انجام‌شده ندارد، امروز ثبت نمی‌شود
+  // (گزارش بازبین، مهر ۱۴۰۵). پولِ نسیهٔ امروز (بدون جابه‌جایی وجه) دست نمی‌خورد.
+  for (const movement of movements.filter((item) => ['in', 'out', 'transfer'].includes(item.direction))) {
+    const amount = byId.get(movement.amountRef);
+    if (!amount?.accepted || amount.status !== 'done' || becameObligation.has(amount.id) || amount.role === 'credit-part') continue;
+    // «پس می‌گیریم»، «برمی‌گردانند»: استردادِ آینده است، نه زمانِ همین پرداخت.
+    const clause = (clauseOf(amount.evidence) || clauseOf(movement.evidence)).replace(/پس\s*می[\s‌]*(?:گیریم|گیرند|دهیم|دهند|دیم)|بر\s*می[\s‌]*گردان\S*/g, ' ');
+    if (!clause.trim() || !FUTURE_CLAUSE.test(clause) || DONE_CLAUSE.test(clause)) continue;
+    amount.status = CONDITION_CLAUSE.test(sentenceOf(amount.evidence) || clause) ? 'conditional' : 'future';
+    violations.push(`amounts.${amount.id}:${amount.status}-in-speech`);
+  }
   // نفی‌ای که مبلغی را «پرداخت‌نشده» می‌کند بر جابه‌جاییِ همان مبلغ مقدم است:
   // «خریدیم ولی هنوز پولش رو ندادیم» خروج وجه نیست.
-  for (const condition of conditions.filter((item) => item.kind === 'negation')) {
+  for (const condition of conditions.filter((item) => item.kind === 'negation' && [item.evidence, item.text].some((said) => PAYMENT_NEGATION.test(normalizePersian(said || ''))))) {
     for (const ref of condition.affects) {
       if (becameObligation.has(ref)) continue;
       for (const movement of movements.filter((item) => item.amountRef === ref && ['in', 'out'].includes(item.direction))) {

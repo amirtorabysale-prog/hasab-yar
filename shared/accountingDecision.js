@@ -24,6 +24,14 @@ import {
   EVENT_NATURES, NATURE_EXPLANATIONS, natureAffectsPast, natureNeedsAccountant,
 } from './eventNature.js';
 import { needsJudgment as purchaseNeedsJudgment, needsPurchasePurpose } from './purchasePurpose.js';
+import { persianMonthRange, todayPersian } from './persianDate.js';
+
+function persianMonthOf(iso) {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const day = todayPersian(parsed);
+  return persianMonthRange(day.year, day.month);
+}
 import { judgmentReason } from './moneyPurpose.js';
 
 /**
@@ -451,6 +459,15 @@ export const DEFAULT_POLICIES = Object.freeze([
       // پرداخت بسته می‌شود. با مقایسهٔ اکید، همان جواب صریح نادیده می‌ماند و
       // سیستم باز هم دارایی می‌ساخت.
       if (end && new Date(end).getTime() <= new Date(today).getTime()) {
+        return { treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
+      }
+      // «اجارهٔ همین ماه»: پوششی که در ماهِ پرداخت شروع و تمام می‌شود، چیزی را به
+      // دورهٔ بعد نمی‌برد؛ دارایی‌ساختن و مستهلک‌کردنش در همان ماه فقط سند اضافه است
+      // (آزمون بازبین، مهر ۱۴۰۵: «اجاره هم پیش‌پرداخت ماه‌های آینده نیست»).
+      const paidMonth = facts?.occurredAt ? persianMonthOf(facts.occurredAt) : null;
+      const start = facts?.servicePeriodStart;
+      if (end && paidMonth && new Date(end).getTime() <= new Date(paidMonth.to).getTime()
+        && (!start || new Date(start).getTime() >= new Date(paidMonth.from).getTime())) {
         return { treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
       }
       return {

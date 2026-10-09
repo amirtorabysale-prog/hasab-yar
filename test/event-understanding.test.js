@@ -593,6 +593,101 @@ test('زنده: دارایی برای استفادهٔ خودمان بلندمد
   assert.equal(advance.components[0].item.receiptPurpose, 'advance');
 });
 
+// ---- آزمون بازبین، ۱۷ مهر ۱۴۰۵ — شکاف‌های کنترل و خروجیِ واقعیِ مدل در دفتر آزمایشی
+
+test('بازبین: واحد را متن می‌گوید، «دیروز» را عبارت، و بندِ آینده پرداخت امروز نیست', () => {
+  // تومان با برچسبِ ریالِ مدل ده برابر کوچک نمی‌شود.
+  const mixed = 'مبلغ کل ۳۰۰ میلیون ریال بود؛ ۱۲ میلیون تومان از ملت دادیم.';
+  const toman = validateUnderstanding({ ...blank(), amounts: [amount('a1', 12_000_000, '۱۲ میلیون تومان', { currency: 'rial', role: 'paid-now' })] }, { text: mixed, now: NOW }).understanding;
+  assert.equal(toman.amounts[0].value, 12_000_000);
+  const rial = validateUnderstanding({ ...blank(), amounts: [amount('a1', 300_000_000, '۳۰۰ میلیون ریال', { currency: 'toman' })] }, { text: mixed, now: NOW }).understanding;
+  assert.equal(rial.amounts[0].value, 30_000_000, 'ریالِ گفته‌شده ریال است، هر برچسبی که مدل زده باشد');
+
+  // «دیروز» با برچسبِ today، دیروز است.
+  const said = 'دیروز قبض برق دو میلیون رسید';
+  const dated = validateUnderstanding({ ...blank(), amounts: [amount('a1', 2_000_000, 'دو میلیون')],
+    dates: [{ id: 'd1', role: 'occurrence', expression: 'دیروز', relative: 'today', jalali: { year: null, month: null, day: null } }] }, { text: said, now: NOW }).understanding;
+  assert.equal(fa(dated.dates[0].iso), '1405/7/16');
+
+  // «اگر تأیید کنیم، فردا ۱۵ میلیون بیعانه می‌دهیم» با وضعیتِ done از مدل.
+  const later = 'برای ماه بعد سفارش کالا دادیم؛ اگر تأیید کنیم، فردا ۱۵ میلیون بیعانه می‌دهیم.';
+  const result = plan({ ...blank(), event: { kind: 'advance-paid', description: '', status: 'done' },
+    amounts: [amount('a1', 15_000_000, '۱۵ میلیون بیعانه', { role: 'paid-now' })],
+    movements: [movement('m1', 'a1', 'out', party('bank', 'بانک ملت'), party('counterparty'), 'فردا ۱۵ میلیون بیعانه می‌دهیم')] }, later,
+  { endpoints: { 'm1.from': { status: 'resolved', accountId: 'mellat-1' } } });
+  assert.equal(result.understanding.amounts[0].status, 'conditional');
+  assert.equal(result.plan.components.length, 0);
+});
+
+test('بازبین: «به سامان واریز کردند» بانکِ ماست وقتی دفتر حسابِ سامان دارد', () => {
+  const text = 'کار طراحی برای شرکت آفتاب تمام و امروز تحویل شد. مبلغ قطعی ۲۷ میلیون تومان، بدون مالیات است؛ ۹ میلیون امروز به سامان واریز کردند و ۱۸ میلیون را پانزدهم ماه بعد می‌دهند.';
+  const output = {
+    ...blank(), event: { kind: 'sale', description: '', status: 'done' },
+    amounts: [amount('a1', 27_000_000, 'مبلغ قطعی ۲۷ میلیون تومان'), amount('a2', 9_000_000, '۹ میلیون امروز به سامان واریز کردند', { role: 'received-now', partOf: 'a1' }),
+      amount('a3', 18_000_000, '۱۸ میلیون را پانزدهم ماه بعد می‌دهند', { role: 'future-payment', status: 'future', partOf: 'a1' })],
+    counterparties: [{ id: 'c1', name: 'شرکت آفتاب', role: 'customer', evidence: 'شرکت آفتاب' }, { id: 'c2', name: 'سامان', role: 'other', evidence: 'سامان' }],
+    movements: [movement('m1', 'a2', 'in', party('counterparty', 'سامان'), party('us'), 'به سامان واریز کردند'),
+      movement('m2', 'a3', 'in', party('counterparty', 'شرکت آفتاب'), party('us'), '۱۸ میلیون را پانزدهم ماه بعد می‌دهند')],
+    subject: { ...blank().subject, what: 'کار طراحی', kind: 'service', delivered: 'yes', evidence: 'کار طراحی' },
+  };
+  const { understanding } = validateUnderstanding(output, { text, now: NOW, ledgerBanks: ['saman'] });
+  const m1 = understanding.movements.find((item) => item.id === 'm1');
+  assert.deepEqual([m1.direction, m1.to.kind, m1.to.name, m1.from.name], ['in', 'bank', 'سامان', 'شرکت آفتاب']);
+  assert.equal(understanding.counterparties.find((item) => item.name === 'سامان').role, 'bank');
+  const result = buildUnderstandingPlan(understanding, { transcript: text, now: NOW,
+    resolution: { endpoints: { 'm1.to': { status: 'resolved', accountId: 'saman-1' } }, counterparties: { c1: { status: 'exact', contactId: 'k-aftab', name: 'شرکت آفتاب', candidates: [], balance: 0 } } } });
+  assert.deepEqual(result.components.map((item) => [item.kind, item.amount, item.item.contactName]), [['cash', 9_000_000, 'شرکت آفتاب'], ['obligation', 18_000_000, 'شرکت آفتاب']]);
+  // بی‌حسابِ سامان در دفتر، «سامان» نامِ کسی است و حدس زده نمی‌شود.
+  const unknown = validateUnderstanding(output, { text, now: NOW }).understanding;
+  assert.notEqual(unknown.counterparties.find((item) => item.name === 'سامان').role, 'bank');
+});
+
+test('بازبین: جهتِ پول از فعل جمله؛ دو معاملهٔ جدا طرف حسابشان را قاطی نمی‌کنند', () => {
+  const text = 'امروز شرکت آفتاب ۶ میلیون تومان بابت خدمت انجام‌شده به ملت واریز کرد. جدا از آن، ۲ میلیون تومان از صندوق بابت نظافت امروز به شرکت پاکیزه دادیم. این دو معامله ربطی به هم ندارند.';
+  const { understanding, plan: result } = plan({
+    ...blank(), event: { kind: 'expense', description: '', status: 'done' },
+    amounts: [amount('a1', 6_000_000, '۶ میلیون تومان', { role: 'paid-now' }), amount('a2', 2_000_000, '۲ میلیون تومان', { role: 'paid-now' })],
+    counterparties: [{ id: 'c1', name: 'ملت', role: 'other', evidence: 'ملت' }, { id: 'c2', name: 'شرکت پاکیزه', role: 'other', evidence: 'شرکت پاکیزه' }],
+    movements: [movement('m1', 'a1', 'out', party('bank', 'شرکت آفتاب'), party('counterparty', 'ملت'), ''),
+      movement('m2', 'a2', 'out', party('cash', 'صندوق'), party('counterparty', 'شرکت پاکیزه'), '')],
+  }, text, { endpoints: { 'm1.to': { status: 'resolved', accountId: 'mellat-1' }, 'm2.from': { status: 'resolved', accountId: 'cash' } } });
+  const m1 = understanding.movements.find((item) => item.id === 'm1');
+  assert.deepEqual([m1.direction, m1.from.name, m1.to.name], ['in', 'شرکت آفتاب', 'ملت']);
+  assert.deepEqual(result.components.map((item) => [item.amount, item.item.type, item.item.contactName]),
+    [[6_000_000, 'income', 'شرکت آفتاب'], [2_000_000, 'expense', 'شرکت پاکیزه']]);
+});
+
+test('بازبین: ودیعه ودیعه است و اجارهٔ همین ماه هزینه؛ «هزینه نیست» پرداخت را نفی نمی‌کند', () => {
+  const text = 'امروز ۳۶ میلیون تومان از ملت به شرکت سپهر پرداخت کردیم: ۳۰ میلیون ودیعه است که پایان قرارداد کامل پس می‌گیریم و ۶ میلیون اجاره همین ماه است. ودیعه هزینه نیست و اجاره هم پیش‌پرداخت ماه‌های آینده نیست.';
+  const { plan: result } = plan({
+    ...blank(), event: { kind: 'deposit', description: '', status: 'done' },
+    amounts: [amount('a1', 36_000_000, '۳۶ میلیون تومان'), amount('a2', 30_000_000, '۳۰ میلیون ودیعه', { role: 'deposit', partOf: 'a1' }),
+      amount('a3', 6_000_000, '۶ میلیون اجاره همین ماه', { role: 'other', partOf: 'a1' })],
+    counterparties: [{ id: 'c1', name: 'ملت', role: 'bank', evidence: 'ملت' }, { id: 'c2', name: 'شرکت سپهر', role: 'landlord', evidence: 'شرکت سپهر' }],
+    movements: [movement('m1', 'a1', 'out', party('us'), party('counterparty', 'شرکت سپهر'), ''), movement('m2', 'a2', 'out', party('us'), party('counterparty', 'شرکت سپهر'), ''),
+      movement('m3', 'a3', 'out', party('us'), party('counterparty', 'شرکت سپهر'), '')],
+    conditions: [{ kind: 'negation', text: 'ودیعه هزینه نیست', affects: ['a2'], evidence: 'ودیعه هزینه نیست' },
+      { kind: 'negation', text: 'اجاره پیش‌پرداخت نیست', affects: ['a3'], evidence: 'اجاره هم پیش‌پرداخت ماه‌های آینده نیست' }],
+  }, text, { endpoints: { 'm2.from': { status: 'resolved', accountId: 'mellat-1' }, 'm3.from': { status: 'resolved', accountId: 'mellat-1' } },
+    counterparties: { c2: { status: 'exact', contactId: 'k-sepehr', name: 'شرکت سپهر', candidates: [], balance: 0 } } });
+  assert.ok(!result.questions.some((item) => item.id.endsWith('.done')), result.questions.map((item) => item.text).join(' · '));
+  const deposit = result.components.find((item) => item.amount === 30_000_000).item;
+  const rent = result.components.find((item) => item.amount === 6_000_000).item;
+  assert.deepEqual([deposit.paymentPurpose, deposit.refundable], ['deposit', true]);
+  assert.deepEqual([rent.paymentPurpose, rent.refundable, rent.category], ['expense', false, 'اجاره']);
+  assert.equal(fa(rent.servicePeriodStart), '1405/7/1');
+  assert.equal(fa(rent.servicePeriodEnd), '1405/7/30');
+});
+
+test('بازبین: ماندهٔ قبلیِ بی‌عدد یادداشتِ «۰ تومان» نمی‌سازد', () => {
+  const text = 'دیروز قبض برق همین ماه به مبلغ ۲ میلیون و ۴۰۰ هزار تومان از شرکت برق رسید. هنوز هیچ پولی پرداخت نکرده‌ایم.';
+  const { plan: result } = plan({
+    ...blank(), event: { kind: 'obligation', description: '', status: 'done' },
+    amounts: [amount('a1', 2_400_000, 'به مبلغ ۲ میلیون و ۴۰۰ هزار تومان'), amount('a2', null, 'هنوز هیچ پولی پرداخت نکرده‌ایم', { role: 'prior-balance', status: 'context' })],
+  }, text);
+  assert.ok(!result.notes.some((note) => /۰ تومان/.test(note.text)), result.notes.map((note) => note.text).join(' · '));
+});
+
 test('زنده: سفارش یا قرارِ آینده بدهی نمی‌سازد، حتی با «هنوز پرداخت نکردیم»', () => {
   const text = '۱۲۰ میلیون تومان کالا از شرکت آلفا سفارش دادیم ولی هنوز پرداخت نکردیم';
   const { understanding } = validateUnderstanding({

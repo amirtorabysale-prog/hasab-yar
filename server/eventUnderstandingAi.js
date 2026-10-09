@@ -143,7 +143,10 @@ export async function understandText(database, { text, rereadAnswers = [], now =
   if (!provider) throw fail('کلید سرویس AI روی سرور تنظیم نشده است.', 'UNDERSTANDING_NOT_CONFIGURED');
   const cacheKey = understandingCacheKey({ text, rereadAnswers, model: provider.model });
   const cached = database.prepare('SELECT * FROM understanding_extractions WHERE cache_key=?').get(cacheKey);
-  const validate = (output) => validateUnderstanding(output, { text, now, timeZone });
+  // بانک‌هایی که همین دفتر حسابشان را دارد: «به سامان واریز کردند» بانک است، نه شخص.
+  let ledgerBanks = [];
+  try { ledgerBanks = database.prepare("SELECT DISTINCT bank_id AS bankId FROM accounts WHERE kind='bank' AND active=1 AND bank_id IS NOT NULL").all().map((row) => row.bankId); } catch { /* دفتر بی‌حساب */ }
+  const validate = (output) => validateUnderstanding(output, { text, now, timeZone, ledgerBanks });
   if (cached) {
     const result = validate(JSON.parse(cached.output));
     if (result.ok) return { ...result, raw: JSON.parse(cached.output), model: cached.model, cacheKey, cacheHit: true, usage: { inputTokens: 0, outputTokens: 0 }, latencyMs: 0 };
