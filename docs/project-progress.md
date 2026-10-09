@@ -913,3 +913,12 @@ PR #87 مرج شد؛ در بررسی مستقیم `/api/health`، Production ر�
 ۳. **روشن کردن `shadowMode` روی دفتر واقعی** — بی‌ریسک است و داده‌اش زمان می‌خواهد، پس هرچه زودتر بهتر
 
 مورد سوم مستقل از بقیه است و می‌تواند موازی با فاز ۳ پیش برود.
+
+
+## 2026-10-09 — Workspace UI reorganization
+
+Presentation-only changes: grouped permitted navigation into daily work, accounting/reporting, and office management; added a persistent page/workspace header and mobile menu access on every page. The mobile primary navigation now includes accountant review when authorized. Accounting tools are separated into registered journals (default), trial balance, manual entry, worklist, payroll, and period controls. Panels remain mounted so switching sections does not discard drafts.
+
+Today now labels cash receipts/payments explicitly and always displays available general-ledger income/expense/profit separately, including when totals coincide. This avoids describing collected cash as total sales. Refreshed spacing, RTL navigation, focus indicators, financial metric cards, and small-screen amount layout. Review queue has a clearer heading and process explanation. Server permissions, posting engines, AI calls, API payloads, and financial calculations were not changed.
+
+Validation: production build and 34 targeted tests passed (today experience, ledger summary, experience permissions/switching). Existing summary rendering expectation was updated for the intentionally separate ledger block. Browser could not connect to the local preview (connection refused); visual and live interaction acceptance remains pending. No production deployment or financial test entries were made for this UI change.

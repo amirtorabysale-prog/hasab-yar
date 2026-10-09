@@ -444,9 +444,9 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
 
   const needsAccountant = (items || []).filter((item) => item.route === 'accountant-review').length;
 
-  return <section className="mt-5 rounded-[10px] border border-line bg-surface p-4">
+  return <section className="mx-auto my-5 w-full max-w-[980px] rounded-[16px] border border-line bg-surface p-4 sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="font-bold">صف بررسی</p>
+      <div><p className="text-xs font-bold text-accent">میز بررسی حسابدار</p><h1 className="mt-1 text-xl font-extrabold">صف بررسی</h1><p className="mt-2 text-xs leading-6 text-muted">متن اصلی را بخوانید، اطلاعات لازم را تکمیل کنید و سپس پیشنهاد ثبت را بررسی کنید.</p></div>
       {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-[12px]">
         <span className={`rounded border px-2 py-0.5 font-bold ${ROUTE_STYLE['accountant-review']}`}>نیازمند بررسی: <span className="numbers">{toPersianDigits(needsAccountant)}</span></span>
         <span className={`rounded border px-2 py-0.5 font-bold ${ROUTE_STYLE.confirm}`}>در انتظار تأیید: <span className="numbers">{toPersianDigits(items.length - needsAccountant)}</span></span>
@@ -473,3 +473,4 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
     </div>}
   </section>;
 }
+

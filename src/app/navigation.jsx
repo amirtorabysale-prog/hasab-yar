@@ -19,11 +19,29 @@ export function allowedScreens(access) {
   return Array.isArray(access?.screens) ? access.screens : [];
 }
 
+const NAV_GROUPS = [
+  { label: 'کارهای روزانه', ids: ['today', 'ledger', 'petty-cash'] },
+  { label: 'حسابداری و گزارش', ids: ['review', 'accounting', 'report', 'tax'] },
+  { label: 'مدیریت دفتر', ids: ['firm', 'chart', 'collaboration', 'learning', 'settings'] },
+];
+
+function GroupedNavigation({ access, screen, navigate }) {
+  const screens = allowedScreens(access);
+  const known = new Set(NAV_GROUPS.flatMap((group) => group.ids));
+  const groups = [...NAV_GROUPS, { label: 'سایر بخش‌ها', ids: screens.filter((item) => !known.has(item.id)).map((item) => item.id) }];
+  return <nav aria-label="بخش‌های حساب‌یار" className="workspace-navigation">{groups.map((group) => {
+    const items = group.ids.map((id) => screens.find((item) => item.id === id)).filter(Boolean);
+    if (!items.length) return null;
+    return <div className="nav-group" key={group.label}><p className="nav-group-label">{group.label}</p>{items.map((item) => {
+      const Icon = SCREEN_ICONS[item.icon] || Home;
+      return <button type="button" key={item.id} aria-current={screen === item.id ? 'page' : undefined} onClick={() => navigate(item.id)} className="workspace-nav-item"><Icon size={19} aria-hidden="true" /><span>{item.label}</span>{screen === item.id && <span className="nav-active-dot" aria-hidden="true" />}</button>;
+    })}</div>;
+  })}</nav>;
+}
+
 export function DesktopNav({ screen, navigate, businessName, profileType = 'business', access }) {
-  // میز کار فقط وقتی معنا دارد که کاربر بیش از یک پرونده داشته باشد.
-  const items = allowedScreens(access).map((item) => [item.id, item.label, SCREEN_ICONS[item.icon] || Home]);
   const profile = profileDefinition(profileType);
-  return <aside className="desktop-nav hidden border-l border-line bg-surface px-4 py-6 lg:block"><div className="sticky top-6"><div className="mb-8 border-b border-line pb-5"><p className="text-xl font-extrabold">حساب‌یار</p><p className="mt-1 truncate text-xs text-muted">{businessName || profile.label}</p><p className="mt-1 text-[11px] leading-5 text-muted">دستیار ثبت و مدیریت نقدینگی</p></div><nav className="space-y-1">{items.map(([id, label, Icon]) => <button key={id} onClick={() => navigate(id)} className={`tap flex w-full items-center gap-3 rounded-lg px-3 text-right text-sm font-bold ${screen === id ? 'bg-warn-bg text-accent' : 'text-muted hover:bg-paper hover:text-ink'}`}><Icon size={20} />{label}</button>)}</nav></div></aside>;
+  return <aside className="desktop-nav hidden lg:block"><div className="desktop-nav-inner"><div className="workspace-brand"><span className="brand-mark"><BookOpenCheck size={24} /></span><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">فضای کار مالی شما</p></div></div><div className="workspace-identity"><span className="text-[11px] text-muted">دفتر فعال</span><p className="mt-1 break-words text-sm font-bold">{access?.workspace?.name || businessName || profile.label}</p></div><GroupedNavigation access={access} screen={screen} navigate={navigate} /></div></aside>;
 }
 
 export function InsightRail({ overview = {}, navigate, open = false, setOpen }) {
@@ -32,26 +50,17 @@ export function InsightRail({ overview = {}, navigate, open = false, setOpen }) 
 
 export function BottomNav({ screen, navigate, access }) {
   // فقط صفحه‌های اصلی در نوار پایین جا می‌شوند؛ بقیه در کشو می‌مانند.
-  const items = allowedScreens(access).filter((item) => item.primary).slice(0, 4)
+  const items = allowedScreens(access).filter((item) => item.primary).sort((a, b) => (a.id === 'review' ? -1 : b.id === 'review' ? 1 : 0)).slice(0, 4).sort((a, b) => (a.id === 'today' ? -1 : b.id === 'today' ? 1 : 0))
     .map((item) => ({ id: item.id, label: item.label, icon: SCREEN_ICONS[item.icon] || Home }));
-  return <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex h-[76px] max-w-[640px] items-start justify-around border-t border-line bg-surface px-3 pb-[env(safe-area-inset-bottom)] pt-2 lg:hidden">{items.map((item) => { const Icon = item.icon; const active = screen === item.id; return <button key={item.id} onClick={() => navigate(item.id)} className={`tap flex min-w-20 flex-col items-center justify-center gap-1 rounded-lg text-[12px] font-bold ${active ? 'text-accent' : 'text-muted'}`}><Icon size={21} strokeWidth={active ? 2.6 : 2} />{item.label}</button>; })}</nav>;
+  return <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex h-[76px] max-w-[640px] items-start justify-around border-t border-line bg-surface px-3 pb-[env(safe-area-inset-bottom)] pt-2 lg:hidden">{items.map((item) => { const Icon = item.icon; const active = screen === item.id; return <button key={item.id} aria-current={active ? 'page' : undefined} onClick={() => navigate(item.id)} className={`tap flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg text-[12px] font-bold ${active ? 'text-accent' : 'text-muted'}`}><Icon size={21} strokeWidth={active ? 2.6 : 2} />{item.label}</button>; })}</nav>;
 }
 
-export function Drawer({ profileType = 'business', close, navigate, access }) {
+export function Drawer({ profileType = 'business', close, navigate, access, screen }) {
   const profile = profileDefinition(profileType);
-  return <div className="fixed inset-0 z-[60] bg-ink/35 lg:hidden" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-    <aside className="sheet-in h-full w-[82%] max-w-[330px] bg-paper px-4 py-5 shadow-2xl">
-      <div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">{profile.label} · دستیار نقدینگی</p></div><button onClick={close} className="tap grid place-items-center" aria-label="بستن"><X /></button></div>
-      <div className="mt-8 space-y-2">
-        {/* همان فهرستی که سرور اجازه داده؛ کشو نسخهٔ دوم نمی‌سازد. */}
-        {allowedScreens(access).map((item) => {
-          const Icon = SCREEN_ICONS[item.icon] || Home;
-          return <DrawerItem key={item.id} icon={Icon} label={item.label} onClick={() => navigate(item.id)} />;
-        })}
-      </div>
-      <div className="absolute bottom-6 right-4 left-4 border-t border-line pt-4 text-xs leading-6 text-muted">هیچ مبلغی بدون تأیید تو ثبت نمی‌شود.</div>
+  return <div className="fixed inset-0 z-[60] bg-ink/35 lg:hidden" onKeyDown={(event) => { if (event.key === 'Escape') close(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <aside aria-label="منوی بخش‌ها" className="sheet-in h-full w-[86%] max-w-[340px] overflow-y-auto bg-surface px-4 py-5 shadow-2xl">
+      <div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="mt-1 text-xs text-muted">{access?.workspace?.name || profile.label}</p></div><button autoFocus onClick={close} className="tap grid place-items-center" aria-label="بستن منو"><X /></button></div>
+      <GroupedNavigation access={access} screen={screen} navigate={(id) => { navigate(id); close(); }} />
     </aside>
   </div>;
 }
-
-function DrawerItem({ icon: Icon, label, onClick }) { return <button onClick={onClick} className="tap flex w-full items-center gap-3 rounded-lg px-3 text-right font-bold hover:bg-surface"><Icon size={20} className="text-muted" />{label}</button>; }

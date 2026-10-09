@@ -1,5 +1,5 @@
 import { needsUnquantifiedReview, UNQUANTIFIED_REVIEW_REASON } from '../shared/reviewIntake.js';
-import { Check, RotateCcw, WifiOff } from 'lucide-react';
+import { Check, Menu, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { BottomNav, DesktopNav, Drawer, InsightRail, allowedScreens } from './app/navigation.jsx';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
@@ -1094,6 +1094,7 @@ export default function App() {
       <div className={`app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper ${insightsOpen ? 'insights-open' : ''}`}>
         <DesktopNav screen={screen} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div className="safe-bottom min-w-0 lg:col-start-2">
+          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden"><Menu size={21} /></button><div className="min-w-0"><p className="text-[11px] text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><p className="mt-1 text-sm font-extrabold">{allowedScreens(access).find((item) => item.id === screen)?.label || 'حساب‌یار'}</p></div></div><span className="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-muted">مبالغ به تومان</span></header>
           <Suspense fallback={<ScreenLoading />}>
           {screen === 'today' && (
             <TodayPage
@@ -1125,7 +1126,7 @@ export default function App() {
       </div>
 
       <BottomNav screen={screen} navigate={navigate} access={access} />
-      {drawer && <Drawer profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
+      {drawer && <Drawer screen={screen} profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
       {parseResult && (
         <ConfirmationSheet
           result={parseResult} categories={data.categories} accounts={data.accounts} contacts={data.contacts || []}
@@ -1149,3 +1150,4 @@ export default function App() {
     </div>
   );
 }
+

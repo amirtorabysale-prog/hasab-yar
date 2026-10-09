@@ -39,7 +39,7 @@ test('فروش با ارزش افزوده و پیش‌پرداخت: دریافت
   assert.deepEqual(summary.ledger, { income: 100_000_000, expense: 0, profit: 100_000_000 }, 'دفتر کل: ارزش افزوده درآمد نیست و پیش‌پرداخت هزینه نیست');
 }));
 
-test('کارت امروز اختلاف دفتر کل را نشان می‌دهد و وقتی یکی است ساکت می‌ماند', async () => {
+test('کارت امروز گردش نقد و دفتر کل را حتی با مبالغ برابر جدا نشان می‌دهد', async () => {
   const React = (await import('react')).default;
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { createServer } = await import('vite');
@@ -47,10 +47,14 @@ test('کارت امروز اختلاف دفتر کل را نشان می‌دهد
   try {
     const { SummaryCard } = await vite.ssrLoadModule('/src/features/today/TodayPage.jsx');
     const differs = renderToStaticMarkup(React.createElement(SummaryCard, { summary: { income: 110_000_000, expense: 15_000_000, netCashFlow: 95_000_000, comparison: null, ledger: { income: 100_000_000, expense: 0, profit: 100_000_000 } } }));
-    assert.match(differs, /طبق دفتر کل امروز/);
+    assert.match(differs, /گردش وجه نقد/);
+    assert.match(differs, /دریافت وجه امروز/);
+    assert.match(differs, /عملکرد ثبت‌شده در دفتر کل/);
+    assert.doesNotMatch(differs, /فروش و دریافت/);
     const same = renderToStaticMarkup(React.createElement(SummaryCard, { summary: { income: 5, expense: 2, netCashFlow: 3, comparison: null, ledger: { income: 5, expense: 2, profit: 3 } } }));
-    assert.doesNotMatch(same, /طبق دفتر کل امروز/);
+    assert.match(same, /عملکرد ثبت‌شده در دفتر کل/);
   } finally { await vite.close(); }
 });
 
 test.after(() => removeTempDatabase(databasePath));
+

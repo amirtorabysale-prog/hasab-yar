@@ -4,8 +4,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        paper: '#F5F3ED', surface: '#FFFFFF', ink: '#1C1B19', muted: '#6E6C64',
-        line: '#DDDAD1', income: '#1E5D46', expense: '#A8332A', accent: '#C8622D',
+        paper: '#F4F6F8', surface: '#FFFFFF', ink: '#182B38', muted: '#526573',
+        line: '#DFE6EB', income: '#1E5D46', expense: '#A8332A', accent: '#176E68',
         'warn-bg': '#FDF0E8',
       },
       fontFamily: { vazir: ['Vazirmatn', 'Tahoma', 'sans-serif'] },
