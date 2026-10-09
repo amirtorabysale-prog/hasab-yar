@@ -543,6 +543,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // ۲۰۰ میلیون وام گرفتیم» هر دو را وام دانست.
   const retracted = [];
   const spokenRetractions = [];
+  const replacements = new Map();
   const spoken = normalizePersian(text);
   for (const marker of spoken.matchAll(RETRACT)) {
     const left = extractAmounts(spoken.slice(0, marker.index));
@@ -554,6 +555,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const scale = /میلیارد/.test(first.raw) ? 1_000_000_000 : /میلیون/.test(first.raw) ? 1_000_000 : /هزار/.test(first.raw) ? 1_000 : 1;
     const value = /هزار|میلیون|میلیارد/.test(last.raw) ? last.amount : last.amount * scale;
     spokenRetractions.push(value);
+    replacements.set(value, first.amount);
     const target = amounts.find((item) => item.accepted && item.value === value && !retracted.includes(item.id));
     if (target) { retracted.push(target.id); violations.push(`amounts.${target.id}:retracted-in-speech`); }
   }
@@ -579,6 +581,25 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // مبلغی که شاهدش عددی ندارد ولی عددِ ادعاشده‌اش با مبلغِ پذیرفته‌شده‌ای یکی است،
   // همان مبلغ است؛ جابه‌جایی‌اش به آن منتقل می‌شود و سؤالی نمی‌سازد.
   const sameAs = new Map();
+  // عددِ پس‌گرفته‌ای که مدل پول را روی آن گذاشته بود: پول با عددِ جانشینش رفته
+  // است. آزمون زنده: در «۱۶، نه ۱۸ میلیون» مدل پرداخت از بانک ملت را روی ۱۶ گذاشت،
+  // ۱۸ بی‌جابه‌جایی ماند و «مبلغِ ۱۶، نه ۱۸ میلیون دقیقاً چقدر است؟» پرسیده می‌شد.
+  for (const amount of amounts) {
+    let value = null;
+    if (amount.accepted) {
+      if (!retracted.includes(amount.id)) continue;
+      value = amount.value;
+    } else if (amount.issue === 'not-in-evidence' && amount.status === 'done') {
+      const claimed = Number(amount.raw.value);
+      value = [...replacements.keys()].find((item) => MODEL_UNITS.some((unit) => claimed * unit === item)) ?? null;
+      if (value == null) continue;
+      amount.issue = 'retracted-in-speech';
+      retracted.push(amount.id);
+      violations.push(`amounts.${amount.id}:retracted-in-speech`);
+    } else continue;
+    const successor = amounts.find((item) => item.accepted && !retracted.includes(item.id) && item.value === replacements.get(value));
+    if (successor && !raw.movements.some((item) => item?.amountRef === successor.id)) sameAs.set(amount.id, successor.id);
+  }
   for (const amount of amounts.filter((item) => !item.accepted && ['not-in-evidence', 'value-missing'].includes(item.issue) && item.status === 'done')) {
     const claimed = Number(amount.raw.value);
     if (!(claimed > 0)) continue;
@@ -593,7 +614,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   for (const amount of amounts) {
     if (amount.basis === 'inferred') amount.issue = 'inferred';
     // تکرارِ همان عدد سؤال نمی‌خواهد؛ عددش در مبلغِ نگه‌داشته‌شده هست.
-    if (amount.accepted || amount.issue === 'same-mention') continue;
+    if (amount.accepted || ['same-mention', 'retracted-in-speech'].includes(amount.issue)) continue;
     violations.push(`amounts.${amount.id}:${amount.issue}`);
     // فقط مبلغی که سند می‌سازد می‌پرسد. زمینه، آینده و مشروط ثبت نمی‌شوند؛
     // نامعلوم‌بودن عددشان هیچ سندی را غلط نمی‌کند و سؤالش فقط ثبت را معطل می‌کرد.

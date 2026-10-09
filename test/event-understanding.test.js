@@ -398,6 +398,20 @@ test('زنده: اصلاحِ گفته بر حدسِ مدل مقدم است؛ ج�
   const retracted = invoice.conditions.filter((item) => item.kind === 'correction').flatMap((item) => item.affects);
   assert.ok(!retracted.includes('a3'), '۱۸ پس گرفته نشده');
   assert.equal(invoice.amounts.find((item) => item.id === 'a3').value, 18_000_000);
+  // خروجیِ واقعی مدل برای همین گفته: پرداخت روی ۱۶ِ پس‌گرفته، ۱۸ بی‌جابه‌جایی.
+  const invoiceText = 'فاکتور ۱۴۰۵۷ بابت ۲۵ کارتن روغن برای فروش را ۱۶، نه ۱۸ میلیون از بانک ملت پرداخت کردیم.';
+  const paid = plan({
+    ...blank(), event: { kind: 'purchase', description: '', status: 'done' },
+    amounts: [
+      amount('a1', 14057, 'فاکتور ۱۴۰۵۷', { role: 'other', status: 'context' }), amount('a2', 25, '۲۵ کارتن', { role: 'other', status: 'context' }),
+      amount('a3', 18, 'نه ۱۸ میلیون'), amount('a4', 16, '۱۶، نه ۱۸ میلیون', { role: 'paid-now' }),
+    ],
+    movements: [movement('m1', 'a4', 'out', party('bank', 'بانک ملت'), party('counterparty'), 'از بانک ملت پرداخت کردیم')],
+    conditions: [{ kind: 'correction', text: '۱۶، نه ۱۸ میلیون', affects: ['a3'], evidence: '۱۶، نه ۱۸ میلیون' }],
+  }, invoiceText, { endpoints: { 'm1.from': { status: 'resolved', accountId: 'mellat-1' } } });
+  assert.ok(!paid.understanding.ambiguities.some((item) => item.field === 'amounts.a4.value'), '۱۶ِ پس‌گرفته پرسیده نمی‌شود');
+  assert.deepEqual(paid.understanding.movements.map((item) => item.amountRef), ['a3'], 'پرداخت به ۱۸ منتقل شد');
+  assert.deepEqual(paid.plan.components.map((item) => [item.kind, item.amount]), [['cash', 18_000_000]]);
   // «۳۰ میلیون از صندوق به حساب ملت» — مدل صندوق را تنخواه نامید.
   const transfer = validateUnderstanding({
     ...blank(), event: { kind: 'transfer', description: '', status: 'done' },
