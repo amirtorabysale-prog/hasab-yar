@@ -141,10 +141,8 @@ function PendingQuestionCard({ notify, refresh, reloadKey = 0 }) {
 }
 
 export function SummaryCard({ summary, loading, profileType = 'business', context = 'today' }) {
-  const profile = profileDefinition(profileType);
-  const labels = context === 'today'
-    ? profile.summaryLabels
-    : { income: profileType === 'personal' ? 'دریافتی بازه' : 'فروش و دریافت بازه', expense: profileType === 'personal' ? 'پرداختی بازه' : 'هزینه بازه', net: 'خالص جریان نقدی' };
+  const periodLabel = context === 'today' ? 'امروز' : 'این بازه';
+  const labels = { income: `دریافت وجه ${periodLabel}`, expense: `پرداخت وجه ${periodLabel}`, net: 'خالص جریان نقدی' };
   const values = [
     { label: labels.income, value: summary.income, color: 'text-income' },
     { label: labels.expense, value: summary.expense, color: 'text-expense' },
@@ -152,13 +150,18 @@ export function SummaryCard({ summary, loading, profileType = 'business', contex
   ];
   return (
     <section className="rounded-[10px] border border-line bg-surface p-4 shadow-paper">
-      <div className="grid grid-cols-3 divide-x-reverse divide-x divide-line">
-        {values.map((item) => <div key={item.label} className="min-w-0 px-2 first:pr-0 last:pl-0"><p className="min-h-8 text-[11px] leading-4 text-muted sm:min-h-0 sm:whitespace-nowrap sm:text-[12px]">{item.label}</p><p className={`numbers mt-2 truncate text-[16px] font-extrabold sm:text-[19px] ${item.color}`}>{loading ? '—' : formatAmount(item.value)}</p><p className="mt-0.5 text-[11px] text-muted">تومان</p></div>)}
+      <div className="mb-4 flex items-center justify-between"><h2 className="text-sm font-extrabold">گردش وجه نقد</h2><span className="text-xs text-muted">{periodLabel} · تومان</span></div><div className="financial-metrics">
+        {values.map((item) => <div key={item.label} className="min-w-0 px-2 first:pr-0 last:pl-0"><p className="min-h-8 text-[11px] leading-4 text-muted sm:min-h-0 sm:whitespace-nowrap sm:text-[12px]">{item.label}</p><p className={`numbers mt-2 break-words text-[16px] font-extrabold sm:text-[19px] ${item.color}`}>{loading ? '—' : formatAmount(item.value)}</p><p className="mt-0.5 text-[11px] text-muted">تومان</p></div>)}
       </div>
-      {!loading && summary.ledger && (summary.ledger.income !== summary.income || summary.ledger.expense !== summary.expense) && <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
-        طبق دفتر کل امروز: درآمد <b className="numbers text-income">{formatAmount(summary.ledger.income)}</b> · هزینه <b className="numbers text-expense">{formatAmount(summary.ledger.expense)}</b> · سود <b className="numbers text-ink">{formatAmount(summary.ledger.profit)}</b> تومان.
-        تفاوت با دریافت و پرداخت از ارزش افزوده، پیش‌پرداخت، تسویهٔ طلب و بدهی یا تعیین تکلیف وجه ناشناس است.
-      </p>}
+      {summary.ledger && <div className="accrual-summary">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-extrabold">عملکرد ثبت‌شده در دفتر کل</h3><span className="text-xs text-muted">{periodLabel} · تومان</span></div>
+        <div className="financial-metrics mt-3">{[
+          ['درآمد ثبت‌شده', summary.ledger.income, 'text-income'],
+          ['هزینه ثبت‌شده', summary.ledger.expense, 'text-expense'],
+          ['سود / زیان', summary.ledger.profit, 'text-ink'],
+        ].map(([label, value, color]) => <div key={label}><p className="text-xs text-muted">{label}</p><p className={`numbers mt-2 font-extrabold ${color}`}>{loading ? '—' : formatAmount(value)}</p></div>)}</div>
+        <p className="mt-3 text-xs leading-6 text-muted">فروش نسیه می‌تواند درآمد باشد بدون دریافت وجه؛ دریافت طلب و پرداخت پیش‌پرداخت هم لزوماً درآمد یا هزینه نیستند.</p>
+      </div>}
       <div className="mt-4 border-t border-line pt-3 text-[13px] text-muted">
         {summary.comparison == null ? 'برای مقایسه با دیروز هنوز داده کافی نیست.' : <span><b className={summary.comparison >= 0 ? 'text-income' : 'text-expense'}>{summary.comparison >= 0 ? '↑' : '↓'} {formatAmount(Math.abs(summary.comparison))}٪</b> {summary.comparison >= 0 ? 'بیشتر' : 'کمتر'} از دیروز</span>}
       </div>
@@ -291,3 +294,4 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoic
     </section>
   );
 }
+
