@@ -454,8 +454,9 @@ test('زنده: «این ماه» روزِ دقیق نمی‌خواهد', () => 
       { id: 'd2', role: 'coverage-start', expression: 'این ماه', relative: null, jalali: { year: null, month: null, day: null } }],
     movements: [movement('m1', 'a1', 'in', party('counterparty', 'بانک ملت'), party('bank', 'بانک ملت'), 'به حسابمون واریز کرد')],
   }, text);
-  assert.ok(understanding.dates.every((item) => item.accepted));
-  assert.equal(fa(understanding.dates.find((item) => item.role === 'coverage-start').iso), '1405/7/1');
+  assert.equal(understanding.dates.find((item) => item.role === 'payment').accepted, true);
+  // پوششی که در همین ماه است، دوره‌ای برای تقسیم نمی‌سازد.
+  assert.equal(understanding.dates.find((item) => item.role === 'coverage-start').iso, null);
   assert.ok(!understanding.ambiguities.some((item) => item.field.startsWith('dates.')));
 });
 

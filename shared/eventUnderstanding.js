@@ -401,11 +401,14 @@ const dayKey = (iso, timeZone) => {
  */
 function resolveDate(date, { now, timeZone }) {
   // «سود سپردهٔ این ماه»، «قبض گاز این ماه»: ماهِ جاری، بی‌روز. روز پرداختش همان
-  // پیش‌فرضِ امروز است و پوششش همین ماه. آزمون زنده: دو بار «دقیقاً چه روزی؟».
+  // پیش‌فرضِ امروز است. پوششی که در همین ماه تمام می‌شود چیزی را به دورهٔ بعد
+  // نمی‌برد، پس دورهٔ پوشش نیست و پرسیده هم نمی‌شود. آزمون زنده: دو بار «دقیقاً
+  // چه روزی؟»، و سود سپرده با دورهٔ پوشش طرف حساب خواست.
   if (THIS_MONTH.test(normalizePersian(date.expression || '').trim())) {
     if (['payment', 'occurrence'].includes(date.role)) return { iso: new Date(now).toISOString(), issue: null };
+    if (['coverage-start', 'coverage-end'].includes(date.role)) return { iso: null, issue: 'this-month' };
     const today = todayPersian(now, timeZone);
-    const iso = date.role === 'coverage-end' ? persianMonthEnd(today.year, today.month, timeZone) : persianToISO(today.year, today.month, 1, timeZone);
+    const iso = persianToISO(today.year, today.month, 1, timeZone);
     return { iso, issue: iso ? null : 'unresolved' };
   }
   // عبارتی که نام ماه دارد، ماه و روز و سالش را از واژه‌های خودش می‌گیرد؛ شمارهٔ
@@ -732,6 +735,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   }
   for (const date of dates.filter((item) => !item.accepted)) {
     violations.push(`dates.${date.id}:${date.issue}`);
+    if (date.issue === 'this-month') continue;
     // فقط تاریخی که سند را عوض می‌کند پرسیده می‌شود: روز پرداخت و دورهٔ پوشش.
     // سررسید یا روز تحویلِ نامعلوم، ثبت امروز را غلط نمی‌کند.
     if (POSTING_DATE_ROLES.has(date.role)) ask(`dates.${date.role}`, 'information', `تاریخِ «${date.expression || 'این بخش'}» دقیقاً چه روزی است؟`);
