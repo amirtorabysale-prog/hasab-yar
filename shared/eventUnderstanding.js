@@ -88,6 +88,7 @@ const STATUS_BY_ROLE = Object.freeze({
 });
 
 const PAST_DATE_ROLES = new Set(['payment', 'occurrence', 'invoice']);
+const POSTING_DATE_ROLES = new Set(['payment', 'occurrence', 'coverage-start', 'coverage-end']);
 
 /** اسم شمارشیِ پس از عدد: آن عدد تعداد است، نه پول. */
 const COUNT_NOUN = /^\s*(?:تا|عدد|قسط|کارتن|بسته|نفر|ماه|سال|روز|هفته|کیلو|متر|دستگاه|قلم|فقره|برگ|چک|فاکتور|درصد|واحد|جلد|شاخه|تن)(?![آ-ی])/;
@@ -403,8 +404,9 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (amount.basis === 'inferred') amount.issue = 'inferred';
     if (amount.accepted) continue;
     violations.push(`amounts.${amount.id}:${amount.issue}`);
-    // مبلغی که فقط زمینه است، اگر خوانده نشد، چیزی را مسدود نمی‌کند؛ بقیه می‌پرسند.
-    if (amount.status !== 'context') {
+    // فقط مبلغی که سند می‌سازد می‌پرسد. زمینه، آینده و مشروط ثبت نمی‌شوند؛
+    // نامعلوم‌بودن عددشان هیچ سندی را غلط نمی‌کند و سؤالش فقط ثبت را معطل می‌کرد.
+    if (amount.status === 'done') {
       ask(`amounts.${amount.id}.value`, 'information', amount.evidence
         ? `مبلغِ «${amount.evidence}» دقیقاً چقدر است؟`
         : 'مبلغ این بخش دقیقاً چقدر است؟');
@@ -461,7 +463,9 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   });
   for (const date of dates.filter((item) => !item.accepted)) {
     violations.push(`dates.${date.id}:${date.issue}`);
-    ask(`dates.${date.role}`, 'information', `تاریخِ «${date.expression || 'این بخش'}» دقیقاً چه روزی است؟`);
+    // فقط تاریخی که سند را عوض می‌کند پرسیده می‌شود: روز پرداخت و دورهٔ پوشش.
+    // سررسید یا روز تحویلِ نامعلوم، ثبت امروز را غلط نمی‌کند.
+    if (POSTING_DATE_ROLES.has(date.role)) ask(`dates.${date.role}`, 'information', `تاریخِ «${date.expression || 'این بخش'}» دقیقاً چه روزی است؟`);
   }
 
   // --- طرف حساب، جابه‌جایی، موضوع -------------------------------------------

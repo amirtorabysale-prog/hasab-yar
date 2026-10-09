@@ -1,0 +1,2312 @@
+{
+  "version": 1,
+  "now": "2026-10-09T09:00:00.000Z",
+  "notes": "Each event has six phrasings. expect.post lists [kind, amount, account] that must be posted when the case is ready; kind is cash-out, cash-in, obligation-payable, obligation-receivable, settlement-payable, settlement-receivable or transfer. expect.forbid lists amounts that must never be posted. expect.outcomes lists acceptable case routes. expect.amounts lists [value, status] the understanding must contain. oracle is a hand-written correct understanding for the formal phrasing only; it tests everything after the model, not the model. ledger.capitalizationThreshold stands for an office that has approved its own threshold.",
+  "ledger": {
+    "accounts": [
+      {
+        "alias": "cash",
+        "id": "cash",
+        "name": "صندوق نقدی",
+        "kind": "cash",
+        "openingBalance": 500000000
+      },
+      {
+        "alias": "mellat",
+        "name": "جاری ملت",
+        "kind": "bank",
+        "bankId": "mellat",
+        "openingBalance": 1000000000
+      },
+      {
+        "alias": "saman",
+        "name": "جاری سامان",
+        "kind": "bank",
+        "bankId": "saman",
+        "openingBalance": 500000000
+      }
+    ],
+    "contacts": [
+      "شرکت آلفا",
+      "شرکت بتا"
+    ],
+    "seed": [
+      {
+        "text": "هشتاد میلیون جنس برای فروش از شرکت قیاسی نسیه خریدیم و تحویل گرفتیم",
+        "understanding": {
+          "event": {
+            "kind": "purchase",
+            "description": "خرید نسیهٔ کالا",
+            "status": "done"
+          },
+          "amounts": [
+            {
+              "id": "a1",
+              "value": 80000000,
+              "currency": null,
+              "role": "credit-part",
+              "status": "done",
+              "partOf": null,
+              "basis": "explicit",
+              "computedFrom": {
+                "op": null,
+                "of": []
+              },
+              "evidence": "هشتاد میلیون"
+            }
+          ],
+          "nonAmountNumbers": [],
+          "dates": [],
+          "counterparties": [
+            {
+              "id": "c1",
+              "name": "شرکت قیاسی",
+              "role": "supplier",
+              "evidence": "از شرکت قیاسی نسیه خریدیم"
+            }
+          ],
+          "movements": [
+            {
+              "id": "m1",
+              "amountRef": "a1",
+              "direction": "none",
+              "from": {
+                "kind": "us",
+                "name": null
+              },
+              "to": {
+                "kind": "counterparty",
+                "name": "شرکت قیاسی"
+              },
+              "evidence": "نسیه خریدیم"
+            }
+          ],
+          "subject": {
+            "what": "جنس",
+            "kind": "goods",
+            "use": "resale",
+            "delivered": "yes",
+            "usefulLifeMonths": null,
+            "evidence": "جنس برای فروش"
+          },
+          "conditions": [],
+          "ambiguities": []
+        }
+      }
+    ],
+    "capitalizationThreshold": 20000000
+  },
+  "events": [
+    {
+      "id": "E01",
+      "title": "پرداخت بخشی از بدهی با بخشودگی مشروط",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "۸۰ میلیون به شرکت قیاسی بدهکار بودیم، امروز ۵۰ میلیون از بانک سامان دادیم، گفت اگر ۱۰ میلیون دیگر بدهید، ۲۰ میلیون باقی‌مانده را می‌بخشم.",
+          "expect": {
+            "post": [
+              [
+                "settlement-payable",
+                50000000,
+                "saman"
+              ]
+            ],
+            "forbid": [
+              80000000,
+              10000000,
+              20000000
+            ],
+            "outcomes": [
+              "ready"
+            ],
+            "amounts": [
+              [
+                80000000,
+                "context"
+              ],
+              [
+                50000000,
+                "done"
+              ],
+              [
+                10000000,
+                "future"
+              ],
+              [
+                20000000,
+                "conditional"
+              ]
+            ]
+          },
+          "oracle": "fixture:understanding-qiasi.json"
+        },
+        {
+          "style": "colloquial",
+          "text": "هشتاد میلیون به قیاسی بدهی داشتیم، امروز پنجاه‌تاشو از سامان ریختیم براشون، گفتن اگه ده میلیون دیگه بدین بیست تای باقیش رو می‌بخشیم.",
+          "expect": {
+            "post": [
+              [
+                "settlement-payable",
+                50000000,
+                "saman"
+              ]
+            ],
+            "forbid": [
+              80000000,
+              10000000,
+              20000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "امروز از بانک سامان ۵۰ میلیون به شرکت قیاسی پرداخت کردیم. از ۸۰ میلیون بدهی ما، گفته اگر ۱۰ میلیون دیگر پرداخت کنیم ۲۰ میلیون باقی را می‌بخشد.",
+          "expect": {
+            "post": [
+              [
+                "settlement-payable",
+                50000000,
+                "saman"
+              ]
+            ],
+            "forbid": [
+              80000000,
+              10000000,
+              20000000
+            ],
+            "outcomes": [
+              "ready"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "۸۰ میلیون به شرکت قیاسی بدهکار بودیم، امروز ۵۰ میلیون از بانک سامان دادیم، گفت اگر ۱۰ میلیون دیگر بدهید، ۲۰ میلیون باقی‌مانده را می‌بخشم. راستی جلسهٔ فردا با حسابرس ساعت ده است.",
+          "expect": {
+            "post": [
+              [
+                "settlement-payable",
+                50000000,
+                "saman"
+              ]
+            ],
+            "forbid": [
+              80000000,
+              10000000,
+              20000000
+            ],
+            "outcomes": [
+              "ready"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "۸۰ میلیون به شرکت قیاسی بدهکار بودیم، قرار بود امروز ۵۰ میلیون از بانک سامان بدهیم ولی هنوز نداده‌ایم؛ گفته اگر ۱۰ میلیون دیگر هم بدهیم ۲۰ میلیون را می‌بخشد.",
+          "expect": {
+            "post": [],
+            "forbid": [
+              80000000,
+              50000000,
+              10000000,
+              20000000
+            ],
+            "outcomes": [
+              "no-entry",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "۸۰ میلیون به شرکت قیاسی بدهکار بودیم، امروز ۴۰ میلیون، نه ببخشید ۵۰ میلیون از بانک سامان دادیم، گفت اگر ۱۰ میلیون دیگر بدهید ۲۰ میلیون باقی‌مانده را می‌بخشم.",
+          "expect": {
+            "post": [
+              [
+                "settlement-payable",
+                50000000,
+                "saman"
+              ]
+            ],
+            "forbid": [
+              80000000,
+              40000000,
+              10000000,
+              20000000
+            ],
+            "outcomes": [
+              "ready"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E02",
+      "title": "خرید کالا: بخش نقد و بخش نسیه",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "۱۲۰ میلیون تومان کالا برای فروش از شرکت آلفا خریدیم و تحویل گرفتیم؛ ۴۰ میلیون نقد از صندوق پرداخت شد و ۸۰ میلیون باقی‌مانده نسیه است.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                40000000,
+                "cash"
+              ],
+              [
+                "obligation-payable",
+                80000000,
+                null
+              ]
+            ],
+            "forbid": [
+              120000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                120000000,
+                "done"
+              ],
+              [
+                40000000,
+                "done"
+              ],
+              [
+                80000000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "purchase",
+              "description": "خرید کالا برای فروش، نقد و نسیه",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 120000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۱۲۰ میلیون تومان"
+              },
+              {
+                "id": "a2",
+                "value": 40000000,
+                "currency": null,
+                "role": "cash-part",
+                "status": "done",
+                "partOf": "a1",
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۴۰ میلیون نقد از صندوق پرداخت شد"
+              },
+              {
+                "id": "a3",
+                "value": 80000000,
+                "currency": null,
+                "role": "credit-part",
+                "status": "done",
+                "partOf": "a1",
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۸۰ میلیون باقی‌مانده نسیه است"
+              }
+            ],
+            "nonAmountNumbers": [],
+            "dates": [],
+            "counterparties": [
+              {
+                "id": "c1",
+                "name": "شرکت آلفا",
+                "role": "supplier",
+                "evidence": "از شرکت آلفا خریدیم"
+              }
+            ],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a2",
+                "direction": "out",
+                "from": {
+                  "kind": "cash",
+                  "name": null
+                },
+                "to": {
+                  "kind": "counterparty",
+                  "name": "شرکت آلفا"
+                },
+                "evidence": "۴۰ میلیون نقد از صندوق پرداخت شد"
+              },
+              {
+                "id": "m2",
+                "amountRef": "a3",
+                "direction": "none",
+                "from": {
+                  "kind": "us",
+                  "name": null
+                },
+                "to": {
+                  "kind": "counterparty",
+                  "name": "شرکت آلفا"
+                },
+                "evidence": "۸۰ میلیون باقی‌مانده نسیه است"
+              }
+            ],
+            "subject": {
+              "what": "کالا",
+              "kind": "goods",
+              "use": "resale",
+              "delivered": "yes",
+              "usefulLifeMonths": null,
+              "evidence": "کالا برای فروش"
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "صد و بیست میلیون جنس واسه فروش از آلفا گرفتیم، چهل‌شو نقد از صندوق دادیم بقیه‌ش نسیه.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                40000000,
+                "cash"
+              ],
+              [
+                "obligation-payable",
+                80000000,
+                null
+              ]
+            ],
+            "forbid": [
+              120000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "از صندوق ۴۰ میلیون نقد به شرکت آلفا دادیم بابت خرید ۱۲۰ میلیونی کالا برای فروش که تحویل گرفتیم؛ مابقی نسیه شد.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                40000000,
+                "cash"
+              ],
+              [
+                "obligation-payable",
+                80000000,
+                null
+              ]
+            ],
+            "forbid": [
+              120000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "۱۲۰ میلیون تومان کالا برای فروش از شرکت آلفا خریدیم و تحویل گرفتیم؛ ۴۰ میلیون نقد از صندوق پرداخت شد و ۸۰ میلیون باقی‌مانده نسیه است. قیمتش نسبت به ماه قبل گران‌تر بود.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                40000000,
+                "cash"
+              ],
+              [
+                "obligation-payable",
+                80000000,
+                null
+              ]
+            ],
+            "forbid": [
+              120000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "۱۲۰ میلیون تومان کالا برای فروش از شرکت آلفا سفارش دادیم ولی هنوز نه تحویل گرفتیم نه پولی دادیم.",
+          "expect": {
+            "post": [],
+            "forbid": [
+              120000000
+            ],
+            "outcomes": [
+              "no-entry",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "۱۲۰ میلیون کالا برای فروش از شرکت آلفا خریدیم و تحویل گرفتیم، ۳۰ میلیون، ببخشید ۴۰ میلیون نقد از صندوق دادیم، بقیه نسیه.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                40000000,
+                "cash"
+              ],
+              [
+                "obligation-payable",
+                80000000,
+                null
+              ]
+            ],
+            "forbid": [
+              120000000,
+              30000000,
+              90000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E03",
+      "title": "دریافت وام امروز، اقساط آینده",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "امروز ۲۰۰ میلیون تومان وام از بانک ملت گرفتیم که به حساب ملت واریز شد؛ بازپرداخت در ۲۴ قسط ۱۰ میلیونی از ماه بعد است.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                200000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              10000000,
+              24,
+              240000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                200000000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "loan-received",
+              "description": "دریافت وام بانکی",
+              "status": "mixed"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 200000000,
+                "currency": "toman",
+                "role": "loan-principal",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۲۰۰ میلیون تومان وام"
+              },
+              {
+                "id": "a2",
+                "value": 10000000,
+                "currency": null,
+                "role": "installment",
+                "status": "future",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "قسط ۱۰ میلیونی"
+              }
+            ],
+            "nonAmountNumbers": [
+              {
+                "value": "۲۴",
+                "role": "installment-count",
+                "evidence": "۲۴ قسط"
+              }
+            ],
+            "dates": [
+              {
+                "id": "d1",
+                "role": "payment",
+                "expression": "امروز",
+                "relative": "today",
+                "jalali": {
+                  "year": null,
+                  "month": null,
+                  "day": null
+                }
+              }
+            ],
+            "counterparties": [
+              {
+                "id": "c1",
+                "name": "بانک ملت",
+                "role": "lender",
+                "evidence": "وام از بانک ملت"
+              }
+            ],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "in",
+                "from": {
+                  "kind": "counterparty",
+                  "name": "بانک ملت"
+                },
+                "to": {
+                  "kind": "bank",
+                  "name": "ملت"
+                },
+                "evidence": "به حساب ملت واریز شد"
+              }
+            ],
+            "subject": {
+              "what": null,
+              "kind": "money",
+              "use": "unknown",
+              "delivered": "unknown",
+              "usefulLifeMonths": null,
+              "evidence": null
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "از ملت دویست میلیون وام گرفتیم ریختن به حسابمون، ۲۴ تا قسط ده میلیونی داره از ماه دیگه.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                200000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              10000000,
+              24
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "بازپرداخت ۲۴ قسط ۱۰ میلیونی از ماه بعد شروع می‌شود؛ امروز ۲۰۰ میلیون وام بانک ملت به حساب ملت واریز شد.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                200000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              10000000,
+              24
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "امروز ۲۰۰ میلیون تومان وام از بانک ملت گرفتیم که به حساب ملت واریز شد؛ بازپرداخت در ۲۴ قسط ۱۰ میلیونی از ماه بعد است. نرخ سود هم ۲۳ درصد است.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                200000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              10000000,
+              24,
+              23
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "وام ۲۰۰ میلیونی بانک ملت تصویب شده ولی هنوز به حسابمان واریز نشده است.",
+          "expect": {
+            "post": [],
+            "forbid": [
+              200000000
+            ],
+            "outcomes": [
+              "no-entry",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "امروز ۱۵۰ میلیون، نه، ۲۰۰ میلیون وام از بانک ملت گرفتیم و به حساب ملت واریز شد.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                200000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              150000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E04",
+      "title": "بیمه: تاریخ پرداخت امروز، پوشش از ماه بعد",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "امروز ۳۶ میلیون تومان بابت بیمهٔ آتش‌سوزی انبار از بانک ملت پرداخت کردیم؛ پوشش از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶ است.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                36000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              1405,
+              1406
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                36000000,
+                "done"
+              ]
+            ],
+            "dates": [
+              [
+                "payment",
+                "1405/7/17"
+              ],
+              [
+                "coverage-start",
+                "1405/8/1"
+              ],
+              [
+                "coverage-end",
+                "1406/7/30"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "expense",
+              "description": "حق بیمهٔ آتش‌سوزی انبار",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 36000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۳۶ میلیون تومان"
+              }
+            ],
+            "nonAmountNumbers": [
+              {
+                "value": "۱۴۰۵",
+                "role": "year",
+                "evidence": "اول آبان ۱۴۰۵"
+              },
+              {
+                "value": "۱۴۰۶",
+                "role": "year",
+                "evidence": "پایان مهر ۱۴۰۶"
+              }
+            ],
+            "dates": [
+              {
+                "id": "d1",
+                "role": "payment",
+                "expression": "امروز",
+                "relative": "today",
+                "jalali": {
+                  "year": null,
+                  "month": null,
+                  "day": null
+                }
+              },
+              {
+                "id": "d2",
+                "role": "coverage-start",
+                "expression": "اول آبان ۱۴۰۵",
+                "relative": null,
+                "jalali": {
+                  "year": 1405,
+                  "month": 8,
+                  "day": 1
+                }
+              },
+              {
+                "id": "d3",
+                "role": "coverage-end",
+                "expression": "پایان مهر ۱۴۰۶",
+                "relative": null,
+                "jalali": {
+                  "year": 1406,
+                  "month": 7,
+                  "day": null
+                }
+              }
+            ],
+            "counterparties": [],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "out",
+                "from": {
+                  "kind": "bank",
+                  "name": "بانک ملت"
+                },
+                "to": {
+                  "kind": "unknown",
+                  "name": null
+                },
+                "evidence": "از بانک ملت پرداخت کردیم"
+              }
+            ],
+            "subject": {
+              "what": "بیمهٔ آتش‌سوزی انبار",
+              "kind": "service",
+              "use": "unknown",
+              "delivered": "unknown",
+              "usefulLifeMonths": null,
+              "evidence": null
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "امروز سی و شش میلیون بیمه آتش‌سوزی انبار رو از ملت دادیم، از اول آبان تا آخر مهر سال بعد پوشش میده.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                36000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "پوشش بیمهٔ آتش‌سوزی انبار از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶ است و حق بیمه‌اش، ۳۶ میلیون، را امروز از بانک ملت پرداختیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                36000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              1405,
+              1406
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "امروز ۳۶ میلیون تومان بابت بیمهٔ آتش‌سوزی انبار از بانک ملت پرداخت کردیم؛ پوشش از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶ است. نمایندهٔ بیمه گفت سال بعد تخفیف می‌دهد.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                36000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              1405,
+              1406
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "بیمهٔ آتش‌سوزی انبار ۳۶ میلیون است و پوشش از اول آبان شروع می‌شود، ولی هنوز پرداختش نکرده‌ایم.",
+          "expect": {
+            "post": [],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "no-entry",
+              "needs-answers",
+              "needs-accountant",
+              "ready"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "امروز ۳۲ میلیون، ببخشید ۳۶ میلیون، بابت بیمهٔ آتش‌سوزی انبار از بانک ملت دادیم؛ پوشش از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                36000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              32000000,
+              1405,
+              1406
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E05",
+      "title": "شمارهٔ فاکتور و تعداد کالا مبلغ نیستند",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "فاکتور شمارهٔ ۱۴۰۵۷ بابت ۲۵ کارتن روغن برای فروش را ۱۸ میلیون تومان از بانک ملت پرداخت کردیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                18000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              14057,
+              25
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                18000000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "purchase",
+              "description": "خرید روغن برای فروش",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 18000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۱۸ میلیون تومان"
+              }
+            ],
+            "nonAmountNumbers": [
+              {
+                "value": "۱۴۰۵۷",
+                "role": "invoice-number",
+                "evidence": "فاکتور شمارهٔ ۱۴۰۵۷"
+              },
+              {
+                "value": "۲۵",
+                "role": "quantity",
+                "evidence": "۲۵ کارتن روغن"
+              }
+            ],
+            "dates": [],
+            "counterparties": [],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "out",
+                "from": {
+                  "kind": "bank",
+                  "name": "بانک ملت"
+                },
+                "to": {
+                  "kind": "unknown",
+                  "name": null
+                },
+                "evidence": "از بانک ملت پرداخت کردیم"
+              }
+            ],
+            "subject": {
+              "what": "روغن",
+              "kind": "goods",
+              "use": "resale",
+              "delivered": "unknown",
+              "usefulLifeMonths": null,
+              "evidence": "روغن برای فروش"
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "۱۸ میلیون از ملت دادیم بابت فاکتور ۱۴۰۵۷، بیست و پنج کارتن روغن واسه فروش.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                18000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              14057,
+              25
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "۲۵ کارتن روغن برای فروش خریدیم؛ مبلغ ۱۸ میلیون تومان فاکتور شمارهٔ ۱۴۰۵۷ را از بانک ملت پرداختیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                18000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              14057,
+              25
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "فاکتور شمارهٔ ۱۴۰۵۷ بابت ۲۵ کارتن روغن برای فروش را ۱۸ میلیون تومان از بانک ملت پرداخت کردیم. تحویل کالا هم پنج‌شنبه است.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                18000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              14057,
+              25
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "فاکتور شمارهٔ ۱۴۰۵۷ بابت ۲۵ کارتن روغن، ۱۸ میلیون تومان، رسیده ولی هنوز پرداخت نشده است.",
+          "expect": {
+            "post": [],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [
+              14057,
+              25
+            ],
+            "outcomes": [
+              "no-entry",
+              "needs-answers",
+              "needs-accountant",
+              "ready"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "فاکتور ۱۴۰۵۷ بابت ۲۵ کارتن روغن برای فروش را ۱۶، نه ۱۸ میلیون از بانک ملت پرداخت کردیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                18000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              14057,
+              25,
+              16000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E06",
+      "title": "قبض پرداخت‌نشده",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "قبض برق مهر به مبلغ ۴ میلیون و ۲۰۰ هزار تومان رسیده ولی هنوز پرداخت نکرده‌ایم.",
+          "expect": {
+            "post": [
+              [
+                "obligation-payable",
+                4200000,
+                null
+              ]
+            ],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ],
+            "amounts": [
+              [
+                4200000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "expense",
+              "description": "قبض برق مهر، پرداخت‌نشده",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 4200000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۴ میلیون و ۲۰۰ هزار تومان"
+              }
+            ],
+            "nonAmountNumbers": [],
+            "dates": [],
+            "counterparties": [],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "none",
+                "from": {
+                  "kind": "us",
+                  "name": null
+                },
+                "to": {
+                  "kind": "unknown",
+                  "name": null
+                },
+                "evidence": "هنوز پرداخت نکرده‌ایم"
+              }
+            ],
+            "subject": {
+              "what": "قبض برق مهر",
+              "kind": "service",
+              "use": "unknown",
+              "delivered": "unknown",
+              "usefulLifeMonths": null,
+              "evidence": null
+            },
+            "conditions": [
+              {
+                "kind": "negation",
+                "text": "قبض پرداخت نشده",
+                "affects": [
+                  "a1"
+                ],
+                "evidence": "هنوز پرداخت نکرده‌ایم"
+              }
+            ],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "قبض برق مهر اومده چهار میلیون و دویست هزار تومن، هنوز ندادیم.",
+          "expect": {
+            "post": [
+              [
+                "obligation-payable",
+                4200000,
+                null
+              ]
+            ],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "هنوز پرداخت نکرده‌ایم، ولی قبض برق مهر ۴ میلیون و ۲۰۰ هزار تومان آمده است.",
+          "expect": {
+            "post": [
+              [
+                "obligation-payable",
+                4200000,
+                null
+              ]
+            ],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "قبض برق مهر به مبلغ ۴ میلیون و ۲۰۰ هزار تومان رسیده ولی هنوز پرداخت نکرده‌ایم. مصرف این ماه به‌خاطر کولرها بالا بود.",
+          "expect": {
+            "post": [
+              [
+                "obligation-payable",
+                4200000,
+                null
+              ]
+            ],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "قبض برق مهر ۴ میلیون و ۲۰۰ هزار تومان را امروز از بانک ملت پرداخت کردیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                4200000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "قبض برق مهر ۴ میلیون، ببخشید ۴ میلیون و ۲۰۰ هزار تومان آمده و هنوز پرداخت نشده.",
+          "expect": {
+            "post": [
+              [
+                "obligation-payable",
+                4200000,
+                null
+              ]
+            ],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [
+              4000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E07",
+      "title": "خرید دارایی با عمر مفید",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "یک دستگاه چاپ به مبلغ ۹۵ میلیون تومان نقدی از صندوق خریدیم که سه سال کار می‌کند.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                95000000,
+                "cash"
+              ]
+            ],
+            "forbid": [
+              3
+            ],
+            "forbidRoles": [
+              "expense-category"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ],
+            "amounts": [
+              [
+                95000000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "asset-purchase",
+              "description": "خرید دستگاه چاپ",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 95000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۹۵ میلیون تومان"
+              }
+            ],
+            "nonAmountNumbers": [
+              {
+                "value": "سه",
+                "role": "duration",
+                "evidence": "سه سال کار می‌کند"
+              }
+            ],
+            "dates": [],
+            "counterparties": [],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "out",
+                "from": {
+                  "kind": "cash",
+                  "name": null
+                },
+                "to": {
+                  "kind": "unknown",
+                  "name": null
+                },
+                "evidence": "نقدی از صندوق خریدیم"
+              }
+            ],
+            "subject": {
+              "what": "دستگاه چاپ",
+              "kind": "asset",
+              "use": "long-term",
+              "delivered": "yes",
+              "usefulLifeMonths": 36,
+              "evidence": "سه سال کار می‌کند"
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "یه دستگاه چاپ نود و پنج میلیونی نقد از صندوق خریدیم، سه سالی کار میکنه.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                95000000,
+                "cash"
+              ]
+            ],
+            "forbid": [
+              3
+            ],
+            "forbidRoles": [
+              "expense-category"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "از صندوق ۹۵ میلیون تومان نقد دادیم و یک دستگاه چاپ با عمر مفید سه سال خریدیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                95000000,
+                "cash"
+              ]
+            ],
+            "forbid": [
+              3
+            ],
+            "forbidRoles": [
+              "expense-category"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "یک دستگاه چاپ به مبلغ ۹۵ میلیون تومان نقدی از صندوق خریدیم که سه سال کار می‌کند. فروشنده گفت گارانتی هم دارد.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                95000000,
+                "cash"
+              ]
+            ],
+            "forbid": [
+              3
+            ],
+            "forbidRoles": [
+              "expense-category"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "یک دستگاه چاپ ۹۵ میلیونی پیش‌فاکتور گرفتیم ولی هنوز نخریده‌ایم.",
+          "expect": {
+            "post": [],
+            "forbid": [
+              95000000
+            ],
+            "outcomes": [
+              "no-entry",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "یک دستگاه چاپ ۸۵، ببخشید ۹۵ میلیون نقدی از صندوق خریدیم که سه سال کار می‌کند.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                95000000,
+                "cash"
+              ]
+            ],
+            "forbid": [
+              3,
+              85000000
+            ],
+            "forbidRoles": [
+              "expense-category"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E08",
+      "title": "فروش: دریافت بخشی، بقیه طلب",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "۶۰ میلیون تومان کالا به شرکت بتا فروختیم و تحویل دادیم؛ ۲۵ میلیون آن به حساب ملت واریز شد و ۳۵ میلیون باقی را آخر ماه می‌پردازند.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                25000000,
+                "mellat"
+              ],
+              [
+                "obligation-receivable",
+                35000000,
+                null
+              ]
+            ],
+            "forbid": [
+              60000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                60000000,
+                "done"
+              ],
+              [
+                25000000,
+                "done"
+              ],
+              [
+                35000000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "sale",
+              "description": "فروش کالا به شرکت بتا",
+              "status": "mixed"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 60000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۶۰ میلیون تومان"
+              },
+              {
+                "id": "a2",
+                "value": 25000000,
+                "currency": null,
+                "role": "received-now",
+                "status": "done",
+                "partOf": "a1",
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۲۵ میلیون آن به حساب ملت واریز شد"
+              },
+              {
+                "id": "a3",
+                "value": 35000000,
+                "currency": null,
+                "role": "credit-part",
+                "status": "done",
+                "partOf": "a1",
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۳۵ میلیون باقی را آخر ماه می‌پردازند"
+              }
+            ],
+            "nonAmountNumbers": [],
+            "dates": [
+              {
+                "id": "d1",
+                "role": "due",
+                "expression": "آخر ماه",
+                "relative": null,
+                "jalali": {
+                  "year": null,
+                  "month": null,
+                  "day": null
+                }
+              }
+            ],
+            "counterparties": [
+              {
+                "id": "c1",
+                "name": "شرکت بتا",
+                "role": "customer",
+                "evidence": "به شرکت بتا فروختیم"
+              }
+            ],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a2",
+                "direction": "in",
+                "from": {
+                  "kind": "counterparty",
+                  "name": "شرکت بتا"
+                },
+                "to": {
+                  "kind": "bank",
+                  "name": "ملت"
+                },
+                "evidence": "به حساب ملت واریز شد"
+              },
+              {
+                "id": "m2",
+                "amountRef": "a3",
+                "direction": "none",
+                "from": {
+                  "kind": "counterparty",
+                  "name": "شرکت بتا"
+                },
+                "to": {
+                  "kind": "us",
+                  "name": null
+                },
+                "evidence": "آخر ماه می‌پردازند"
+              }
+            ],
+            "subject": {
+              "what": "کالا",
+              "kind": "goods",
+              "use": "unknown",
+              "delivered": "yes",
+              "usefulLifeMonths": null,
+              "evidence": null
+            },
+            "conditions": [
+              {
+                "kind": "promise",
+                "text": "مانده آخر ماه پرداخت می‌شود",
+                "affects": [
+                  "a3"
+                ],
+                "evidence": "آخر ماه می‌پردازند"
+              }
+            ],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "شصت میلیون جنس به بتا فروختیم دادیم دستشون، بیست و پنج‌شو کارت به کارت کردن به ملت، بقیه رو آخر ماه میدن.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                25000000,
+                "mellat"
+              ],
+              [
+                "obligation-receivable",
+                35000000,
+                null
+              ]
+            ],
+            "forbid": [
+              60000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "۲۵ میلیون تومان از شرکت بتا به حساب ملت واریز شد بابت فروش ۶۰ میلیونی کالا که تحویل دادیم؛ مابقی آخر ماه.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                25000000,
+                "mellat"
+              ],
+              [
+                "obligation-receivable",
+                35000000,
+                null
+              ]
+            ],
+            "forbid": [
+              60000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "۶۰ میلیون تومان کالا به شرکت بتا فروختیم و تحویل دادیم؛ ۲۵ میلیون آن به حساب ملت واریز شد و ۳۵ میلیون باقی را آخر ماه می‌پردازند. قرار است ماه بعد هم سفارش بدهند.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                25000000,
+                "mellat"
+              ],
+              [
+                "obligation-receivable",
+                35000000,
+                null
+              ]
+            ],
+            "forbid": [
+              60000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "۶۰ میلیون تومان کالا به شرکت بتا فروختیم ولی هنوز تحویل نداده‌ایم و پولی هم نگرفته‌ایم.",
+          "expect": {
+            "post": [],
+            "forbidKinds": [
+              "cash-in"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "no-entry",
+              "needs-answers",
+              "needs-accountant"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "۶۰ میلیون کالا به شرکت بتا فروختیم و تحویل دادیم، ۲۰ میلیون، نه، ۲۵ میلیون به حساب ملت واریز کردند و بقیه آخر ماه.",
+          "expect": {
+            "post": [
+              [
+                "cash-in",
+                25000000,
+                "mellat"
+              ],
+              [
+                "obligation-receivable",
+                35000000,
+                null
+              ]
+            ],
+            "forbid": [
+              60000000,
+              20000000,
+              40000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E09",
+      "title": "پرداخت سادهٔ اجاره و اصلاح گفته",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "اجارهٔ مهر دفتر را ۱۵ میلیون تومان از بانک ملت پرداخت کردیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                15000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                15000000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "expense",
+              "description": "اجارهٔ مهر دفتر",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 15000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۱۵ میلیون تومان"
+              }
+            ],
+            "nonAmountNumbers": [],
+            "dates": [
+              {
+                "id": "d1",
+                "role": "coverage-start",
+                "expression": "مهر",
+                "relative": null,
+                "jalali": {
+                  "year": null,
+                  "month": 7,
+                  "day": 1
+                }
+              },
+              {
+                "id": "d2",
+                "role": "coverage-end",
+                "expression": "مهر",
+                "relative": null,
+                "jalali": {
+                  "year": null,
+                  "month": 7,
+                  "day": null
+                }
+              }
+            ],
+            "counterparties": [],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "out",
+                "from": {
+                  "kind": "bank",
+                  "name": "بانک ملت"
+                },
+                "to": {
+                  "kind": "unknown",
+                  "name": null
+                },
+                "evidence": "از بانک ملت پرداخت کردیم"
+              }
+            ],
+            "subject": {
+              "what": "اجارهٔ مهر دفتر",
+              "kind": "service",
+              "use": "unknown",
+              "delivered": "unknown",
+              "usefulLifeMonths": null,
+              "evidence": null
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "اجاره مهر دفترو پونزده میلیون از ملت دادیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                15000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "از بانک ملت ۱۵ میلیون تومان بابت اجارهٔ مهر دفتر پرداخت شد.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                15000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "اجارهٔ مهر دفتر را ۱۵ میلیون تومان از بانک ملت پرداخت کردیم. صاحبخانه گفت سال بعد اجاره بالا می‌رود.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                15000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "اجارهٔ مهر دفتر ۱۵ میلیون است ولی هنوز پرداخت نکرده‌ایم.",
+          "expect": {
+            "post": [],
+            "forbidKinds": [
+              "cash-out"
+            ],
+            "forbid": [],
+            "outcomes": [
+              "no-entry",
+              "needs-answers",
+              "needs-accountant",
+              "ready"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "اجارهٔ مهر دفتر را ۱۲ میلیون، نه ببخشید ۱۵ میلیون، از بانک ملت پرداخت کردیم.",
+          "expect": {
+            "post": [
+              [
+                "cash-out",
+                15000000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              12000000,
+              27000000
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "E10",
+      "title": "انتقال بین حساب‌های خود شرکت با کارمزد",
+      "variants": [
+        {
+          "style": "formal",
+          "text": "۳۰ میلیون تومان از صندوق به حساب بانک ملت واریز کردیم و بانک ۲۰ هزار تومان کارمزد از حساب ملت کم کرد.",
+          "expect": {
+            "post": [
+              [
+                "transfer",
+                30000000,
+                null
+              ],
+              [
+                "cash-out",
+                20000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "forbidKinds": [
+              "cash-in"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ],
+            "amounts": [
+              [
+                30000000,
+                "done"
+              ],
+              [
+                20000,
+                "done"
+              ]
+            ]
+          },
+          "oracle": {
+            "event": {
+              "kind": "transfer",
+              "description": "واریز صندوق به بانک ملت و کارمزد",
+              "status": "done"
+            },
+            "amounts": [
+              {
+                "id": "a1",
+                "value": 30000000,
+                "currency": "toman",
+                "role": "total",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۳۰ میلیون تومان"
+              },
+              {
+                "id": "a2",
+                "value": 20000,
+                "currency": "toman",
+                "role": "fee",
+                "status": "done",
+                "partOf": null,
+                "basis": "explicit",
+                "computedFrom": {
+                  "op": null,
+                  "of": []
+                },
+                "evidence": "۲۰ هزار تومان کارمزد"
+              }
+            ],
+            "nonAmountNumbers": [],
+            "dates": [],
+            "counterparties": [],
+            "movements": [
+              {
+                "id": "m1",
+                "amountRef": "a1",
+                "direction": "transfer",
+                "from": {
+                  "kind": "cash",
+                  "name": null
+                },
+                "to": {
+                  "kind": "bank",
+                  "name": "بانک ملت"
+                },
+                "evidence": "از صندوق به حساب بانک ملت واریز کردیم"
+              },
+              {
+                "id": "m2",
+                "amountRef": "a2",
+                "direction": "out",
+                "from": {
+                  "kind": "bank",
+                  "name": "ملت"
+                },
+                "to": {
+                  "kind": "unknown",
+                  "name": null
+                },
+                "evidence": "از حساب ملت کم کرد"
+              }
+            ],
+            "subject": {
+              "what": null,
+              "kind": "money",
+              "use": "unknown",
+              "delivered": "unknown",
+              "usefulLifeMonths": null,
+              "evidence": null
+            },
+            "conditions": [],
+            "ambiguities": []
+          }
+        },
+        {
+          "style": "colloquial",
+          "text": "سی میلیون از صندوق ریختیم به ملت، بیست هزار تومنم کارمزد برداشت.",
+          "expect": {
+            "post": [
+              [
+                "transfer",
+                30000000,
+                null
+              ],
+              [
+                "cash-out",
+                20000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "forbidKinds": [
+              "cash-in"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "reordered",
+          "text": "بانک ملت ۲۰ هزار تومان کارمزد کم کرد بابت واریز ۳۰ میلیونی ما از صندوق به حساب ملت.",
+          "expect": {
+            "post": [
+              [
+                "transfer",
+                30000000,
+                null
+              ],
+              [
+                "cash-out",
+                20000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "forbidKinds": [
+              "cash-in"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "extra-sentence",
+          "text": "۳۰ میلیون تومان از صندوق به حساب بانک ملت واریز کردیم و بانک ۲۰ هزار تومان کارمزد از حساب ملت کم کرد. صف بانک خیلی شلوغ بود.",
+          "expect": {
+            "post": [
+              [
+                "transfer",
+                30000000,
+                null
+              ],
+              [
+                "cash-out",
+                20000,
+                "mellat"
+              ]
+            ],
+            "forbid": [],
+            "forbidKinds": [
+              "cash-in"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "negation",
+          "text": "قرار است فردا ۳۰ میلیون از صندوق به حساب ملت واریز کنیم.",
+          "expect": {
+            "post": [],
+            "forbid": [
+              30000000
+            ],
+            "outcomes": [
+              "no-entry",
+              "needs-answers"
+            ]
+          }
+        },
+        {
+          "style": "self-correction",
+          "text": "۲۰ میلیون، نه، ۳۰ میلیون از صندوق به حساب ملت واریز کردیم و ۲۰ هزار تومان کارمزد کم شد.",
+          "expect": {
+            "post": [
+              [
+                "transfer",
+                30000000,
+                null
+              ],
+              [
+                "cash-out",
+                20000,
+                "mellat"
+              ]
+            ],
+            "forbid": [
+              20000000
+            ],
+            "forbidKinds": [
+              "cash-in"
+            ],
+            "outcomes": [
+              "ready",
+              "needs-answers"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

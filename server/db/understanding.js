@@ -132,6 +132,12 @@ function planCase(understanding, answers, row, now = new Date()) {
           : [{ role: 'cash', debit: component.amount, credit: 0 }, { role: 'receivable', debit: 0, credit: component.amount }] };
       continue;
     }
+    // انتقال بین حساب‌های خودِ شرکت: نه درآمد، نه هزینه؛ سندش همان سند کارت انتقال است.
+    if (component.kind === 'transfer') {
+      component.preview = { route: ROUTES.CONFIRM, eventKind: 'transfer', decisionStatus: 'decided', treatment: 'account-transfer',
+        lines: [{ role: 'cash', debit: component.amount, credit: 0 }, { role: 'cash', debit: 0, credit: component.amount }] };
+      continue;
+    }
     if (!component.item) continue;
     component.item = applyEngineAnswers(component, answers, today);
     if (component.kind === 'transfer') continue;
@@ -230,6 +236,10 @@ export function getUnderstandingCase(id) {
       route: plan.route, notes: plan.notes, reasons: plan.reasons, questions: plan.questions,
       components: plan.components.map((component) => ({
         id: component.id, kind: component.kind, amount: component.amount, label: component.label,
+        // جهت پول یا تعهد، یک‌دست برای همهٔ انواع جزء.
+        flow: component.kind === 'transfer' ? 'transfer' : component.kind === 'settlement' ? component.direction
+          : component.kind === 'obligation' ? (component.item?.type === 'income' ? 'receivable' : 'payable')
+            : component.item?.type === 'income' ? 'in' : 'out',
         accountId: component.item?.accountId || component.accountId || component.fromAccountId || null, toAccountId: component.toAccountId || null,
         contactId: component.item?.contactId || component.contactId || null, category: component.item?.category || null, target: component.target || null,
         occurredAt: component.item?.occurredAt || component.occurredAt || null, preview: component.preview || null,

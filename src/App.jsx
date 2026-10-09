@@ -7,6 +7,7 @@ import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateShee
 import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
 import { EMPTY_SUMMARY } from './components/common.jsx';
 import { IntentSheet, SettleSheet } from './features/capture/IntentSheets.jsx';
+import { inUnderstandingScope } from '../shared/understandingScope.js';
 import { LoginPage, Onboarding } from './features/auth/AuthScreens.jsx';
 import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
@@ -62,6 +63,8 @@ const SessionsPanel = namedLazy(() => import('./features/settings/SettingsPage.j
 const SettingsPage = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SettingsPage');
 const TaxPage = namedLazy(() => import('./features/tax/TaxPage.jsx'), 'TaxPage');
 const PettyCashPage = namedLazy(() => import('./features/pettyCash/PettyCashPage.jsx'), 'PettyCashPage');
+// فقط وقتی فهم گفته در دفتر فعال است و گفته‌ای مرکب آمده بارگذاری می‌شود.
+const UnderstandingSheet = namedLazy(() => import('./features/understanding/UnderstandingSheet.jsx'), 'UnderstandingSheet');
 const WorkspacePanel = lazy(() => import('./features/settings/WorkspacePanel.jsx'));
 
 /** تا رسیدن قطعهٔ صفحه، همان چرخندهٔ آشنای برنامه — نه یک پرش به سفیدی. */
@@ -132,6 +135,7 @@ export default function App() {
   const [voicePath, setVoicePath] = useState('ready');
   const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
   const [intentDraft, setIntentDraft] = useState(null);
+  const [understandingDraft, setUnderstandingDraft] = useState(null);
   const [settleDraft, setSettleDraft] = useState(null);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
@@ -724,6 +728,15 @@ export default function App() {
     // در حساب‌های عادی نیست. هیچ‌کدام هزینه نیست.
     const pettyFunding = detectPettyCashFunding(transcript, { accounts: data.accounts || [] });
     if (pettyFunding) { setIntentDraft(pettyFunding); return true; }
+    // فهم گفتهٔ مرکب با AI، فقط وقتی دفتر آن را فعال کرده. همان گفته‌هایی که
+    // مسیر قطعی امروز به حسابدار می‌داد یا تکه‌تکه می‌کرد؛ گفتهٔ ساده همان مسیر
+    // رایگان می‌ماند.
+    const understanding = data.understanding;
+    if (understanding?.mode === 'active' && understanding.engineV2 && understanding.available && online
+      && inUnderstandingScope(transcript, understanding.scope)) {
+      void openUnderstanding(transcript, source);
+      return true;
+    }
     if (needsUnquantifiedReview(transcript)) {
       if (!online) { setFailure({ transcript, message: 'برای ذخیره درخواست بررسی حسابدار اتصال اینترنت لازم است.' }); return true; }
       void api.queueUnquantifiedReview({ transcript, source, clientId: crypto.randomUUID() })
@@ -749,6 +762,22 @@ export default function App() {
     if (!found) return false;
     setIntentDraft(found);
     return true;
+  };
+
+  /**
+   * پروندهٔ فهم گفته. برگه بلافاصله با متن کاربر باز می‌شود و پس از فهم، همان
+   * پرونده را نشان می‌دهد. شکستِ فهم، مسیر قدیمی را بی‌صدا جایگزین نمی‌کند؛
+   * پرونده با وضعیت «ناموفق» و دکمهٔ تلاش دوباره می‌ماند.
+   */
+  const openUnderstanding = async (transcript, source) => {
+    setUnderstandingDraft({ transcript, status: 'extracting' });
+    try {
+      const { item } = await api.createUnderstandingCase({ text: transcript, source, clientId: crypto.randomUUID() });
+      setUnderstandingDraft(item);
+    } catch (error) {
+      setUnderstandingDraft(null);
+      setFailure({ transcript, message: error.message });
+    }
   };
 
   const queueSettlementReview = async (draft) => {
@@ -1108,6 +1137,8 @@ export default function App() {
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
       {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
       {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} accounts={data.accounts || []} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
+      {understandingDraft && <Suspense fallback={null}><UnderstandingSheet draft={understandingDraft} setDraft={setUnderstandingDraft} close={() => setUnderstandingDraft(null)} notify={notify}
+        onPosted={() => { notify('پرونده ثبت شد؛ فقط اجزای انجام‌شده سند خوردند.'); void load(); }} /></Suspense>}
       {settleDraft && <SettleSheet draft={settleDraft} obligations={data.obligations || []} close={() => setSettleDraft(null)} confirm={applySettlement} queueReview={queueSettlementReview} />}
       {selectedDecision && <DecisionDetailsSheet item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}

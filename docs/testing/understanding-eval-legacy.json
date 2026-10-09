@@ -1,0 +1,1025 @@
+{
+  "generatedAt": "2026-10-09T06:25:21.616Z",
+  "fixtureVersion": 1,
+  "summary": {
+    "provider": "legacy",
+    "utterances": 60,
+    "correct": 15,
+    "protectiveStop": 35,
+    "partialPost": 7,
+    "wrongPost": 3,
+    "errors": 0,
+    "routes": {
+      "ready": 10,
+      "needs-answers": 31,
+      "needs-accountant": 19,
+      "no-entry": 0,
+      "failed": 0
+    },
+    "fakeAmounts": 1,
+    "doubleCounted": 0,
+    "latencyMs": {
+      "median": 3,
+      "max": 104
+    }
+  },
+  "results": [
+    {
+      "id": "E01/formal",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "accountant-queue",
+      "rows": [],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 4
+    },
+    {
+      "id": "E01/colloquial",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        80000000,
+        50,
+        10000000,
+        20
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 104
+    },
+    {
+      "id": "E01/reordered",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "settle",
+      "rows": [
+        50000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E01/extra-sentence",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "accountant-queue",
+      "rows": [],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 0
+    },
+    {
+      "id": "E01/negation",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        80000000,
+        50000000,
+        10000000,
+        20000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 15
+    },
+    {
+      "id": "E01/self-correction",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "accountant-queue",
+      "rows": [],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 0
+    },
+    {
+      "id": "E02/formal",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        120000000,
+        40000000,
+        80000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 6
+    },
+    {
+      "id": "E02/colloquial",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        120000000,
+        40
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E02/reordered",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        40000000,
+        120000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E02/extra-sentence",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        120000000,
+        40000000,
+        80000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 4
+    },
+    {
+      "id": "E02/negation",
+      "route": "needs-accountant",
+      "verdict": "wrong-post",
+      "detail": "posted cash-out:120000000",
+      "posted": [
+        [
+          "cash-out",
+          120000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        120000000,
+        9
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 10
+    },
+    {
+      "id": "E02/self-correction",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        120000000,
+        30000000,
+        40000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E03/formal",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        200000000,
+        10000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 8
+    },
+    {
+      "id": "E03/colloquial",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        200000000,
+        10000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E03/reordered",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        10000000,
+        200000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E03/extra-sentence",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        200000000,
+        10000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 6
+    },
+    {
+      "id": "E03/negation",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        200000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 4
+    },
+    {
+      "id": "E03/self-correction",
+      "route": "needs-answers",
+      "verdict": "correct",
+      "detail": "needs-answers",
+      "posted": [
+        [
+          "cash-in",
+          200000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        150000000,
+        200000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E04/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          36000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        36000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 6
+    },
+    {
+      "id": "E04/colloquial",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          36000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        36000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E04/reordered",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          36000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        36000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E04/extra-sentence",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          36000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        36000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 14
+    },
+    {
+      "id": "E04/negation",
+      "route": "needs-answers",
+      "verdict": "correct",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        36000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E04/self-correction",
+      "route": "needs-accountant",
+      "verdict": "correct",
+      "detail": "needs-accountant",
+      "posted": [
+        [
+          "cash-out",
+          36000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        32000000,
+        36000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 4
+    },
+    {
+      "id": "E05/formal",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "settle",
+      "rows": [
+        18000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E05/colloquial",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          18000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        18000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E05/reordered",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          18000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        18000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E05/extra-sentence",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "settle",
+      "rows": [
+        18000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E05/negation",
+      "route": "needs-accountant",
+      "verdict": "correct",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        18000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E05/self-correction",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "settle",
+      "rows": [
+        27000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 1
+    },
+    {
+      "id": "E06/formal",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        4200000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E06/colloquial",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        4200000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 1
+    },
+    {
+      "id": "E06/reordered",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        4200000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E06/extra-sentence",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "obligation-payable",
+          4200000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        4200000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E06/negation",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          4200000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        4200000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E06/self-correction",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        4000000,
+        4200000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 4
+    },
+    {
+      "id": "E07/formal",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        95000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E07/colloquial",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        95000000,
+        3
+      ],
+      "fake": 1,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E07/reordered",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "queued",
+      "rows": [
+        95000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 1
+    },
+    {
+      "id": "E07/extra-sentence",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        95000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E07/negation",
+      "route": "needs-answers",
+      "verdict": "correct",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        95000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E07/self-correction",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        95000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E08/formal",
+      "route": "needs-accountant",
+      "verdict": "partial",
+      "detail": "missing obligation-receivable:35000000",
+      "posted": [
+        [
+          "cash-in",
+          25000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        60000000,
+        25000000,
+        35000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 10
+    },
+    {
+      "id": "E08/colloquial",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        60000000,
+        25
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 6
+    },
+    {
+      "id": "E08/reordered",
+      "route": "needs-accountant",
+      "verdict": "partial",
+      "detail": "missing obligation-receivable:35000000",
+      "posted": [
+        [
+          "cash-in",
+          25000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        25000000,
+        60000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 8
+    },
+    {
+      "id": "E08/extra-sentence",
+      "route": "needs-accountant",
+      "verdict": "partial",
+      "detail": "missing obligation-receivable:35000000",
+      "posted": [
+        [
+          "cash-in",
+          25000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        60000000,
+        25000000,
+        35000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 6
+    },
+    {
+      "id": "E08/negation",
+      "route": "ready",
+      "verdict": "wrong-post",
+      "detail": "posted cash-in:60000000",
+      "posted": [
+        [
+          "cash-in",
+          60000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        60000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 1
+    },
+    {
+      "id": "E08/self-correction",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        60000000,
+        20000000,
+        25000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 8
+    },
+    {
+      "id": "E09/formal",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        15000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E09/colloquial",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        15000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 5
+    },
+    {
+      "id": "E09/reordered",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        15000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E09/extra-sentence",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        15000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E09/negation",
+      "route": "needs-answers",
+      "verdict": "correct",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        15000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E09/self-correction",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        12000000,
+        15000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E10/formal",
+      "route": "needs-answers",
+      "verdict": "partial",
+      "detail": "missing transfer:30000000",
+      "posted": [
+        [
+          "cash-out",
+          20000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        30000000,
+        20000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 2
+    },
+    {
+      "id": "E10/colloquial",
+      "route": "needs-answers",
+      "verdict": "partial",
+      "detail": "missing transfer:30000000",
+      "posted": [
+        [
+          "cash-out",
+          20000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        30000000,
+        20000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E10/reordered",
+      "route": "ready",
+      "verdict": "wrong-post",
+      "detail": "expected cash-out:20000,transfer:30000000 got cash-out:20000,cash-out:30000000",
+      "posted": [
+        [
+          "cash-out",
+          20000,
+          null
+        ],
+        [
+          "cash-out",
+          30000000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        20000,
+        30000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E10/extra-sentence",
+      "route": "needs-answers",
+      "verdict": "partial",
+      "detail": "missing transfer:30000000",
+      "posted": [
+        [
+          "cash-out",
+          20000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        30000000,
+        20000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    },
+    {
+      "id": "E10/negation",
+      "route": "needs-answers",
+      "verdict": "correct",
+      "detail": "needs-answers",
+      "posted": [],
+      "path": "transaction",
+      "rows": [
+        30000000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 4
+    },
+    {
+      "id": "E10/self-correction",
+      "route": "needs-answers",
+      "verdict": "partial",
+      "detail": "missing transfer:30000000",
+      "posted": [
+        [
+          "cash-out",
+          20000,
+          null
+        ]
+      ],
+      "path": "transaction",
+      "rows": [
+        20000000,
+        30000000,
+        20000
+      ],
+      "fake": 0,
+      "doubleCounted": false,
+      "latencyMs": 3
+    }
+  ]
+}

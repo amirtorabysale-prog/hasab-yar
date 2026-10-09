@@ -160,23 +160,25 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
 
   const kindReason = ACCOUNTANT_KINDS[facts.event.kind];
   if (kindReason) toAccountant(kindReason);
-  for (const condition of facts.conditions || []) {
-    if (condition.kind === 'correction') toAccountant(ACCOUNTANT_KINDS.correction);
-  }
+  // «۱۲ میلیون، نه ببخشید ۱۵»: اصلاحِ همان گفته است، نه اصلاح یک ثبت قبلی.
+  // مبلغِ پس‌گرفته‌شده کنار می‌رود و یادداشت می‌شود؛ اصلاح سند قبلی (نوع رویداد
+  // `correction`) همچنان با حسابدار است.
+  const retracted = new Set((facts.conditions || []).filter((condition) => condition.kind === 'correction').flatMap((condition) => condition.affects));
 
   const occurredAt = dateFor(facts, ['payment', 'occurrence']);
   const coverageStart = dateFor(facts, ['coverage-start']);
   const coverageEnd = dateFor(facts, ['coverage-end']);
+  // «تحویل دادیم» بی‌تاریخ یعنی همین امروز تحویل شد: زمان شناسایی درآمد فروشِ نسیه.
   const deliveryDate = dateFor(facts, ['delivery']);
   const dueAt = dateFor(facts, ['due']);
-  // «امروز» نگفتن یعنی امروز — همان قاعدهٔ پارسر — مگر جمله تاریخ دیگری داشته
-  // باشد: تاریخ شروع پوشش یا تحویل جای تاریخ پرداخت نمی‌نشیند و پرسیده می‌شود.
-  const otherDates = facts.dates.some((date) => date.accepted && !['payment', 'occurrence'].includes(date.role));
+  // «امروز» نگفتن یعنی امروز — همان قاعدهٔ پارسر. نقش هر تاریخ این‌جا صریح است،
+  // پس شروع پوشش یا سررسید هیچ‌وقت جای تاریخ پرداخت نمی‌نشیند و دلیلی برای
+  // پرسیدن نیست. فقط وقتی پرسیده می‌شود که روز پرداخت گفته شده ولی خوانده نشد.
   const unresolvedPaymentDate = facts.dates.some((date) => !date.accepted && ['payment', 'occurrence'].includes(date.role));
-  if (!occurredAt && (otherDates || unresolvedPaymentDate) && !answers['dates.payment']) {
+  if (!occurredAt && unresolvedPaymentDate && !answers['dates.payment']) {
     question({ id: 'dates.payment', kind: 'information', text: 'پول در چه تاریخی پرداخت یا دریافت شد؟ تاریخ پوشش یا تحویل جای آن نیست.', picker: 'date', options: [] });
   }
-  const paymentDate = occurredAt || (otherDates || unresolvedPaymentDate ? null : new Date(now).toISOString());
+  const paymentDate = occurredAt || (unresolvedPaymentDate ? null : new Date(now).toISOString());
 
   const amounts = facts.amounts;
   const byId = new Map(amounts.map((amount) => [amount.id, amount]));
@@ -185,6 +187,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
 
   for (const amount of amounts) {
     const label = amount.evidence || amount.role;
+    if (retracted.has(amount.id)) { notes.push({ amountRef: amount.id, kind: 'retracted', text: `«${label}» در همان گفته اصلاح شد و کنار گذاشته شد.` }); continue; }
     if (amount.status === 'context') {
       if (amount.role === 'prior-balance') notes.push({ amountRef: amount.id, kind: 'context', text: `${money(amount.value)} تومان بدهی یا طلبِ قبلی است؛ دوباره ثبت نمی‌شود.` });
       continue;
@@ -241,7 +244,9 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const createContact = pickedContact === 'new' || (resolved?.status === 'new' && Boolean(counterparty));
 
     const isSettlement = movement.direction !== 'none' && (facts.event.kind === 'settlement' || (priorBalance && ['paid-now', 'received-now', 'part'].includes(amount.role)));
-    const needsCounterparty = isSettlement || movement.direction === 'none' || ['advance-paid', 'advance-received', 'deposit', 'loan-received'].includes(facts.event.kind);
+    // تسویه و پیش‌پرداخت و وام بدون طرف حساب معنا ندارند. تعهدِ بی‌نام — «قبض
+    // برق اومده» — همان مسیر امروز را می‌رود: اگر موتور طرف حساب بخواهد، خودش می‌پرسد.
+    const needsCounterparty = isSettlement || (movement.direction === 'none' && Boolean(counterparty)) || ['advance-paid', 'advance-received', 'deposit', 'loan-received'].includes(facts.event.kind);
     if (needsCounterparty && counterparty && !contactId && !(createContact && !isSettlement) && !answers[`counterparties.${counterparty.id}`]) {
       question({
         id: `counterparties.${counterparty.id}`, kind: 'information', picker: 'contact',
@@ -301,7 +306,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
 
     const type = movement.direction === 'in' ? 'income' : movement.direction === 'out' ? 'expense'
       : ['sale', 'income', 'advance-received'].includes(facts.event.kind) ? 'income' : 'expense';
-    const purposes = PURPOSE_BY_KIND[facts.event.kind] || {};
+    // کارمزد خودش هزینهٔ جاری است، هر رویدادی که کنارش آمده باشد.
+    const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' } : PURPOSE_BY_KIND[facts.event.kind] || {};
     const intendedUse = SUBJECT_USE_TO_INTENT[facts.subject.use] || purposes.intendedUse || null;
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
@@ -327,7 +333,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       unpaidSignal: movement.direction === 'none',
       dueAt: movement.direction === 'none' ? dueAt : null,
       intendedUse, ...purposes,
-      servicePeriodStart: coverageStart, servicePeriodEnd: coverageEnd, deliveryDate,
+      servicePeriodStart: coverageStart, servicePeriodEnd: coverageEnd,
+      deliveryDate: deliveryDate || (facts.subject.delivered === 'yes' ? paymentDate : null),
       amountScaleAmbiguous: Boolean(amount.scaleAmbiguous),
       eventNature: 'new', factSource: 'understanding', userConfirmed: true, needsReview: false, reviewReasons: [],
       confidenceDetails: { amount: { score: 1, reason: amount.provenance === 'user' ? 'مبلغ را ثبت‌کننده تعیین کرد.' : 'مبلغ از شاهدِ جمله خوانده و کنترل شد.' } },

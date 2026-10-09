@@ -26,7 +26,9 @@ export const OPTIONAL_BACKUP_TABLES = new Set([
   // بدونشان ساخته شده‌اند و باید همچنان قابل بازیابی بمانند.
   'tax_documents', 'tax_document_versions', 'tax_provisions', 'tax_document_relations', 'tax_document_mirrors',
   // تنخواه‌گردان، مهر ۱۴۰۵.
-  'petty_cash_funds']);
+  'petty_cash_funds',
+  // فهم رویداد، مهر ۱۴۰۵.
+  'understanding_cases', 'understanding_versions']);
 
 function backupError(message, code = 'BACKUP_INVALID') {
   return Object.assign(new Error(message), { status: 400, code });

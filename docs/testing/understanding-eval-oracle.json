@@ -1,0 +1,540 @@
+{
+  "generatedAt": "2026-10-09T06:25:19.263Z",
+  "fixtureVersion": 1,
+  "summary": {
+    "provider": "oracle",
+    "utterances": 10,
+    "correct": 8,
+    "protectiveStop": 2,
+    "partialPost": 0,
+    "wrongPost": 0,
+    "errors": 0,
+    "routes": {
+      "ready": 8,
+      "needs-answers": 1,
+      "needs-accountant": 1,
+      "no-entry": 0,
+      "failed": 0
+    },
+    "fakeAmounts": 0,
+    "amountsFound": "18/18",
+    "datesFound": "3/3",
+    "questions": 1,
+    "unbalanced": 0,
+    "wrongAccount": 0,
+    "aiCalls": 10,
+    "tokens": {
+      "input": 0,
+      "output": 0
+    },
+    "latencyMs": {
+      "median": 59,
+      "max": 75
+    }
+  },
+  "results": [
+    {
+      "id": "E01/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "settlement-payable",
+          50000000,
+          "8114eb1c-c7a6-4961-ab28-c1509257e320"
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 4,
+        "found": 4,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "پرداخت ۵۰٬۰۰۰٬۰۰۰ تومان به شرکت قیاسی — تسویهٔ «شرکت قیاسی»",
+          "treatment": "settlement",
+          "lines": [
+            "Dr payable 50000000",
+            "Cr cash 50000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 59,
+      "violations": []
+    },
+    {
+      "id": "E02/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          40000000,
+          "cash"
+        ],
+        [
+          "obligation-payable",
+          80000000,
+          null
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 3,
+        "found": 3,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "پرداخت ۴۰٬۰۰۰٬۰۰۰ تومان به شرکت آلفا",
+          "treatment": "inventory-purchase",
+          "lines": [
+            "Dr inventory-unsplit 40000000",
+            "Cr cash 40000000"
+          ]
+        },
+        {
+          "label": "بدهی ۸۰٬۰۰۰٬۰۰۰ تومان به شرکت آلفا",
+          "treatment": "inventory-purchase",
+          "lines": [
+            "Dr inventory-unsplit 80000000",
+            "Cr payable 80000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 75,
+      "violations": []
+    },
+    {
+      "id": "E03/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-in",
+          200000000,
+          "9b6c1c75-edf7-44c4-bdb7-6fd2bf70e44b"
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 1,
+        "found": 1,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "دریافت ۲۰۰٬۰۰۰٬۰۰۰ تومان از بانک ملت",
+          "treatment": "loan-received",
+          "lines": [
+            "Dr cash 200000000",
+            "Cr loan-payable 200000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 65,
+      "violations": []
+    },
+    {
+      "id": "E04/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          36000000,
+          "60bfd9f8-455d-4e45-a57e-b146e38a563e"
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 1,
+        "found": 1,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 3,
+        "found": 3
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "پرداخت ۳۶٬۰۰۰٬۰۰۰ تومان",
+          "treatment": "prepaid-expense",
+          "lines": [
+            "Dr prepaid-asset 36000000",
+            "Cr cash 36000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 63,
+      "violations": []
+    },
+    {
+      "id": "E05/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          18000000,
+          "e7229c15-efab-47a7-bd96-3f827b7e38e0"
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 1,
+        "found": 1,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "پرداخت ۱۸٬۰۰۰٬۰۰۰ تومان",
+          "treatment": "inventory-purchase",
+          "lines": [
+            "Dr inventory-unsplit 18000000",
+            "Cr cash 18000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 57,
+      "violations": []
+    },
+    {
+      "id": "E06/formal",
+      "route": "needs-answers",
+      "verdict": "stop",
+      "detail": "needs-answers",
+      "posted": [],
+      "questions": [
+        "engine.a1.counterparty"
+      ],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 1,
+        "found": 1,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": null,
+      "accountsOk": null,
+      "entries": [],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 0,
+        "trigger": "extraction"
+      },
+      "latencyMs": 54,
+      "violations": []
+    },
+    {
+      "id": "E07/formal",
+      "route": "needs-accountant",
+      "verdict": "stop",
+      "detail": "needs-accountant",
+      "posted": [],
+      "questions": [],
+      "reasons": [
+        "کالای ماندگار و هم‌اندازه یا بالاتر از حد سرمایه‌ای شدن دفتر است؛ دارایی ثابت با عمر مفید و شروع استهلاک را حسابدار ثبت می‌کند."
+      ],
+      "error": null,
+      "amounts": {
+        "expected": 1,
+        "found": 1,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": null,
+      "accountsOk": null,
+      "entries": [],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 60,
+      "violations": []
+    },
+    {
+      "id": "E08/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-in",
+          25000000,
+          "bb17ea69-a4a3-457b-8f4d-ea1f78b4b0cd"
+        ],
+        [
+          "obligation-receivable",
+          35000000,
+          null
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 3,
+        "found": 3,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "دریافت ۲۵٬۰۰۰٬۰۰۰ تومان از شرکت بتا",
+          "treatment": "recognized-revenue",
+          "lines": [
+            "Dr cash 25000000",
+            "Cr income-category 25000000"
+          ]
+        },
+        {
+          "label": "طلب ۳۵٬۰۰۰٬۰۰۰ تومان از شرکت بتا",
+          "treatment": "accrued-revenue",
+          "lines": [
+            "Dr receivable 35000000",
+            "Cr income-category 35000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 0,
+        "trigger": "extraction"
+      },
+      "latencyMs": 57,
+      "violations": []
+    },
+    {
+      "id": "E09/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "cash-out",
+          15000000,
+          "8ed312f4-65c8-4838-9261-43847eee4ffd"
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 1,
+        "found": 1,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "پرداخت ۱۵٬۰۰۰٬۰۰۰ تومان",
+          "treatment": "prepaid-expense",
+          "lines": [
+            "Dr prepaid-asset 15000000",
+            "Cr cash 15000000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 0,
+        "trigger": "extraction"
+      },
+      "latencyMs": 51,
+      "violations": []
+    },
+    {
+      "id": "E10/formal",
+      "route": "ready",
+      "verdict": "correct",
+      "detail": "ready",
+      "posted": [
+        [
+          "transfer",
+          30000000,
+          "cash"
+        ],
+        [
+          "cash-out",
+          20000,
+          "694245b5-2e93-4b54-9d53-539265402d86"
+        ]
+      ],
+      "questions": [],
+      "reasons": [],
+      "error": null,
+      "amounts": {
+        "expected": 2,
+        "found": 2,
+        "fake": 0
+      },
+      "dates": {
+        "expected": 0,
+        "found": 0
+      },
+      "balanced": true,
+      "accountsOk": true,
+      "entries": [
+        {
+          "label": "انتقال ۳۰٬۰۰۰٬۰۰۰ تومان بین حساب‌های خود شرکت",
+          "treatment": "account-transfer",
+          "lines": [
+            "Dr cash 30000000",
+            "Cr cash 30000000"
+          ]
+        },
+        {
+          "label": "پرداخت ۲۰٬۰۰۰ تومان",
+          "treatment": "period-expense",
+          "lines": [
+            "Dr expense-category 20000",
+            "Cr cash 20000"
+          ]
+        }
+      ],
+      "ai": {
+        "model": "oracle",
+        "cacheHit": false,
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "latencyMs": 1,
+        "trigger": "extraction"
+      },
+      "latencyMs": 59,
+      "violations": []
+    }
+  ]
+}

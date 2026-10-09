@@ -322,6 +322,16 @@ export const api = {
   setJournalApproval: (id, state, reason = '') => request(`/api/accounting/journal/${encodeURIComponent(id)}/approval`, { method: 'POST', body: JSON.stringify({ state, reason }) }),
   automationPolicy: () => request('/api/automation-policy'),
   saveAutomationPolicy: (payload) => request('/api/automation-policy', { method: 'PUT', body: JSON.stringify(payload) }),
+  // فهم رویداد با AI — docs/ai-event-understanding.md
+  createUnderstandingCase: (payload) => request('/api/understanding/cases', { method: 'POST', body: JSON.stringify(payload) }),
+  understandingCase: (id) => request(`/api/understanding/cases/${encodeURIComponent(id)}`),
+  understandingCases: (query = '') => request(`/api/understanding/cases${query ? `?${query}` : ''}`),
+  understandingReport: () => request('/api/understanding/report'),
+  answerUnderstandingCase: (id, answers) => request(`/api/understanding/cases/${encodeURIComponent(id)}/answers`, { method: 'POST', body: JSON.stringify({ answers }) }),
+  retryUnderstandingCase: (id) => request(`/api/understanding/cases/${encodeURIComponent(id)}/retry`, { method: 'POST', body: '{}' }),
+  commitUnderstandingCase: (id) => request(`/api/understanding/cases/${encodeURIComponent(id)}/commit`, { method: 'POST', body: '{}' }),
+  sendUnderstandingToAccountant: (id) => request(`/api/understanding/cases/${encodeURIComponent(id)}/send-to-accountant`, { method: 'POST', body: '{}' }),
+  dismissUnderstandingCase: (id) => request(`/api/understanding/cases/${encodeURIComponent(id)}/dismiss`, { method: 'POST', body: '{}' }),
   // پرسش‌های خودِ کاربر — در محیط ساده هم در دسترس است.
   confirmations: () => request('/api/confirmations'),
   confirmPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({}) }),

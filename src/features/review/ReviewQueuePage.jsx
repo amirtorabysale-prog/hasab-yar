@@ -1,4 +1,5 @@
 import { ReviewAssistant } from './ReviewAssistant.jsx';
+import { UnderstandingPolicyBox } from '../understanding/UnderstandingSheet.jsx';
 import { UnidentifiedFundsPanel } from './UnidentifiedFundsPanel.jsx';
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -344,6 +345,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
             {policy.shadowMode ? 'خاموش کن' : 'روشن کن'}
           </button>
         </div>}
+        {policy.engineV2 && <UnderstandingPolicyBox policy={policy} busy={busy} save={save} />}
       </div>
 
       <CapitalizationThresholdField value={policy.capitalizationThreshold} busy={busy} onSave={(capitalizationThreshold) => save({ capitalizationThreshold })} />
