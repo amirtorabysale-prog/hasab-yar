@@ -244,7 +244,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // کلی که اجزای انجام‌شده دارد، از راه اجزایش ثبت می‌شود.
     // فقط جزءِ پذیرفته‌شده جای کل را می‌گیرد؛ جزءِ کنارگذاشته (تکرار یا بی‌عدد)
     // نباید کل را از ثبت بیندازد.
-    const doneParts = amounts.filter((part) => part.partOf === amount.id && part.accepted && part.status === 'done' && SPLIT_ROLES.has(part.role));
+    const doneParts = amounts.filter((part) => part.partOf === amount.id && part.accepted && !retracted.has(part.id) && part.status === 'done' && SPLIT_ROLES.has(part.role));
     if (doneParts.length) { notes.push({ amountRef: amount.id, kind: 'total', text: `جمع کل ${money(amount.value)} تومان؛ اجزایش جداگانه ثبت می‌شوند.` }); continue; }
     if (amount.partOf && JUDGMENT_PART_ROLES.has(amount.role)) {
       toAccountant(`«${label}» بخشی از یک مبلغ کل است (مالیات، تخفیف یا سود)؛ تفکیکش با حسابدار است.`);

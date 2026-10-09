@@ -271,6 +271,10 @@ export function extractAmounts(input) {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (!isNumericWord(token.value)) continue;
+    // «۱۶، نه ۱۸ میلیون»: «نه» پیش از عددِ رقمی، حرف نفی است نه «۹». بدون این،
+    // «نه ۱۸ میلیون» با هم ۲۷ میلیون خوانده می‌شد — مبلغی که هیچ‌کس نگفته بود.
+    // کسی که «نُه» می‌گوید، موتور گفتار آن را ۹ می‌نویسد؛ «نه میلیون» همان نُه میلیون می‌ماند.
+    if (token.value === 'نه' && /^\d/.test(tokens[index + 1]?.value || '')) continue;
     const collected = [token.value];
     let cursor = index + 1;
     let end = token.end;

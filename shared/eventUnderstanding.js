@@ -542,6 +542,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // عدد دیگری درست بعدش، پس گرفته شده است. آزمون زنده: مدل در «۱۵۰ میلیون، نه،
   // ۲۰۰ میلیون وام گرفتیم» هر دو را وام دانست.
   const retracted = [];
+  const spokenRetractions = [];
   const spoken = normalizePersian(text);
   for (const marker of spoken.matchAll(RETRACT)) {
     const left = extractAmounts(spoken.slice(0, marker.index));
@@ -552,10 +553,15 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (!first || right.text.slice(0, first.start).trim()) continue;
     const scale = /میلیارد/.test(first.raw) ? 1_000_000_000 : /میلیون/.test(first.raw) ? 1_000_000 : /هزار/.test(first.raw) ? 1_000 : 1;
     const value = /هزار|میلیون|میلیارد/.test(last.raw) ? last.amount : last.amount * scale;
+    spokenRetractions.push(value);
     const target = amounts.find((item) => item.accepted && item.value === value && !retracted.includes(item.id));
     if (target) { retracted.push(target.id); violations.push(`amounts.${target.id}:retracted-in-speech`); }
   }
-  const modelRetracted = raw.conditions.filter((item) => item?.kind === 'correction').flatMap((item) => item.affects || []);
+  // وقتی جمله خودش روشن می‌گوید کدام عدد پس گرفته شد، حدسِ مدل کنار می‌رود، حتی
+  // اگر عددِ پس‌گرفته خودش مبلغِ پذیرفته‌ای نشده باشد. آزمون زنده: در «۱۶، نه ۱۸
+  // میلیون» جمله ۱۶ را پس می‌گیرد ولی مدل ۱۸ را پس‌گرفته دانست.
+  const trustModelCorrections = spokenRetractions.length === 0;
+  const modelRetracted = trustModelCorrections ? raw.conditions.filter((item) => item?.kind === 'correction').flatMap((item) => item.affects || []) : [];
   const isRetracted = (id) => retracted.includes(id) || modelRetracted.includes(id);
   // اجزایی که مدل به کلِ تنها وصل نکرده بود، به همان وصل می‌شوند؛ بدون این، کل
   // خودش پرداختِ جدا دیده می‌شد و «۱۲۰ از کدام حساب رفت؟» پرسیده می‌شد.
@@ -582,6 +588,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     sameAs.set(amount.id, twin.id);
     violations.push(`amounts.${amount.id}:same-as-${twin.id}`);
   }
+  // تکرارِ همان عدد که کنار رفت، جابه‌جایی‌اش را به مبلغِ نگه‌داشته می‌دهد.
+  for (const amount of amounts) if (amount.issue === 'same-mention' && amount.duplicateOf && !sameAs.has(amount.id)) sameAs.set(amount.id, amount.duplicateOf);
   for (const amount of amounts) {
     if (amount.basis === 'inferred') amount.issue = 'inferred';
     // تکرارِ همان عدد سؤال نمی‌خواهد؛ عددش در مبلغِ نگه‌داشته‌شده هست.
@@ -694,6 +702,13 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   const isBank = (name) => Boolean(name && detectBank(name));
   const people = counterparties.filter((item) => !isBank(item.name));
   for (const movement of movements) {
+    // «تنخواه» فقط وقتی تنخواه است که در جمله گفته شده باشد؛ «صندوق» صندوق است.
+    for (const side of ['from', 'to']) {
+      if (movement[side].kind === 'petty-cash' && !/تنخواه/.test(spoken)) {
+        movement[side] = { kind: /صندوق/.test(movement[side].name || '') || /صندوق/.test(spoken) ? 'cash' : 'unknown', name: movement[side].name };
+        violations.push(`movements.${movement.id}.${side}:not-petty-cash`);
+      }
+    }
     // پولِ وام از بانک وام‌دهنده به حساب ما «انتقال بین حساب‌های خودمان» نیست.
     if (eventKind === 'loan-received' && movement.direction === 'transfer') {
       Object.assign(movement, { direction: 'in', from: { kind: 'counterparty', name: movement.from.name } });
@@ -829,7 +844,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       },
       amounts: amounts.map(({ raw: _raw, ...amount }) => amount),
       nonAmountNumbers, dates, counterparties, movements: uniqueMovements, subject,
-      conditions: [...conditions, ...retracted
+      conditions: [...conditions.filter((item) => trustModelCorrections || item.kind !== 'correction'), ...retracted
         .filter((id) => !conditions.some((item) => item.kind === 'correction' && item.affects.includes(id)))
         .map((id) => ({ kind: 'correction', text: 'اصلاحِ همان گفته', affects: [id], evidence: '', source: 'validator' }))],
       ambiguities,

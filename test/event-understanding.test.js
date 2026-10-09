@@ -373,6 +373,32 @@ test('زنده: جزءِ کنارگذاشته کل را از ثبت نمی‌ا�
   assert.deepEqual(sale.movements[0].to, { kind: 'bank', name: 'ملت' });
 });
 
+test('زنده: اصلاحِ گفته بر حدسِ مدل مقدم است؛ جزءِ پس‌گرفته جای کل را نمی‌گیرد؛ «صندوق» تنخواه نیست', () => {
+  // «اجارهٔ مهر دفتر را ۱۲ میلیون، نه ببخشید ۱۵ میلیون، از بانک ملت پرداخت کردیم» — مدل ۱۲ را جزءِ ۱۵ کرد.
+  const rent = plan({
+    ...blank(), event: { kind: 'expense', description: '', status: 'done' },
+    amounts: [amount('a1', 12, '۱۲ میلیون', { role: 'part', partOf: 'a2' }), amount('a2', 15, '۱۵ میلیون', { role: 'part' })],
+    movements: [movement('m1', 'a2', 'out', party('bank', 'بانک ملت'), party('counterparty', 'دفتر'), 'از بانک ملت پرداخت کردیم')],
+  }, 'اجارهٔ مهر دفتر را ۱۲ میلیون، نه ببخشید ۱۵ میلیون، از بانک ملت پرداخت کردیم.', { endpoints: { 'm1.from': { status: 'resolved', accountId: 'mellat-1' } } }).plan;
+  assert.deepEqual(rent.components.map((item) => [item.kind, item.amount]), [['cash', 15_000_000]]);
+  // «۱۶، نه ۱۸ میلیون»: مدل ۱۸ را پس‌گرفته دانست؛ خودِ جمله می‌گوید ۱۶.
+  const invoice = validateUnderstanding({
+    ...blank(), event: { kind: 'purchase', description: '', status: 'done' },
+    amounts: [amount('a3', 18, 'نه ۱۸ میلیون'), amount('a4', 16, '۱۶، نه ۱۸ میلیون', { role: 'paid-now' })],
+    conditions: [{ kind: 'correction', text: 'اصلاح', affects: ['a3'], evidence: '۱۶، نه ۱۸ میلیون' }],
+  }, { text: 'فاکتور ۱۴۰۵۷ بابت ۲۵ کارتن روغن برای فروش را ۱۶، نه ۱۸ میلیون از بانک ملت پرداخت کردیم.', now: NOW }).understanding;
+  const retracted = invoice.conditions.filter((item) => item.kind === 'correction').flatMap((item) => item.affects);
+  assert.ok(!retracted.includes('a3'), '۱۸ پس گرفته نشده');
+  assert.equal(invoice.amounts.find((item) => item.id === 'a3').value, 18_000_000);
+  // «۳۰ میلیون از صندوق به حساب ملت» — مدل صندوق را تنخواه نامید.
+  const transfer = validateUnderstanding({
+    ...blank(), event: { kind: 'transfer', description: '', status: 'done' },
+    amounts: [amount('a1', 30_000_000, 'واریز ۳۰ میلیونی')],
+    movements: [movement('m1', 'a1', 'transfer', party('petty-cash', 'صندوق'), party('bank', 'حساب ملت'), 'از صندوق به حساب ملت')],
+  }, { text: 'بانک ملت ۲۰ هزار تومان کارمزد کم کرد بابت واریز ۳۰ میلیونی ما از صندوق به حساب ملت.', now: NOW }).understanding;
+  assert.equal(transfer.movements[0].from.kind, 'cash');
+});
+
 test('زنده: سفارش یا قرارِ آینده بدهی نمی‌سازد، حتی با «هنوز پرداخت نکردیم»', () => {
   const text = '۱۲۰ میلیون تومان کالا از شرکت آلفا سفارش دادیم ولی هنوز پرداخت نکردیم';
   const { understanding } = validateUnderstanding({
