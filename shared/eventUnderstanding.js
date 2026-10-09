@@ -591,7 +591,10 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     // نامعلوم‌بودن عددشان هیچ سندی را غلط نمی‌کند و سؤالش فقط ثبت را معطل می‌کرد.
     // کل یا «سایر»ِ نامعلوم وقتی مبلغ انجام‌شدهٔ دیگری هست مانع ثبت نیست: پول را
     // همان‌ها جابه‌جا می‌کنند. آزمون زنده: «فاکتور ۱۴۰۵۷» مبلغِ خالی شد و پرسیده می‌شد.
-    if (amount.status === 'done' && !(['total', 'other'].includes(amount.role) && otherDone)) {
+    // جزءِ بی‌عددِ یک مبلغِ پذیرفته‌شده هم سؤال نمی‌خواهد: کل، یک‌جا ثبت می‌شود.
+    // فقط جزئی که عددی ادعا نکرده؛ جزئی که عددش با شاهدش تناقض دارد همچنان پرسیده می‌شود.
+    const partOfAccepted = amount.raw.value == null && amount.partOf && amounts.some((item) => item.id === amount.partOf && item.accepted);
+    if (amount.status === 'done' && !partOfAccepted && !(['total', 'other'].includes(amount.role) && otherDone)) {
       ask(`amounts.${amount.id}.value`, 'information', amount.evidence
         ? `مبلغِ «${amount.evidence}» دقیقاً چقدر است؟`
         : 'مبلغ این بخش دقیقاً چقدر است؟');
@@ -707,6 +710,13 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     // «از بانک سامان به شرکت قیاسی پرداخت کردیم»: مدل بانک را گیرنده نوشت. وقتی
     // سمتِ حساب خالی است و سمتِ دیگر نام بانک دارد، آن بانک حسابِ ماست — جز در
     // وام، که بانک واقعاً طرف حساب است.
+    // «کارت به کارت کردن به ملت»: مدل بانک را فقط در فهرست نام‌ها آورد. سمتِ حسابِ
+    // خالی، وقتی جمله فقط یک بانک دارد، همان بانک است.
+    const namedBanks = counterparties.filter((item) => isBank(item.name));
+    if (!ACCOUNT_SIDES.has(movement[cashKey].kind) && !loanEvent && !isBank(movement[otherKey].name) && namedBanks.length === 1) {
+      movement[cashKey] = { kind: 'bank', name: namedBanks[0].name };
+      violations.push(`movements.${movement.id}:bank-from-names`);
+    }
     if (!ACCOUNT_SIDES.has(movement[cashKey].kind) && !loanEvent && isBank(movement[otherKey].name)) {
       movement[cashKey] = { kind: 'bank', name: movement[otherKey].name };
       movement[otherKey] = people.length === 1 ? { kind: 'counterparty', name: people[0].name } : { kind: 'unknown', name: null };

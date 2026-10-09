@@ -350,6 +350,29 @@ test('زنده: «به مبلغ ۹۵ میلیون» و «نقدی از صندو�
   assert.deepEqual(settled.components.map((item) => [item.kind, item.amount, item.contactId]), [['settlement', 50_000_000, 'k-qiasi']]);
 });
 
+test('زنده: جزءِ کنارگذاشته کل را از ثبت نمی‌اندازد؛ جزءِ بی‌عدد سؤال نمی‌سازد؛ بانکِ فهرست نام‌ها حساب است', () => {
+  // «یه دستگاه چاپ نود و پنج میلیونی نقد از صندوق خریدیم»
+  const machine = plan({
+    ...blank(), event: { kind: 'asset-purchase', description: '', status: 'done' },
+    amounts: [amount('a1', 95, 'نود و پنج میلیونی'), amount('a2', 95, 'نقد', { role: 'paid-now', partOf: 'a1' })],
+    movements: [movement('m1', 'a2', 'out', party('cash', 'صندوق'), party('counterparty'), 'نقد از صندوق')],
+  }, 'یه دستگاه چاپ نود و پنج میلیونی نقد از صندوق خریدیم، سه سالی کار میکنه.', { endpoints: { 'm1.from': { status: 'resolved', accountId: 'cash' } } }).plan;
+  assert.deepEqual(machine.components.map((item) => [item.kind, item.amount]), [['cash', 95_000_000]]);
+  // «۲۵ کارتن روغن» جزءِ بی‌عددِ ۱۸ میلیون
+  const oil = validateUnderstanding({
+    ...blank(), amounts: [amount('a1', 18_000_000, '۱۸ میلیون تومان', { role: 'paid-now' }), amount('a2', null, '۲۵ کارتن روغن', { role: 'part', partOf: 'a1', basis: 'inferred' })],
+  }, { text: 'فاکتور شمارهٔ ۱۴۰۵۷ بابت ۲۵ کارتن روغن برای فروش را ۱۸ میلیون تومان از بانک ملت پرداخت کردیم.', now: NOW }).understanding;
+  assert.equal(oil.ambiguities.length, 0);
+  // «بیست و پنج‌شو کارت به کارت کردن به ملت»
+  const sale = validateUnderstanding({
+    ...blank(), event: { kind: 'sale', description: '', status: 'mixed' },
+    amounts: [amount('a1', 60, 'شصت میلیون')],
+    counterparties: [{ id: 'c1', name: 'بتا', role: 'customer', evidence: 'به بتا' }, { id: 'c2', name: 'ملت', role: 'bank', evidence: 'به ملت' }],
+    movements: [movement('m1', 'a1', 'in', party('counterparty', 'بتا'), party('us'), 'کارت به کارت کردن')],
+  }, { text: 'شصت میلیون جنس به بتا فروختیم دادیم دستشون، بیست و پنج‌شو کارت به کارت کردن به ملت، بقیه رو آخر ماه میدن.', now: NOW }).understanding;
+  assert.deepEqual(sale.movements[0].to, { kind: 'bank', name: 'ملت' });
+});
+
 test('زنده: سفارش یا قرارِ آینده بدهی نمی‌سازد، حتی با «هنوز پرداخت نکردیم»', () => {
   const text = '۱۲۰ میلیون تومان کالا از شرکت آلفا سفارش دادیم ولی هنوز پرداخت نکردیم';
   const { understanding } = validateUnderstanding({
