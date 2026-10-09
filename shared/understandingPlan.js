@@ -22,6 +22,7 @@
  */
 import { classifyCategory } from './categoryRules.js';
 import { detectBank } from './banks.js';
+import { normalizePersian } from './normalize.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -30,6 +31,11 @@ const SUBJECT_USE_TO_INTENT = Object.freeze({
 /** جزئی که خودش جابه‌جایی پول یا تعهد است، نه مالیات و تخفیفِ داخلِ یک کل. */
 const SPLIT_ROLES = new Set(['cash-part', 'credit-part', 'paid-now', 'received-now', 'part', 'deposit', 'fee']);
 const JUDGMENT_PART_ROLES = new Set(['tax', 'discount', 'interest', 'waiver']);
+/** «چک» به‌عنوان یک واژه — نه «کوچک» — و «پاس شد» یعنی پول جابه‌جا شده است. */
+const CHEQUE_CUE = /(?:^|[\s«(،])چک(?=$|[\s.،؛!؟»)ِ‌]|ی\s)/;
+const CHEQUE_CLEARED = /پاس\s*شد|وصول\s*شد|نقد\s*شد/;
+const UNIDENTIFIED_DEPOSIT = /معلوم\s*نیس(?:ت)?\s*(?:از\s*طرف\s*)?(?:کی|چه\s*کسی)|بدون\s*مشخصات|ناشناس|مشکوک/;
+const TAX_RETURN = /اظهارنامه[^.،؛!؟]{0,30}(?:ارسال|تسلیم)\s*شد|تهاتر/;
 
 /**
  * نوع رویداد → هدف دریافت یا پرداخت، همان واژگان موتور تصمیم.
@@ -186,6 +192,13 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
 
   const kindReason = ACCOUNTANT_KINDS[facts.event.kind];
   if (kindReason) toAccountant(kindReason);
+  // هر نوعی که مدل گفته باشد: چکِ وصول‌نشده پول نیست، واریزِ بی‌نام درآمد نیست، و
+  // اظهارنامه و تهاتر مالیات قضاوت است. آزمون زنده: «چک ۲۵ میلیونی از آقای نادری
+  // گرفتیم» پرسید «پول به کدام حساب آمد؟» و با جوابش دریافت وجه ثبت می‌شد.
+  const said = normalizePersian(transcript || '');
+  if (CHEQUE_CUE.test(said) && !CHEQUE_CLEARED.test(said)) toAccountant(ACCOUNTANT_KINDS.cheque);
+  if (UNIDENTIFIED_DEPOSIT.test(said)) toAccountant('واریزِ بی‌نام یا مشکوک درآمد نیست؛ تا شناختنِ واریزکننده، ثبتش با حسابدار است.');
+  if (TAX_RETURN.test(said)) toAccountant('اظهارنامه و تهاتر مالیات با حسابدار است.');
   // «۱۲ میلیون، نه ببخشید ۱۵»: اصلاحِ همان گفته است، نه اصلاح یک ثبت قبلی.
   // مبلغِ پس‌گرفته‌شده کنار می‌رود و یادداشت می‌شود؛ اصلاح سند قبلی (نوع رویداد
   // `correction`) همچنان با حسابدار است.

@@ -32,7 +32,7 @@ const LINE_ROLES = {
   'loan-payable': 'وام پرداختنی', 'owner-capital': 'سرمایه', 'owner-drawing': 'برداشت مالک', 'fixed-asset': 'دارایی ثابت',
   'refundable-deposit': 'ودیعه', 'supplier-advance': 'پیش‌پرداخت خرید', 'unidentified-receipt': 'وجوه تعیین‌تکلیف‌نشده',
 };
-const PROVENANCE = { computed: 'محاسبه از مبالغ گفته‌شده', 'explicit-scale-from-sentence': 'مقیاس از همین جمله', user: 'تعیین‌شده توسط تو' };
+const PROVENANCE = { computed: 'محاسبه از مبالغ گفته‌شده', 'explicit-scale-from-sentence': 'مقیاس از همین جمله', 'whole-balance': 'همهٔ ماندهٔ گفته‌شده', user: 'تعیین‌شده توسط تو' };
 
 export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted }) {
   const [answers, setAnswers] = useState({});

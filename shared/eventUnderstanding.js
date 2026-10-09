@@ -112,6 +112,23 @@ const RETRACT = /[،,]?\s*(?:نه\s*[،,]?\s*ببخشید|نه|ببخشید|من
 const SPLIT_PART_ROLES = new Set(['cash-part', 'credit-part', 'paid-now', 'received-now', 'part', 'future-payment']);
 const ACCOUNT_SIDES = new Set(['bank', 'cash', 'petty-cash']);
 const POSTING_DATE_ROLES = new Set(['payment', 'occurrence', 'coverage-start', 'coverage-end']);
+/** نشانهٔ پرداختِ بخشی از مانده؛ بدون هیچ‌کدام، «بدهی‌اش را واریز کرد» یعنی همهٔ مانده. */
+const PARTIAL_PAYMENT = /بخشی|قسمتی|مقداری|نصف|نیمی|کمی|یه\s*کم|بعضی|بقیه|باقی|مابقی|علی[\s\u200c]*الحساب|درصد|قسط|بیعانه/;
+/** فعلِ انجام‌شدهٔ جابه‌جایی پول. */
+const DONE_MONEY_VERB = /(?:پرداخت|واریز|منتقل|حواله|کارت\s*به\s*کارت)\s*(?:کردیم|کردم|کرد|کردند|کردن|شد)(?=$|[\s.،؛!؟])|(?:^|\s)(?:دادیم|دادم|ریختیم|ریختم|زدیم|زدم|کشیدیم|کشیدن)(?=$|[\s.،؛!؟])/;
+const NOT_YET = /قرار|خواه|بعدا|بعداً|هنوز|اگر|اگه|می[\s\u200c]*(?:پرداز|ده|دیم|ریز|زن)/;
+/**
+ * اصلاحِ سندِ قبلی یا رویدادِ دیرگفته، هر نوعی که مدل بگوید. آزمون زنده: «سود
+ * سال قبل را برداشت کردم، یادم رفته بود بگم، درستش کن» برداشتِ پس‌گرفته دیده شد
+ * و «فروش سال قبل جا افتاده» تاریخ پرداخت را پرسید.
+ */
+const BOOK_CORRECTION = /اشتباه\S*[^.،؛!؟]{0,40}(?:ثبت|منظور|برده)\s*شده|جا\s*افتاده|تعدیل(?:ات)?\s*سنواتی|سند\s*(?:اصلاحی|تعدیل)|(?:کمتر|بیشتر)\s*محاسبه\s*شده|یادم\s*رفته\s*بود|(?:اصلاحش|درستش)\s*کن/;
+const THIS_MONTH = /^(?:این|همین)\s*ماه$|^ماه\s*جاری$/;
+
+function persianMonthEnd(year, month, timeZone) {
+  const next = month === 12 ? persianToISO(year + 1, 1, 1, timeZone) : persianToISO(year, month + 1, 1, timeZone);
+  return next ? new Date(Date.parse(next) - 86_400_000).toISOString() : null;
+}
 
 /** اسم شمارشیِ پس از عدد: آن عدد تعداد است، نه پول. */
 const COUNT_NOUN = /^\s*(?:تا|عدد|قسط|کارتن|بسته|نفر|ماه|سال|روز|هفته|کیلو|متر|دستگاه|قلم|فقره|برگ|چک|فاکتور|درصد|واحد|جلد|شاخه|تن)(?![آ-ی])/;
@@ -383,6 +400,14 @@ const dayKey = (iso, timeZone) => {
  * اگر دو منبع با هم نخوانند تاریخ پذیرفته نمی‌شود و سؤال می‌شود.
  */
 function resolveDate(date, { now, timeZone }) {
+  // «سود سپردهٔ این ماه»، «قبض گاز این ماه»: ماهِ جاری، بی‌روز. روز پرداختش همان
+  // پیش‌فرضِ امروز است و پوششش همین ماه. آزمون زنده: دو بار «دقیقاً چه روزی؟».
+  if (THIS_MONTH.test(normalizePersian(date.expression || '').trim())) {
+    if (['payment', 'occurrence'].includes(date.role)) return { iso: new Date(now).toISOString(), issue: null };
+    const today = todayPersian(now, timeZone);
+    const iso = date.role === 'coverage-end' ? persianMonthEnd(today.year, today.month, timeZone) : persianToISO(today.year, today.month, 1, timeZone);
+    return { iso, issue: iso ? null : 'unresolved' };
+  }
   // عبارتی که نام ماه دارد، ماه و روز و سالش را از واژه‌های خودش می‌گیرد؛ شمارهٔ
   // ماهِ مدل کنار گذاشته می‌شود (آزمون زنده: «آبان» = ۱۱، «مهر» = ۱۰ از مدل).
   const spoken = date.expression ? readJalaliExpression(date.expression) : null;
@@ -512,14 +537,19 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     mentions.set(value, (mentions.get(value) || 0) + 1);
   }
   const generality = (role) => (['total', 'other'].includes(role) ? 1 : 0);
+  // «آقای محمدی بدهی پنجاه میلیونیش را واریز کرد»: یک عدد با دو نقش — مانده (زمینه)
+  // و پرداخت. مانده هیچ‌وقت ثبت نمی‌شود، پس دوباره‌شماری نمی‌سازد.
+  const wholeBalance = (amount, balance) => balance.role === 'prior-balance' && ['paid-now', 'received-now'].includes(amount.role)
+    && amount.status === 'done' && !PARTIAL_PAYMENT.test(normalizePersian(text));
   const byValue = new Map();
   for (const amount of amounts.filter((item) => item.accepted && item.provenance === 'explicit')) {
     byValue.set(amount.value, [...(byValue.get(amount.value) || []), amount]);
   }
   for (const [value, group] of byValue) {
     const allowed = Math.max(1, mentions.get(value) || 0);
-    if (group.length <= allowed) continue;
-    const ordered = [...group].sort((left, right) => generality(left.role) - generality(right.role));
+    const counted = group.filter((item) => !group.some((other) => wholeBalance(other, item)));
+    if (counted.length <= allowed) continue;
+    const ordered = [...counted].sort((left, right) => generality(left.role) - generality(right.role));
     for (const extra of ordered.slice(allowed)) {
       Object.assign(extra, { accepted: false, issue: 'same-mention', duplicateOf: ordered[0].id, value: null });
       violations.push(`amounts.${extra.id}:same-mention`);
@@ -605,6 +635,13 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     if (!(claimed > 0)) continue;
     const twin = amounts.find((item) => item !== amount && item.accepted && !isRetracted(item.id) && MODEL_UNITS.some((unit) => item.value === claimed * unit));
     if (!twin) continue;
+    // پرداختِ همهٔ مانده، تکرارِ مانده نیست؛ آزمون زنده (T031): پرداخت روی ماندهٔ
+    // زمینه افتاد و هیچ سندی ساخته نشد.
+    if (wholeBalance(amount, twin)) {
+      Object.assign(amount, { value: twin.value, accepted: true, provenance: 'whole-balance', issue: null });
+      violations.push(`amounts.${amount.id}:whole-balance-of-${twin.id}`);
+      continue;
+    }
     Object.assign(amount, { issue: 'same-mention', duplicateOf: twin.id });
     sameAs.set(amount.id, twin.id);
     violations.push(`amounts.${amount.id}:same-as-${twin.id}`);
@@ -678,6 +715,21 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const resolved = resolveDate(date, { now, timeZone });
     return { ...date, iso: resolved.iso, accepted: Boolean(resolved.iso), issue: resolved.issue };
   });
+  // «از اول مهر تا آخر شهریور»: پایانِ بی‌سالی که پیش از آغاز می‌افتد، سالِ بعد
+  // است. آزمون زنده (V09): پایان ۳۱ شهریورِ همین سال خوانده شد، یک روز پیش از
+  // آغاز، و بیمهٔ یک‌ساله یک‌جا هزینه شد. پایانی که سالش گفته شده و باز پیش از
+  // آغاز است، پرسیده می‌شود.
+  const coverageFrom = dates.find((item) => item.accepted && item.role === 'coverage-start');
+  for (const end of dates.filter((item) => coverageFrom && item.accepted && item.role === 'coverage-end')) {
+    if (Date.parse(end.iso) > Date.parse(coverageFrom.iso)) continue;
+    const spokenEnd = end.expression ? readJalaliExpression(end.expression) : null;
+    const yearSaid = spokenEnd ? spokenEnd.year != null || spokenEnd.yearOffset != null : end.jalali?.year != null;
+    const parts = todayPersian(new Date(end.iso), timeZone);
+    const monthEnd = spokenEnd ? Boolean(spokenEnd.end) || spokenEnd.day == null : end.jalali?.day == null;
+    const rolled = yearSaid ? null : monthEnd ? persianMonthEnd(parts.year + 1, parts.month, timeZone) : persianToISO(parts.year + 1, parts.month, parts.day, timeZone);
+    if (rolled && Date.parse(rolled) > Date.parse(coverageFrom.iso)) { end.iso = rolled; violations.push(`dates.${end.id}:next-year`); continue; }
+    Object.assign(end, { iso: null, accepted: false, issue: 'before-start' });
+  }
   for (const date of dates.filter((item) => !item.accepted)) {
     violations.push(`dates.${date.id}:${date.issue}`);
     // فقط تاریخی که سند را عوض می‌کند پرسیده می‌شود: روز پرداخت و دورهٔ پوشش.
@@ -718,6 +770,10 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   if (KIND_CUES[eventKind] && !KIND_CUES[eventKind].test(spoken)) {
     violations.push(`event:${eventKind}-without-cue`);
     eventKind = amounts.some((item) => item.role === 'prior-balance') ? 'settlement' : 'other';
+  }
+  if (eventKind !== 'correction' && BOOK_CORRECTION.test(spoken)) {
+    violations.push(`event:${eventKind}-is-correction`);
+    eventKind = 'correction';
   }
   const loanEvent = ['loan-received', 'loan-repayment'].includes(eventKind);
   const isBank = (name) => Boolean(name && detectBank(name));
@@ -797,17 +853,21 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // فعلی (`readUnpaidSignal`) این‌جا هم داور است، و سفارش، پیش‌فاکتور یا قرار
   // آینده («قرار است») هرگز بدهی نمی‌سازد.
   const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته)|(?:دریافت|واریز)\s*ن(?:شده|کرده|کردیم))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
-  const notYetReal = /سفارش|پیش\s*فاکتور|قرار\s*(?:است|بود)|قراره/.test(spoken) || subject.delivered === 'no';
+  // «تموم کردیم و تحویل دادیم؛ قراره بدن»: «قرار» دربارهٔ پول است و طلب امروز هست
+  // (آزمون زنده V15). «قرار» فقط وقتی چیزی را آینده می‌کند که تحویلی گفته نشده باشد.
+  const deliveredInSpeech = /تحویل\s*(?:دادیم|دادم|گرفتیم|گرفتم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|انجام\s*(?:دادیم|دادم|شد)/.test(spoken)
+    && !/(?:نه|هنوز)\s*تحویل|تحویل\s*ن(?:دادیم|داده|گرفتیم|گرفته|شده)/.test(spoken);
+  const notYetReal = /سفارش|پیش\s*فاکتور/.test(spoken) || (/قرار\s*(?:است|بود)|قراره/.test(spoken) && !deliveredInSpeech) || subject.delivered === 'no';
   const accrues = ['expense', 'purchase', 'asset-purchase', 'sale', 'income'].includes(eventKind) && !notYetReal;
   const becameObligation = new Set();
   for (const condition of conditions.filter((item) => item.kind === 'negation')) {
     for (const ref of condition.affects) {
       // نفیِ «پرداخت آینده»ای که جزء یک کل است، دربارهٔ همان کل است.
       const target = byId.get(ref)?.role === 'future-payment' && byId.get(ref)?.partOf ? byId.get(byId.get(ref).partOf) : byId.get(ref);
-      if (!accrues || !target?.accepted) continue;
+      if (!accrues || !target?.accepted || becameObligation.has(target.id)) continue;
       const own = movements.filter((item) => item.amountRef === target.id || item.amountRef === ref);
-      const direction = own.find((item) => ['in', 'out'].includes(item.direction))?.direction
-        || (['sale', 'income'].includes(eventKind) ? 'in' : 'out');
+      // جهت از نوع رویداد: مدل در «هنوز پولی نگرفتیم» جابه‌جایی را «خروج» نوشت.
+      const direction = ['sale', 'income'].includes(eventKind) ? 'in' : 'out';
       if (!unpaidHere[direction]) continue;
       target.status = 'done';
       for (const item of own) { item.direction = 'none'; item.amountRef = target.id; }
@@ -815,6 +875,34 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       becameObligation.add(target.id);
       violations.push(`amounts.${target.id}:unpaid-obligation`);
     }
+  }
+  // «قبض ... اومده، موعد پرداختش هفته بعده»: مدل نفی‌ای نگفت ولی داورِ قطعیِ مسیر
+  // فعلی می‌گوید پرداخت نشده. آزمون زنده (T008): مبلغ «آینده» ماند و بدهی گم شد.
+  // فقط وقتی یک مبلغ در میان است و هیچ پرداخت انجام‌شدهٔ دیگری گفته نشده.
+  if (unpaidHere.out && !becameObligation.size && !['sale', 'income'].includes(eventKind) && (accrues || (eventKind === 'obligation' && !notYetReal))) {
+    const candidates = amounts.filter((item) => item.accepted && !isRetracted(item.id) && ['total', 'other'].includes(item.role) && ['done', 'future'].includes(item.status));
+    const othersDone = amounts.some((item) => item.accepted && !isRetracted(item.id) && item.status === 'done' && !candidates.includes(item));
+    if (candidates.length === 1 && !othersDone) {
+      const [target] = candidates;
+      target.status = 'done';
+      const own = movements.filter((item) => item.amountRef === target.id);
+      for (const item of own) item.direction = 'none';
+      if (!own.length) movements.push({ id: `${target.id}-unpaid`, amountRef: target.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: '' });
+      becameObligation.add(target.id);
+      violations.push(`amounts.${target.id}:unpaid-obligation`);
+    }
+  }
+  // «اجارهٔ شش ماه آینده را ... پرداخت کردیم»: «آینده» دربارهٔ دورهٔ اجاره است، نه
+  // پول. مبلغی که مدل «آینده» نامید ولی جابه‌جایی‌اش با فعلِ انجام‌شده آمده، انجام
+  // شده است. آزمون زنده (V10): هیچ سندی ساخته نشد.
+  const hedged = new Set(conditions.filter((item) => ['negation', 'condition', 'promise'].includes(item.kind)).flatMap((item) => item.affects));
+  for (const movement of movements.filter((item) => ['in', 'out', 'transfer'].includes(item.direction))) {
+    const amount = byId.get(movement.amountRef);
+    if (!amount?.accepted || amount.status !== 'future' || STATUS_BY_ROLE[amount.role] || hedged.has(amount.id) || becameObligation.has(amount.id)) continue;
+    const said = normalizePersian(movement.evidence || '');
+    if (!said || !foundLoosely(movement.evidence, textKey) || !DONE_MONEY_VERB.test(said) || NOT_YET.test(said)) continue;
+    amount.status = 'done';
+    violations.push(`amounts.${amount.id}:done-in-speech`);
   }
   // نفی‌ای که مبلغی را «پرداخت‌نشده» می‌کند بر جابه‌جاییِ همان مبلغ مقدم است:
   // «خریدیم ولی هنوز پولش رو ندادیم» خروج وجه نیست.
