@@ -192,6 +192,37 @@ const found = (evidence, textKey) => {
   return key.length > 0 && textKey.includes(key);
 };
 
+/**
+ * شاهدِ توصیفی — کاربرد کالا، شرط، نفی — کمی آزادتر.
+ *
+ * مدل واقعی گاهی یک «را» یا یک واژه را از عبارت جا می‌اندازد و شاهد عیناً در
+ * متن پیدا نمی‌شد؛ «برای فروش» دور ریخته می‌شد و خرید کالا بی‌کاربرد می‌ماند.
+ * این‌جا کافی است همهٔ واژه‌های شاهد به همان ترتیب در متن باشند و جمعاً حداکثر
+ * دو واژه جا افتاده باشد. هیچ واژه‌ای که در متن نیست پذیرفته نمی‌شود.
+ *
+ * مبلغ، تاریخ و نام همچنان عینِ متن را می‌خواهند: دوختن تکه‌های دور از هم
+ * («پنجاه … میلیون») می‌تواند عدد یا تاریخی بسازد که کسی نگفته.
+ */
+// واژه‌های دستوری که مدل در نقل‌قول اضافه یا کم می‌کند و معنایی نمی‌سازند.
+const FUNCTION_WORDS = new Set(['را', 'رو', 'و', 'که', 'به', 'از', 'با', 'هم', 'این', 'اون', 'آن', 'ما', 'ها']);
+
+const foundLoosely = (evidence, textKey) => {
+  if (found(evidence, textKey)) return true;
+  const words = evidenceKey(evidence).split(' ').filter((word) => word && !FUNCTION_WORDS.has(word));
+  const textWords = textKey.split(' ');
+  if (words.length < 2) return false;
+  let position = textWords.indexOf(words[0]);
+  if (position < 0) return false;
+  let skipped = 0;
+  for (const word of words.slice(1)) {
+    const next = textWords.indexOf(word, position + 1);
+    if (next < 0) return false;
+    skipped += next - position - 1;
+    position = next;
+  }
+  return skipped <= 2;
+};
+
 const cleanLabel = (value, limit = 160) => String(value ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, limit);
 
 /**
@@ -390,6 +421,32 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       }
     }
   }
+  // یک عددِ گفته‌شده، حداکثر یک مبلغ قابل ثبت.
+  //
+  // مدل واقعی «هشتاد میلیون … نسیه خریدیم» را دو مبلغ کرد: کل ۸۰ و بخش نسیهٔ ۸۰،
+  // بی‌آنکه یکی را جزء دیگری بداند. نتیجه‌اش سؤال «۸۰ میلیون از کدام حساب رفت؟»
+  // بود و با جوابش، ۸۰ نقد و ۸۰ بدهی — دو برابرِ واقعیت. وقتی عددی در متن کمتر
+  // از تعداد مبالغِ هم‌اندازهٔ ادعاشده آمده، همان تعداد نگه داشته می‌شود و نقشِ
+  // مشخص‌تر (نسیه، نقد، پرداخت‌شده) بر «کل» مقدم است.
+  const mentions = new Map();
+  for (const read of readEvidenceAmounts(text).filter((item) => item.cue || item.colloquial)) {
+    const value = read.colloquial ? read.amount * 1_000 : read.rial ? Math.round(read.amount / 10) : read.amount;
+    mentions.set(value, (mentions.get(value) || 0) + 1);
+  }
+  const generality = (role) => (['total', 'other'].includes(role) ? 1 : 0);
+  const byValue = new Map();
+  for (const amount of amounts.filter((item) => item.accepted && item.provenance === 'explicit')) {
+    byValue.set(amount.value, [...(byValue.get(amount.value) || []), amount]);
+  }
+  for (const [value, group] of byValue) {
+    const allowed = Math.max(1, mentions.get(value) || 0);
+    if (group.length <= allowed) continue;
+    const ordered = [...group].sort((left, right) => generality(left.role) - generality(right.role));
+    for (const extra of ordered.slice(allowed)) {
+      Object.assign(extra, { accepted: false, issue: 'same-mention', duplicateOf: ordered[0].id, value: null });
+      violations.push(`amounts.${extra.id}:same-mention`);
+    }
+  }
   // محاسبه‌شده‌ها بعد از صریح‌ها، و فقط از مبالغ پذیرفته‌شده: «بقیه‌اش» از
   // اعداد صریح قابل محاسبه است، از عدد حدسی نه.
   for (const amount of amounts) {
@@ -402,7 +459,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   }
   for (const amount of amounts) {
     if (amount.basis === 'inferred') amount.issue = 'inferred';
-    if (amount.accepted) continue;
+    // تکرارِ همان عدد سؤال نمی‌خواهد؛ عددش در مبلغِ نگه‌داشته‌شده هست.
+    if (amount.accepted || amount.issue === 'same-mention') continue;
     violations.push(`amounts.${amount.id}:${amount.issue}`);
     // فقط مبلغی که سند می‌سازد می‌پرسد. زمینه، آینده و مشروط ثبت نمی‌شوند؛
     // نامعلوم‌بودن عددشان هیچ سندی را غلط نمی‌کند و سؤالش فقط ثبت را معطل می‌کرد.
@@ -432,7 +490,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // --- اعداد غیرمبلغ ---------------------------------------------------------
   const nonAmountNumbers = raw.nonAmountNumbers.slice(0, 12).map((item) => ({
     value: cleanLabel(item.value, 30), role: pick(item.role, NON_AMOUNT_ROLES, 'other'), evidence: cleanLabel(item.evidence, 200),
-  })).filter((item) => found(item.evidence, textKey));
+  })).filter((item) => foundLoosely(item.evidence, textKey));
   // اگر مدل همان عدد را هم مبلغ دانسته و هم شماره یا تعداد، به هیچ‌کدام اعتماد
   // نمی‌شود.
   for (const amount of amounts.filter((item) => item.accepted && item.provenance === 'explicit')) {
@@ -504,7 +562,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     evidence: raw.subject?.evidence ? cleanLabel(raw.subject.evidence, 300) : null,
   };
   // «برای فروش نیست» یا «عمر مفیدش سه سال است» فقط با شاهد پذیرفته می‌شود.
-  if (subject.evidence && !found(subject.evidence, textKey)) {
+  if (subject.evidence && !foundLoosely(subject.evidence, textKey)) {
     violations.push('subject:evidence-not-found');
     subject.use = 'unknown';
     subject.usefulLifeMonths = null;
@@ -521,7 +579,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     affects: (item.affects || []).map((ref) => cleanLabel(ref, 20)).filter((ref) => byId.has(ref)),
     evidence: cleanLabel(item.evidence, 300),
   })).filter((item) => {
-    const ok = found(item.evidence, textKey);
+    const ok = foundLoosely(item.evidence, textKey);
     if (!ok) violations.push('conditions:evidence-not-found');
     return ok;
   });

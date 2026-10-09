@@ -69,6 +69,11 @@ export function ensureUnderstandingSchema(database = db) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (case_id, version)
     );`);
+  // خروجی خامِ مدل، کنار نسخهٔ سنجیده‌شده: علت هر برداشت ردشده بعداً روی خود
+  // سایت دیده می‌شود، بی‌آنکه درخواست را تکرار کنیم.
+  if (!database.prepare('PRAGMA table_info(understanding_versions)').all().some((column) => column.name === 'raw')) {
+    database.exec('ALTER TABLE understanding_versions ADD COLUMN raw TEXT');
+  }
   return database;
 }
 
@@ -175,10 +180,10 @@ function replan(id, { now } = {}) {
   return plan;
 }
 
-function saveVersion(id, { understanding, violations = [], model = null, cacheHit = false, usage = {}, latencyMs = null }, trigger) {
+function saveVersion(id, { understanding, violations = [], model = null, cacheHit = false, usage = {}, latencyMs = null, raw = null }, trigger) {
   const next = (db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM understanding_versions WHERE case_id=?').get(id).version || 0) + 1;
-  db.prepare(`INSERT INTO understanding_versions (case_id,version,understanding,violations,model,cache_hit,usage,latency_ms,trigger)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(id, next, JSON.stringify(understanding), JSON.stringify(violations), model, cacheHit ? 1 : 0, JSON.stringify(usage), latencyMs, trigger);
+  db.prepare(`INSERT INTO understanding_versions (case_id,version,understanding,violations,model,cache_hit,usage,latency_ms,trigger,raw)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, next, JSON.stringify(understanding), JSON.stringify(violations), model, cacheHit ? 1 : 0, JSON.stringify(usage), latencyMs, trigger, raw ? JSON.stringify(raw) : null);
   touch(id, { version: next, error_code: null, error_message: null });
   return next;
 }
@@ -247,6 +252,7 @@ export function getUnderstandingCase(id) {
       accounts: plan.accounts,
       counterparties: plan.counterparties,
     } : null,
+    modelOutput: json(db.prepare('SELECT raw FROM understanding_versions WHERE case_id=? AND raw IS NOT NULL ORDER BY version DESC LIMIT 1').get(id)?.raw, null),
     ai: version ? { model: version.model, cacheHit: Boolean(version.cache_hit), usage: json(version.usage, {}), latencyMs: version.latency_ms, trigger: version.trigger } : null,
     legacy: json(row.legacy, null), comparison: json(row.comparison, null), result: json(row.result, null),
     createdAt: row.created_at, updatedAt: row.updated_at,

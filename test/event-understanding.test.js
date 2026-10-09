@@ -107,6 +107,29 @@ test('کل و اجزا: مانده از اعداد صریح محاسبه می‌
   assert.ok(bad.ambiguities.length > 0);
 });
 
+test('آزمون زنده: یک عددِ گفته‌شده دو مبلغ نمی‌شود؛ شاهد توصیفی با یک واژهٔ جاافتاده پذیرفته می‌شود', () => {
+  // خروجی واقعی مدل روی سایت، ۱۷ مهر ۱۴۰۵: «هشتاد میلیون» هم «کل» شد هم «بخش نسیه».
+  const text = 'هشتاد میلیون جنس برای فروش از شرکت قیاسی نسیه خریدیم و تحویل گرفتیم';
+  const { understanding, violations } = validateUnderstanding({
+    ...blank(), event: { kind: 'purchase', description: '', status: 'done' },
+    amounts: [amount('a1', 80_000_000, 'هشتاد میلیون'), amount('a2', 80_000_000, 'هشتاد میلیون', { role: 'credit-part' })],
+    movements: [movement('m1', 'a2', 'none', party('counterparty', 'شرکت قیاسی'), party('us'), 'نسیه خریدیم')],
+    subject: { what: 'جنس', kind: 'goods', use: 'resale', delivered: 'yes', usefulLifeMonths: null, evidence: 'جنس را برای فروش از قیاسی' },
+  }, { text, now: NOW });
+  assert.deepEqual(understanding.amounts.filter((item) => item.accepted).map((item) => [item.id, item.role]), [['a2', 'credit-part']]);
+  assert.ok(violations.includes('amounts.a1:same-mention'));
+  assert.equal(understanding.ambiguities.length, 0, 'تکرارِ همان عدد سؤال نمی‌سازد');
+  assert.equal(understanding.subject.use, 'resale', '«جنس را برای فروش از قیاسی»: «را» اضافه و «شرکت» جاافتاده، همان شاهد است');
+  // دو بار گفتنِ همان عدد، دو مبلغ است.
+  const twice = validateUnderstanding({ ...blank(), amounts: [amount('a1', 10_000_000, '۱۰ میلیون از ملت'), amount('a2', 10_000_000, '۱۰ میلیون از سامان')] },
+    { text: '۱۰ میلیون از ملت و ۱۰ میلیون از سامان دادیم', now: NOW }).understanding;
+  assert.equal(twice.amounts.filter((item) => item.accepted).length, 2);
+  // ولی شاهدِ مبلغ و نام همچنان عین متن است: تکه‌های دور از هم عدد نمی‌سازند.
+  const stitched = validateUnderstanding({ ...blank(), amounts: [amount('a1', 50_000_000, 'پنجاه میلیون')] },
+    { text: 'پنجاه کارتن خریدیم و ۲ میلیون دادیم', now: NOW }).understanding;
+  assert.equal(stitched.amounts[0].accepted, false);
+});
+
 test('فیلد حسابداری در خروجی مدل کل پاسخ را رد می‌کند', () => {
   assert.equal(validateUnderstanding({ ...blank(), journalEntry: {} }, { text: 'x', now: NOW }).ok, false);
   assert.equal(validateUnderstanding({ ...blank(), amounts: [{ ...amount('a1', 1, 'x'), debitAccount: '1101' }] }, { text: 'x', now: NOW }).ok, false);
