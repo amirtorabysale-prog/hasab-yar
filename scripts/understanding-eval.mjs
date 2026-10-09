@@ -223,6 +223,8 @@ if (args.set && args.set !== 'acceptance') {
   } else throw new Error('set باید acceptance، stress40 یا v3 باشد.');
   const rows = [];
   for (const item of items) {
+    if (args.out && rows.length) writeFileSync(`${args.out}.partial.json`, `${JSON.stringify(rows)}
+`);
     const { run } = await freshLedger();
     rows.push(await run(async () => {
       const startedAt = Date.now();
@@ -258,6 +260,9 @@ for (const event of fixture.events) {
     } catch (error) {
       results.push({ id: `${event.id}/${variant.style}`, verdict: 'error', detail: error.message, route: 'error' });
     }
+    // نتیجهٔ نیمه‌کاره هم نگه داشته می‌شود: اجرای طولانی با مدل واقعی اگر وسطش قطع شود، کار انجام‌شده گم نمی‌شود.
+    if (args.out) writeFileSync(`${args.out}.partial.json`, `${JSON.stringify(results)}
+`);
   }
 }
 
