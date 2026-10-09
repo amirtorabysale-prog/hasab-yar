@@ -124,6 +124,13 @@ test('آزمون زنده: یک عددِ گفته‌شده دو مبلغ نمی�
   const twice = validateUnderstanding({ ...blank(), amounts: [amount('a1', 10_000_000, '۱۰ میلیون از ملت'), amount('a2', 10_000_000, '۱۰ میلیون از سامان')] },
     { text: '۱۰ میلیون از ملت و ۱۰ میلیون از سامان دادیم', now: NOW }).understanding;
   assert.equal(twice.amounts.filter((item) => item.accepted).length, 2);
+  // مدل واقعی نقل‌قول بلند را با «...» کوتاه کرد؛ هر تکه جدا در متن هست.
+  const elided = validateUnderstanding({
+    ...blank(), amounts: [amount('a1', 80_000_000, 'هشتاد میلیون ... نسیه خریدیم', { role: 'credit-part' })],
+    subject: { what: 'جنس', kind: 'goods', use: 'resale', delivered: 'yes', usefulLifeMonths: null, evidence: 'جنس برای فروش ... تحویل گرفتیم' },
+  }, { text, now: NOW }).understanding;
+  assert.equal(elided.subject.use, 'resale');
+  assert.equal(elided.amounts[0].accepted, true);
   // ولی شاهدِ مبلغ و نام همچنان عین متن است: تکه‌های دور از هم عدد نمی‌سازند.
   const stitched = validateUnderstanding({ ...blank(), amounts: [amount('a1', 50_000_000, 'پنجاه میلیون')] },
     { text: 'پنجاه کارتن خریدیم و ۲ میلیون دادیم', now: NOW }).understanding;

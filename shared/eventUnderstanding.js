@@ -187,9 +187,25 @@ export function evidenceKey(value) {
   return normalizePersian(value).replace(/[«»"'“”()[\]{}،,؛;:!؟?.\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * تکه‌های یک نقل‌قول.
+ *
+ * مدل واقعی عبارتِ بلند را با «...» کوتاه می‌کند: «جنس برای فروش ... تحویل
+ * گرفتیم». هر تکه جداگانه باید در متن باشد؛ «...» خودش ادعایی نیست.
+ */
+const segments = (evidence) => String(evidence || '').split(/\.{2,}|…/).map((part) => part.trim()).filter(Boolean);
+
+/** عینِ متن؛ اگر چند تکه است، همه به همان ترتیب. */
 const found = (evidence, textKey) => {
-  const key = evidenceKey(evidence);
-  return key.length > 0 && textKey.includes(key);
+  const parts = segments(evidence).map(evidenceKey).filter(Boolean);
+  if (!parts.length) return false;
+  let from = 0;
+  for (const part of parts) {
+    const index = textKey.indexOf(part, from);
+    if (index < 0) return false;
+    from = index + part.length;
+  }
+  return true;
 };
 
 /**
@@ -208,6 +224,8 @@ const FUNCTION_WORDS = new Set(['را', 'رو', 'و', 'که', 'به', 'از', '�
 
 const foundLoosely = (evidence, textKey) => {
   if (found(evidence, textKey)) return true;
+  const parts = segments(evidence);
+  if (parts.length > 1) return parts.every((part) => foundLoosely(part, textKey));
   const words = evidenceKey(evidence).split(' ').filter((word) => word && !FUNCTION_WORDS.has(word));
   const textWords = textKey.split(' ');
   if (words.length < 2) return false;
@@ -397,7 +415,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   for (const amount of amounts) {
     if (amount.basis === 'explicit') {
       if (!found(amount.evidence, textKey)) { amount.issue = 'evidence-not-found'; continue; }
-      const verified = verifyExplicitAmount(amount.raw, amount.evidence);
+      // عدد از یک تکهٔ پیوسته خوانده می‌شود، نه از تکه‌های دوخته‌شده.
+      const verified = segments(amount.evidence).map((part) => verifyExplicitAmount(amount.raw, part)).find(Boolean) || null;
       if (!verified) { amount.issue = amount.raw.value == null ? 'value-missing' : 'not-in-evidence'; continue; }
       Object.assign(amount, { value: verified.value, scaleAmbiguous: verified.scaleAmbiguous, accepted: true, provenance: 'explicit' });
     }
