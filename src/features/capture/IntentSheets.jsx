@@ -342,7 +342,12 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
       </p> : <>
         {loadingInvoices && <p className="mt-4 text-sm text-muted">در حال خواندن سندهای باز…</p>}
 
-        {!loadingInvoices && !targets.length && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+        {!loadingInvoices && !targets.length && byPartner && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+          بدهی بازی{draft.contactName ? ` به «${draft.contactName}»` : ''} در «طلب و بدهی» ثبت نشده است. اگر این بدهی از قبل بوده،
+          اول همان بدهی را با مبلغ و بابتش در «طلب و بدهی» ثبت کن و دوباره همین جمله را بگو تا از پول شخصی شریک بسته شود؛
+          یا گفته را به صف حسابدار بفرست. هیچ پولی از صندوق یا بانک کم نمی‌شود.
+        </p>}
+        {!loadingInvoices && !targets.length && !byPartner && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
           سند بازی که با این توضیح بخورد پیدا نشد. شاید نام یا مبلغ فرق دارد، یا سند هنوز صادر نشده است
           — پیش‌نویس تسویه نمی‌شود. تعهدهای قدیمیِ بدون سند اولیه هم تا بررسی حسابدار قابل تسویه نیستند؛ وضعیتشان در «طلب و بدهی» نمایش داده می‌شود.
         </p>}
