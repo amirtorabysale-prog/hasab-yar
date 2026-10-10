@@ -248,7 +248,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   if (CAPITAL_CHANGE.test(said)) toAccountant('تغییرِ سرمایهٔ ثبت‌شده سند حقوقی دارد و مبلغش تفاوتِ دو عدد است؛ با حسابدار است.');
   // بدهیِ شرکت که شریک از پول شخصی‌اش داد مسیر خودش را دارد (پایین)؛ بقیهٔ
   // جابه‌جایی‌های جاری شریک همچنان با حسابدار است.
-  const partnerPaid = facts.event.kind === 'paid-by-partner';
+  // پولِ شخصی را خودِ جمله می‌گوید، نه فقط برچسب مدل. مدل «ماشین شخصی‌اش را
+  // فروخت و بدهی را داد» را گاهی «تسویه» یا «خرید» می‌نامد و آن‌وقت حساب شرکت
+  // پرسیده می‌شد. همان تشخیص قطعیِ مسیر کارت این‌جا هم داور است.
+  const partnerPaid = facts.event.kind === 'paid-by-partner' || Boolean(detectPartnerPaidDebt(said)) || Boolean(detectPartnerFundedSpend(said));
   if (PARTNER_CUE.test(said) && !partnerPaid && !/افزایش\s*سرمایه/.test(said)) toAccountant('حساب جاری شریک یا سهامدار با حسابدار است.');
   if (ADJUSTING_CUE.test(said)) toAccountant('ثبتِ تعدیلیِ پایان دوره (ذخیره یا سودِ تحقق‌یافته) قضاوت حسابدار است.');
   // «۱۲ میلیون، نه ببخشید ۱۵»: اصلاحِ همان گفته است، نه اصلاح یک ثبت قبلی.
@@ -529,17 +532,29 @@ function fundingOf(facts, said) {
   if (facts.amounts.some((item) => item.role === 'prior-balance')) return null;
   const spoken = detectPartnerFundedSpend(said);
   if (!spoken) return null;
-  const person = facts.counterparties.find((item) => ['owner', 'partner', 'employee'].includes(item.role));
+  const person = facts.counterparties.find((item) => ['owner', 'partner', 'employee'].includes(item.role))
+    || facts.counterparties.find((item) => spoken.name && normalizePersian(item.name).replace(/آ/g, 'ا') === normalizePersian(spoken.name).replace(/آ/g, 'ا'));
   return { kind: person?.role === 'employee' ? 'employee' : spoken.kind, name: person?.name || spoken.name, role: spoken.role };
 }
 
 function planPartnerPaid({ facts, said, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant }) {
   const parties = facts.counterparties.filter((item) => !detectBank(item.name) && item.role !== 'bank');
-  const payer = parties.find((item) => ['owner', 'partner'].includes(item.role)) || null;
-  const creditor = parties.find((item) => item !== payer && !['owner', 'partner', 'employee'].includes(item.role)) || null;
+  const spoken = detectPartnerPaidDebt(said);
+  const sameName = (left, right) => Boolean(left && right) && (() => {
+    const a = normalizePersian(left).replace(/آ/g, 'ا');
+    const b = normalizePersian(right).replace(/آ/g, 'ا');
+    return a.includes(b) || b.includes(a);
+  })();
+  // پرداخت‌کننده: نقشِ شریک در فهم مدل، یا همان آدمی که جمله از پول شخصی‌اش می‌گوید.
+  // مدل گاهی نقش او را «other» می‌نویسد یا اصلاً در فهرست نمی‌آورد.
+  const payer = parties.find((item) => ['owner', 'partner'].includes(item.role))
+    || parties.find((item) => sameName(item.name, spoken?.paidBy?.name))
+    || (spoken?.paidBy?.name || spoken?.paidBy?.role ? { id: 'spoken-payer', name: spoken.paidBy.name || spoken.paidBy.role, role: 'owner' } : null);
+  const creditor = parties.find((item) => item !== payer && sameName(item.name, spoken?.contactName) && !sameName(item.name, payer?.name))
+    || parties.find((item) => item !== payer && !['owner', 'partner', 'employee'].includes(item.role) && !sameName(item.name, payer?.name)) || null;
   // پول مشتری به حساب شخصی شریک رفت: طلب ما بسته می‌شود، شریک بدهکار می‌شود.
-  const direction = creditor?.role === 'customer' || detectPartnerPaidDebt(said)?.direction === 'receivable'
-    || facts.movements.some((movement) => movement.direction === 'in') ? 'receivable' : 'payable';
+  const direction = spoken?.direction || (creditor?.role === 'customer'
+    || facts.movements.some((movement) => movement.direction === 'in') ? 'receivable' : 'payable');
   const side = direction === 'payable' ? 'بدهی' : 'طلب';
   if (!payer) { toAccountant('شریکی که پول از حساب شخصی او گذشت در جمله معلوم نیست؛ جاری کدام شریک؟ با حسابدار است.'); return; }
   if (!creditor) { toAccountant(`طرف حسابی که ${side}ش بسته شد در جمله نیست؛ تسویه بدون طرف حساب ثبت نمی‌شود.`); return; }
