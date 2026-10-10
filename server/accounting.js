@@ -258,15 +258,67 @@ function reversedLine(line) {
   };
 }
 
+/**
+ * نگاشت قدیمی و اشتباهِ حساب‌های پول به کدینگ.
+ *
+ * نسخه‌های قدیمی حساب بانکی را گاهی روی معین «صندوق» می‌نشاندند (و تنخواه را
+ * روی صندوق). نگهبانِ ثبت جلوی سند تازه روی چنین حسابی را می‌گیرد، چون ماندهٔ
+ * بانک و صندوق در تراز کدینگ و فایل پارسیان قاطی می‌شود. ولی جواب درست معمولاً
+ * معلوم است: کدینگ دفتر یک معین بانک دارد. پس همان‌جا اصلاح می‌شود و ردش می‌ماند.
+ *
+ * توقف فقط وقتی است که جواب معلوم نیست — هیچ معین بانکی، چند معین بانک بی‌نامِ
+ * منطبق — یا اصلاح، دورهٔ بسته‌شده را تغییر می‌دهد. پیام دقیقاً همان را می‌گوید.
+ */
+const OPERATIONAL_ROLES = new Set(['cash', 'bank', 'petty-cash']);
+function ensureChartMappingRepairLog(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS chart_mapping_repairs (
+    id TEXT PRIMARY KEY, ledger_account_id TEXT NOT NULL, from_chart_id TEXT, to_chart_id TEXT NOT NULL,
+    reason TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+}
+
+export function repairOperationalChartMapping(database, ledgerAccountId, { timeZone = 'Asia/Tehran' } = {}) {
+  const row = database.prepare(`SELECT a.id,a.name,a.type,a.chart_account_id AS chartId,c.role AS chartRole,c.code AS chartCode,c.name AS chartName,
+      o.id AS accountId,o.name AS accountName,o.kind,o.bank_id AS bankId
+    FROM ledger_accounts a JOIN accounts o ON a.source_kind='operational-account' AND a.source_key=o.id
+    LEFT JOIN chart_accounts c ON c.id=a.chart_account_id WHERE a.id=?`).get(String(ledgerAccountId || ''));
+  if (!row || !row.chartId || !OPERATIONAL_ROLES.has(row.chartRole)) return { status: 'not-applicable' };
+  const petty = isPettyCashAccount(database, row.accountId);
+  const expectedRole = petty || row.kind === 'petty' ? 'petty-cash' : row.kind === 'bank' || row.bankId ? 'bank' : 'cash';
+  if (row.chartRole === expectedRole) return { status: 'ok' };
+  const label = { bank: 'بانک', cash: 'صندوق', 'petty-cash': 'تنخواه‌گردان' };
+  const what = `حساب ${label[expectedRole]} «${row.accountName}» به معین ${label[row.chartRole]} (${row.chartCode} ${row.chartName}) نگاشت شده است`;
+  const candidates = listChartAccounts(database).filter((item) => item.level === 'subsidiary' && item.active && item.type === row.type && item.role === expectedRole);
+  // چند معین بانک (یکی برای هر بانک): همان که نامش با نام این حساب می‌خواند — «جاری سامان» → «بانک سامان».
+  const tokens = String(row.accountName || '').split(/\s+/).filter((word) => word.length > 1 && !/^(?:جاری|حساب|بانک|کارت|سپرده|کوتاه|مدت|قرض|الحسنه)$/.test(word));
+  const named = candidates.filter((item) => tokens.some((word) => String(item.name || '').includes(word)));
+  const target = candidates.length === 1 ? candidates[0] : named.length === 1 ? named[0] : null;
+  const ambiguous = candidates.length > 1 && !target;
+  if (!target) {
+    return { status: 'blocked', message: `${what}. در کدینگ حساب‌ها ${ambiguous ? `چند معین ${label[expectedRole]} هست؛ معین درست این حساب را` : `معینی با نقش «${label[expectedRole]}» تعریف کن و این حساب را`} به آن نگاشت کن و دوباره ثبت کن.` };
+  }
+  // سندهای قبلیِ همین حساب با نگاشت تازه در تراز کدینگ جابه‌جا می‌شوند؛ دورهٔ بسته نباید عوض شود.
+  const locked = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'").all().map((item) => item.period));
+  if (locked.size) {
+    const touched = database.prepare(`SELECT DISTINCT journal_entries.occurred_at AS at FROM journal_lines
+      JOIN journal_entries ON journal_entries.id=journal_lines.entry_id WHERE journal_lines.account_id=?`).all(row.id)
+      .some((item) => locked.has(periodForDate(item.at, timeZone)));
+    if (touched) return { status: 'blocked', message: `${what} و این حساب در دورهٔ بسته‌شده سند دارد؛ اصلاح نگاشت آن دوره را عوض می‌کند. حسابدار نگاشت را در کدینگ حساب‌ها اصلاح کند.` };
+  }
+  mapLedgerAccountToChart(database, row.id, target.id);
+  ensureChartMappingRepairLog(database);
+  database.prepare('INSERT INTO chart_mapping_repairs (id,ledger_account_id,from_chart_id,to_chart_id,reason) VALUES (?,?,?,?,?)')
+    .run(randomUUID(), row.id, row.chartId, target.id, `${what}؛ خودکار به ${target.code} ${target.name} اصلاح شد.`);
+  return { status: 'repaired', from: { id: row.chartId, code: row.chartCode, name: row.chartName }, to: { id: target.id, code: target.code, name: target.name } };
+}
+
 function insertJournal(database, values) {
-  // Old bank/cash mappings require explicit repair. Opening/reversal history remains usable.
+  // نگاشت قدیمیِ اشتباهِ بانک، صندوق یا تنخواه پیش از ثبت اصلاح می‌شود، اگر جواب
+  // معلوم باشد؛ وگرنه ثبت با پیامی که دقیقاً می‌گوید چه کنی متوقف می‌شود.
+  // سند افتتاحیه و معکوس، تاریخچه‌اند و همان‌طور قابل استفاده می‌مانند.
   if ((values.entryKind || 'normal') === 'normal') {
     for (const line of values.lines || []) {
-      const mismatch=database.prepare(`SELECT o.name FROM ledger_accounts a
-        JOIN accounts o ON a.source_kind='operational-account' AND a.source_key=o.id
-        JOIN chart_accounts c ON c.id=a.chart_account_id
-        WHERE a.id=? AND (o.kind='bank' OR COALESCE(o.bank_id,'')!='') AND c.role='cash'`).get(line.accountId);
-      if(mismatch) throw accountingError(`حساب بانکی «${mismatch.name}» به معین صندوق نگاشت شده است؛ در کدینگ حساب‌ها نگاشت بانک را اصلاح و دوباره ثبت کن.`, 'BANK_CHART_MAPPING_INVALID');
+      const repair = repairOperationalChartMapping(database, line.accountId, { timeZone: values.timeZone || 'Asia/Tehran' });
+      if (repair.status === 'blocked') throw accountingError(repair.message, 'BANK_CHART_MAPPING_INVALID');
     }
   }
   const validated = validateLines(database, values.lines);
