@@ -58,6 +58,8 @@ export const EVENT_KINDS = Object.freeze({
 });
 
 const KIND_VALUES = new Set(Object.values(EVENT_KINDS));
+/** چه کسی به‌جای صندوق شرکت پول داد. */
+export const FUNDERS = Object.freeze(['partner', 'employee']);
 
 /** رویدادهایی که پول را همان لحظه جابه‌جا می‌کنند و حساب نقدی لازم دارند. */
 const CASH_MOVING = new Set([
@@ -123,7 +125,7 @@ export function normalizeFinancialEvent(raw = {}) {
     counterparty: cleanText(raw.counterparty, 120) || null,
     counterpartyId: cleanText(raw.counterpartyId, 64) || null,
     // حساب نقدی فقط برای رویدادهای پول‌جابه‌جاکن؛ بقیه خودشان طرف حساب دارند.
-    accountId: eventMovesCash(kind) ? (cleanText(raw.accountId, 64) || 'cash') : null,
+    accountId: eventMovesCash(kind) && !FUNDERS.includes(raw.fundedBy) ? (cleanText(raw.accountId, 64) || 'cash') : null,
     // ارجاع به سندی که این رویداد رویش اثر می‌گذارد (تسویه، پرداخت فاکتور).
     reference: cleanText(raw.reference, 120) || null,
     // جهت تسویه: طلبی وصول شد یا بدهی‌ای پرداخت. قواعد بدون این نمی‌دانند کدام
@@ -132,8 +134,11 @@ export function normalizeFinancialEvent(raw = {}) {
     settlementDirection: ['receivable', 'payable'].includes(raw.settlementDirection) ? raw.settlementDirection : null,
     // شریکی که از پول شخصی خودش تعهد شرکت را بست. طرف حساب اصلی (`counterparty`)
     // همان طلبکار یا بدهکار است؛ این نام و شناسه، زیرحسابِ جاری شریک را می‌سازد.
-    payerName: kind === 'obligation-settled-by-partner' ? (cleanText(raw.payerName, 120) || null) : null,
-    payerId: kind === 'obligation-settled-by-partner' ? (cleanText(raw.payerId, 64) || null) : null,
+    payerName: kind === 'obligation-settled-by-partner' || FUNDERS.includes(raw.fundedBy) ? (cleanText(raw.payerName, 120) || null) : null,
+    payerId: kind === 'obligation-settled-by-partner' || FUNDERS.includes(raw.fundedBy) ? (cleanText(raw.payerId, 64) || null) : null,
+    // منبع پولِ هزینه یا خرید وقتی از حساب شرکت نگذشته: شریک (جاری شریک) یا
+    // کارمند (پرداختنیِ همان کارمند). سطر صندوق در سند جایش را به آن می‌دهد.
+    fundedBy: eventMovesCash(kind) && FUNDERS.includes(raw.fundedBy) ? raw.fundedBy : null,
     description: cleanText(raw.description, 300) || null,
     // منشأ رویداد: صدا، متن، ایمپورت، یا خودکار. برای ردیابی و برای DNA.
     source: ['voice', 'text', 'import', 'system'].includes(raw.source) ? raw.source : 'text',

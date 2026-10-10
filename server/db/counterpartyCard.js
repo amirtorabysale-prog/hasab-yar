@@ -58,19 +58,40 @@ function counterpartyAccounts(contact) {
 }
 
 /**
- * ماندهٔ حساب پرداختنیِ یک طرف حساب در دفتر کل — مثبت یعنی ما به او بدهکاریم.
+ * ماندهٔ طلب و بدهیِ یک طرف حساب در دفتر کل، و بخشی که هیچ سند بازی پوشش نمی‌دهد.
  *
- * بدهی همیشه در «طلب و بدهی» یا فاکتور نیست: خریدی که حسابدار از صف تأیید کرد
- * مستقیم در دفتر کل می‌نشیند. تسویه از پول شریک باید همین مانده را ببیند،
- * همان عددی که کارت حساب نشان می‌دهد.
+ * بدهی و طلب همیشه در «طلب و بدهی» یا فاکتور نیستند: خریدی که حسابدار از صف
+ * تأیید کرد، یا ماندهٔ افتتاحیه، مستقیم در دفتر کل می‌نشیند. هر تسویه — نقدی یا
+ * از پول شریک — باید همان عددی را ببیند که کارت حساب نشان می‌دهد.
+ *
+ * «بی‌سند» = ماندهٔ دفتر کل منهای سندهای بازِ همان جهت (تعهد و فاکتور). سند باز
+ * از مسیر خودش تسویه می‌شود؛ اگر این‌جا هم پیشنهاد می‌شد، همان بدهی دو بار
+ * بسته می‌شد و فاکتور باز می‌ماند.
  */
-export function payableLedgerBalance(contactId) {
+export function ledgerSideBalances(contactId) {
   const contact = db.prepare('SELECT id,name FROM contacts WHERE id=?').get(String(contactId || ''));
-  if (!contact) return 0;
-  const accounts = counterpartyAccounts(contact).filter((account) => account.sourceKind === 'vendor-payable');
-  if (!accounts.length) return 0;
-  return Number(db.prepare(`SELECT COALESCE(SUM(credit)-SUM(debit),0) AS net FROM journal_lines
-    WHERE account_id IN (${accounts.map(() => '?').join(',')})`).get(...accounts.map((account) => account.id)).net || 0);
+  if (!contact) return { payable: 0, receivable: 0, uncoveredPayable: 0, uncoveredReceivable: 0 };
+  const accounts = counterpartyAccounts(contact);
+  const sum = (kind) => {
+    const ids = accounts.filter((account) => account.sourceKind === kind).map((account) => account.id);
+    if (!ids.length) return 0;
+    return Number(db.prepare(`SELECT COALESCE(SUM(debit)-SUM(credit),0) AS net FROM journal_lines
+      WHERE account_id IN (${ids.map(() => '?').join(',')})`).get(...ids).net || 0);
+  };
+  const payable = -sum('vendor-payable');
+  const receivable = sum('customer-receivable');
+  const open = openDocumentsFor(contact.id).filter((item) => ['obligation', 'invoice'].includes(item.kind));
+  const covered = (direction) => open.filter((item) => item.direction === direction).reduce((total, item) => total + Number(item.remaining || 0), 0);
+  return {
+    payable, receivable,
+    uncoveredPayable: Math.max(0, payable - covered('payable')),
+    uncoveredReceivable: Math.max(0, receivable - covered('receivable')),
+  };
+}
+
+/** ماندهٔ حساب پرداختنیِ دفتر کل — مثبت یعنی ما به او بدهکاریم. */
+export function payableLedgerBalance(contactId) {
+  return ledgerSideBalances(contactId).payable;
 }
 
 /**

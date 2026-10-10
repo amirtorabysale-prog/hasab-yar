@@ -1,7 +1,8 @@
 import { extractAmounts, hasCompositeAmounts, parseFinancialText } from '../../shared/parser.js';
 import { detectVoiceIntent, intentToFinancialEvent } from '../../shared/voiceIntent.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
-import { detectPartnerPaidDebt } from '../../shared/partnerPaidSpeech.js';
+import { asFundedSpend, detectPartnerFundedSpend, detectPartnerPaidDebt } from '../../shared/partnerPaidSpeech.js';
+import { normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
 import { planJournal } from '../../shared/accountingRules.js';
 import { DECISION_STATUS } from '../../shared/accountingDecision.js';
@@ -81,13 +82,19 @@ export function runVoice(text, {
   }
   return {
     path: 'transaction',
-    items: items.map((item) => {
+    items: items.map((parsed) => {
+      const spender = detectPartnerFundedSpend(text);
+      const item = spender ? asFundedSpend(parsed, spender) : parsed;
       const draft = transactionEventDecision({
         ...item, accountId: item.accountId || 'cash', occurredAt: item.occurredAt || today, source: 'voice',
       }, { transcript: text, sentence: items.length === 1 ? text : '', policy: { engineV2: true }, counterpartyBalance });
-      const { event, decision: routing, accountingDecision: decision } = draft;
+      const { decision: routing, accountingDecision: decision } = draft;
+      // همان کاری که `insertTransactionRows` می‌کند: هزینه از پول شخصی شریک یا
+      // کارمند، بی‌ردیف نقدی، با منبع پولِ درست.
+      const funder = spender;
+      const event = funder ? normalizeFinancialEvent({ ...draft.event, fundedBy: funder.kind, payerName: funder.name || funder.role || null }) : draft.event;
       const guards = runGuards(event, factsFromEvent(event), { decision, vat, openDocuments });
-      const base = { amount: event.amount, kind: event.kind, category: event.category, decision, routing, guards };
+      const base = { amount: event.amount, kind: event.kind, category: event.category, decision, routing, guards, ...(funder ? { noCashRow: true, fundedBy: funder.kind } : {}) };
       if (guards.verdict === GUARD_VERDICTS.BLOCK) return { ...base, outcome: 'accountant', reason: guards.reason };
       if (decision.decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT) {
         return { ...base, outcome: 'ask', fact: decision.question?.fact || decision.missingFacts?.[0] };

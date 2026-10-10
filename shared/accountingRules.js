@@ -197,6 +197,25 @@ export function treatmentHasPlan(treatment) {
  * دقیقاً همان قبلی است و هیچ مسیر موجودی عوض نمی‌شود.
  */
 export function planJournal(event, decision = null) {
+  return applyFunding(planJournalCore(event, decision), event);
+}
+
+/**
+ * منبع پولی جز صندوق و بانک شرکت.
+ *
+ * هزینه یا خریدی که شریک یا کارمند از پول شخصی‌اش داد، همان سند عادی را دارد —
+ * هزینه، پیش‌پرداخت، موجودی یا دارایی ثابت، هرچه موتور تصمیم گفته — با این
+ * تفاوت که سطرِ صندوق یا بانک جایش را به جاری شریک یا پرداختنیِ کارمند می‌دهد.
+ * یک قاعده برای همهٔ برخوردها، نه یک نسخهٔ دوم از هر کدام.
+ */
+export function applyFunding(plan, event) {
+  if (!event?.fundedBy || !plan?.lines) return plan;
+  const role = event.fundedBy === 'employee' ? ROLES.PAYABLE : ROLES.PARTNER_PAYABLE;
+  const key = event.payerName || (event.fundedBy === 'employee' ? 'کارمند' : 'شریک');
+  return { ...plan, fundedBy: event.fundedBy, lines: plan.lines.map((line) => (line.role === ROLES.CASH ? { ...line, role, key } : line)) };
+}
+
+function planJournalCore(event, decision = null) {
   if (!event || !event.kind) throw ruleError('رویداد برای ساخت سند معتبر نیست.');
   const { amount, category, counterparty, description, reference } = event;
 

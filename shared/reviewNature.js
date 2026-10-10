@@ -43,7 +43,7 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   // تسویه از پول شخصی شریک: شریک را ثبت‌کننده روی کارت نام برده و تأیید کرده، و
   // سند هیچ سطر نقدی ندارد. کنترل‌های انتقال وجه شریک دربارهٔ پولی است که به
   // حساب شرکت آمده یا از آن رفته، و این‌جا چنین پولی نیست.
-  const settledByPartner=facts.kind==='obligation-settled-by-partner' && !lines.some(l=>l.role==='cash');
+  const settledByPartner=(facts.kind==='obligation-settled-by-partner' || facts.fundedBy==='partner') && !lines.some(l=>l.role==='cash');
   if(partnerRoles && !n.partner && !settledByPartner) add('nature.partner-identity','رابطه شریک در متن رویداد مشخص نیست؛ حساب جاری شریک جای حساب تجاری نیست.');
   if(n.partner && lines.length && !settledByPartner) {
     const expected=partnerTransferProposal(text,lines.find(l=>l.role==='cash')?.debit || lines.find(l=>l.role==='cash')?.credit || 1,facts);

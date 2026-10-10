@@ -3,8 +3,8 @@ import { audit, currentTimeZone, currentWorkspace, db, invalidInput } from './co
 import { automationPolicy } from './settings.js';
 import { insertTransactionRows, previewTransactions, recordUnderstoodObligation } from './transactions.js';
 import { queueUnderstoodIntake } from './reviewIntakes.js';
-import { openDocumentsFor, payableLedgerBalance } from './counterpartyCard.js';
-import { settleObligation, settlePayableBalanceByPartner } from './obligations.js';
+import { ledgerSideBalances, openDocumentsFor } from './counterpartyCard.js';
+import { settleLedgerBalance, settleObligation } from './obligations.js';
 import { recordInvoicePayment } from './invoices.js';
 import { postAccountTransferJournal } from '../accounting.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
@@ -126,12 +126,11 @@ function planCase(understanding, answers, row, now = new Date()) {
   ]);
   resolution.documents = Object.fromEntries([...contactIds].map((contactId) => {
     const documents = openDocumentsFor(contactId);
-    // بدهیِ دفتر کل که سند ندارد (خرید تأییدشده از صف حسابدار): همان ماندهٔ کارت
-    // حساب، منهای آنچه سندهای باز پرداختنی پوشش می‌دهند. فقط مسیر «پول شریک»
-    // این را می‌پذیرد؛ تسویهٔ نقدی همچنان سند می‌خواهد.
-    const covered = documents.filter((item) => item.direction === 'payable').reduce((sum, item) => sum + Number(item.remaining || 0), 0);
-    const uncovered = payableLedgerBalance(contactId) - covered;
-    if (uncovered > 0) documents.push({ kind: 'ledger-balance', id: contactId, direction: 'payable', remaining: uncovered, reference: 'ماندهٔ بدهی در دفتر کل' });
+    // طلب یا بدهیِ دفتر کل که سند باز ندارد (خرید تأییدشده از صف حسابدار، ماندهٔ
+    // افتتاحیه): همان ماندهٔ کارت حساب، منهای آنچه سندهای باز پوشش می‌دهند.
+    const { uncoveredPayable, uncoveredReceivable } = ledgerSideBalances(contactId);
+    if (uncoveredPayable > 0) documents.push({ kind: 'ledger-balance', id: contactId, direction: 'payable', remaining: uncoveredPayable, reference: 'ماندهٔ بدهی در دفتر کل (بدون سند باز)' });
+    if (uncoveredReceivable > 0) documents.push({ kind: 'ledger-balance', id: contactId, direction: 'receivable', remaining: uncoveredReceivable, reference: 'ماندهٔ طلب در دفتر کل (بدون سند باز)' });
     return [contactId, documents];
   }));
   const plan = buildUnderstandingPlan(understanding, { resolution, answers, transcript: row.transcript, source: row.source, now });
@@ -149,7 +148,9 @@ function planCase(understanding, answers, row, now = new Date()) {
     // بدهی از پول شخصی شریک: هیچ سطر نقدی؛ طلبکار در برابر جاری شریک.
     if (component.kind === 'partner-settlement') {
       component.preview = { route: ROUTES.CONFIRM, eventKind: 'obligation-settled-by-partner', decisionStatus: 'decided', treatment: 'partner-settlement',
-        lines: [{ role: 'payable', debit: component.amount, credit: 0 }, { role: 'partner-payable', debit: 0, credit: component.amount }] };
+        lines: component.direction === 'receivable'
+          ? [{ role: 'partner-receivable', debit: component.amount, credit: 0 }, { role: 'receivable', debit: 0, credit: component.amount }]
+          : [{ role: 'payable', debit: component.amount, credit: 0 }, { role: 'partner-payable', debit: 0, credit: component.amount }] };
       continue;
     }
     // انتقال بین حساب‌های خودِ شرکت: نه درآمد، نه هزینه؛ سندش همان سند کارت انتقال است.
@@ -165,6 +166,12 @@ function planCase(understanding, answers, row, now = new Date()) {
     try { [preview] = previewTransactions({ transcript: row.transcript, transactions: [component.item] }); }
     catch (error) { preview = { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [error.message] }; }
     component.preview = { route: preview.route, lines: preview.lines || [], treatment: preview.treatment || null, eventKind: preview.eventKind || null, decisionStatus: preview.decisionStatus || null };
+    // پول از جیب شریک یا کارمند: پیش‌نمایش همان سندی را نشان می‌دهد که ثبت می‌شود.
+    if (component.item.fundedBy) {
+      const role = component.item.fundedBy.kind === 'employee' ? 'payable' : 'partner-payable';
+      component.preview.lines = component.preview.lines.map((line) => (line.role === 'cash' ? { ...line, role, key: component.item.fundedBy.name || null } : line));
+      component.paidBy = { name: component.item.fundedBy.name || null, kind: component.item.fundedBy.kind };
+    }
     if (preview.question && !answers[`engine.${component.id}.${preview.question.fact}`]) {
       const definition = FACT_QUESTIONS[preview.question.fact];
       plan.questions.push({
@@ -418,7 +425,7 @@ export function commitUnderstandingCase(id, { now } = {}) {
         continue;
       }
       if (component.kind === 'partner-settlement' && component.target.kind === 'ledger-balance') {
-        const settled = settlePayableBalanceByPartner(component.target.id, { amount: component.amount, occurredAt: component.occurredAt || undefined, paidBy: component.paidBy, clientId: `understanding:${id}:${component.id}`, withinTransaction: true });
+        const settled = settleLedgerBalance(component.target.id, { direction: component.direction, amount: component.amount, occurredAt: component.occurredAt || undefined, paidBy: component.paidBy, clientId: `understanding:${id}:${component.id}`, withinTransaction: true });
         results.push({ component: component.id, kind: 'partner-settlement', target: component.target, eventId: settled.event.id, status: settled.event.status });
         continue;
       }
@@ -426,6 +433,11 @@ export function commitUnderstandingCase(id, { now } = {}) {
         const settled = settleObligation(component.target.id, { amount: component.amount, occurredAt: component.occurredAt || undefined, paidBy: component.paidBy, withinTransaction: true });
         if (!settled) throw fail('بدهی مبنا دیگر باز نیست؛ هیچ سندی ثبت نشد.', 'UNDERSTANDING_TARGET_CLOSED');
         results.push({ component: component.id, kind: 'partner-settlement', target: component.target, eventId: settled.event?.id || null, status: settled.event?.status || 'posted' });
+        continue;
+      }
+      if (component.kind === 'settlement' && component.target.kind === 'ledger-balance') {
+        const settled = settleLedgerBalance(component.target.id, { direction: component.direction, amount: component.amount, accountId: component.accountId, occurredAt: component.occurredAt || undefined, clientId: `understanding:${id}:${component.id}`, withinTransaction: true });
+        results.push({ component: component.id, kind: 'settlement', target: component.target, transactionId: settled.transactionId || null, status: 'posted' });
         continue;
       }
       if (component.kind === 'settlement') {
@@ -450,7 +462,9 @@ export function commitUnderstandingCase(id, { now } = {}) {
         counterpartyResolution: contactAnswer ? 'separate' : '',
       });
       const transactionId = ids[0] || null;
-      const event = transactionId ? db.prepare('SELECT id,status,route FROM financial_events WHERE source_event_id=?').get(`transaction:${transactionId}`) : null;
+      // هزینه از پول شخصی ردیف نقدی ندارد؛ رویدادش مستقیم برمی‌گردد.
+      const event = transactionId ? db.prepare('SELECT id,status,route FROM financial_events WHERE source_event_id=?').get(`transaction:${transactionId}`)
+        : ids.nonCash?.[0] ? { id: ids.nonCash[0].eventId, status: ids.nonCash[0].status, route: ids.nonCash[0].route } : null;
       results.push({ component: component.id, kind: component.kind, transactionId, eventId: event?.id || null, status: event?.status || null, route: event?.route || null });
     }
     touch(id, { status: 'posted', result: JSON.stringify({ postedAt: new Date().toISOString(), components: results }) });

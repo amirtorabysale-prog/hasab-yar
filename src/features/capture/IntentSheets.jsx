@@ -295,6 +295,8 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
   const [busy, setBusy] = useState(false);
   // تسویه از پول شخصی شریک: نام پرداخت‌کننده زیرحساب جاری اوست و بی‌نام ثبت نمی‌شود.
   const byPartner = Boolean(draft.paidBy);
+  // پول مشتری به حساب شخصی شریک رفت: طلب ما بسته می‌شود و شریک به شرکت بدهکار.
+  const intoPartner = byPartner && draft.direction === 'receivable';
   const [payerName, setPayerName] = useState(draft.paidBy?.name || '');
 
   useEffect(() => {
@@ -310,8 +312,8 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
   // جاری شریک فقط طلب و بدهیِ ثبت‌شده را می‌بندد؛ تسویهٔ فاکتور از پول شریک هنوز
   // مسیر ندارد و به صف حسابدار می‌رود.
   const documentTargets = draft.bounced ? [] : matchSettleTargets(draft, { invoices: byPartner ? [] : invoices, obligations });
-  // بدهیِ دفتر کل بی‌سند (مثلاً خرید تأییدشده از صف حسابدار) هم برای تسویه از پول شریک هدف است.
-  const targets = [...documentTargets, ...(byPartner ? ledgerBalanceTargets(draft, { contacts, documentTargets }) : [])];
+  // طلب یا بدهیِ دفتر کل بی‌سند (خرید تأییدشده از صف حسابدار، ماندهٔ افتتاحیه) هم هدف تسویه است.
+  const targets = draft.bounced ? [] : [...documentTargets, ...ledgerBalanceTargets(draft, { contacts })];
   const selected = targets.find((item) => item.id === selectedId) || null;
   const payer = payerName.trim();
   const submit = async () => {
@@ -325,17 +327,20 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
     <section role="dialog" aria-modal="true" aria-label="تأیید تسویه" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">تسویه</span>
-      <h2 className="mt-3 text-xl font-extrabold">{draft.bounced ? 'چک برگشتی تسویه نمی‌شود' : byPartner ? 'کدام بدهی از پول شخصی شریک تسویه شد؟' : 'کدام سند تسویه شود؟'}</h2>
+      <h2 className="mt-3 text-xl font-extrabold">{draft.bounced ? 'چک برگشتی تسویه نمی‌شود' : intoPartner ? 'کدام طلب به حساب شخصی شریک وصول شد؟' : byPartner ? 'کدام بدهی از پول شخصی شریک تسویه شد؟' : 'کدام سند تسویه شود؟'}</h2>
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
 
       {byPartner && <div className="mt-4 rounded-lg border border-line bg-surface px-3 py-3">
-        <label className="block text-[12px] font-bold" htmlFor="settle-payer">چه کسی از پول شخصی‌اش پرداخت کرد؟{draft.paidBy.role ? ` (${draft.paidBy.role})` : ''}</label>
+        <label className="block text-[12px] font-bold" htmlFor="settle-payer">{intoPartner ? 'پول به حساب شخصی چه کسی رفت؟' : 'چه کسی از پول شخصی‌اش پرداخت کرد؟'}{draft.paidBy.role ? ` (${draft.paidBy.role})` : ''}</label>
         <input id="settle-payer" value={payerName} onChange={(event) => setPayerName(event.target.value)} placeholder="مثلاً آقای سهرابی"
           className="mt-2 w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm" />
-        <p className="mt-2 text-[12px] leading-6 text-muted">
+        {intoPartner ? <p className="mt-2 text-[12px] leading-6 text-muted">
+          به صندوق و بانک شرکت پولی اضافه نمی‌شود. طلب انتخاب‌شده بسته می‌شود و
+          {payer ? ` ${payer}` : ' این شخص'} همین مبلغ را به شرکت بدهکار می‌شود (جاری شریک).
+        </p> : <p className="mt-2 text-[12px] leading-6 text-muted">
           از صندوق و بانک شرکت پولی کم نمی‌شود. بدهی انتخاب‌شده بسته می‌شود و شرکت همین مبلغ را به
           {payer ? ` ${payer}` : ' این شخص'} بدهکار می‌شود (جاری شریک). فروش داراییِ شخصیِ او درآمد شرکت نیست و ثبت نمی‌شود.
-        </p>
+        </p>}
       </div>}
 
       {draft.bounced ? <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
@@ -345,9 +350,9 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
         {loadingInvoices && <p className="mt-4 text-sm text-muted">در حال خواندن سندهای باز…</p>}
 
         {!loadingInvoices && !targets.length && byPartner && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
-          بدهی بازی{draft.contactName ? ` به «${draft.contactName}»` : ''} در «طلب و بدهی» ثبت نشده است. اگر این بدهی از قبل بوده،
-          اول همان بدهی را با مبلغ و بابتش در «طلب و بدهی» ثبت کن و دوباره همین جمله را بگو تا از پول شخصی شریک بسته شود؛
-          یا گفته را به صف حسابدار بفرست. هیچ پولی از صندوق یا بانک کم نمی‌شود.
+          {intoPartner ? 'طلب' : 'بدهی'}{draft.contactName ? ` ${intoPartner ? 'از' : 'به'} «${draft.contactName}»` : ''}{draft.amount ? ` به این مبلغ` : ''} نه در «طلب و بدهی» و فاکتورها
+          پیدا شد، نه در ماندهٔ کارت حساب او در دفتر کل. نام طرف حساب را در کارت حسابش چک کن؛ اگر ثبت نشده،
+          اول آن را ثبت کن و همین جمله را دوباره بگو، یا گفته را به صف حسابدار بفرست. صندوق و بانک دست نمی‌خورند.
         </p>}
         {!loadingInvoices && !targets.length && !byPartner && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
           سند بازی که با این توضیح بخورد پیدا نشد. شاید نام یا مبلغ فرق دارد، یا سند هنوز صادر نشده است
@@ -367,7 +372,7 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
               <span className="min-w-0">
                 <b className="block truncate text-sm">{target.label}</b>
                 <span className="mt-0.5 block text-[11px] text-muted">
-                  {target.kind === 'invoice' ? 'فاکتور' : target.kind === 'ledger-balance' ? 'ماندهٔ کارت حساب' : target.direction === 'receivable' ? 'طلب ما' : 'بدهی ما'}
+                  {target.kind === 'invoice' ? 'فاکتور' : target.kind === 'ledger-balance' ? 'ماندهٔ کارت حساب (بدون سند باز)' : target.direction === 'receivable' ? 'طلب ما' : 'بدهی ما'}
                   {target.name ? ` · ${target.name}` : ''}
                 </span>
               </span>

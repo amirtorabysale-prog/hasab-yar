@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { audit, db, invalidInput } from './core.js';
 import { normalizedCounterpartyInput, resolveCounterparty } from '../counterparties.js';
-import { counterpartyBalance } from './counterpartyCard.js';
+import { counterpartyBalance, ledgerSideBalances } from './counterpartyCard.js';
 
 /**
  * فهرست اشخاص با ماندهٔ واقعی.
@@ -16,7 +16,11 @@ export function listContacts() {
     (SELECT COUNT(*) FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open')
     + (SELECT COUNT(*) FROM invoices WHERE invoices.contact_id=contacts.id AND invoices.status='sent') AS openCount
     FROM contacts ORDER BY contacts.updated_at DESC,contacts.name`).all();
-  return rows.map((row) => ({ ...row, balance: counterpartyBalance(row.id) }));
+  // ماندهٔ بی‌سندِ دفتر کل: کارت تسویه بدهی یا طلبی را که فقط در دفتر کل است هم می‌بیند.
+  return rows.map((row) => {
+    const { uncoveredPayable, uncoveredReceivable } = ledgerSideBalances(row.id);
+    return { ...row, balance: counterpartyBalance(row.id), uncoveredPayable, uncoveredReceivable };
+  });
 }
 
 export function saveContact(values = {}) {

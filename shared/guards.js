@@ -1,5 +1,5 @@
 import { ECONOMIC_FAMILIES } from './economicFamily.js';
-import { ROLES, planJournal } from './accountingRules.js';
+import { ROLES, planJournal, applyFunding } from './accountingRules.js';
 import { SETTLEMENT_MATCH, matchOpenDocument } from './settlementMatch.js';
 import { EVENT_KINDS } from './financialEvent.js';
 import { VAT_FORMS, readVatMention, splitInclusive } from './vatSpeech.js';
@@ -324,7 +324,7 @@ export function guardedPlan(event, decision, guardResult) {
   }
   // نام نگهبان روی نقشه می‌ماند. لایهٔ ثبت با همین می‌فهمد این نقشه را نباید
   // با سندِ جاافتادهٔ تراکنش عوض کند — آن مسیر فقط هزینه و درآمد می‌شناسد.
-  return { ...guardResult.plan, guard: guardResult.rewrittenBy };
+  return applyFunding({ ...guardResult.plan, guard: guardResult.rewrittenBy }, event);
 }
 
 /** آیا این نقشه را نگهبانی بازنویسی کرده است؟ */
