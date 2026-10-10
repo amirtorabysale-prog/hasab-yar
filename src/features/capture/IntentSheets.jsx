@@ -269,6 +269,8 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
       {draft.dueAt && <p className="mt-1 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}
       </>}
 
+      {draft.bounced && queueReview && <button disabled={busy} className="tap mt-3 w-full rounded-lg border border-accent p-3 font-bold text-accent" onClick={async()=>{setBusy(true);try{await queueReview(draft);}finally{setBusy(false);}}}>ارسال به صف حسابدار</button>}
+
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
         <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">
           {busy ? 'در حال ثبت…' : isInvoice ? 'پیش‌نویس بساز' : 'ثبت کن'}
@@ -319,8 +321,8 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
 
       {draft.bounced ? <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
-        برگشت چک، تسویه نیست: سند همچنان باز می‌ماند و معمولاً پیگیری حقوقی یا ثبت هزینهٔ جداگانه می‌خواهد.
-        حساب‌یار عمداً کاری انجام نمی‌دهد تا یک سند باز، بسته اعلام نشود.
+        برگشت چک، تسویه نیست: چک از اسناد دریافتنی یا پرداختنی برمی‌گردد و طلب یا بدهی دوباره باز می‌شود.
+        حساب‌یار خودش سندی نمی‌زند؛ گفته را به صف حسابدار بفرست تا چک مربوط را پیدا و ثبت کند.
       </p> : <>
         {loadingInvoices && <p className="mt-4 text-sm text-muted">در حال خواندن سندهای باز…</p>}
 
@@ -357,7 +359,7 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
         {!draft.bounced && <button disabled={busy || !selected} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
-        <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''}`}>{draft.bounced ? 'باشه' : 'لغو'}</button>
+        <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''}`}>{draft.bounced ? 'بستن' : 'لغو'}</button>
       </div>
     </section>
   </div>;

@@ -140,6 +140,9 @@ test('سرور: کارمزد با انتقال یک‌جا ثبت می‌شود 
     assert.ok(result.feeTransactionId);
     assert.equal(balance(mellat.id), 100_000_000 - 40_000_000 - 25_000);
     assert.equal(balance(tejarat.id), 40_000_000);
+    // برگهٔ انتقال برای انتقال بی‌کارمزد `fee: 0` می‌فرستد؛ این نباید رد شود.
+    for (const fee of [0, '0', '', null]) database.transferWithFee({ fromAccountId: mellat.id, toAccountId: tejarat.id, amount: 1_000_000, fee });
+    assert.equal(balance(tejarat.id), 44_000_000);
 
     const cheque = database.recordCheque({ direction: 'payable', counterpartyName: 'شرکت پخش البرز', amount: 55_000_000, against: 'income',
       dueAt: '2026-11-21T08:30:00.000Z', note: 'از شرکت پخش البرز ۵۰ میلیون کالا به‌علاوه ۱۰ درصد ارزش افزوده خریدیم؛ یه چک ۵۵ میلیونی دادیم' });
@@ -193,6 +196,32 @@ test('«فاکتور زدیم، پولش نیومده» صدور فاکتور ا
   assert.equal(detectVoiceIntent('سی میلیون به حساب کاظمی زدیم ولی نمیدونم فاکتور خریدش قبلاً ثبت شده'), null);
   // «ندادیم» پرداخت نیست.
   assert.equal(detectVoiceIntent('فاکتور خرید ۱۰ میلیون از تامین گستر، هنوز پولشو ندادیم')?.documentType, 'purchase');
+});
+
+test('دور سوم: تخفیف، فروش وسیلهٔ کارکرده، انتقال کارت به کارت و چک برگشتی', async () => {
+  assert.equal(hasCompositeAmounts('به شرکت نوین ۱۵ میلیون جنس فروختیم، ۱ میلیون تخفیف دادیم و ۱۴ میلیون رو کارت به کارت به ملت زد.'), true);
+  assert.equal(hasCompositeAmounts('۲۰ میلیون با تخفیف فروختیم'), false, 'یک مبلغ، کل و جزء نیست');
+
+  assert.match(judgmentReason('پرینتر قدیمی دفتر رو ۳ میلیون نقد فروختیم.'), /دارایی/);
+  assert.match(judgmentReason('لپ تاپ دست دوم خودمون رو ۲۰ میلیون فروختم'), /دارایی/);
+  assert.equal(judgmentReason('سه تا پرینتر به مشتری ۴۵ میلیون فروختیم'), null, 'کالای فروش، فروش است');
+
+  const transfer = detectCaptureTransfer('۵۰ میلیون از ملت به تجارت کارت به کارت کردیم.');
+  assert.equal(transfer?.intent, 'transfer');
+  assert.equal(transfer.amount, 50_000_000);
+  assert.equal(detectCaptureTransfer('۵۰ میلیون از حساب ملت به حساب تجارت زدیم')?.intent, 'transfer');
+  assert.equal(detectCaptureTransfer('۵۰ میلیون از ملت به آقای رضایی کارت به کارت کردیم'), null, 'به شخص، پرداخت است');
+  assert.equal(detectCaptureTransfer('قبض برق ۲ میلیون از ملت زدیم'), null);
+
+  const database = await import('../server/db.js');
+  const owner = database.authenticateUser('part-owner', 'part-of-total-strong-password-5520');
+  const workspace = database.createWorkspace(owner.id, { name: 'دفتر چک برگشتی', profileType: 'business' });
+  await database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, () => {
+    const queued = database.queueUnmatchedSettlement('چک ۳۰ میلیونی که از آقای نادری گرفته بودیم برگشت خورد.');
+    assert.equal(queued.status, 'pending');
+    assert.equal(queued.route, 'accountant-review');
+    assert.match(JSON.stringify(database.reviewQueue()), /چک برگشت خورده/);
+  });
 });
 
 test.after(() => removeTempDatabase(databasePath));

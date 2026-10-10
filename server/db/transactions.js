@@ -368,11 +368,15 @@ export function queueCompositeUtterance(transcript, { clientId = '', source = 't
 /** A failed match is an auditable case, never a guessed settlement. */
 export function queueUnmatchedSettlement(transcript, { clientId = '', source = 'text' } = {}) {
   const text=String(transcript || '').trim().slice(0,1000),draft=detectSettleIntent(text);
-  if(!draft || draft.bounced) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
+  if(!draft) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
   const amounts=extractAmounts(text).spans.map(s=>s.amount).filter(n=>Number.isSafeInteger(n) && n>0);
   const amount=Math.max(...amounts);
   if(!Number.isSafeInteger(amount) || amount>999_999_999_999) throw invalidInput('مبلغ مرجع معتبر لازم است.');
-  const reason='سند مبنای تسویه انتخاب نشده؛ حسابدار باید مانده و مرجع واقعی را بررسی کند. هیچ وجه یا سندی ثبت نشده است.';
+  // چک برگشتی هم تسویه نیست و هم نباید گم شود: چک از اسناد دریافتنی (یا
+  // پرداختنی) برمی‌گردد و طلب یا بدهی دوباره باز می‌شود؛ کدام چک، با حسابدار.
+  const reason=draft.bounced
+    ? 'چک برگشت خورده؛ چک از اسناد دریافتنی یا پرداختنی برمی‌گردد و طلب یا بدهی دوباره باز می‌شود. حسابدار چک مربوط را پیدا و ثبت می‌کند. هیچ سندی ثبت نشده است.'
+    : 'سند مبنای تسویه انتخاب نشده؛ حسابدار باید مانده و مرجع واقعی را بررسی کند. هیچ وجه یا سندی ثبت نشده است.';
   const event=normalizeFinancialEvent({kind:EVENT_KINDS.REVIEW_PLACEHOLDER,amount,amountReferenceOnly:true,
     occurredAt:draft.occurredAt || new Date().toISOString(),source:source==='voice'?'voice':'text',evidence:text,utterance:text,description:reason});
   return recordFinancialEvent(db,event,{sourceEventId:`unmatched-settlement:${String(clientId || randomUUID()).slice(0,100)}`,
@@ -861,8 +865,10 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
  * ماندهٔ بانک مبدأ را ۲۵ هزار بیشتر از صورت‌حساب نشان می‌داد.
  */
 export function transferWithFee({ fee = 0, ...values } = {}) {
+  // کارمزد صفر یا خالی یعنی انتقال ساده؛ `cleanAmount(0)` خطا می‌دهد و هر
+  // انتقال بی‌کارمزدِ برگهٔ انتقال را رد می‌کرد.
+  if (fee === '' || fee === null || Number(fee) === 0) return transferBetweenAccounts(values);
   const charge = cleanAmount(fee);
-  if (!(charge > 0)) return transferBetweenAccounts(values);
   db.exec('BEGIN IMMEDIATE');
   try {
     const result = transferBetweenAccounts(values, { withinTransaction: true });
