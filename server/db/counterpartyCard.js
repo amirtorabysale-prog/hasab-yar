@@ -17,7 +17,17 @@ import { db, invalidInput } from './core.js';
  * گردشِ همان شخص از کارت جا می‌ماند.
  */
 
+/** حساب‌های تجاری: همان‌هایی که سند «طلب و بدهی»، فاکتور یا چک دارند. */
 const COUNTERPARTY_KINDS = ['customer-receivable', 'vendor-payable', 'cheque-receivable', 'cheque-payable'];
+/**
+ * هر حسابی که به نام یک شخص باز می‌شود — کارت حساب همهٔ داد و ستد با اوست.
+ *
+ * جاری شریک (پرداخت بدهی شرکت از جیب مدیرعامل)، پیش‌دریافت و پیش‌پرداخت، وام،
+ * ودیعه و مساعده هم به نام همان شخص‌اند. کارتی که فقط حساب‌های تجاری را بخواند،
+ * «سهرابی بدهی آریا را داد» را ثبت می‌کرد ولی کارت سهرابی صفر و «بی‌گردش» می‌ماند.
+ */
+const CARD_KINDS = [...COUNTERPARTY_KINDS, 'partner-payable', 'partner-receivable', 'customer-advance', 'deferred-revenue',
+  'prepaid-asset', 'loan-payable', 'refundable-deposit', 'employee-advance'];
 
 /** بدهکار مثبت، بستانکار منفی. مانده از دید ما: مثبت یعنی او به ما بدهکار است. */
 const movement = (row) => Number(row.debit || 0) - Number(row.credit || 0);
@@ -47,14 +57,14 @@ function documentBalance(contactId) {
   return { balance: Number(row?.balance || 0), openCount: Number(row?.openCount || 0) };
 }
 
-function counterpartyAccounts(contact) {
+function counterpartyAccounts(contact, kinds = COUNTERPARTY_KINDS) {
   const keys = [contact.id, contact.name].map((value) => String(value || '').trim().slice(0, 120)).filter(Boolean);
   if (!keys.length) return [];
-  const kindHoles = COUNTERPARTY_KINDS.map(() => '?').join(',');
+  const kindHoles = kinds.map(() => '?').join(',');
   const keyHoles = keys.map(() => '?').join(',');
   return db.prepare(`SELECT id,code,name,source_kind AS sourceKind FROM ledger_accounts
     WHERE source_kind IN (${kindHoles}) AND source_key IN (${keyHoles}) ORDER BY code`)
-    .all(...COUNTERPARTY_KINDS, ...keys);
+    .all(...kinds, ...keys);
 }
 
 /**
@@ -120,6 +130,14 @@ export function counterpartyLedgerBalance(contact) {
  * حالا یک تابع، یک عدد. کند بودنش مهم نیست: چند پرس‌وجوی کوچک به‌ازای هر
  * شخص، در برابر دو عددِ متناقض روی صفحه چیزی نیست.
  */
+const CARD_GROUP = (kind) => (kind === 'partner-payable' || kind === 'partner-receivable' ? 'partner'
+  : COUNTERPARTY_KINDS.includes(kind) || kind === 'transaction' ? 'trade' : 'other');
+function groupBalances(rows) {
+  const totals = { trade: 0, partner: 0, other: 0 };
+  for (const row of rows) totals[CARD_GROUP(row.accountKind)] += movement(row);
+  return totals;
+}
+
 export function counterpartyBalance(contactId) {
   try { return counterpartyCard(contactId).totals.balance; } catch { return 0; }
 }
@@ -128,7 +146,7 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
   const contact = db.prepare('SELECT id,name,kind,phone,note FROM contacts WHERE id=?').get(String(contactId || ''));
   if (!contact) throw invalidInput('این طرف حساب پیدا نشد.', 'CONTACT_NOT_FOUND');
 
-  const accounts = counterpartyAccounts(contact);
+  const accounts = counterpartyAccounts(contact, CARD_KINDS);
   const openDocuments = documentBalance(contact.id);
   const reconcile = (ledgerBalance) => ({
     documents: openDocuments.balance,
@@ -229,11 +247,16 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
       debit: lines.reduce((sum, line) => sum + line.debit, 0),
       credit: lines.reduce((sum, line) => sum + line.credit, 0),
       balance,
+      // ماندهٔ هر گروه جدا: طلب و بدهی تجاری، جاری شریک، و بقیه (پیش‌دریافت،
+      // پیش‌پرداخت، وام، ودیعه، مساعده). مثبت یعنی او به ما بدهکار است.
+      byGroup: groupBalances(all),
       documents: new Set(lines.map((line) => `${line.sourceType}:${line.sourceId}`)).size,
     },
     // اختلاف فقط وقتی معنا دارد که کل گردش دیده شود؛ با بازه، بخشی از سندها
     // عمداً بیرون‌اند و مقایسه گمراه‌کننده می‌شود.
-    reconciliation: from || to ? null : reconcile(balance),
+    // سندهای باز فقط حساب‌های تجاری را توضیح می‌دهند؛ جاری شریک یا پیش‌دریافت
+    // سند «طلب و بدهی» ندارند و نباید هشدار «کارت کامل نیست» بسازند.
+    reconciliation: from || to ? null : reconcile(groupBalances(all).trade),
   };
 }
 
