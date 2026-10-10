@@ -56,7 +56,9 @@ const EXPECTED = {
   T068: { allow: [ACCOUNTANT] },
   // ---- تسویه
   T031: { allow: [ACCOUNTANT, ask('settlement-target')], amount: 50_000_000, direction: 'income' },
-  T032: { allow: [ask('settlement-target')] },
+  // تخفیف خوش‌حسابی بخشی از همان طلب است: کارت تسویه فقط ۷۰ را می‌بست و ۵ باز
+  // می‌ماند؛ حسابدار ۷۰ بانک + ۵ تخفیف را در برابر ۷۵ طلب می‌نشاند.
+  T032: { allow: [ask('settlement-target'), ACCOUNTANT] },
   T033: { allow: [ACCOUNTANT] },
   T035: { allow: [ACCOUNTANT, ask('amountScale')] },
   // ---- چک

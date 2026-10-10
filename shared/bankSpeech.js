@@ -49,7 +49,8 @@ export function detectPettyCashFunding(input, { accounts = [], now } = {}) {
  * customer payment mentioning a bank must stay on the income/expense path. */
 // «پایا زدیم»، «ساتنا کردیم»، «حواله زدیم»: انتقال بانکی به زبان روزمره، ولی
 // فقط وقتی دو حساب خودِ شرکت در جمله باشند؛ «به آقای رضایی پایا زدیم» پرداخت است.
-const BANK_WIRE = /(?:پایا|ساتنا|حواله)\s*(?:زد|کرد|شد)/;
+// «از ملت به تجارت کارت به کارت کردیم» و «… زدیم» هم همین‌اند، با همان شرط.
+const BANK_WIRE = /(?:پایا|ساتنا|حواله|کارت\s*به\s*کارت)\s*(?:زد|کرد|شد)|(?<![آ-ی])(?:زدیم|زدم|ریختیم|ریختم)(?![آ-ی])/;
 const FEE = /کارمزد/;
 
 export function detectCaptureTransfer(input, options = {}) {
