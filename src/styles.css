@@ -88,6 +88,18 @@ main table tbody tr:hover { background: #f4f8fa; }
 }
 .workspace-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 82px; padding: 14px 24px; border-bottom: 1px solid #dfe6eb; background: #ffffff; }
 @media (max-width: 639px) { .workspace-topbar { padding: 10px 16px; } }
+.transaction-journey { display: grid; gap: 16px; margin-top: 20px; }
+.journey-step { position: relative; padding: 20px; padding-right: 54px; border: 1px solid #dfe6eb; border-radius: 14px; background: #fff; }
+.journey-step h3 { margin-bottom: 14px; font-weight: 800; font-size: 15px; }
+.journey-number { position: absolute; right: 14px; top: 17px; display: grid; place-items: center; width: 28px; height: 28px; background: #e7f3f1; border-radius: 9px; color: #12635f; font-weight: bold; }
+.journey-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.journey-facts dt { color: #526573; font-size: 11px; margin-bottom: 5px; }
+.journey-facts dd { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.journey-document { border: 1px solid #dfe6eb; border-radius: 10px; margin-top: 14px; padding: 12px; }
+.journey-document header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+.journey-document th, .journey-document td { padding: 10px 6px; text-align: right; border-bottom: 1px solid #e4eaed; }
+.journey-document th { font-size: 11px; color: #526573; background: #f4f6f8; }
+@media(max-width:479px) { .journey-step { padding: 16px 12px; } .journey-step h3 { padding-right: 38px; min-height: 28px; } .journey-facts { grid-template-columns: 1fr; } }
 
 /* منوی درختی: گروه‌های بازشونده، برگ‌های تورفته، جست‌وجو. */
 .menu-search { display: flex; align-items: center; gap: 8px; margin: 0 4px 14px; padding: 0 12px; min-height: 44px; border: 1px solid #dfe6eb; border-radius: 10px; background: #f7f9fa; color: #697b87; }
