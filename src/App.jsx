@@ -1,8 +1,8 @@
 import { needsUnquantifiedReview, UNQUANTIFIED_REVIEW_REASON } from '../shared/reviewIntake.js';
 import { Check, Menu, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { BottomNav, DesktopNav, Drawer, InsightRail, allowedScreens } from './app/navigation.jsx';
-import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
+import { BottomNav, DesktopNav, Drawer, allowedScreens } from './app/navigation.jsx';
+import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_REQUIRES, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
 import { profileDefinition } from '../shared/product.js';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
 import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet } from './features/capture/CaptureSheets.jsx';
@@ -134,7 +134,6 @@ export default function App() {
   const [duplicatePrompt, setDuplicatePrompt] = useState(null);
   const [learningSuggestion, setLearningSuggestion] = useState(null);
   const [selectedDecision, setSelectedDecision] = useState(null);
-  const [insightsOpen, setInsightsOpen] = useState(false);
   const [recordState, setRecordState] = useState('idle');
   const [voicePath, setVoicePath] = useState('ready');
   const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
@@ -1037,6 +1036,8 @@ export default function App() {
     // نبودش یعنی کاربر ساده می‌تواند به صفحه‌ای برود که همهٔ درخواست‌هایش ۴۰۳
     // می‌گیرند و فقط خطا می‌بیند.
     if (allowedScreens(access).length && !allowedScreens(access).some((item) => item.id === target)) return;
+    // یادگیری‌ها زبانهٔ تنظیمات شد؛ پیوندهای قدیمی همان‌جا می‌روند.
+    if (target === 'learning') { target = 'settings'; section = 'learning'; }
     setSection(section);
     setScreen(target); setDrawer(false);
     // صفحه‌ها تنبل بارگذاری می‌شوند؛ بخش مقصد چند لحظه بعد ساخته می‌شود.
@@ -1116,7 +1117,7 @@ export default function App() {
   return (
     <div dir="rtl" className="min-h-screen bg-paper text-ink">
       {!online && <div className="sticky top-0 z-50 flex h-9 items-center justify-center gap-2 bg-ink px-4 text-[13px] text-white"><WifiOff size={15} /> آفلاین — ضبط ذخیره می‌شود و بعداً ارسال</div>}
-      <div className={`app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper ${insightsOpen ? 'insights-open' : ''}`}>
+      <div className="app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper">
         <DesktopNav screen={screen} section={section} searchRef={menuSearchRef} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div className="safe-bottom min-w-0 lg:col-start-2">
           <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden"><Menu size={21} /></button><div className="min-w-0"><p className="text-[11px] text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><span className="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-muted">مبالغ به تومان</span></header>
@@ -1127,7 +1128,7 @@ export default function App() {
               parseManual={parseManual} recordState={recordState}
               stopRecording={stopRecording} cancelProcessing={cancelProcessing} beginRecording={() => { holdingRef.current = true; startRecording(); }}
               levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable}
-              voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
+              voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} readOnly={!canWrite}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
               navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision} onSnoozeAlert={snoozeAlert}
               notify={notify} refreshToday={load} experience={access.experience}
@@ -1142,26 +1143,27 @@ export default function App() {
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} initialTab={section} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} initialTab={section} />}
           {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} />}
-          {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
           {screen === 'settings' && (() => {
             // تنظیمات یک ستون بلند بود: پشتیبان و رمز ته صفحه گم می‌شدند. حالا هر
             // بخش زبانهٔ خودش را دارد و از منو مستقیم باز می‌شود.
-            const part = SETTINGS_SECTIONS.some(([id]) => id === section) ? section : 'general';
+            const screens = allowedScreens(access);
+            const tabs = SETTINGS_SECTIONS.filter(([id]) => !SETTINGS_REQUIRES[id] || screens.some((item) => item.id === SETTINGS_REQUIRES[id]));
+            const part = tabs.some(([id]) => id === section) ? section : 'general';
             const canManageWorkspace = ['owner', 'manager'].includes(access.workspace?.role);
             const refreshAccess = async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); };
             return <>
-              <div className="mx-auto w-full max-w-[900px] px-4"><nav aria-label="بخش‌های تنظیمات" className="section-navigation">{SETTINGS_SECTIONS.map(([id, label]) => <button type="button" key={id} aria-current={part === id ? 'page' : undefined} onClick={() => navigate('settings', id)}>{label}</button>)}</nav></div>
+              <div className="mx-auto w-full max-w-[900px] px-4"><nav aria-label="بخش‌های تنظیمات" className="section-navigation">{tabs.map(([id, label]) => <button type="button" key={id} aria-current={part === id ? 'page' : undefined} onClick={() => navigate('settings', id)}>{label}</button>)}</nav></div>
               {part === 'general' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={canManageWorkspace} /></>}
               {part === 'accounts' && <AccountsPanel accounts={data.accounts} canManage={canManageWorkspace} notify={notify} refresh={load} />}
               {part === 'team' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={refreshAccess} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={refreshAccess} /></Suspense></>}
               {part === 'backup' && <BackupPanel access={access} notify={notify} refresh={load} />}
               {part === 'privacy' && <DataPrivacyPanel access={access} notify={notify} />}
               {part === 'security' && <><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+              {part === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
             </>;
           })()}
           </Suspense>
         </div>
-        <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
         <CounterpartyMatchSheet />
       </div>
 

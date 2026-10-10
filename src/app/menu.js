@@ -63,7 +63,6 @@ export const MENU = Object.freeze([
       { label: 'نگاشت حساب‌ها', screen: 'chart', section: 'mapping', keywords: 'اتصال کدینگ نگاشت' },
       { label: 'تفصیلی و مرکز هزینه', screen: 'chart', section: 'dimensions', keywords: 'تفصیلی پروژه مرکز هزینه' },
       { label: 'ورود کدینگ و ماندهٔ افتتاحیه', screen: 'chart', section: 'import', keywords: 'اکسل افتتاحیه ورود فایل' },
-      { label: 'یادگیری‌های دسته‌بندی', screen: 'learning', keywords: 'یادگیری دسته کلمه' },
     ],
   },
   {
@@ -77,8 +76,6 @@ export const MENU = Object.freeze([
       { label: 'تحویل به حسابدار', screen: 'collaboration', section: 'delivery', keywords: 'خروجی پارسیان انتقال بسته پایان ماه' },
       { label: 'سؤال و پاسخ', screen: 'collaboration', section: 'questions', keywords: 'درخواست توضیح سوال' },
       { label: 'DNA مالی', screen: 'collaboration', section: 'dna', keywords: 'الگو رفتار مالی' },
-      { label: 'پلن و هزینه', screen: 'collaboration', section: 'plan', keywords: 'اشتراک مصرف' },
-      { label: 'پایلوت و سلامت', screen: 'collaboration', section: 'pilot', keywords: 'مصاحبه سلامت دفتر' },
     ],
   },
   {
@@ -88,6 +85,8 @@ export const MENU = Object.freeze([
       { label: 'پشتیبان و بازیابی', screen: 'settings', section: 'backup', keywords: 'بکاپ پشتیبان بازیابی' },
       { label: 'حریم خصوصی داده', screen: 'settings', section: 'privacy', keywords: 'حذف داده نگهداری' },
       { label: 'امنیت، نشست‌ها و رمز', screen: 'settings', section: 'security', keywords: 'رمز عبور دستگاه نشست خروج' },
+      // صفحهٔ جدا بود؛ حالا زبانهٔ تنظیمات است ولی همان مجوز صفحهٔ یادگیری را می‌خواهد.
+      { label: 'یادگیری‌های دسته‌بندی', screen: 'settings', section: 'learning', requires: 'learning', keywords: 'یادگیری دسته کلمه' },
     ],
   },
 ]);
@@ -105,8 +104,11 @@ export const CARD_SECTIONS = Object.freeze({ 'cards-banks': 'banks', 'cards-cash
 /** بخش‌های صفحهٔ تنظیمات، به ترتیب زبانه‌ها. */
 export const SETTINGS_SECTIONS = Object.freeze([
   ['general', 'عمومی'], ['accounts', 'صندوق و بانک'], ['team', 'دفترها و تیم'],
-  ['backup', 'پشتیبان'], ['privacy', 'حریم خصوصی'], ['security', 'امنیت و ورود'],
+  ['backup', 'پشتیبان'], ['privacy', 'حریم خصوصی'], ['security', 'امنیت و ورود'], ['learning', 'یادگیری‌ها'],
 ]);
+
+/** بخش‌هایی از تنظیمات که مجوز صفحهٔ دیگری لازم دارند. */
+export const SETTINGS_REQUIRES = Object.freeze({ learning: 'learning' });
 
 /**
  * منوی همین کاربر: فقط برگ‌هایی که صفحه‌شان مجاز است، و در دفتر مالی فقط
@@ -116,7 +118,7 @@ export function visibleMenu(screens = [], { ledgerTabs = null } = {}) {
   const allowed = new Map(screens.map((item) => [item.id, item]));
   return MENU.map((group) => ({
     ...group,
-    items: group.items.filter((item) => allowed.has(item.screen)
+    items: group.items.filter((item) => allowed.has(item.screen) && (!item.requires || allowed.has(item.requires))
       && (!item.ledgerTab || !ledgerTabs || ledgerTabs.includes(item.ledgerTab))),
   })).filter((group) => group.items.length);
 }

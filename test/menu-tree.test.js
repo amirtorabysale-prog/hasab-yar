@@ -20,7 +20,7 @@ test('هر برگ به صفحهٔ واقعی و زبانهٔ واقعی همان
     ledger: Object.keys(LEDGER_SECTIONS),
     accounting: ['journals', 'trial', 'entry', 'worklist', 'payroll', 'period'],
     chart: ['mapping', 'chart', 'dimensions', 'import'],
-    collaboration: ['delivery', 'dna', 'questions', 'plan', 'pilot'],
+    collaboration: ['delivery', 'dna', 'questions'],
     settings: SETTINGS_SECTIONS.map(([id]) => id),
     review: ['automation-policy'],
   };
@@ -35,7 +35,8 @@ test('هر برگ به صفحهٔ واقعی و زبانهٔ واقعی همان
 });
 
 test('هر صفحهٔ قابل دیدن دست‌کم یک برگ دارد و هیچ برگی تکراری نیست', () => {
-  const inMenu = new Set(leaves.map(({ item }) => item.screen));
+  // «یادگیری‌ها» زبانهٔ تنظیمات است ولی با مجوز صفحهٔ خودش؛ همان هم شمرده می‌شود.
+  const inMenu = new Set(leaves.flatMap(({ item }) => [item.screen, item.requires].filter(Boolean)));
   for (const screen of SCREENS.filter((item) => !item.hidden)) assert.ok(inMenu.has(screen.id), `صفحهٔ ${screen.id} در منو نیست`);
   const keys = leaves.map(({ item }) => `${item.screen}/${item.section || ''}`);
   assert.equal(new Set(keys).size, keys.length, 'دو برگ به یک مقصد می‌روند');
@@ -52,6 +53,18 @@ test('منو فقط صفحه‌های مجاز و زبانه‌های همان �
 
   const personal = visibleMenu(screensFor({ role: 'owner', experience: 'simple', profileType: 'personal' }), { ledgerTabs: profileDefinition('personal').ledgerTabs });
   assert.ok(!personal.some((group) => group.items.some((item) => item.section === 'invoices')), 'پروندهٔ شخصی فاکتور ندارد');
+});
+
+test('بخش‌های حذف‌شده در منو نیستند و یادگیری‌ها فقط با مجوز خودش در تنظیمات است', () => {
+  assert.ok(!leaves.some(({ item }) => ['plan', 'pilot'].includes(item.section)), 'پلن و پایلوت حذف شده‌اند');
+  assert.ok(!leaves.some(({ item }) => item.screen === 'learning'), 'یادگیری‌ها دیگر صفحهٔ جدا نیست');
+  const owner = visibleMenu(screensFor({ role: 'owner', experience: 'simple' }));
+  assert.ok(!owner.some((group) => group.items.some((item) => item.section === 'learning')), 'بدون مجوز یادگیری، زبانه‌اش در منو نیست');
+  const accountant = visibleMenu(screensFor({ role: 'accountant', experience: 'professional' }));
+  assert.ok(accountant.some((group) => group.items.some((item) => item.section === 'learning')));
+  const app = source('src/App.jsx');
+  assert.doesNotMatch(app, /InsightRail/, 'نوار نبض نقدینگی حذف شده است');
+  assert.doesNotMatch(source('src/features/settings/SettingsPage.jsx'), /محدوده محصول|دقت صوت و حریم خصوصی/);
 });
 
 test('جست‌وجو هر قابلیت را با نام یا واژهٔ هم‌معنا پیدا می‌کند', () => {

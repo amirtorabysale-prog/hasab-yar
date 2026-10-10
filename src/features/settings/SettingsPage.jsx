@@ -1,7 +1,7 @@
 import { Download, Pencil, Trash2, Users } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { BANKS, bankById, detectBank } from '../../../shared/banks.js';
-import { PRODUCT_POSITIONING, profileDefinition } from '../../../shared/product.js';
+import { profileDefinition } from '../../../shared/product.js';
 import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
@@ -88,9 +88,7 @@ export function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
 
 export function SettingsPage({ initial, accounts = [], notify, refresh, onLogout, canManage = false }) {
   const [settings, setSettings] = useState({ businessName: '', profileType: 'business', openingBalance: '0', lowBalanceThreshold: '2000000', alertSensitivity: 'balanced', ...initial });
-  const [stats, setStats] = useState(null);
   useEffect(() => setSettings({ businessName: '', profileType: 'business', openingBalance: '0', lowBalanceThreshold: '2000000', alertSensitivity: 'balanced', ...initial }), [initial]);
-  useEffect(() => { api.voiceStats().then(setStats).catch(() => {}); }, []);
   const save = async () => { if (!canManage) return notify('برای تغییر تنظیمات، نقش مدیر یا مالک لازم است.'); const result = await api.settings(settings); setSettings(result.settings); notify('تنظیمات ذخیره شد.'); };
   const selectedProfile = profileDefinition(settings.profileType);
   return <main className="mx-auto max-w-[760px] px-4 py-5">
@@ -114,12 +112,6 @@ export function SettingsPage({ initial, accounts = [], notify, refresh, onLogout
       <div className="rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-muted">واحد نمایش و ذخیره نسخه فعلی تومان است. مهاجرت آینده به ریال بدون تغییر معنای مبالغ موجود انجام می‌شود.</div>
       <button onClick={save} className="tap w-full rounded-lg bg-accent font-bold text-white">ذخیره تنظیمات</button>
     </section>
-    <section className="mt-5 border-y border-line py-4">
-      <h2 className="font-extrabold">دقت صوت و حریم خصوصی</h2>
-      <p className="mt-2 text-sm leading-7 text-muted">تشخیص اصلی با مدل تخصصی گفتار فارسی انجام می‌شود و مبلغ با قواعد قطعی استخراج می‌شود. اگر سرویس اصلی در دسترس نباشد، مسیر پشتیبان فعال می‌شود. کلیدها فقط روی سرور می‌مانند.</p>
-      {stats && <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4"><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.total || 0)}</b><span className="text-[11px] text-muted">پردازش</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageFirstTranscript || 0)}</b><span className="text-[11px] text-muted">اولین متن؛ ms</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.averageLatency || 0)}</b><span className="text-[11px] text-muted">نتیجه؛ ms</span></div><div className="rounded-lg bg-paper p-2"><b className="numbers block">{toPersianDigits(stats.reviewed || 0)}</b><span className="text-[11px] text-muted">نیاز به اصلاح</span></div></div>}
-    </section>
-    <section className="mt-5 rounded-[10px] border border-line bg-surface p-4"><h2 className="font-extrabold">محدوده محصول</h2><p className="mt-2 text-[13px] leading-6 text-muted">{PRODUCT_POSITIONING.accountingDisclaimer}</p></section>
   </main>;
 }
 

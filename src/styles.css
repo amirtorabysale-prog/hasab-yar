@@ -31,8 +31,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .pulse-warning { color: #b56024; border-right: 4px solid #b56024; }
 .pulse-danger { color: #a8332a; border-right: 4px solid #a8332a; }
 .pulse-neutral { color: #6f6b64; border-right: 4px solid #9c968d; }
-.insight-rail { min-width: 0; overflow: hidden; transition: width .2s ease; }
-.insight-rail-label { writing-mode: vertical-rl; transform: rotate(180deg); }
 .tap { min-height: 48px; min-width: 48px; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .record-pulse::before, .record-pulse::after { content: ''; position: absolute; inset: -9px; border: 2px solid #A8332A; border-radius: 999px; animation: pulse-ring 1.6s ease-out infinite; }
@@ -44,10 +42,6 @@ button { -webkit-tap-highlight-color: transparent; }
 @media (min-width: 1024px) {
   .app-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); }
   .safe-bottom { padding-bottom: 40px; }
-}
-@media (min-width: 1280px) {
-  .app-shell { grid-template-columns: 220px minmax(0, 1fr) 64px; transition: grid-template-columns .2s ease; }
-  .app-shell.insights-open { grid-template-columns: 220px minmax(0, 1fr) 250px; }
 }
 @media (max-width: 359px) {
   .voice-composer { padding-inline: 12px; }
@@ -86,10 +80,6 @@ main h1 { letter-spacing: -.035em; line-height: 1.7; }
 main table th { white-space: nowrap; }
 main table tbody tr:hover { background: #f4f8fa; }
 @media (min-width: 1024px) { .app-shell { grid-template-columns: 236px minmax(0, 1fr); } }
-@media (min-width: 1280px) {
-  .app-shell { grid-template-columns: 236px minmax(0, 1fr) 64px; }
-  .app-shell.insights-open { grid-template-columns: 236px minmax(0, 1fr) 230px; }
-}
 @media (max-width: 479px) {
   .financial-metrics { grid-template-columns: 1fr; gap: 8px; }
   .financial-metrics > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
@@ -118,7 +108,3 @@ main table tbody tr:hover { background: #f4f8fa; }
 .menu-result small { color: #8a9aa5; font-size: 11px; font-weight: 600; }
 .menu-empty { margin: 8px 12px; color: #697b87; font-size: 12px; }
 @media (min-width: 1024px) { .app-shell { grid-template-columns: 264px minmax(0, 1fr); } }
-@media (min-width: 1280px) {
-  .app-shell { grid-template-columns: 264px minmax(0, 1fr) 64px; }
-  .app-shell.insights-open { grid-template-columns: 264px minmax(0, 1fr) 230px; }
-}
