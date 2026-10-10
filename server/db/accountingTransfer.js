@@ -5,6 +5,7 @@ import { activeWorkspaceDatabase, audit, currentWorkspace, db, invalidInput, par
 import { chartMappingOverview } from '../chartOfAccounts.js';
 import { monthlyAccountantPackage } from './collaboration.js';
 import { readParsianTemplate } from '../parsianAccessFile.js';
+import { ensureTransferEntriesSchema, recordTransferBatchEntries } from '../accounting.js';
 
 export function transferFieldCatalog() {
   return { fields: TRANSFER_FIELDS, defaultColumns: DEFAULT_TRANSFER_COLUMNS, formats: Object.values(TRANSFER_FILE_FORMATS) };
@@ -146,7 +147,23 @@ function accountingTransferState(month = '', targetSystem = 'generic-csv', now =
     chart: { installed: chart.chartInstalled, complete: chart.complete },
     workflow: { pendingInPeriod, openingEntriesExcluded: openingEntriesInScope(packageData.scope) },
   });
+  const corrections = postExportEntries(packageData.scope.period, journalRows);
+  if (corrections) readiness.checks.push({
+    id: 'post-export-corrections', severity: 'advisory', passed: true, count: corrections,
+    label: `${corrections} سند (اصلاحیه یا ثبت تازه) پس از بستهٔ تحویل‌شدهٔ این دوره ثبت شده؛ بستهٔ تازه کل دوره را دارد، پس در پارسیان یا بستهٔ قبلی را حذف کن یا فقط همین اسناد را وارد کن.`,
+  });
   return { packageData, settings, mappings, journalRows, readiness, chart, workflow: { pendingInPeriod } };
+}
+
+/** اسناد این دوره که در هیچ بستهٔ تحویل‌شده‌ای نبوده‌اند، وقتی بستهٔ تحویل‌شده‌ای هست. */
+function postExportEntries(period, journalRows) {
+  ensureTransferEntriesSchema(activeWorkspaceDatabase());
+  const delivered = db.prepare(`SELECT id FROM accounting_transfer_batches WHERE period=? AND status IN ('delivered','accepted')
+    AND EXISTS(SELECT 1 FROM accounting_transfer_entries e WHERE e.batch_id=accounting_transfer_batches.id)`).all(period);
+  if (!delivered.length) return 0;
+  const sent = new Set(db.prepare(`SELECT entry_id AS entryId FROM accounting_transfer_entries
+    WHERE batch_id IN (${delivered.map(() => '?').join(',')})`).all(...delivered.map((row) => row.id)).map((row) => row.entryId));
+  return new Set(journalRows.map((row) => row.entryId).filter((entryId) => !sent.has(entryId))).size;
 }
 
 function hydrateAccountingTransferBatch(row, includeFile = false) {
@@ -338,7 +355,12 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
   const digest = createHash('sha256').update(fileData).digest('hex');
   const existing = db.prepare(`${accountingTransferBatchSelect} WHERE period=? AND target_system=? AND digest=?`)
     .get(state.packageData.scope.period, targetSystem, digest);
-  if (existing) return hydrateAccountingTransferBatch(existing);
+  // فهرست اسنادِ بسته همراهش می‌ماند تا وقتی تحویل شد، همان اسناد قفل شوند.
+  const entryIds = state.journalRows.map((row) => row.entryId);
+  if (existing) {
+    recordTransferBatchEntries(activeWorkspaceDatabase(), existing.id, entryIds);
+    return hydrateAccountingTransferBatch(existing);
+  }
   const id = randomUUID();
   const workspaceId = String(currentWorkspace()?.id || 'primary').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'primary';
   // هش کوتاه در نام فایل، دو بستهٔ یک ماه را در پوشهٔ دانلود از هم متمایز
@@ -350,6 +372,7 @@ export function createAccountingTransferBatch(values = {}, now = new Date()) {
     .run(id, state.packageData.scope.period, targetSystem, fileName, state.readiness.rowCount, state.readiness.entryCount,
       state.readiness.debitTotal, state.readiness.creditTotal, digest, JSON.stringify(state.readiness), fileData,
       currentWorkspace()?.userId || null, fileFormat, state.settings.amountUnit);
+  recordTransferBatchEntries(activeWorkspaceDatabase(), id, entryIds);
   audit('generate-transfer-batch', 'accounting_transfer_batch', id, {
     period: state.packageData.scope.period, targetSystem, digest, rowCount: state.readiness.rowCount, fileFormat,
     amountUnit: state.settings.amountUnit, multipart: Boolean(built.multipart),

@@ -38,6 +38,18 @@ export function ensureOverdraftSchema(database) {
     id INTEGER PRIMARY KEY AUTOINCREMENT, account_id TEXT NOT NULL, account_name TEXT NOT NULL,
     balance_before INTEGER NOT NULL, balance_after INTEGER NOT NULL, reason TEXT NOT NULL,
     approved_by TEXT, approver_role TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+  for (const column of ["kind TEXT NOT NULL DEFAULT 'cash'", 'request_id TEXT', 'requested_by TEXT']) {
+    try { database.exec(`ALTER TABLE overdraft_approvals ADD COLUMN ${column}`); } catch (error) {
+      if (!/duplicate column name/i.test(error.message)) throw error;
+    }
+  }
+  // درخواستی که ثبت‌کننده برای حسابدار می‌فرستد وقتی خودش نمی‌تواند تأیید کند.
+  database.exec(`CREATE TABLE IF NOT EXISTS approval_requests (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '', items TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','executed','cancelled')),
+    requested_by TEXT, decided_by TEXT, decider_role TEXT, decision_reason TEXT NOT NULL DEFAULT '', decided_at TEXT,
+    executed_by TEXT, executed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
 }
 
 /** ماندهٔ همهٔ حساب‌های پول؛ `null` وقتی جدول‌ها هنوز ساخته نشده‌اند. */
@@ -66,16 +78,47 @@ const money = (value) => Math.abs(Math.round(Number(value) || 0)).toLocaleString
 export function overdraftError(violations) {
   const parts = violations.map((item) => `«${item.name}» ${item.before < 0 ? `از منفی ${money(item.before)}` : `از ${money(item.before)}`} به منفی ${money(item.after)} تومان`);
   return Object.assign(new Error(`با این ثبت موجودی ${parts.join(' و ')} می‌رسد. صندوق و بانک منفی نمی‌شوند مگر با تأیید حسابدار؛ اگر واقعاً چنین است (اضافه‌برداشت یا ثبتی که جا افتاده)، با دلیل تأیید کن.`), {
-    code: 'NEGATIVE_BALANCE', status: 409, requiresAction: true, details: { accounts: violations },
+    code: 'NEGATIVE_BALANCE', status: 409, requiresAction: true, details: { approvalKind: 'cash', accounts: violations },
   });
 }
 
 /** تأیید حسابدار، با دلیل، در همان تراکنش ثبت می‌شود تا با خودِ عملیات بماند یا برود. */
-export function recordOverdraftApproval(database, violations, approval) {
+export function recordOverdraftApproval(database, violations, approval, kind = 'cash') {
   ensureOverdraftSchema(database);
-  const insert = database.prepare(`INSERT INTO overdraft_approvals (account_id,account_name,balance_before,balance_after,reason,approved_by,approver_role)
-    VALUES (?,?,?,?,?,?,?)`);
-  for (const item of violations) insert.run(item.accountId, item.name, item.before, item.after, approval.reason, approval.userId || null, approval.role || null);
+  const insert = database.prepare(`INSERT INTO overdraft_approvals (account_id,account_name,balance_before,balance_after,reason,approved_by,approver_role,kind,request_id,requested_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  for (const item of violations) insert.run(item.accountId, item.name, item.before, item.after, approval.reason, approval.userId || null,
+    approval.role || null, kind, approval.requestId || null, approval.requestedBy || null);
+  // درخواستِ تأییدشده یک‌بار مصرف است: با همین عملیات «اجرا شده» می‌شود و
+  // اگر عملیات برگردد، این هم برمی‌گردد.
+  if (approval.requestId) database.prepare(`UPDATE approval_requests SET status='executed',executed_by=?,executed_at=CURRENT_TIMESTAMP
+    WHERE id=? AND status='approved'`).run(approval.executedBy || approval.userId || null, approval.requestId);
+}
+
+/**
+ * تأییدِ جاری، از هر جای لایهٔ داده.
+ *
+ * نگهبان موجودی کالا (`inventory.js`) و قفل اسناد صادرشده (`accounting.js`)
+ * به زمینهٔ درخواست دسترسی ندارند؛ `core.js` منبع را این‌جا می‌نشاند تا همه از
+ * یک تأیید بخوانند — همان تأییدی که صندوق و بانک را باز می‌کند.
+ */
+let approvalSource = () => null;
+let approvalModeSource = () => 'inline';
+export function setApprovalSource(source, modeSource) {
+  approvalSource = typeof source === 'function' ? source : () => null;
+  if (typeof modeSource === 'function') approvalModeSource = modeSource;
+}
+export function currentApproval(database) {
+  try { return approvalSource(database) || null; } catch { return null; }
+}
+
+/** وقتی تأیید لازم است اما نیامده: خطای یکسان برای صندوق، کالا و سند صادرشده. */
+export function approvalRequiredError(kind, message, items, extra = {}) {
+  return Object.assign(new Error(message), {
+    code: kind === 'stock' ? 'INVENTORY_NEGATIVE_STOCK' : kind === 'export' ? 'EXPORTED_ENTRY_LOCKED' : 'NEGATIVE_BALANCE',
+    status: 409, requiresAction: true,
+    details: { approvalKind: kind, approvalMode: approvalModeSource() || 'inline', accounts: items, ...extra },
+  });
 }
 
 /** نقش‌هایی که می‌توانند منفی شدن موجودی را تأیید کنند. */

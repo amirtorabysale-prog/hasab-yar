@@ -13,7 +13,7 @@ import { ensureReconciliationSchema } from '../reconciliation.js';
 import { ensureTaxAssistantSchema } from '../taxAssistant.js';
 import { ensureTaxKnowledgeSchema, migrateTaxKnowledgeSources } from '../taxKnowledge.js';
 import { ensureTaxSchema } from '../tax.js';
-import { balanceSnapshot, ensureOverdraftSchema, negativeViolations, overdraftError, recordOverdraftApproval } from '../balanceGuard.js';
+import { balanceSnapshot, currentApproval, ensureOverdraftSchema, negativeViolations, overdraftError, recordOverdraftApproval, setApprovalSource } from '../balanceGuard.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 
@@ -58,10 +58,10 @@ function guardedExec(active, sql) {
     openTransactions.delete(active);
     const violations = negativeViolations(active, before);
     if (violations.length) {
-      const approval = workspaceContext.getStore()?.member?.overdraftApproval || null;
+      const approval = currentApproval(active);
       if (!approval) {
         active.exec('ROLLBACK');
-        throw overdraftError(violations);
+        throw withApprovalMode(overdraftError(violations));
       }
       recordOverdraftApproval(active, violations, approval);
     }
@@ -77,6 +77,50 @@ function guardedExec(active, sql) {
     }
   }
   return active.exec(sql);
+}
+
+/**
+ * تأیید از کجا می‌آید.
+ *
+ * - دفتری که جز ثبت‌کننده تأییدکنندهٔ دیگری ندارد: خودِ مدیر/حسابدار با دلیل
+ *   تأیید می‌کند (هدر `X-Overdraft-Approval`).
+ * - دفتری که حسابدار یا مدیر دیگری دارد: ثبت‌کننده تأیید خودش را نمی‌دهد؛
+ *   درخواست به صف تأیید می‌رود و نفر دوم تأیید می‌کند. اجرای آن با
+ *   `X-Approval-Request-Id` فقط وقتی پذیرفته است که همان درخواست (همان مسیر و
+ *   همان بدنه) تأیید شده و هنوز اجرا نشده باشد.
+ */
+export function canonicalRequestBody(body) {
+  if (body == null || (typeof body === 'object' && !Object.keys(body).length)) return '';
+  const sort = (value) => Array.isArray(value) ? value.map(sort)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sort(value[key])])) : value;
+  return JSON.stringify(sort(typeof body === 'string' ? JSON.parse(body || 'null') : body));
+}
+
+function approvedRequestFor(active, member) {
+  ensureOverdraftSchema(active);
+  const row = active.prepare("SELECT * FROM approval_requests WHERE id=? AND status='approved'").get(String(member.approvalRequestId));
+  if (!row) return null;
+  if (row.method !== member.requestMethod || row.path !== member.requestPath) return null;
+  if (row.body !== canonicalRequestBody(member.requestBody)) return null;
+  if (member.userId && ![row.requested_by, row.decided_by].includes(member.userId)) return null;
+  return { reason: row.decision_reason || row.note, role: row.decider_role, userId: row.decided_by,
+    requestId: row.id, requestedBy: row.requested_by, executedBy: member.userId || null };
+}
+
+setApprovalSource((database) => {
+  const store = workspaceContext.getStore();
+  const member = store?.member;
+  if (!member) return null;
+  if (member.overdraftApproval) return member.overdraftApproval;
+  if (member.approvalRequestId) return approvedRequestFor(database || store.database || controlDb, member);
+  return null;
+}, () => workspaceContext.getStore()?.member?.approvalMode || 'inline');
+
+/** خطا می‌گوید کاربر خودش تأیید می‌کند یا باید درخواست بفرستد. */
+export function withApprovalMode(error) {
+  const member = workspaceContext.getStore()?.member;
+  error.details = { ...(error.details || {}), approvalMode: member?.approvalMode || 'inline' };
+  return error;
 }
 
 export const db = new Proxy(controlDb, {

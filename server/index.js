@@ -29,6 +29,7 @@ import {
   saveChartAccountEntry, saveCostCenterEntry,
   listAccountingTransferBatches, listAccountingTransferValidations, recordAudit, removeWorkspaceMember, report, resolveCollaborationRequest, revokeOtherUserSessions, revokeUserSession, revokeWorkspaceSessions, runInWorkspace, saveAccount, saveAccountingTransferMapping, saveAccountingTransferSettings, saveContact, saveLearning, saveObligation, savePilotCheckin, saveRecurringRule, saveSettings, settleObligation, settlePayableBalanceByPartner, settleLedgerBalance, snoozeFinancialAlert,
   confirmReceipt, redoTransaction, saveAutomationRule, saveProduct, saveReceipt, saveTaxRate, taxReport, typicalAmounts, updateAccountingTransferBatchStatus, updateLearning, updateReceipt, updateTransaction, updateWorkspaceCommercialPlan, updateWorkspaceMember, userFromSession, voiceStats, workspaceForUser, workspaceOperationalSignals,
+  approvalModeFor, cancelApprovalRequest, createApprovalRequest, decideApprovalRequest, listApprovalRequests,
   askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
 } from './db.js';
 import { parseFinancialText } from './parser.js';
@@ -166,9 +167,18 @@ app.use('/api', (request, response, next) => {
   if (!workspace) return response.status(403).json({ code: 'WORKSPACE_FORBIDDEN', message: 'به این دفتر دسترسی نداری.' });
   request.workspace = workspace;
   response.append('Set-Cookie', workspaceCookie(workspace.id));
-  // تأیید حسابدار برای منفی شدن موجودی: فقط با نقش مجاز و دلیلِ نوشته‌شده.
-  const overdraftApproval = readOverdraftApproval(request.get('x-overdraft-approval'), { role: workspace.role, userId: user.id });
-  return runInWorkspace(workspace.id, { ...workspace, userId: user.id, overdraftApproval }, next);
+  // تأیید حسابدار برای منفی شدن موجودی، فروش بیش از انبار و اصلاح سند صادرشده.
+  // دفتری که تأییدکنندهٔ دیگری دارد، تأییدِ ثبت‌کننده برای کار خودش را نمی‌پذیرد
+  // (تأیید دونفره)؛ آن‌جا فقط درخواستِ تأییدشده در صف (`X-Approval-Request-Id`) اجرا می‌شود.
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
+  const approvalMode = mutating ? approvalModeFor(workspace.id, user.id, workspace.role) : 'inline';
+  const overdraftApproval = approvalMode === 'inline'
+    ? readOverdraftApproval(request.get('x-overdraft-approval'), { role: workspace.role, userId: user.id }) : null;
+  const approvalRequestId = String(request.get('x-approval-request-id') || '').trim().slice(0, 64) || null;
+  return runInWorkspace(workspace.id, {
+    ...workspace, userId: user.id, overdraftApproval, approvalMode, approvalRequestId,
+    requestMethod: request.method, requestPath: `${request.baseUrl}${request.path}`, requestBody: request.body,
+  }, next);
 });
 app.use('/api', (request, response, next) => {
   const path = request.path;
@@ -474,6 +484,10 @@ app.post('/api/accounting/journal/batch', (request, response, next) => {
   try { return response.status(201).json(createJournalDocuments(request.body?.documents)); }
   catch (error) { return next(error); }
 });
+app.get('/api/approval-requests', (request, response) => response.json({ items: listApprovalRequests({ status: String(request.query.status || 'open') }) }));
+app.post('/api/approval-requests', (request, response) => response.status(201).json(createApprovalRequest(request.body || {})));
+app.post('/api/approval-requests/:id/decide', (request, response) => response.json(decideApprovalRequest(request.params.id, request.body || {})));
+app.post('/api/approval-requests/:id/cancel', (request, response) => response.json(cancelApprovalRequest(request.params.id)));
 app.get('/api/accounting/journal/worklist', (request, response, next) => {
   try { return response.json(journalWorklistOverview(request.query)); } catch (error) { return next(error); }
 });

@@ -84,7 +84,8 @@ test('tracks lightweight inventory and low-stock warnings', () => {
   const adjusted = core.adjustStock(product.id, { quantity: -3, note: 'مصرف' });
   assert.equal(adjusted.stock, 2);
   assert.equal(adjusted.isLow, 1);
-  assert.throws(() => core.adjustStock(product.id, { quantity: -10 }), /منفی/);
+  // تأییدِ کل اسکریپت (بالای فایل) کالا را هم باز می‌کند؛ بی‌تأیید، خروج بیش از موجودی سد است.
+  assert.throws(() => core.runInWorkspace('primary', { role: 'owner' }, () => core.adjustStock(product.id, { quantity: -10 })), /منفی/);
 });
 
 // «حسن بدهکار شد» نباید کاربر را مجبور کند اول شخص را دستی بسازد — ولی شخص

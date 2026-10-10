@@ -139,10 +139,26 @@ async function request(path, options = {}) {
     window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
   }
   if (response.status === 403 && body.code === 'CSRF_INVALID') rememberCsrfToken('');
-  if (response.status === 409 && body.code === 'NEGATIVE_BALANCE' && overdraftApprover && !options.headers?.['X-Overdraft-Approval']) {
-    const reason = await overdraftApprover({ message: body.message, accounts: body.details?.accounts || [] });
-    if (reason) return request(path, { ...options, headers: { ...options.headers, 'X-Overdraft-Approval': encodeURIComponent(reason) } });
-    throw Object.assign(new Error('ثبت انجام نشد؛ موجودی منفی نشد.'), { status: 409, code: 'NEGATIVE_BALANCE_DECLINED', details: body.details });
+  // صندوق/بانک منفی، کالا بیش از موجودی، یا اصلاح سندِ رفته به پارسیان: یک برگه.
+  // در دفتر تک‌نفره تأییدکننده با دلیل همین‌جا تأیید می‌کند؛ در دفتر دونفره
+  // درخواست با همین مسیر و بدنه به صف حسابدار می‌رود و پس از تأیید اجرا می‌شود.
+  const approvalKind = body.details?.approvalKind || (body.code === 'NEGATIVE_BALANCE' ? 'cash' : '');
+  if (response.status === 409 && approvalKind && overdraftApprover && !options.headers?.['X-Overdraft-Approval'] && !options.headers?.['X-Approval-Request-Id']) {
+    const queueable = typeof options.body === 'string' || options.body == null;
+    const answer = await overdraftApprover({
+      message: body.message, accounts: body.details?.accounts || [], kind: approvalKind,
+      mode: queueable ? body.details?.approvalMode || 'inline' : 'inline',
+    });
+    if (typeof answer === 'string' && answer) return request(path, { ...options, headers: { ...options.headers, 'X-Overdraft-Approval': encodeURIComponent(answer) } });
+    if (answer?.requestNote !== undefined) {
+      let payload = null;
+      try { payload = options.body ? JSON.parse(options.body) : null; } catch { payload = null; }
+      await request('/api/approval-requests', { method: 'POST', body: JSON.stringify({
+        kind: approvalKind, method, path, body: payload, note: answer.requestNote, message: body.message, items: body.details?.accounts || [],
+      }) });
+      throw Object.assign(new Error('درخواست برای تأیید حسابدار فرستاده شد؛ پس از تأیید، از «درخواست‌های تأیید» اجرا می‌شود.'), { status: 202, code: 'APPROVAL_REQUESTED', details: body.details });
+    }
+    throw Object.assign(new Error('ثبت انجام نشد؛ چیزی تغییر نکرد.'), { status: 409, code: 'NEGATIVE_BALANCE_DECLINED', details: body.details });
   }
   if (!response.ok) {
     const retryAfterHeader = Number(response.headers.get('retry-after'));
@@ -294,6 +310,14 @@ export const api = {
   deleteContact: (id) => request(`/api/contacts/${id}`, { method: 'DELETE' }),
   obligations: (status = 'open') => request(`/api/obligations?status=${encodeURIComponent(status)}`),
   saveObligation: (payload) => request(payload.id ? `/api/obligations/${payload.id}` : '/api/obligations', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
+  approvalRequests: (status = 'open') => request(`/api/approval-requests?status=${encodeURIComponent(status)}`),
+  decideApprovalRequest: (id, payload) => request(`/api/approval-requests/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify(payload) }),
+  cancelApprovalRequest: (id) => request(`/api/approval-requests/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }),
+  /** درخواستِ تأییدشده را با همان مسیر و بدنه، یک بار اجرا می‌کند. */
+  executeApprovalRequest: (item) => request(item.path, {
+    method: item.method, headers: { 'X-Approval-Request-Id': item.id },
+    ...(item.body == null ? {} : { body: JSON.stringify(item.body) }),
+  }),
   settleLedgerBalance: (contactId, payload = {}) => request(`/api/contacts/${encodeURIComponent(contactId)}/settle-balance`, { method: 'POST', body: JSON.stringify(payload) }),
   settlePayableBalanceByPartner: (contactId, payload = {}) => request(`/api/contacts/${encodeURIComponent(contactId)}/partner-settle`, { method: 'POST', body: JSON.stringify(payload) }),
   settleObligation: (id, payload = {}) => request(`/api/obligations/${id}/settle`, { method: 'POST', body: JSON.stringify(payload) }),
