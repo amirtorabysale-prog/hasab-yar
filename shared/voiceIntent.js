@@ -144,7 +144,23 @@ function hasSeveralAmounts(input) {
 // فاکتور خریدش قبلاً ثبت شده» دربارهٔ پولی است که رفته؛ پیش‌نویس فاکتور خرید
 // برایش ساختن یعنی یک خرید دوم.
 const MONEY_ARRIVED = /واریز\s*(?:شده|شد|کرد|کردن)|ریخته(?:ن)?(?![آ-ی])|اومده\s*(?:تو|به)\s*حساب|دریافت\s*(?:شد|کردیم|کردم)|وصول\s*شد/;
-const PAYMENT_DONE = /(?:زدیم|زدم|ریختیم|ریختم|واریز\s*کرد(?:یم|م)|پرداخت\s*کرد(?:یم|م)|دادیم|دادم)(?![آ-ی])/;
+// مرز آغاز واژه لازم است: «ندادیم» و «نزدیم» درست برعکس پرداخت‌اند.
+const PAYMENT_DONE = /(?<![آ-ی])(?:زدیم|زدم|ریختیم|ریختم|واریز\s*کرد(?:یم|م)|پرداخت\s*کرد(?:یم|م)|دادیم|دادم)(?![آ-ی])/;
+
+/**
+ * «فاکتور فروش برای آلفا زدیم ولی پولش هنوز نیومده» — «زدیم» اینجا صدور فاکتور
+ * است، نه پرداخت. فقط با نشانهٔ صریح نرسیدن پول؛ «فاکتور زدیم و کارت به کارت
+ * کرد» فروش نقدی است و کارت فاکتور، دریافتش را گم می‌کرد.
+ */
+const INVOICE_ISSUED = /فاکتور(?:\s*[^\s،,.]+){0,8}?\s*(?:زد(?:یم|م)|صادر\s*کرد(?:یم|م))(?![آ-ی])/;
+const STILL_UNPAID = /هنوز\s*(?:[^\s،,.]+\s*){0,3}?(?:ن(?:یومده|یامده|رسیده|داده|دادن|ریخته|ریختن|زده|کرده|گرفتیم|گرفتم)|پرداخت\s*نکرده|تسویه\s*نکرده)(?![آ-ی])|(?<![آ-ی])نسیه(?![آ-ی])/;
+
+function issuedUnpaidInvoice(text) {
+  const issued = INVOICE_ISSUED.exec(text);
+  if (!issued || !STILL_UNPAID.test(text)) return false;
+  const rest = text.slice(0, issued.index) + text.slice(issued.index + issued[0].length);
+  return !PAYMENT_DONE.test(rest) && !MONEY_ARRIVED.test(rest);
+}
 
 /**
  * چکِ طرف سوم که ما خرجش کردیم — پشت‌نویسی.
@@ -251,7 +267,8 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   const isCheque = matchesAny(text, CHEQUE_PATTERNS) && !/دسته\s*چک/.test(text);
 
   // پولی که آمده «بابت فاکتور فروش»، وصول همان فاکتور است، نه صدور فاکتور تازه.
-  if ((matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) && !PAYMENT_DONE.test(text) && !MONEY_ARRIVED.test(text)) {
+  const issuedUnpaid = issuedUnpaidInvoice(text);
+  if (issuedUnpaid || ((matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) && !PAYMENT_DONE.test(text) && !MONEY_ARRIVED.test(text))) {
     if (!amount) return null;
     const documentType = matchesAny(text, INVOICE_PURCHASE_PATTERNS) ? 'purchase' : 'sales';
     return {

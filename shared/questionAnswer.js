@@ -1,5 +1,5 @@
 import { FACT_KEYS, FACT_QUESTIONS, QUESTION_KINDS } from './factRequirements.js';
-import { persianToISO, todayPersian } from './persianDate.js';
+import { persianToISO, readTypedDate, todayPersian } from './persianDate.js';
 
 /**
  * جواب کاربر را به واقعیت تبدیل می‌کند.
@@ -67,7 +67,7 @@ export function applyAnswer(event, { fact, value, freeText = '' } = {}, { today 
     // گزینهٔ «تاریخش را می‌گویم» خودش مقدار نیست؛ ورودی آزاد می‌خواهد.
     if (chosen.freeInput) {
       if (!freeText) throw answerError('مقدار وارد نشده است.', 'ANSWER_VALUE_MISSING');
-      return { [fact]: freeText };
+      return { [fact]: typedValue(fact, freeText, reference) };
     }
     if (fact === FACT_KEYS.SERVICE_PERIOD_START) return START_OPTIONS[value](event, { today: reference });
     if (fact === FACT_KEYS.SERVICE_PERIOD_END) {
@@ -87,5 +87,16 @@ export function applyAnswer(event, { fact, value, freeText = '' } = {}, { today 
   }
 
   if (!freeText) throw answerError('مقدار وارد نشده است.', 'ANSWER_VALUE_MISSING');
-  return { [fact]: freeText };
+  return { [fact]: typedValue(fact, freeText, reference) };
+}
+
+const DATE_FACTS = new Set([FACT_KEYS.SERVICE_PERIOD_START, FACT_KEYS.SERVICE_PERIOD_END, FACT_KEYS.OCCURRED_AT,
+  FACT_KEYS.DELIVERY_DATE, FACT_KEYS.READY_FOR_USE_DATE].filter(Boolean));
+
+/** پاسخ تایپی؛ تاریخ به تاریخ واقعی تبدیل می‌شود و تاریخِ نخوانده رد می‌شود. */
+function typedValue(fact, freeText, reference) {
+  if (!DATE_FACTS.has(fact)) return freeText;
+  const iso = readTypedDate(freeText, { now: reference ? new Date(reference) : new Date() });
+  if (!iso) throw answerError('تاریخ خوانده نشد؛ مثل ۱۴۰۵/۰۷/۳۰ یا «۳۰ مهر ۱۴۰۵» بنویس.', 'ANSWER_DATE_INVALID');
+  return iso;
 }

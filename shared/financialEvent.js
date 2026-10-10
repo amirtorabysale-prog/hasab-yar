@@ -16,6 +16,8 @@
  * این ماژول عمداً هیچ وابستگی‌ای ندارد: نه دیتابیس، نه شبکه، نه رابط کاربری.
  */
 
+import { readTypedDate } from './persianDate.js';
+
 /**
  * «این پول بابت چه بود؟» — مقدارهای مجاز.
  *
@@ -79,6 +81,10 @@ function cleanText(value, limit) {
 
 function cleanIso(value) {
   if (!value) return null;
+  // سال ۱۲۰۰ تا ۱۴۹۹ شمسی است، نه میلادی: «1405/07/30» یا همان تاریخ که جایی
+  // بی‌تبدیل به ISO رفته («1405-07-30T…») وگرنه ششصد سال عقب ثبت می‌شود.
+  const jalali = typeof value === 'string' && /^\s*([1۱][2-4۲-۴][\d۰-۹]{2})\s*[/\-.]\s*([\d۰-۹]{1,2})\s*[/\-.]\s*([\d۰-۹]{1,2})(?:T[\d:.]+Z?)?\s*$/.exec(value);
+  if (jalali) return readTypedDate(jalali.slice(1).join('/'));
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
