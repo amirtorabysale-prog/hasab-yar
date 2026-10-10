@@ -37,7 +37,8 @@ const NUMBER_PATTERN = `(\\d{1,2}|${Object.keys(WORD_NUMBERS).join('|')})`;
 /** «شش ماهه»، «یک‌ساله» — صفت، یعنی طول پوشش. */
 const ADJECTIVE = new RegExp(`${NUMBER_PATTERN}${GAP}(ماهه|ساله|سال${GAP}ه)`);
 /** «برای شش ماه جلوتر» — عدد و واحد، با نشانهٔ صریح آینده. */
-const FORWARD = new RegExp(`${NUMBER_PATTERN}${GAP}(ماه|سال)${GAP}(?:${['جلوتر', 'آ' + YA + 'نده', 'بعد', 'پ' + YA + 'ش' + GAP + 'رو', 'آت' + YA].join('|')})`);
+// تا سه واژه میان مدت و نشانهٔ آینده: «شش ماه دفتر را جلوتر دادیم».
+const FORWARD = new RegExp(`${NUMBER_PATTERN}${GAP}(ماه|سال)(?:${GAP}[^\\s.،؛]+){0,3}?${GAP}(?:${['جلوتر', 'جلو', 'آ' + YA + 'نده', 'بعد', 'پ' + YA + 'ش' + GAP + 'رو', 'آت' + YA, 'پ' + YA + 'ش' + GAP + '?پرداخت'].join('|')})(?![آ-ی])`);
 /** گذشته: صریحاً یک زمان است، نه دوره. */
 const PAST = new RegExp(`${NUMBER_PATTERN}${GAP}(?:ماه|سال)${GAP}(?:پ${YA}ش|قبل|گذشته)`);
 
