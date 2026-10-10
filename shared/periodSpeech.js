@@ -89,6 +89,15 @@ const COMMON_WORD_MONTHS = ['تیر', 'تير', 'مهر', 'دی'];
 const DISTINCT_MONTHS = PERSIAN_MONTHS.map(([name]) => name).filter((name) => !COMMON_WORD_MONTHS.includes(name)).join('|');
 const NAMED_MONTH = new RegExp(`(?<![آ-ی])(?:بابت|مال|برا${YA}|واسه)(?![آ-ی])${GAP}(?:[^\\s\\d]+[\\s\\u200c]+){0,3}?(?:(${DISTINCT_MONTHS})(?![آ-ی])|(${COMMON_WORD_MONTHS.join('|')})${GAP}ماه)(?![^\\s]*\\d)`);
 
+/**
+ * «اجارهٔ مهر»، «شارژ ماه آبان» — ماه درست پشت نام خدمت دوره‌دار.
+ *
+ * بی‌حرف «بابت» هم روشن است که ماه موضوع پرداخت است؛ پشت «اجاره» حتی «مهر» و
+ * «دی» واژهٔ روزمره نیستند. بدون این، «اجارهٔ مهر» بی‌دوره می‌ماند و برای
+ * اجارهٔ همین ماه، شروع دوره پرسیده می‌شد.
+ */
+const SERVICE_MONTH = new RegExp(`(?<![آ-ی])(?:اجاره|اجاره${GAP}بها|کرا${YA}ه${GAP}(?:دفتر|مغازه|انبار|خانه|خونه)|شارژ|اشتراک)(?:${GAP}${YA}(?![آ-ی])|ٔ)?${GAP}(?:ماه${GAP})?(${MONTH_NAMES})(?![آ-ی])`);
+
 function yearShift(text) {
   if (/پارسال|سال${GAP}(?:قبل|گذشته)/.test(text)) return -1;
   if (/سال${GAP}(?:بعد|آ[یي]نده)/.test(text)) return 1;
@@ -135,6 +144,11 @@ function namedMonths(text, occurredAt) {
   const single = NAMED_MONTH.exec(text);
   if (single) {
     const month = monthNumber(single[1] || single[2]);
+    return month ? monthSpan(year, month, month) : null;
+  }
+  const service = SERVICE_MONTH.exec(text);
+  if (service) {
+    const month = monthNumber(service[1]);
     return month ? monthSpan(year, month, month) : null;
   }
   return null;

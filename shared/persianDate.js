@@ -467,3 +467,23 @@ export function extractOccurrenceDate(input, options = {}) {
   text = text.replace(/(?:فردا|پس\s*فردا|هفته\s*بعد)\s*(?:نقدش|نقد|وصولش|وصول|پاسش|پاس)\s*(?:می\s*)?(?:کنه|کند|کنند|کنن|شه|شود)/g, ' ');
   return extractDateMention(text, { ...options, preferPast: true });
 }
+
+/**
+ * تاریخی که کاربر خودش تایپ کرده — «۱۴۰۵/۰۷/۳۰»، «1405-7-30» یا «۳۰ مهر ۱۴۰۵».
+ *
+ * `new Date('1405/07/30')` سال ۱۴۰۵ میلادی می‌سازد، یعنی ششصد سال پیش. پیش‌پرداختی
+ * که پایانش این‌طور تایپ می‌شد «دوره‌اش گذشته» دیده می‌شد و همان روز هزینه
+ * می‌شد. سالِ زیر ۱۷۰۰ همیشه شمسی است؛ چیزی که خوانده نشود `null` است، نه حدس.
+ */
+export function readTypedDate(input, { now = new Date() } = {}) {
+  const text = normalizePersian(String(input || '')).trim();
+  if (!text) return null;
+  const numeric = /^(\d{4})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})$/.exec(text);
+  if (numeric) {
+    const [year, month, day] = numeric.slice(1).map(Number);
+    if (year < 1700) return persianToISO(year, month, day);
+    const date = new Date(Date.UTC(year, month - 1, day, 8, 30));
+    return Number.isNaN(date.getTime()) || date.getUTCMonth() !== month - 1 ? null : date.toISOString();
+  }
+  return extractDateMention(text, { now, preferPast: false })?.iso || null;
+}

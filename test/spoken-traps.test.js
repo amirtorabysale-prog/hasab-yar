@@ -8,6 +8,9 @@ import { detectCaptureTransfer } from '../shared/bankSpeech.js';
 import { transactionEventDecision } from '../shared/transactionEvent.js';
 import { planJournal } from '../shared/accountingRules.js';
 import { understandingReasons } from '../shared/understandingScope.js';
+import { applyAnswer } from '../shared/questionAnswer.js';
+import { normalizeFinancialEvent } from '../shared/financialEvent.js';
+import { decide, DECISION_STATUS } from '../shared/accountingDecision.js';
 
 /**
  * دام‌های گفتار که ثبت غلط با اطمینان می‌ساختند (آزمون ۱۵ چالشی، مسیر بدون AI).
@@ -143,6 +146,53 @@ test('سرور: کارمزد با انتقال یک‌جا ثبت می‌شود 
     assert.equal(cheque.queuedForAccountant, true);
     assert.match(cheque.queuedReason, /ارزش افزوده/);
   });
+});
+
+test('تاریخ شمسیِ تایپ‌شده شمسی خوانده می‌شود، نه سال ۱۴۰۵ میلادی', () => {
+  const event = { occurredAt: '2026-10-10T08:00:00.000Z' };
+  for (const typed of ['1405/07/30', '۱۴۰۵/۰۷/۳۰', '۳۰ مهر ۱۴۰۵']) {
+    const patch = applyAnswer(event, { fact: 'servicePeriodStart', value: 'custom', freeText: typed });
+    assert.equal(patch.servicePeriodStart.slice(0, 10), '2026-10-22', typed);
+  }
+  assert.equal(applyAnswer(event, { fact: 'servicePeriodStart', value: 'custom', freeText: '2026-10-21' }).servicePeriodStart.slice(0, 10), '2026-10-21');
+  assert.throws(() => applyAnswer(event, { fact: 'servicePeriodStart', value: 'custom', freeText: 'یه وقتی' }), { code: 'ANSWER_DATE_INVALID' });
+  // تاریخی که جای دیگری بی‌تبدیل به ISO رفته هم در لایهٔ رویداد شمسی خوانده می‌شود.
+  for (const raw of ['1405/07/30', '1405-07-30T00:00:00.000Z']) {
+    assert.equal(normalizeFinancialEvent({ kind: 'cash-expense', amount: 1000, occurredAt: raw }).occurredAt.slice(0, 10), '2026-10-22', raw);
+  }
+});
+
+test('اجارهٔ ماه نام‌برده دوره دارد: همین ماه یا گذشته هزینه، ماه آینده پیش‌پرداخت', () => {
+  const now = new Date('2026-10-10T08:00:00.000Z');
+  const decideFor = (sentence) => {
+    const [item] = parseFinancialText(sentence, { now }).transactions;
+    return decide({ moneyDirection: 'out', amount: item.amount, category: item.category, evidence: sentence, occurredAt: now.toISOString(),
+      cashAccountId: 'cash', servicePeriodStart: item.servicePeriodStart, servicePeriodEnd: item.servicePeriodEnd }, { today: now.toISOString() });
+  };
+  for (const sentence of ['اجاره مهر بیست میلیون دادم', 'اجارهٔ مهر ماه رو ۲۰ میلیون پرداخت کردم', 'اجاره‌ی ماه شهریور ۲۰ میلیون دادم']) {
+    const decision = decideFor(sentence);
+    assert.equal(decision.decisionStatus, DECISION_STATUS.DECIDED, sentence);
+    assert.equal(decision.treatment, 'period-expense', sentence);
+  }
+  assert.equal(decideFor('اجاره آبان ۲۰ میلیون دادم').treatment, 'prepaid-expense');
+  // بی‌ماه، دوره همچنان پرسیده می‌شود؛ «مهر» بیرون از نام خدمت ماه نیست.
+  assert.equal(decideFor('اجاره دادم ۲۰ میلیون').question?.fact, 'servicePeriodStart');
+  assert.equal(parseFinancialText('مهر شرکت خریدم ۵۰۰ هزار', { now }).transactions[0].servicePeriodStart, undefined);
+});
+
+test('«فاکتور زدیم، پولش نیومده» صدور فاکتور است، نه پرداخت', () => {
+  const issued = detectVoiceIntent('فاکتور فروش ۵۰ میلیون برای شرکت آلفا زدیم ولی پولش هنوز نیومده');
+  assert.equal(issued?.intent, 'invoice');
+  assert.equal(issued.documentType, 'sales');
+  assert.equal(issued.amount, 50_000_000);
+  assert.equal(issued.contactName, 'شرکت آلفا');
+  assert.equal(detectVoiceIntent('برای آقای رضایی فاکتور ۳۰ میلیون زدیم، هنوز پول نداده')?.intent, 'invoice');
+  assert.equal(detectVoiceIntent('فاکتور فروش ۵۰ میلیون برای شرکت آلفا صادر کردم').contactName, 'شرکت آلفا');
+  // پولی که آمده یا رفته، کارت فاکتور نمی‌گیرد.
+  assert.equal(detectVoiceIntent('فاکتور ۲۰ میلیون زدیم و پولشو کارت به کارت کرد'), null);
+  assert.equal(detectVoiceIntent('سی میلیون به حساب کاظمی زدیم ولی نمیدونم فاکتور خریدش قبلاً ثبت شده'), null);
+  // «ندادیم» پرداخت نیست.
+  assert.equal(detectVoiceIntent('فاکتور خرید ۱۰ میلیون از تامین گستر، هنوز پولشو ندادیم')?.documentType, 'purchase');
 });
 
 test.after(() => removeTempDatabase(databasePath));
