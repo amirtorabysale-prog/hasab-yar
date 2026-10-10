@@ -81,7 +81,9 @@ export function isRoutineExpense(facts, { capitalizationThreshold = null } = {})
   if (ROUTINE_EXPENSE_CATEGORIES.includes(category(facts))) return true;
   // ملزومات زیر حد سرمایه‌ای شدنِ خودِ دفتر، حتی اگر ماندگار باشند، هزینه‌اند.
   // بدون حد، پرینتر و خودکار از هم جدا نمی‌شوند و سؤال پرسیده می‌شود.
-  return category(facts) === PRESUMED_CONSUMABLE
+  // تعمیر هم همین‌طور: تعمیر اساسیِ سرمایه‌ای بالای حد است؛ تعمیر کولر چهار
+  // میلیونی زیر حد، هزینهٔ همین دوره است و پرسیدن «بابت چه بود» فقط اصطکاک.
+  return [PRESUMED_CONSUMABLE, 'تعمیر و نگهداری'].includes(category(facts))
     && Number.isSafeInteger(capitalizationThreshold) && Number(facts?.amount) < capitalizationThreshold;
 }
 

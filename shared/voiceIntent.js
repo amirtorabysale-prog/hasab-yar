@@ -336,6 +336,10 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   const { receivable, payable } = decided;
   if (!receivable && !payable) return null;
   if (!amount && !obligationContext) return null;
+  // «۵۰ میلیون از نوری قرض گرفتیم، ریخت به ملت»: پول همین حالا جابه‌جا شده.
+  // کارت تعهد فقط بدهی را می‌ساخت و طرف دیگرش «سایر هزینه‌ها» می‌شد؛ مسیر ثبت
+  // روزانه وام دریافتی را درست می‌نشاند. در صفحهٔ طلب و بدهی، کارت تعهد بجاست.
+  if (!isCheque && !obligationContext && /قرض\s*(?:\S+\s*)?(?:گرفت|داد)(?:م|یم|ن)?(?![آ-ی])/.test(text)) return null;
 
   // هر دو نشانه یعنی جمله واقعاً مبهم است؛ اجرا نمی‌شود تا کاربر روشنش کند.
   const direction = receivable && payable ? null : receivable ? 'receivable' : 'payable';

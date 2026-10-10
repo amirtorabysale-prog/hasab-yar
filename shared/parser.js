@@ -42,14 +42,19 @@ const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS),
 // و «یه پولی اومده تو حساب ملی» یا «اداره دارایی… عودت داد» خروج پول ثبت
 // می‌شد — ردیف تراکنش هم با همان جهت غلط ماندهٔ بانک را جابه‌جا می‌کرد.
 const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'فروختیم', 'دخل', 'وصول', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد',
-  'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد'];
-const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'خریدیم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'دادیم', 'برداشت', 'قبض', 'کرایه', 'مواد'];
+  'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد',
+  // «از نوری قرض گرفتیم» پول آمده است، نه رفته؛ «گرفتیم» در «گرفتم» نمی‌گنجد.
+  'قرض گرفت', 'وام گرفت'];
+const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'خریدیم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'دادیم', 'برداشت', 'قبض', 'کرایه', 'مواد', 'واریز کردیم', 'واریز کردم'];
 // فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
 // هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و نوع بی‌دلیل
 // هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
 const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'فروختیم', 'واریز', 'واریزی', 'دریافت',
-  'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد']);
-const EXPENSE_VERBS = new Set(['دادم', 'دادیم', 'خریدم', 'خریدیم', 'برداشت']);
+  'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد',
+  'قرض گرفت', 'وام گرفت']);
+// «حقوق رو از ملت واریز کردیم»: «واریز» درآمدی شمرده می‌شد و نوع مبهم می‌ماند؛
+// واریزِ اول‌شخص، پرداخت ماست.
+const EXPENSE_VERBS = new Set(['دادم', 'دادیم', 'خریدم', 'خریدیم', 'برداشت', 'واریز کردیم', 'واریز کردم']);
 const LEARNING_STOP_WORDS = new Set(['امروز', 'دیروز', 'تومان', 'تومن', 'تومنی', 'ریال', 'بابت', 'برای', 'از', 'به', 'را', 'رو', 'کردم', 'دادم', 'گرفتم', 'داشتم', 'خریدم', 'فروختم', 'پرداخت', 'هزینه', 'درآمد', 'فروش', 'حقوق', 'و']);
 
 export const FINANCIAL_SPEECH_PHRASES = [
@@ -411,6 +416,12 @@ const MONEY_IN_PHRASE = /اومده?\s*تو\s*حساب|به\s*حساب\s*(?:\S+\
  * «کردم») و مقصدی که حساب خودِ ماست، جهت را صریح می‌کنند.
  */
 const THIRD_PERSON_IN = /(?:به|تو|توی)\s*(?:حساب\s*)?(?:بانک\s*\S+|حسابمون|حساب\s*(?:ما|شرکت))\s*(?:\S+\s*){0,3}?(?:کارت\s*به\s*کارت\s*کرد|واریز\s*کرد|انتقال\s*داد|ریخت)(?![آ-ی])|(?:بهمون|به\s*ما|بهم)\s*(?:\S+\s*){0,1}?(?:داد|پرداخت\s*کرد|واریز\s*کرد|کارت\s*به\s*کارت\s*کرد)(?![آ-ی])/;
+/**
+ * «۹ میلیون رو نقد آورد»، «ودیعه‌مون رو به تجارت برگردوند» — پولی که طرف
+ * مقابل آورد یا پس داد. فقط با مفعولِ پول: «جنس آورد» خرید است و «جنس رو پس
+ * آورد» برگشت کالا.
+ */
+const BROUGHT_MONEY_IN = /(?<!پس\s*)(?:نقد|پول|پولش|پولشو|وجه|وجهش)\s*(?:رو\s*)?آورد(?:ن)?(?![آ-ی])|(?:ودیعه|پول|پولمون|طلبمون)[\s\u200c]*(?:مون|مونو|ش|شو)?\s*(?:\S+\s*){0,4}?برگردوند(?:ن)?(?![آ-ی])/;
 /** طلبی که هنوز وصول نشده: «قراره بدن ولی هنوز پولی نگرفتیم». */
 const RECEIVABLE_STATEMENT = /قرار(?:ه)?\s*(?:بدن|بده|بدهند|پرداخت\s*کنن)|(?:پولش|پولی|پولشو)\s*(?:رو\s*)?(?:هنوز\s*)?نگرفتیم|هنوز\s*(?:پولش|پولی)\s*(?:رو\s*)?نگرفتیم/;
 // فعل پرداختِ اول‌شخص. «برای خرید مواد اولیه» اسم است، نه فعل؛ جلوی تشخیص
@@ -421,20 +432,21 @@ function sentenceMoneyIn(input) {
   const text = normalizePersian(input);
   // «تحویل دادیم» و «انجام دادیم» دربارهٔ کار است، نه پول.
   const payments = text.replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
-  return (MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments);
+  return (MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments);
 }
 
 /** نشانهٔ ورودِ صریح، نه حدسی: اطمینانش پایین نمی‌آید. */
 function explicitMoneyIn(input) {
   const text = normalizePersian(input);
-  return THIRD_PERSON_IN.test(text) || RECEIVABLE_STATEMENT.test(text);
+  return THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text);
 }
 
 function classify(context, learnings = [], categoryContext = '') {
   const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword)));
-  const incomeScore = signalScore(normalizedContext, INCOME_WORDS, INCOME_VERBS);
+  // «واریز کردیم» پرداخت ماست؛ همان «واریز» نباید در سمت درآمد هم شمرده شود.
+  const incomeScore = signalScore(normalizedContext.replace(/واریز\s*کرد(?:یم|م)(?![آ-ی])/g, ' '), INCOME_WORDS, INCOME_VERBS);
   const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
   const hasIncome = incomeScore > 0;
   const hasExpense = expenseScore > 0;
@@ -725,6 +737,11 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       && !/\d|هزار|میلیون|میلیارد/.test(span.raw)
       && /تومان|تومن/.test(context);
     if (colloquialThousands) amount *= 1_000;
+    // «بنزین ۸۰۰ تومن زدیم»: رقم تایپ‌شده تبدیل نمی‌شود، ولی هشتصد تومان چیزی
+    // نمی‌خرد و بی‌صدا ثبت می‌شد. مقیاسش مبهم علامت می‌خورد و موتور می‌پرسد:
+    // «۸۰۰ تومان یا ۸۰۰٬۰۰۰ تومان؟».
+    const typedSmallToman = !colloquialThousands && amount > 0 && amount < 1_000
+      && /\d/.test(span.raw) && !/هزار|میلیون|میلیارد/.test(span.raw) && /تومان|تومن/.test(context);
     if (context.includes('ریال') && !containsAny(context, ['تومان', 'تومن'])) amount = Math.round(amount / 10);
     const average = Number(averages[classified.type] || 0);
     const unusual = average > 0 && amount >= average * 5;
@@ -742,7 +759,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (capitalWording === 'fixed-asset') reviewReasons.push('این جمله از دارایی ثابت می‌گوید؛ دارایی ثابت هزینهٔ این ماه نیست.');
     if (natureNeedsAccountant(eventNature)) reviewReasons.push('این جمله اصلاح یک ثبت قبلی است؛ تراکنش تازه ساخته نمی‌شود و برای اصلاح به حسابدار می‌رسد.');
     if (unusual) reviewReasons.push('مبلغ نسبت به میانگین ثبت‌های مشابه غیرعادی است.');
-    if (colloquialThousands) reviewReasons.push('مقیاس مبلغ مبهم است؛ مبلغ دقیق را با هزار، میلیون یا میلیارد مشخص کن.');
+    if (colloquialThousands || typedSmallToman) reviewReasons.push('مقیاس مبلغ مبهم است؛ مبلغ دقیق را با هزار، میلیون یا میلیارد مشخص کن.');
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
@@ -750,7 +767,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       // مقیاس محاوره‌ای ابهام دارد و حدس‌زدنش خطای هزاربرابری می‌سازد.
       // مقدار همان ×۱۰۰۰ می‌ماند تا مسیر قدیمی نشکند؛ این پرچم می‌گوید موتور
       // تصمیم باید بپرسد.
-      ...(colloquialThousands ? { amountScaleAmbiguous: true } : {}),
+      ...(colloquialThousands || typedSmallToman ? { amountScaleAmbiguous: true } : {}),
       // نشانهٔ ماهیت، نه دسته: پول رفته ولی هنوز هیچ چیزی بابتش نگرفته‌ایم.
       ...(prepayment ? { prepaymentSignal: true } : {}),
       ...(unpaid ? { unpaidSignal: true } : {}),
@@ -765,7 +782,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       // دستهٔ مبهم یعنی دو دسته به یک اندازه موجه بودند؛ ثبت چنین چیزی بدون
       // نگاه کاربر همان خطای بی‌صداست که در بخش مبلغ بستیم.
       confidence: classified.confidence,
-      needsReview: unusual || ambiguous || colloquialThousands || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording) || natureNeedsAccountant(eventNature),
+      needsReview: unusual || ambiguous || colloquialThousands || typedSmallToman || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording) || natureNeedsAccountant(eventNature),
       source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),
       // شناسهٔ بانک می‌رود، نه شناسهٔ حساب: پارسر دفتر را نمی‌شناسد و نمی‌داند
