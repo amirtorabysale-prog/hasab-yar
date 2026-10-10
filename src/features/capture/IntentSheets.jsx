@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { invoiceLinesTotal } from '../../../shared/voiceIntent.js';
-import { matchSettleTargets } from '../../../shared/settleSpeech.js';
+import { matchSettleTargets, ledgerBalanceTargets } from '../../../shared/settleSpeech.js';
 
 /**
  * کارت تأیید نیت‌های ساختاری (طلب، بدهی، چک).
@@ -288,7 +288,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
  * اشتباه جابه‌جا می‌شود و یک سند باز، بسته اعلام می‌شود. پس هیچ سندی خودکار
  * تسویه نمی‌شود — حتی وقتی فقط یک گزینه بخورد، کاربر باید همان یکی را تأیید کند.
  */
-export function SettleSheet({ draft, obligations = [], close, confirm, queueReview }) {
+export function SettleSheet({ draft, obligations = [], contacts = [], close, confirm, queueReview }) {
   const [invoices, setInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(true);
   const [selectedId, setSelectedId] = useState('');
@@ -309,7 +309,9 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
 
   // جاری شریک فقط طلب و بدهیِ ثبت‌شده را می‌بندد؛ تسویهٔ فاکتور از پول شریک هنوز
   // مسیر ندارد و به صف حسابدار می‌رود.
-  const targets = draft.bounced ? [] : matchSettleTargets(draft, { invoices: byPartner ? [] : invoices, obligations });
+  const documentTargets = draft.bounced ? [] : matchSettleTargets(draft, { invoices: byPartner ? [] : invoices, obligations });
+  // بدهیِ دفتر کل بی‌سند (مثلاً خرید تأییدشده از صف حسابدار) هم برای تسویه از پول شریک هدف است.
+  const targets = [...documentTargets, ...(byPartner ? ledgerBalanceTargets(draft, { contacts, documentTargets }) : [])];
   const selected = targets.find((item) => item.id === selectedId) || null;
   const payer = payerName.trim();
   const submit = async () => {
@@ -365,7 +367,7 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
               <span className="min-w-0">
                 <b className="block truncate text-sm">{target.label}</b>
                 <span className="mt-0.5 block text-[11px] text-muted">
-                  {target.kind === 'invoice' ? 'فاکتور' : target.direction === 'receivable' ? 'طلب ما' : 'بدهی ما'}
+                  {target.kind === 'invoice' ? 'فاکتور' : target.kind === 'ledger-balance' ? 'ماندهٔ کارت حساب' : target.direction === 'receivable' ? 'طلب ما' : 'بدهی ما'}
                   {target.name ? ` · ${target.name}` : ''}
                 </span>
               </span>

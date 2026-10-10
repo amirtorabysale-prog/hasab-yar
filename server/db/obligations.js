@@ -7,6 +7,7 @@ import { ensureFinancialEventSchema, findEventBySource, recordFinancialEvent } f
 import { insertTransactionRows, transactionRow } from './transactions.js';
 import { resolveAccountId } from './accounts.js';
 import { routeEvent } from '../../shared/confidenceEngine.js';
+import { payableLedgerBalance } from './counterpartyCard.js';
 
 export function listObligations({ status = 'open' } = {}) {
   ensureFinancialEventSchema(db);
@@ -253,4 +254,44 @@ function postObligationSettledByPartner(obligationId, item, { occurredAt, amount
     actor: currentWorkspace()?.userId || null,
     rawInput: `تسویه ${item.title} از پول شخصی ${payerName}`,
   });
+}
+
+/**
+ * بستن ماندهٔ حساب پرداختنی یک طرف حساب از پول شخصی شریک — وقتی بدهی در دفتر
+ * کل هست ولی سند «طلب و بدهی» یا فاکتوری ندارد (مثلاً خریدی که حسابدار از صف
+ * تأیید کرده). سقف، همان ماندهٔ بستانکارِ حساب پرداختنیِ او در دفتر کل است.
+ */
+export function settlePayableBalanceByPartner(contactId, { amount: requested, paidBy = null, occurredAt, clientId = '', withinTransaction = false } = {}) {
+  const contact = db.prepare('SELECT id,name FROM contacts WHERE id=?').get(String(contactId || ''));
+  if (!contact) throw invalidInput('طرف حساب پیدا نشد.');
+  const payerName = String(paidBy?.name || '').trim().slice(0, 120);
+  if (!payerName) throw invalidInput('نام شریکی که از پول شخصی پرداخت کرده لازم است.');
+  // همان کلیک یا همان پرونده دوباره رسید: نتیجهٔ قبلی، نه سند دوم.
+  const sourceEventId = clientId ? `partner-paid-balance:${String(clientId).slice(0, 100)}` : '';
+  const repeated = sourceEventId ? db.prepare('SELECT id,status,amount FROM financial_events WHERE source_event_id=?').get(sourceEventId) : null;
+  if (repeated) return { contact: { id: contact.id, name: contact.name }, amount: repeated.amount, remaining: payableLedgerBalance(contact.id), event: { id: repeated.id, status: repeated.status }, paidBy: { name: payerName }, duplicate: true };
+  const available = payableLedgerBalance(contact.id);
+  if (available <= 0) throw invalidInput(`در دفتر کل ماندهٔ بدهی‌ای به «${contact.name}» نیست.`);
+  const amount = requested == null || requested === '' ? available : cleanAmount(requested);
+  if (amount <= 0) throw invalidInput('مبلغ تسویه باید بیشتر از صفر باشد.');
+  if (amount > available) throw invalidInput(`مبلغ از ماندهٔ بدهی به «${contact.name}» در دفتر کل بیشتر است؛ مانده ${available.toLocaleString('en-US')} تومان است.`);
+  const payerId = paidBy.contactId || contactIdForName(payerName, paidBy.counterpartyResolution);
+  if (payerId && payerId === contact.id) throw invalidInput('پرداخت‌کننده همان طرف حساب است؛ این تسویه از پول شریک نیست.');
+  const event = normalizeFinancialEvent({
+    kind: EVENT_KINDS.OBLIGATION_SETTLED_BY_PARTNER, amount, occurredAt: occurredAt || new Date().toISOString(),
+    counterparty: contact.name, counterpartyId: contact.id, reference: 'ماندهٔ حساب پرداختنی',
+    settlementDirection: 'payable', payerName, payerId, source: 'text',
+  });
+  const decision = routeEvent(event, {
+    components: { amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1, counterpartyCertainty: 1 },
+    policy: automationPolicy(),
+  });
+  const posted = recordFinancialEvent(db, event, {
+    sourceEventId: sourceEventId || `partner-paid-balance:${contact.id}:${available}:${amount}`,
+    decision, actor: currentWorkspace()?.userId || null, withinTransaction,
+    rawInput: `تسویهٔ بدهی ${contact.name} از پول شخصی ${payerName}`,
+  });
+  if (!posted || posted.status !== 'posted') throw invalidInput('سند تسویه از پول شریک قطعی نشد؛ گفته را به صف حسابدار بفرست.');
+  audit('settle-balance-by-partner', 'contact', contact.id, { amount, payerName, eventId: posted.id });
+  return { contact: { id: contact.id, name: contact.name }, amount, remaining: payableLedgerBalance(contact.id), event: { id: posted.id, status: posted.status }, paidBy: { name: payerName, contactId: payerId } };
 }

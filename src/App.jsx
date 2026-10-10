@@ -802,7 +802,11 @@ export default function App() {
   const applySettlement = async (target, { occurredAt = null, paidBy = null } = {}) => {
     try {
       if (paidBy) {
-        await api.settleObligation(target.id, { amount: target.paymentAmount, paidBy, ...(occurredAt ? { occurredAt } : {}) });
+        if (target.kind === 'ledger-balance') {
+          await api.settlePayableBalanceByPartner(target.contactId, { amount: target.paymentAmount, paidBy, clientId: crypto.randomUUID(), ...(occurredAt ? { occurredAt } : {}) });
+        } else {
+          await api.settleObligation(target.id, { amount: target.paymentAmount, paidBy, ...(occurredAt ? { occurredAt } : {}) });
+        }
         setSettleDraft(null);
         await load();
         notify(`${target.label} از پول شخصی ${paidBy.name} تسویه شد؛ از صندوق و بانک پولی کم نشد.`);
@@ -1195,7 +1199,7 @@ export default function App() {
       {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} accounts={data.accounts || []} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
       {understandingDraft && <Suspense fallback={null}><UnderstandingSheet draft={understandingDraft} setDraft={setUnderstandingDraft} close={() => setUnderstandingDraft(null)} notify={notify}
         onPosted={() => { notify('پرونده ثبت شد؛ فقط اجزای انجام‌شده سند خوردند.'); void load(); }} /></Suspense>}
-      {settleDraft && <SettleSheet draft={settleDraft} obligations={data.obligations || []} close={() => setSettleDraft(null)} confirm={applySettlement} queueReview={queueSettlementReview} />}
+      {settleDraft && <SettleSheet draft={settleDraft} obligations={data.obligations || []} contacts={data.contacts || []} close={() => setSettleDraft(null)} confirm={applySettlement} queueReview={queueSettlementReview} />}
       {selectedDecision && <DecisionDetailsSheet access={access} navigate={navigate} item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
       {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.` : 'مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}

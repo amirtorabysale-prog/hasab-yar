@@ -255,3 +255,71 @@ test('فهم با AI: اگر مدل پول را از حساب شرکت بدان�
     assert.equal(item.status, 'needs-accountant', JSON.stringify(item.plan));
   });
 });
+
+// ---------------------------------------------------------------------------
+// بدهیِ دفتر کل بی‌سند — همان وضعیت دفتر واقعی (۱۸ مهر ۱۴۰۵): خرید ۳۰۰ میلیونی
+// از آریا که حسابدار از صف تأیید کرد و مستقیم در دفتر کل نشست. کارت حساب
+// ۲۸۰ میلیون بستانکار نشان می‌داد ولی کارت تسویه «بدهی باز پیدا نشد» می‌گفت.
+// ---------------------------------------------------------------------------
+
+const { recordFinancialEvent } = await import('../server/financialEventStore.js');
+const { ledgerBalanceTargets } = await import('../shared/settleSpeech.js');
+const { routeEvent } = await import('../shared/confidenceEngine.js');
+
+let pars;
+const reviewedPurchase = (contact, amount, key) => {
+  const event = normalizeFinancialEvent({ kind: EVENT_KINDS.PAYABLE_OPENED, amount, occurredAt: NOW.toISOString(),
+    counterparty: contact.name, counterpartyId: contact.id, category: 'خرید کالا', source: 'text' });
+  const decision = routeEvent(event, { components: { amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1, counterpartyCertainty: 1 } });
+  return recordFinancialEvent(db(), event, { sourceEventId: `review-approved:${key}`, decision });
+};
+const payableOf = (name) => -(balances()[`حساب پرداختنی — ${name}`] || 0);
+
+test('کارت تسویه ماندهٔ بستانکار کارت حساب را هدف می‌کند، وقتی سند بازی نیست', () => {
+  const intent = detectPartnerPaidDebt(SAID.spoken, { now: NOW });
+  const contacts = [{ id: 'k1', name: 'شرکت آریا', balance: -280_000_000 }, { id: 'k2', name: 'شرکت نوین', balance: -500_000_000 }, { id: 'k3', name: 'آریا تجارت', balance: 40_000_000 }];
+  assert.deepEqual(ledgerBalanceTargets(intent, { contacts }).map((item) => [item.kind, item.contactId, item.amount, item.paymentAmount]),
+    [['ledger-balance', 'k1', 280_000_000, 280_000_000]]);
+  // اگر سند بازِ همان شخص هست، همان سند هدف است و مانده دوبار پیشنهاد نمی‌شود.
+  assert.deepEqual(ledgerBalanceTargets(intent, { contacts, documentTargets: [{ contactId: 'k1', name: 'شرکت آریا' }] }), []);
+  // بدهی کمتر از مبلغ گفته‌شده هدف نیست.
+  assert.deepEqual(ledgerBalanceTargets(intent, { contacts: [{ id: 'k1', name: 'شرکت آریا', balance: -100_000_000 }] }), []);
+});
+
+test('روی دفتر: بدهیِ دفتر کل بی‌سند از پول شریک بسته می‌شود', () => inWorkspace(() => {
+  pars = database.saveContact({ name: 'شرکت پارس' });
+  assert.equal(reviewedPurchase(pars, 300_000_000, 'pars-1').status, 'posted');
+  assert.equal(database.listObligations({ status: 'all' }).filter((item) => item.contactId === pars.id).length, 0, 'هیچ سند طلب و بدهی ندارد');
+  assert.equal(database.payableLedgerBalance(pars.id), 300_000_000);
+  const rows = transactionCount();
+  const cash = cashBalance();
+  const result = database.settlePayableBalanceByPartner(pars.id, { amount: 280_000_000, paidBy: { name: 'آقای سهرابی' }, clientId: 'card-1' });
+  assert.equal(result.event.status, 'posted');
+  assert.equal(result.remaining, 20_000_000);
+  assert.equal(payableOf('شرکت پارس'), 20_000_000);
+  assert.equal(transactionCount(), rows);
+  assert.equal(cashBalance(), cash);
+  assert.equal(accounting.trialBalance(db()).balanced, true);
+  // همان کلیک دوباره سند دوم نمی‌سازد.
+  database.settlePayableBalanceByPartner(pars.id, { amount: 280_000_000, paidBy: { name: 'آقای سهرابی' }, clientId: 'card-1' });
+  assert.equal(payableOf('شرکت پارس'), 20_000_000);
+  assert.throws(() => database.settlePayableBalanceByPartner(pars.id, { amount: 30_000_000, paidBy: { name: 'آقای سهرابی' } }), /بیشتر است/);
+}));
+
+test('فهم با AI: بدهیِ دفتر کل بی‌سند هدف تسویه است', async () => {
+  await inWorkspace(async () => {
+    const kian = database.saveContact({ name: 'شرکت کیان' });
+    reviewedPurchase(kian, 300_000_000, 'kian-1');
+    const text = 'بدهی 280 میلیونی به شرکت کیان داشتیم مدیر عامل اقای سهرابی ماشین شخصی خودشون رو فروختن و بدهی رو پرداخت کردند';
+    const output = understood();
+    output.counterparties[1] = { id: 'c2', name: 'شرکت کیان', role: 'supplier', evidence: 'به شرکت کیان' };
+    output.movements[0].to = { kind: 'counterparty', name: 'شرکت کیان' };
+    outputs.set(text, output);
+    const item = await database.createUnderstandingCase({ text, clientId: 'ai-ledger-balance' }, options);
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan));
+    assert.deepEqual(item.plan.components.map((component) => [component.kind, component.target.kind, component.amount]), [['partner-settlement', 'ledger-balance', 280_000_000]]);
+    const posted = database.commitUnderstandingCase(item.id, { now: NOW });
+    assert.equal(posted.status, 'posted');
+    assert.equal(payableOf('شرکت کیان'), 20_000_000);
+  });
+});
