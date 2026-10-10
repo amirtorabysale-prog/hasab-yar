@@ -446,3 +446,79 @@ test('فهم با AI: پول مشتری به حساب شخصی شریک — طل
     assert.equal(cashBalance(), cash);
   });
 });
+
+// ---------------------------------------------------------------------------
+// برچسبِ مدل داور نیست — خودِ جمله پول شخصی را می‌گوید (۱۸ مهر ۱۴۰۵).
+// مدل همین جمله را «تسویه» نامید، سهرابی را نقش «other» داد یا نیاورد، و برنامه
+// پرسید «پول از کدام حساب رفت؟» — با جاری تجارت و صندوق به‌عنوان گزینه.
+// ---------------------------------------------------------------------------
+
+const { understandingCacheKey } = await import('../server/eventUnderstandingAi.js');
+const { createHash } = await import('node:crypto');
+const { UNDERSTANDING_VERSION } = await import('../shared/eventUnderstanding.js');
+
+const asSettlement = (creditorName, { payer = 'other' } = {}) => ({
+  ...understood(),
+  event: { kind: 'settlement', description: 'تسویهٔ بدهی', status: 'done' },
+  amounts: [
+    { id: 'a1', value: 280_000_000, currency: null, role: 'prior-balance', status: 'context', partOf: null, basis: 'explicit', computedFrom: none, evidence: 'بدهی 280 میلیونی' },
+    { id: 'a2', value: 280_000_000, currency: null, role: 'paid-now', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence: 'بدهی رو پرداخت کردند' },
+  ],
+  counterparties: [
+    { id: 'c1', name: creditorName, role: 'supplier', evidence: creditorName },
+    ...(payer ? [{ id: 'c2', name: 'اقای سهرابی', role: payer, evidence: 'اقای سهرابی' }] : []),
+  ],
+  movements: [{ id: 'm1', amountRef: 'a2', direction: 'out', from: { kind: 'unknown', name: null }, to: { kind: 'counterparty', name: creditorName }, evidence: 'پرداخت کردند' }],
+});
+
+for (const [label, payer] of [['نقش other', 'other'], ['بی‌نام در فهرست', null]]) {
+  test(`فهم با AI: برچسب «تسویه» با ${label} — باز هم از پول شریک، بی‌پرسیدن حساب شرکت`, async () => {
+    await inWorkspace(async () => {
+      const name = `شرکت آریا ${payer ? 'یک' : 'دو'}`;
+      const aria2 = database.saveContact({ name });
+      reviewedPurchase(aria2, 300_000_000, `aria-${name}`);
+      const text = `بدهی 280 میلیونی به ${name} داشتیم مدیر عامل اقای سهرابی ماشین شخصی خودشون رو فروختن و بدهی رو پرداخت کردند`;
+      outputs.set(text, asSettlement(name, { payer }));
+      const cash = cashBalance();
+      const item = await database.createUnderstandingCase({ text, clientId: `ai-label-${name}` }, options);
+      assert.equal(item.status, 'ready', JSON.stringify({ q: item.plan.questions, r: item.plan.reasons }));
+      assert.ok(!item.plan.questions.some((question) => question.picker === 'account'), 'حساب شرکت پرسیده نمی‌شود');
+      assert.deepEqual(item.plan.components.map((component) => [component.kind, component.target.kind, component.amount, component.paidBy.name]),
+        [['partner-settlement', 'ledger-balance', 280_000_000, 'آقای سهرابی']].map((row) => (payer ? [row[0], row[1], row[2], 'اقای سهرابی'] : row)));
+      database.commitUnderstandingCase(item.id, { now: NOW });
+      assert.equal(payableOf(name), 20_000_000);
+      assert.equal(cashBalance(), cash);
+    });
+  });
+}
+
+test('فهم با AI: «خرید» و «هزینه» از جیب شریک یا کارمند — منبع پول از خود جمله', async () => {
+  await inWorkspace(async () => {
+    const cases = [
+      ['آقای سهرابی با پول شخصی خودش ۱۲ میلیون مواد اولیه برای شرکت خرید', 'purchase', 'goods', 'partner'],
+      ['آقای رضایی کارمندمون ۳ میلیون بنزین ماشین شرکت رو از جیب خودش داد', 'expense', 'service', 'employee'],
+    ];
+    for (const [text, kind, subject, funderKind] of cases) {
+      outputs.set(text, {
+        ...understood(),
+        event: { kind, description: text, status: 'done' },
+        amounts: [{ id: 'a1', value: Number(text.match(/(\d+|۱۲|۳) میلیون/)?.[1] === '۱۲' ? 12_000_000 : 3_000_000), currency: null, role: 'total', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence: text.includes('۱۲') ? '۱۲ میلیون' : '۳ میلیون' }],
+        counterparties: [{ id: 'c1', name: text.includes('رضایی') ? 'آقای رضایی' : 'آقای سهرابی', role: 'other', evidence: text.includes('رضایی') ? 'آقای رضایی' : 'آقای سهرابی' }],
+        movements: [{ id: 'm1', amountRef: 'a1', direction: 'out', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: text.includes('۱۲') ? 'خرید' : 'داد' }],
+        subject: { what: text.includes('۱۲') ? 'مواد اولیه' : 'بنزین', kind: subject, use: text.includes('۱۲') ? 'production' : 'internal', delivered: 'yes', usefulLifeMonths: null, evidence: text.includes('۱۲') ? 'مواد اولیه' : 'بنزین' },
+      });
+      const item = await database.createUnderstandingCase({ text, clientId: `ai-funded-${funderKind}` }, options);
+      assert.ok(!item.plan.questions.some((question) => question.picker === 'account'), `${text}: حساب شرکت پرسیده نمی‌شود`);
+      const lines = item.plan.components[0]?.preview?.lines || [];
+      assert.ok(!lines.some((line) => line.role === 'cash'), `${text}: سطر صندوق ندارد ${JSON.stringify(item.plan)}`);
+      assert.ok(lines.some((line) => line.role === (funderKind === 'employee' ? 'payable' : 'partner-payable') && line.credit > 0), `${text}: ${JSON.stringify(lines)}`);
+    }
+  });
+});
+
+test('کش فهم: تغییر دستورالعمل یا schema برداشت تازه می‌خواهد', () => {
+  const text = 'بدهی آریا رو آقای سهرابی از جیب خودش داد';
+  const legacy = createHash('sha256').update(JSON.stringify([UNDERSTANDING_VERSION, 'm', text, []])).digest('hex');
+  assert.notEqual(understandingCacheKey({ text, model: 'm' }), legacy, 'کلید کش قدیمی (بی‌دستورالعمل) دیگر استفاده نمی‌شود');
+  assert.equal(understandingCacheKey({ text, model: 'm' }), understandingCacheKey({ text, model: 'm' }));
+});

@@ -39,9 +39,18 @@ export function understandingProvider(env = process.env) {
 }
 
 export function understandingCacheKey({ text, rereadAnswers = [], model }) {
+  // دستورالعمل و schema هم جزء کلید است: هر به‌روزرسانیِ آن‌ها برداشت تازه
+  // می‌خواهد. بدونش همان جمله پس از هر بهبود، برداشتِ کهنهٔ کش را برمی‌گرداند و
+  // بهبود هرگز به کاربری که آن جمله را قبلاً گفته بود نمی‌رسید (۱۸ مهر ۱۴۰۵).
   return createHash('sha256')
-    .update(JSON.stringify([UNDERSTANDING_VERSION, model, normalizePersian(text), rereadAnswers]))
+    .update(JSON.stringify([UNDERSTANDING_VERSION, contractFingerprint(), model, normalizePersian(text), rereadAnswers]))
     .digest('hex');
+}
+
+let fingerprint = null;
+function contractFingerprint() {
+  fingerprint ||= createHash('sha256').update(UNDERSTANDING_INSTRUCTIONS).update(JSON.stringify(understandingSchema())).digest('hex').slice(0, 16);
+  return fingerprint;
 }
 
 /**
