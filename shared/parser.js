@@ -411,6 +411,12 @@ const MONEY_IN_PHRASE = /اومده?\s*تو\s*حساب|به\s*حساب\s*(?:\S+\
  * «کردم») و مقصدی که حساب خودِ ماست، جهت را صریح می‌کنند.
  */
 const THIRD_PERSON_IN = /(?:به|تو|توی)\s*(?:حساب\s*)?(?:بانک\s*\S+|حسابمون|حساب\s*(?:ما|شرکت))\s*(?:\S+\s*){0,3}?(?:کارت\s*به\s*کارت\s*کرد|واریز\s*کرد|انتقال\s*داد|ریخت)(?![آ-ی])|(?:بهمون|به\s*ما|بهم)\s*(?:\S+\s*){0,1}?(?:داد|پرداخت\s*کرد|واریز\s*کرد|کارت\s*به\s*کارت\s*کرد)(?![آ-ی])/;
+/**
+ * «۹ میلیون رو نقد آورد»، «ودیعه‌مون رو به تجارت برگردوند» — پولی که طرف
+ * مقابل آورد یا پس داد. فقط با مفعولِ پول: «جنس آورد» خرید است و «جنس رو پس
+ * آورد» برگشت کالا.
+ */
+const BROUGHT_MONEY_IN = /(?<!پس\s*)(?:نقد|پول|پولش|پولشو|وجه|وجهش)\s*(?:رو\s*)?آورد(?:ن)?(?![آ-ی])|(?:ودیعه|پول|پولمون|طلبمون)[\s\u200c]*(?:مون|مونو|ش|شو)?\s*(?:\S+\s*){0,4}?برگردوند(?:ن)?(?![آ-ی])/;
 /** طلبی که هنوز وصول نشده: «قراره بدن ولی هنوز پولی نگرفتیم». */
 const RECEIVABLE_STATEMENT = /قرار(?:ه)?\s*(?:بدن|بده|بدهند|پرداخت\s*کنن)|(?:پولش|پولی|پولشو)\s*(?:رو\s*)?(?:هنوز\s*)?نگرفتیم|هنوز\s*(?:پولش|پولی)\s*(?:رو\s*)?نگرفتیم/;
 // فعل پرداختِ اول‌شخص. «برای خرید مواد اولیه» اسم است، نه فعل؛ جلوی تشخیص
@@ -421,13 +427,13 @@ function sentenceMoneyIn(input) {
   const text = normalizePersian(input);
   // «تحویل دادیم» و «انجام دادیم» دربارهٔ کار است، نه پول.
   const payments = text.replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
-  return (MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments);
+  return (MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments);
 }
 
 /** نشانهٔ ورودِ صریح، نه حدسی: اطمینانش پایین نمی‌آید. */
 function explicitMoneyIn(input) {
   const text = normalizePersian(input);
-  return THIRD_PERSON_IN.test(text) || RECEIVABLE_STATEMENT.test(text);
+  return THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text);
 }
 
 function classify(context, learnings = [], categoryContext = '') {

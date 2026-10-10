@@ -224,4 +224,15 @@ test('دور سوم: تخفیف، فروش وسیلهٔ کارکرده، انت�
   });
 });
 
+test('پولی که طرف مقابل آورد یا پس داد ورود است؛ جنس آورده یا برگشتی نه', () => {
+  const typeOf = (sentence) => parseFinancialText(sentence).transactions[0]?.type;
+  assert.equal(typeOf('خانم توکلی ۹ میلیون از بدهی قبلیش رو نقد آورد.'), 'income');
+  const deposit = parseFinancialText('صاحبخونه قبلی ۶۰ میلیون ودیعه‌مون رو به تجارت برگردوند.').transactions[0];
+  assert.equal(deposit.type, 'income');
+  assert.doesNotMatch(String(deposit.counterparty || ''), /برگردوند/);
+  assert.equal(typeOf('آقای صالحی ۴ میلیون از جنسی که هفته پیش نسیه برده بود رو پس آورد.'), 'expense', 'برگشت کالا، پول نیاورده');
+  assert.equal(typeOf('فروشنده ۱۰ میلیون جنس آورد'), 'expense');
+  assert.equal(typeOf('۵ میلیون ودیعه رو به صاحبخونه برگردوندیم'), 'expense');
+});
+
 test.after(() => removeTempDatabase(databasePath));
