@@ -522,3 +522,31 @@ test('کش فهم: تغییر دستورالعمل یا schema برداشت تا
   assert.notEqual(understandingCacheKey({ text, model: 'm' }), legacy, 'کلید کش قدیمی (بی‌دستورالعمل) دیگر استفاده نمی‌شود');
   assert.equal(understandingCacheKey({ text, model: 'm' }), understandingCacheKey({ text, model: 'm' }));
 });
+
+// ---------------------------------------------------------------------------
+// کارت حساب شریک (۱۸ مهر ۱۴۰۵): سند «بدهکار آریا / بستانکار جاری سهرابی» ثبت
+// شده بود، حساب جاری سهرابی هم باز شده بود، ولی کارت سهرابی «تسویه — هنوز
+// گردشی ثبت نشده» می‌گفت، چون کارت فقط چهار حساب تجاری را می‌خواند.
+// ---------------------------------------------------------------------------
+
+test('کارت حساب: جاری شریک و هر حساب دیگری به نام همان شخص دیده می‌شود', () => inWorkspace(() => {
+  const partner = database.saveContact({ name: 'آقای کاوه' });
+  const lender = database.saveContact({ name: 'شرکت ماهان' });
+  const debt = database.saveObligation({ title: 'خرید پمپ', amount: 45_000_000, direction: 'payable', contactId: lender.id });
+  database.settleObligation(debt.id, { paidBy: { name: 'آقای کاوه', contactId: partner.id } });
+  const card = database.counterpartyCard(partner.id);
+  assert.equal(card.lines.length, 1, 'سند تسویه روی کارت شریک هست');
+  assert.equal(card.lines[0].credit, 45_000_000);
+  assert.match(card.lines[0].accountName, /جاری شریک/);
+  assert.equal(card.totals.balance, -45_000_000, 'شرکت ۴۵ میلیون به او بدهکار است');
+  assert.deepEqual(card.totals.byGroup, { trade: 0, partner: -45_000_000, other: 0 });
+  assert.equal(card.reconciliation.unexplained, 0, 'جاری شریک هشدار «کارت کامل نیست» نمی‌سازد');
+  assert.equal(database.listContacts().find((item) => item.id === partner.id).balance, -45_000_000, 'فهرست اشخاص همان عدد را می‌گوید');
+  // کارت طلبکار هم بسته شدن بدهی را نشان می‌دهد.
+  assert.equal(database.counterpartyCard(lender.id).totals.balance, 0);
+  // طلب از شریک (پول مشتری به حساب شخصی او) هم روی همان کارت.
+  const buyer = database.saveContact({ name: 'شرکت رهام' });
+  const sale = database.saveObligation({ title: 'فروش شیر', amount: 10_000_000, direction: 'receivable', contactId: buyer.id });
+  database.settleObligation(sale.id, { paidBy: { name: 'آقای کاوه', contactId: partner.id } });
+  assert.deepEqual(database.counterpartyCard(partner.id).totals.byGroup, { trade: 0, partner: -35_000_000, other: 0 });
+}));

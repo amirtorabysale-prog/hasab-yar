@@ -220,6 +220,20 @@ function Card({ contact, onBack, notify }) {
             {!card?.totals?.balance ? 'حساب این طرف تسویه است.'
               : tone.label === 'بدهکار' ? 'این مبلغ را از او طلب داریم.' : 'این مبلغ را به او بدهکاریم.'}
           </p>
+          {/* مانده به تفکیک: حساب تجاری، جاری شریک، و پیش‌دریافت/پیش‌پرداخت/وام/ودیعه/مساعده. */}
+          {(() => {
+            const groups = card?.totals?.byGroup;
+            if (!groups) return null;
+            const shown = [['trade', 'طلب و بدهی تجاری'], ['partner', 'جاری شریک'], ['other', 'پیش‌دریافت، پیش‌پرداخت، وام و مساعده']]
+              .filter(([key]) => groups[key]);
+            if (shown.length < 2 && !groups.partner && !groups.other) return null;
+            return <ul className="mt-2 space-y-1 text-[12px]">
+              {shown.map(([key, label]) => <li key={key} className="flex items-center justify-between gap-3">
+                <span className="text-muted">{label}</span>
+                <span className="numbers font-bold">{formatAmount(Math.abs(groups[key]))} <small className="text-muted">{groups[key] > 0 ? 'بدهکار' : 'بستانکار'}</small></span>
+              </li>)}
+            </ul>;
+          })()}
         </div>
       </header>
 
