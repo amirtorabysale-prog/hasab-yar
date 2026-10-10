@@ -235,4 +235,35 @@ test('پولی که طرف مقابل آورد یا پس داد ورود است�
   assert.equal(typeOf('۵ میلیون ودیعه رو به صاحبخونه برگردوندیم'), 'expense');
 });
 
+test('دور چهارم: قرض نقدی، برگشت از خرید، مقیاس «۸۰۰ تومن»، تعمیر زیر حد و عابربانک', () => {
+  // قرضی که گرفته شد پول آمده است: کارت تعهد نه، ورود پول از مسیر ثبت روزانه.
+  const loan = '۵۰ میلیون از آقای نوری قرض گرفتیم تا دو ماه دیگه پس بدیم، ریخت به ملت.';
+  assert.equal(detectVoiceIntent(loan), null);
+  assert.equal(parseFinancialText(loan).transactions[0].type, 'income');
+  assert.equal(detectVoiceIntent('از مغازه یک میلیون قرض گرفتم', { context: 'obligation' }).direction, 'payable', 'صفحهٔ طلب و بدهی همان کارت تعهد را دارد');
+
+  assert.match(judgmentReason('۵ میلیون از مواد اولیه‌ای که از آقای کاظمی خریده بودیم رو پس دادیم.'), /برگشت/);
+  assert.equal(judgmentReason('تا دو ماه دیگه پس بدیم'), null, 'پس دادنِ آینده، برگشت نیست');
+
+  const fuel = parseFinancialText('بنزین وانت ۸۰۰ تومن زدیم.').transactions[0];
+  assert.equal(fuel.amount, 800, 'رقم تایپ‌شده تبدیل نمی‌شود');
+  assert.equal(fuel.amountScaleAmbiguous, true, 'ولی مقیاسش پرسیده می‌شود');
+  assert.equal(parseFinancialText('۲ میلیون و ۵۰۰ تومن قبض دادم').transactions[0].amountScaleAmbiguous, undefined);
+
+  const salary = parseFinancialText('حقوق خانم احمدی رو ۱۸ میلیون از ملت واریز کردیم.').transactions[0];
+  assert.equal(salary.type, 'expense');
+  assert.ok(salary.confidence > 0.9, 'واریزِ اول‌شخص جهت را مبهم نمی‌کند');
+
+  const repair = (amount, capitalizationThreshold) => decide({ moneyDirection: 'out', amount, category: 'تعمیر و نگهداری',
+    evidence: 'تعمیر کولر مغازه نقد دادیم.', occurredAt: '2026-10-10T08:00:00.000Z', cashAccountId: 'cash' }, { capitalizationThreshold });
+  assert.equal(repair(4_200_000, 20_000_000).treatment, 'period-expense');
+  assert.notEqual(repair(45_000_000, 20_000_000).decisionStatus, DECISION_STATUS.DECIDED, 'تعمیر بالای حد شاید سرمایه‌ای باشد');
+  assert.notEqual(repair(4_200_000, null).decisionStatus, DECISION_STATUS.DECIDED, 'بی‌حد، پرسیده می‌شود');
+
+  assert.equal(detectCaptureTransfer('۳ میلیون از عابربانک ملت برداشت کردم گذاشتم تو صندوق.')?.intent, 'transfer');
+  assert.equal(detectCaptureTransfer('۲۰ میلیون از پول صندوق رو بردیم بانک تجارت واریز کردیم.')?.intent, 'transfer');
+  assert.equal(detectCaptureTransfer('حقوق رو ۱۸ میلیون از ملت به حسابش تو تجارت واریز کردیم'), null, 'پرداخت حقوق انتقال داخلی نیست');
+  assert.equal(detectCaptureTransfer('شریک ۱۰ میلیون از صندوق برداشت کرد'), null);
+});
+
 test.after(() => removeTempDatabase(databasePath));
