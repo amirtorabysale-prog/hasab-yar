@@ -98,3 +98,27 @@ main table tbody tr:hover { background: #f4f8fa; }
 }
 .workspace-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 82px; padding: 14px 24px; border-bottom: 1px solid #dfe6eb; background: #ffffff; }
 @media (max-width: 639px) { .workspace-topbar { padding: 10px 16px; } }
+
+/* منوی درختی: گروه‌های بازشونده، برگ‌های تورفته، جست‌وجو. */
+.menu-search { display: flex; align-items: center; gap: 8px; margin: 0 4px 14px; padding: 0 12px; min-height: 44px; border: 1px solid #dfe6eb; border-radius: 10px; background: #f7f9fa; color: #697b87; }
+.menu-search:focus-within { border-color: #147d79; background: #fff; }
+.menu-search input { min-width: 0; flex: 1; background: transparent; font-size: 13px; color: #182b38; outline: none; }
+.workspace-navigation .nav-group { margin-top: 4px; }
+.menu-group { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 10px; color: #182b38; font-size: 13px; font-weight: 800; text-align: right; }
+.menu-group:hover { background: #f2f6f7; }
+.menu-group.is-active { color: #12635f; }
+.menu-group > span { flex: 1; }
+.menu-chevron { color: #8a9aa5; transition: transform .15s ease; }
+.menu-chevron.is-open { transform: rotate(180deg); }
+.menu-leaves { margin: 2px 22px 8px 0; padding-right: 10px; border-right: 1px solid #e4eaed; }
+.menu-leaf { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 38px; margin: 1px 0; padding: 7px 10px; border-radius: 8px; color: #526573; font-size: 12.5px; font-weight: 600; text-align: right; }
+.menu-leaf:hover { background: #f2f6f7; color: #182b38; }
+.menu-leaf[aria-current="page"] { background: #e7f3f1; color: #12635f; font-weight: 800; }
+.menu-results { display: grid; gap: 2px; margin: 0 4px; }
+.menu-result small { color: #8a9aa5; font-size: 11px; font-weight: 600; }
+.menu-empty { margin: 8px 12px; color: #697b87; font-size: 12px; }
+@media (min-width: 1024px) { .app-shell { grid-template-columns: 264px minmax(0, 1fr); } }
+@media (min-width: 1280px) {
+  .app-shell { grid-template-columns: 264px minmax(0, 1fr) 64px; }
+  .app-shell.insights-open { grid-template-columns: 264px minmax(0, 1fr) 230px; }
+}
