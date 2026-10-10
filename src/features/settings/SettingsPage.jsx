@@ -26,7 +26,7 @@ export function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
     event.preventDefault();
     setBusy(true);
     try {
-      await api.saveAccount({ ...draft, openingBalance: Number(digitsOnly(String(draft.openingBalance)) || 0) });
+      await api.saveAccount({ ...draft, allowNegative: Boolean(draft.allowNegative), openingBalance: Number(digitsOnly(String(draft.openingBalance)) || 0) });
       setDraft(null);
       await refresh();
       notify('حساب ذخیره شد.');
@@ -57,7 +57,8 @@ export function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
               {bank ? bank.name : 'بانکش مشخص نیست'}
             </span>}
           </span>
-          <span className="numbers text-[12px] text-muted">{formatAmount(account.balance || 0)}</span>
+          {account.allowNegative ? <span className="rounded-full bg-warn-bg px-2 text-[10px] font-bold text-accent">اضافه‌برداشت مجاز</span> : null}
+          <span className={`numbers text-[12px] ${account.balance < 0 ? 'font-bold text-expense' : 'text-muted'}`}>{account.balance < 0 ? '−' : ''}{formatAmount(Math.abs(account.balance || 0))}</span>
           {/* تنخواه از صفحهٔ خودش اداره می‌شود: بستنش باید باقی‌مانده را برگرداند. */}
           {canManage && account.kind !== 'petty' && <button onClick={() => setDraft({ ...account, bankId: account.bankId || '' })} className="tap grid place-items-center text-muted" aria-label={`ویرایش ${account.name}`}><Pencil size={16} /></button>}
         </li>;
@@ -80,6 +81,11 @@ export function AccountsPanel({ accounts = [], canManage, notify, refresh }) {
       <label className="block text-[11px] text-muted">ماندهٔ ابتدای دوره
         <input inputMode="numeric" value={draft.openingBalance} onChange={(event) => setDraft({ ...draft, openingBalance: event.target.value })}
           className="tap numbers mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-[13px]" />
+      </label>
+      {/* صندوق و بانک منفی نمی‌شوند مگر با تأیید حسابدار؛ این کلید فقط برای حسابی است که واقعاً اضافه‌برداشت دارد. */}
+      <label className="flex items-start gap-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6">
+        <input type="checkbox" checked={Boolean(draft.allowNegative)} onChange={(event) => setDraft({ ...draft, allowNegative: event.target.checked })} className="mt-1" />
+        <span><b>اجازهٔ منفی شدن (اضافه‌برداشت)</b><span className="block text-muted">خاموش: اگر ثبتی این حساب را منفی کند، فقط با تأیید حسابدار و دلیل انجام می‌شود. فقط برای بانکی که قرارداد اضافه‌برداشت دارد روشن کن.</span></span>
       </label>
       <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-white disabled:opacity-40">{busy ? 'در حال ذخیره…' : 'ذخیره حساب'}</button>
     </form>}

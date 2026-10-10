@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * افتتاحیه در روز شروع ثبت دفتر می‌نشیند، نه امروز.
@@ -18,7 +19,7 @@ const accounting = await import('../server/accounting.js');
 database.ensureAdmin();
 const owner = database.authenticateUser('opening-owner', 'opening-strong-password-3381');
 const workspace = database.createWorkspace(owner.id, { name: 'دفتر افتتاحیه', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 test('بی‌تاریخ: روز شروع ثبت؛ تاریخ بعد از آن رد؛ تاریخ پیش از آن پذیرفته', () => inWorkspace(() => {

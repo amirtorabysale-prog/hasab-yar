@@ -7,6 +7,7 @@ import { detectSettleIntent } from '../shared/settleSpeech.js';
 import { extractContactCandidate, extractContactName } from '../shared/counterpartySpeech.js';
 import { needsUnquantifiedReview } from '../shared/reviewIntake.js';
 import { tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 const cases = new Map(JSON.parse(fs.readFileSync(new URL('./fixtures/stress-scenarios-v1.json', import.meta.url))).map(s => [s.id,s.text]));
 const now = new Date('2026-09-30T08:30:00Z');
 const parse = id => parseFinancialText(cases.get(id), { now });
@@ -16,7 +17,7 @@ process.env.ADMIN_PASSWORD = `observed-${crypto.randomUUID()}`;
 const database = await import('../server/db.js');
 database.ensureAdmin();
 const owner = database.authenticateUser(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD);
-const run = fn => database.runInWorkspace('primary', { role:'owner', userId:owner.id }, fn);
+const run = fn => database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role:'owner', userId:owner.id }, fn);
 
 test('T002/T031/T050: service, original purchase and future cashing do not set payment date', () => {
   for (const id of ['T002','T031','T050']) {

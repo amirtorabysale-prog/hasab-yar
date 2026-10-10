@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { parseFinancialText } from '../shared/parser.js';
 import { todayKey, persianDate } from '../src/lib/format.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 const cases = new Map(JSON.parse(fs.readFileSync(new URL('./fixtures/stress-scenarios-v1.json', import.meta.url))).map(item => [item.id, item.text]));
 test('names stop at verbs and fiscal phrases are not counterparties', () => {
   assert.equal(extractContactName('به آقای کاظمی زدیم ولی نمیدونم'), 'کاظمی');
@@ -31,7 +32,7 @@ test('journal search, numbering, paging and seeded expense reuse', async () => {
   const { listJournal } = await import('../server/accounting.js');
   db.ensureAdmin();
   const owner = db.authenticateUser(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD);
-  db.runInWorkspace('primary', { role: 'owner', userId: owner.id }, () => {
+  db.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, () => {
     db.installChartTemplate();
     const sql = db.activeWorkspaceDatabase();
     const rentBefore = sql.prepare("SELECT l.id FROM ledger_accounts l JOIN chart_accounts c ON c.id=l.chart_account_id WHERE c.code='8102' AND l.active=1").all();

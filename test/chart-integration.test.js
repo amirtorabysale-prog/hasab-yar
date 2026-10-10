@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('chart');
 process.env.DATABASE_PATH = databasePath;
@@ -14,7 +15,7 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('chart-owner', 'chart-strong-password-123456');
 const workspace = database.createWorkspace(owner.id, { name: 'شرکت کدینگ', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 
 let costCenter;
 let project;

@@ -15,6 +15,7 @@ const databasePath = tempDatabase('counterparty-card');
 process.env.DATABASE_PATH = databasePath;
 
 const db = await import(`../server/db.js?counterparty-card=${process.pid}`);
+db.approveOverdraftsForScript('آزمون: داده‌های ساختگی بدون موجودی اولیه');
 const { counterpartyCard, createInvoice, issueInvoice, recordInvoicePayment, saveContact, saveObligation } = db;
 
 test.after(() => removeTempDatabase(databasePath));

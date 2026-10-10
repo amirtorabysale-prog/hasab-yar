@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { tempDatabase } from './helpers/tempPath.js';
 import { minimumRoleForRequest } from '../server/access.js';
 import { pathNeedsProfessional } from '../shared/experience.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('policy');
 process.env.DATABASE_PATH = databasePath;
@@ -13,7 +14,7 @@ const database = await import(`../server/db.js?policy=${process.pid}`);
 database.ensureAdmin();
 
 function inPrimary(callback) {
-  return database.runInWorkspace('primary', { role: 'owner', userId: 'test-owner' }, callback);
+  return database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: 'test-owner' }, callback);
 }
 
 const confident = (overrides = {}) => ({

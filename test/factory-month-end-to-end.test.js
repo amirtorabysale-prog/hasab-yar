@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * یک ماه کامل از زندگی یک کارخانهٔ پلاستیک — تا فایل پارسیان.
@@ -25,7 +26,7 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('factory-owner', 'factory-strong-password-4417');
 const workspace = database.createWorkspace(owner.id, { name: 'پلاستیک سازان پارس', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 test('یک ماه کامل ثبت می‌شود و دفتر متوازن می‌ماند', () => {
