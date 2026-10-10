@@ -112,11 +112,14 @@ function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
   </div>;
 }
 
-export function ChartPage({ access, notify }) {
+const CHART_TABS = ['mapping', 'chart', 'dimensions', 'import'];
+
+export function ChartPage({ access, notify, initialTab = '' }) {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [csv, setCsv] = useState('');
-  const [tab, setTab] = useState('mapping');
+  const [tab, setTab] = useState(CHART_TABS.includes(initialTab) ? initialTab : 'mapping');
+  useEffect(() => { if (CHART_TABS.includes(initialTab)) setTab(initialTab); }, [initialTab]);
   const [dimension, setDimension] = useState(null);
   const canManage = ['owner', 'manager'].includes(access?.workspace?.role);
 

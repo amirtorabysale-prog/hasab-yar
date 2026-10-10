@@ -31,7 +31,9 @@ function tehranWeekStart(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' }).format(monday);
 }
 
-export function CollaborationPage({ access, notify, navigate }) {
+const COLLABORATION_TABS = ['delivery', 'dna', 'questions', 'plan', 'pilot'];
+
+export function CollaborationPage({ access, notify, navigate, initialTab = '' }) {
   const [month, setMonth] = useState(() => persianPeriodToken());
   const [transferTarget, setTransferTarget] = useState('generic-csv');
   const periodOptions = useMemo(() => recentPersianPeriods(), []);
@@ -49,7 +51,8 @@ export function CollaborationPage({ access, notify, navigate }) {
   const canManagePilot = ['owner', 'manager'].includes(role);
   // این صفحه چهار کار بی‌ربط را زیر یک عنوان جمع کرده بود و سه بخشش هم اسم
   // «انتقال» داشتند. هر برگه حالا یک کار است، نه یک دیوار عمودی.
-  const [tab, setTab] = useState('delivery');
+  const [tab, setTab] = useState(COLLABORATION_TABS.includes(initialTab) ? initialTab : 'delivery');
+  useEffect(() => { if (COLLABORATION_TABS.includes(initialTab)) setTab(initialTab); }, [initialTab]);
 
   const load = useCallback(async () => {
     setLoading(true);
