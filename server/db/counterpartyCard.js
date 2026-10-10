@@ -138,6 +138,18 @@ function groupBalances(rows) {
   return totals;
 }
 
+/**
+ * سند حسابداریِ جاریِ یک ردیف تراکنش — آخرین سندِ معکوس‌نشدهٔ آن.
+ *
+ * ویرایش یک ردیف سند قبلی را معکوس می‌کند و سند تازه می‌زند؛ کارت باید سندی را
+ * نشان دهد که الان در دفتر اثر دارد، نه نسخهٔ پس‌گرفته‌شده.
+ */
+export function entryOfTransaction(transactionId) {
+  return db.prepare(`SELECT id FROM journal_entries entry WHERE source_type='transaction' AND source_id=? AND entry_kind<>'reversal'
+      AND NOT EXISTS (SELECT 1 FROM journal_entries reversal WHERE reversal.reverses_entry_id=entry.id)
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(String(transactionId || ''))?.id || null;
+}
+
 export function counterpartyBalance(contactId) {
   try { return counterpartyCard(contactId).totals.balance; } catch { return 0; }
 }
@@ -158,7 +170,7 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
   });
   const holes = accounts.map(() => '?').join(',');
   const ids = accounts.map((account) => account.id);
-  const rows = !accounts.length ? [] : db.prepare(`SELECT journal_lines.id,journal_entries.occurred_at AS occurredAt,journal_entries.memo,
+  const rows = !accounts.length ? [] : db.prepare(`SELECT journal_lines.id,journal_entries.id AS entryId,journal_entries.occurred_at AS occurredAt,journal_entries.memo,
       journal_entries.source_type AS sourceType,journal_entries.source_id AS sourceId,
       journal_entries.entry_kind AS entryKind,journal_lines.debit,journal_lines.credit,
       journal_lines.description,ledger_accounts.code AS accountCode,ledger_accounts.name AS accountName,
@@ -196,6 +208,7 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
     .filter((row) => !postedToOwnAccount.has(row.id))
     .map((row) => ({
       id: row.id,
+      entryId: entryOfTransaction(row.id),
       occurredAt: row.occurredAt,
       memo: row.category,
       description: row.memo,
@@ -231,6 +244,9 @@ export function counterpartyCard(contactId, { from = '', to = '' } = {}) {
       accountCode: row.accountCode,
       accountName: row.accountName,
       accountKind: row.accountKind,
+      // سند حسابداریِ همین ردیف؛ کارت با یک کلیک به آن ارجاع می‌دهد. نبودش یعنی سند
+      // هنوز قطعی نشده (منتظر تأیید یا صف حسابدار).
+      entryId: row.entryId || null,
       debit: Number(row.debit || 0),
       credit: Number(row.credit || 0),
       balance,
