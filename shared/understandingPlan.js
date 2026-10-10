@@ -25,6 +25,7 @@ import { detectBank } from './banks.js';
 import { normalizePersian } from './normalize.js';
 import { persianMonthRange, todayPersian } from './persianDate.js';
 import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
+import { readServicePeriod } from './periodSpeech.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -437,12 +438,19 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // نوعِ کل رویداد («ودیعه») به هر دو می‌رسید و اجاره ودیعه می‌شد؛ در گفتهٔ
     // دیگری ودیعه اجاره می‌شد (آزمون بازبین و گزارش مالک محصول، مهر ۱۴۰۵).
     const own = normalizePersian(amount.evidence || '');
-    const refundableHere = REFUNDABLE_WORDS.test(own) || (amount.role === 'deposit' && !ADVANCE_WORDS.test(own));
+    const clause = clauseOf(said, amount.evidence);
+    // برچسب «ودیعه»ی مدل به‌تنهایی کافی نیست: «پیش‌پرداخت بیمه … ۱۲ میلیون» را مدل
+    // «ودیعه» نامید و ۱۲ میلیون ودیعهٔ قابل استرداد شد (۱۸ مهر ۱۴۰۵). ودیعه یعنی
+    // پولی که برمی‌گردد و جمله باید خودش این را بگوید؛ «پیش‌پرداخت» بر برچسب مقدم است.
+    const refundableHere = REFUNDABLE_WORDS.test(own)
+      || (amount.role === 'deposit' && REFUNDABLE_WORDS.test(said) && !ADVANCE_WORDS.test(own));
+    const advanceHere = ADVANCE_WORDS.test(own) || (ADVANCE_WORDS.test(clause) && !REFUNDABLE_WORDS.test(clause))
+      || (ADVANCE_WORDS.test(said) && !REFUNDABLE_WORDS.test(said) && amounts.filter((item) => item.accepted && item.status === 'done' && !retracted.has(item.id)).length === 1);
     const depositSibling = amounts.some((other) => other !== amount && other.accepted && other.partOf === amount.partOf
       && (other.role === 'deposit' || REFUNDABLE_WORDS.test(normalizePersian(other.evidence || ''))));
     const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' }
       : type === 'expense' && refundableHere ? { paymentPurpose: 'deposit', refundable: true }
-        : ADVANCE_WORDS.test(own) ? (type === 'expense' ? { paymentPurpose: 'advance' } : { receiptPurpose: 'advance' })
+        : advanceHere ? (type === 'expense' ? { paymentPurpose: 'advance' } : { receiptPurpose: 'advance' })
           : serviceUpfront ? { receiptPurpose: 'advance' }
             : type === 'expense' && depositSibling ? { paymentPurpose: 'expense', refundable: false }
               : PURPOSE_BY_KIND[facts.event.kind] || {};
@@ -466,7 +474,6 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     }
 
     // دسته هم اول از شاهدِ خودِ مبلغ و بندِ آن، و فقط اگر چیزی نگفتند از شرحِ کل.
-    const clause = clauseOf(said, amount.evidence);
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
     const category = [amount.evidence, clause].map((part) => (part ? classifyCategory(part, type) : null)).find((result) => result?.matched)?.category
       || classifyCategory(describe, type).category;
@@ -476,6 +483,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const inPaidMonth = (iso) => Boolean(iso && paidMonth && Date.parse(iso) >= Date.parse(paidMonth.from) && Date.parse(iso) <= Date.parse(paidMonth.to));
     let periodStart = coverageStart;
     let periodEnd = coverageEnd;
+    // «پوشش یک‌ساله»، «شش ماه جلوتر»: همان قاعدهٔ مسیر قطعی (`readServicePeriod`)،
+    // شروع از روز پرداخت. مدل این را عدد «مدت» می‌نوشت و دوره هرگز به سند نمی‌رسید.
+    if (!periodStart && !periodEnd && type === 'expense' && movement.direction !== 'none' && paymentDate) {
+      const spokenPeriod = readServicePeriod(said, { occurredAt: paymentDate });
+      if (spokenPeriod) { periodStart = spokenPeriod.start; periodEnd = spokenPeriod.end; }
+    }
     if (!periodStart && !periodEnd && paidMonth && type === 'expense' && movement.direction !== 'none' && THIS_MONTH_WORDS.test(own + ' ' + clause)) {
       periodStart = paidMonth.from;
       periodEnd = paidMonth.to;

@@ -67,6 +67,25 @@ export { normalizePersian };
 // «جمع + اجزا» یک رویداد است، نه چند جابه‌جایی پول. تا وقتی مبلغ قابل ثبت و
 // تفکیک سند جداگانه تأیید نشده، حتی ردیف نقدی هم نباید ساخته شود.
 export const COMPOSITE_AMOUNT_MESSAGE = 'چند مبلغ برای یک رویداد گفته شد (جمع و اجزا)؛ هیچ ثبتی انجام نشد. مبلغ پرداخت یا دریافت و تفکیک اصل، سود، مالیات یا کسورات را با سند اصلی در بخش بررسی حسابداری مشخص کن.';
+const RATE_BEFORE = /(?:ماهیانه|ماهانه|(?<![آ-ی])ماهی|هر\s*ماه|در\s*ماه|ماهی\s*یک|سالانه|سالیانه|هر\s*سال|روزانه|هر\s*روز|هفتگی|هر\s*هفته|قسطی|قسط\s*ماهانه)\s*(?:مبلغ\s*)?$/;
+const RATE_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:در|هر|برای\s*هر|به\s*ازای\s*هر)\s*(?:ماه|سال|روز|هفته)(?![آ-ی])|^\s*(?:تومان|تومن|ریال)?\s*(?:ماهیانه|ماهانه|سالانه|روزانه)(?![آ-ی])/;
+
+/** مبلغ‌هایی که نرخ دوره‌اند، وقتی مبلغ دیگری کنارشان هست، کنار می‌روند. */
+export function withoutRateAmounts(text, spans) {
+  if (spans.length < 2) return spans;
+  // نرخی که فعل پرداخت یا دریافتِ خودش را در همان بند دارد، پرداخت است:
+  // «ودیعه ۵۰ میلیون دادیم و اجارهٔ ماهانه ۵ میلیون هم دادیم».
+  const ownVerb = (span, index) => {
+    const next = spans[index + 1]?.start ?? text.length;
+    const clause = text.slice(span.end, next).split(/[.،,؛;\n]/)[0];
+    return /(?<![آ-ی])(?:دادیم|دادم|داد|دادن|پرداخت|واریز|ریختیم|ریختم|ریخت|زدیم|زدم|گرفتیم|گرفتم|خریدیم|خریدم|کارت\s*به\s*کارت)/.test(clause);
+  };
+  const isRate = (span, index) => (RATE_BEFORE.test(text.slice(Math.max(0, span.start - 24), span.start)) || RATE_AFTER.test(text.slice(span.end, span.end + 30)))
+    && !ownVerb(span, index);
+  const kept = spans.filter((span, index) => !isRate(span, index));
+  return kept.length && kept.length < spans.length ? kept : spans;
+}
+
 export function hasCompositeAmounts(input) {
   const normalized = normalizePersian(input);
   if (extractAmounts(normalized).spans.length < 2) return false;
@@ -690,7 +709,13 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   // نام بانک هم ماسک می‌شود، وگرنه «بانک صادرات» دستهٔ «صادرات» می‌سازد و
   // «بانک مسکن» را هزینهٔ اجاره می‌خواند.
   if (bank) amountSource = amountSource.replace(bank.matchedText, ' '.repeat(bank.matchedText.length));
-  const { text, spans } = extractAmounts(amountSource);
+  const extracted = extractAmounts(amountSource);
+  const { text } = extracted;
+  // نرخ دوره‌ای، پرداخت جدا نیست: «بیمهٔ یک‌ساله ۱۲ میلیون، ماهیانه ۱ میلیون» یک
+  // پرداخت ۱۲ میلیونی است و «ماهیانه ۱ میلیون» فقط می‌گوید هر ماه چقدرش هزینه
+  // می‌شود. بدون این، ۱۳ میلیون از حساب کم می‌شد (گزارش کاربر، ۱۸ مهر ۱۴۰۵).
+  // فقط وقتی کنارش مبلغ دیگری هست؛ «حقوق ماهیانه ۱۰ میلیون دادیم» خودش پرداخت است.
+  const spans = withoutRateAmounts(text, extracted.spans);
   // نام طرف حساب از همان جمله برداشته می‌شود، حتی وقتی جمله «طلب و بدهی»
   // نیست. «۹۳ میلیون تومان به شرکت آراد گستر آسیا پرداخت شد» تا امروز یک
   // هزینهٔ ساده ثبت می‌شد و نام شرکت دور ریخته می‌شد — شرکتی که کارت حساب

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   assertAccountingPeriodOpen, periodForDate, postInventoryMovementJournal, reverseInventoryMovementJournal,
 } from './accounting.js';
+import { approvalRequiredError, currentApproval, recordOverdraftApproval } from './balanceGuard.js';
 
 function inventoryError(message, code = 'INVENTORY_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -49,7 +50,14 @@ export function recordInventoryMovement(database, productId, values = {}, { crea
   assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
   const movementType = ['opening', 'purchase', 'sale', 'adjustment', 'reversal'].includes(values.movementType) ? values.movementType : 'adjustment';
   const newStock = Number(product.stock) + quantity;
-  if (newStock < -0.000001) throw inventoryError(`موجودی «${product.name}» کافی نیست و نمی‌تواند منفی شود.`, 'INVENTORY_NEGATIVE_STOCK', 409);
+  // کالا هم مثل صندوق: خروج بیش از موجودی فقط با تأیید حسابدار (مثلاً فروشی که
+  // خریدش هنوز ثبت نشده). ورود روی کالایی که از قبل منفی است سد نمی‌شود.
+  const shortage = quantity < 0 && newStock < -0.000001;
+  const stockApproval = shortage ? currentApproval(database) : null;
+  if (shortage && !stockApproval) {
+    const items = [{ accountId: `product:${product.id}`, productId: product.id, name: product.name, before: Number(product.stock), after: newStock, unit: product.unit }];
+    throw approvalRequiredError('stock', `موجودی «${product.name}» ${Number(product.stock)} ${product.unit || ''} است و این خروج ${Math.abs(quantity)} ${product.unit || ''} آن را به منفی ${Math.abs(newStock)} می‌رساند. کالا بیش از موجودی خارج نمی‌شود مگر با تأیید حسابدار؛ اگر خرید یا ورودی‌اش هنوز ثبت نشده، با دلیل تأیید کن.`.replace(/\s+/g, ' '), items);
+  }
   let valueDelta;
   if (values.valueDelta != null) valueDelta = Math.round(Number(values.valueDelta));
   else if (quantity > 0) {
@@ -58,10 +66,12 @@ export function recordInventoryMovement(database, productId, values = {}, { crea
   } else valueDelta = -Math.round(Math.abs(quantity) * Number(product.averageCost || product.buyPrice || 0));
   if (!Number.isSafeInteger(valueDelta) || (quantity > 0 && valueDelta < 0) || (quantity < 0 && valueDelta > 0)) throw inventoryError('ارزش گردش موجودی معتبر نیست.');
   let newValue = Number(product.inventoryValue) + valueDelta;
-  if (newValue < -1) throw inventoryError('ارزش خروج از ارزش ثبت‌شدهٔ موجودی بیشتر است.', 'INVENTORY_VALUE_NEGATIVE', 409);
+  // ماندهٔ منفیِ تأییدشده به همان بهای میانگین ارزش منفی می‌گیرد تا خریدِ بعدی آن را بپوشاند.
+  const negativeStock = newStock < -0.000001 || (Number(product.stock) < -0.000001 && newStock <= 0.000001);
+  if (newValue < -1 && !negativeStock) throw inventoryError('ارزش خروج از ارزش ثبت‌شدهٔ موجودی بیشتر است.', 'INVENTORY_VALUE_NEGATIVE', 409);
   if (Math.abs(newStock) < 0.000001) { newValue = 0; }
-  newValue = Math.max(0, newValue);
-  const averageCost = newStock > 0 ? Math.round(newValue / newStock) : 0;
+  if (!negativeStock) newValue = Math.max(0, newValue);
+  const averageCost = newStock > 0 ? Math.round(newValue / newStock) : negativeStock ? Number(product.averageCost || product.buyPrice || 0) : 0;
   const id = values.id || randomUUID();
   const sourceType = String(values.sourceType || 'manual').slice(0, 40);
   const sourceId = values.sourceId ? String(values.sourceId).slice(0, 100) : null;
@@ -75,7 +85,8 @@ export function recordInventoryMovement(database, productId, values = {}, { crea
     throw error;
   }
   database.prepare('UPDATE products SET stock=?,inventory_value=?,average_cost=?,buy_price=CASE WHEN ?>0 THEN ? ELSE buy_price END,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .run(Math.max(0, newStock), newValue, averageCost, averageCost, averageCost, product.id);
+    .run(Math.abs(newStock) < 0.000001 ? 0 : newStock, newValue, averageCost, averageCost, averageCost, product.id);
+  if (stockApproval) recordOverdraftApproval(database, [{ accountId: `product:${product.id}`, name: product.name, before: Number(product.stock), after: newStock }], stockApproval, 'stock');
   const movement = database.prepare(`SELECT id,product_id AS productId,quantity,note,movement_type AS movementType,unit_cost AS unitCost,
     value_delta AS valueDelta,source_type AS sourceType,source_id AS sourceId,occurred_at AS occurredAt FROM stock_movements WHERE id=?`).get(id);
   if (journal) postInventoryMovementJournal(database, movement, product, { createdBy, timeZone });

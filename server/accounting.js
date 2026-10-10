@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { approvalRequiredError, currentApproval, recordOverdraftApproval } from './balanceGuard.js';
 import {
   analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart,
   resolveLineDimensions, saveAnalyticAccount, suggestChartAccount,
@@ -311,7 +312,71 @@ export function repairOperationalChartMapping(database, ledgerAccountId, { timeZ
   return { status: 'repaired', from: { id: row.chartId, code: row.chartCode, name: row.chartName }, to: { id: target.id, code: target.code, name: target.name } };
 }
 
-function insertJournal(database, values) {
+/**
+ * سندی که به پارسیان رفته، بی‌صدا عوض نمی‌شود.
+ *
+ * وقتی بستهٔ انتقال «تحویل‌شده» یا «پذیرفته‌شده» است، اسناد داخلش در دفتر
+ * مقصد هم هست. ویرایش یا حذف ردیفِ پشت آن سند (که این‌جا با معکوس و سند تازه
+ * انجام می‌شود) دو دفتر را از هم جدا می‌کند. پس معکوس کردن چنین سندی فقط با
+ * تأیید حسابدار ممکن است و سند معکوس و جایگزین «اصلاحیه» نام می‌گیرند تا در
+ * بستهٔ بعدی دیده شوند.
+ */
+export function ensureTransferEntriesSchema(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS accounting_transfer_entries (
+    batch_id TEXT NOT NULL, entry_id TEXT NOT NULL, PRIMARY KEY (batch_id, entry_id));
+    CREATE INDEX IF NOT EXISTS idx_transfer_entries_entry ON accounting_transfer_entries(entry_id)`);
+}
+
+export function recordTransferBatchEntries(database, batchId, entryIds = []) {
+  ensureTransferEntriesSchema(database);
+  const insert = database.prepare('INSERT OR IGNORE INTO accounting_transfer_entries (batch_id,entry_id) VALUES (?,?)');
+  for (const entryId of new Set(entryIds)) insert.run(batchId, entryId);
+}
+
+/** بستهٔ تحویل‌شده‌ای که این سند در آن رفته؛ `null` اگر هنوز صادر نشده. */
+export function exportedBatchOf(database, entryId, { timeZone = 'Asia/Tehran' } = {}) {
+  let batches;
+  try {
+    batches = database.prepare(`SELECT id,file_name AS fileName,period,status,created_at AS createdAt,
+      first_downloaded_at AS firstDownloadedAt,
+      EXISTS(SELECT 1 FROM accounting_transfer_entries e WHERE e.batch_id=accounting_transfer_batches.id) AS listed,
+      EXISTS(SELECT 1 FROM accounting_transfer_entries e WHERE e.batch_id=accounting_transfer_batches.id AND e.entry_id=?) AS contains
+      FROM accounting_transfer_batches WHERE status IN ('delivered','accepted') ORDER BY created_at`).all(String(entryId || ''));
+  } catch (error) {
+    if (/no such table/i.test(error.message)) { ensureTransferEntriesSchema(database); return exportedBatchOf(database, entryId, { timeZone }); }
+    throw error;
+  }
+  if (!batches.length) return null;
+  const listed = batches.find((batch) => batch.contains);
+  if (listed) return listed;
+  // بسته‌های پیش از این نسخه فهرست سند ندارند: سند همان دوره که پیش از ساخت
+  // بسته ثبت شده بود، در آن بسته رفته است (افتتاحیه به پارسیان نمی‌رود).
+  const legacy = batches.filter((batch) => !batch.listed);
+  if (!legacy.length) return null;
+  const entry = database.prepare(`SELECT j.occurred_at AS occurredAt,j.created_at AS createdAt,j.entry_kind AS entryKind,
+    original.entry_kind AS originalKind FROM journal_entries j LEFT JOIN journal_entries original ON original.id=j.reverses_entry_id WHERE j.id=?`).get(String(entryId || ''));
+  if (!entry || entry.entryKind === 'opening' || entry.originalKind === 'opening') return null;
+  const period = periodForDate(entry.occurredAt, timeZone);
+  return legacy.find((batch) => batch.period === period && String(entry.createdAt) <= String(batch.createdAt)) || null;
+}
+
+function assertExportedEntryCorrection(database, values) {
+  if (!values.reversesEntryId) return values;
+  const batch = exportedBatchOf(database, values.reversesEntryId, { timeZone: values.timeZone || 'Asia/Tehran' });
+  if (!batch) return values;
+  const original = database.prepare('SELECT document_number AS documentNumber,fiscal_year AS fiscalYear,memo FROM journal_entries WHERE id=?').get(values.reversesEntryId) || {};
+  const item = { accountId: `entry:${values.reversesEntryId}`, entryId: values.reversesEntryId, name: `سند ${original.documentNumber ?? '—'} سال ${original.fiscalYear ?? '—'}`,
+    memo: original.memo || '', batchId: batch.id, fileName: batch.fileName, period: batch.period, before: 0, after: 0 };
+  const approval = currentApproval(database);
+  if (!approval) {
+    throw approvalRequiredError('export', `${item.name} در بستهٔ ${batch.period} به پارسیان رفته است («${batch.fileName}»). اصلاح یا حذفِ آن، دفتر حساب‌یار و پارسیان را از هم جدا می‌کند؛ فقط با سند اصلاحیه و تأیید حسابدار ممکن است و حسابدار باید همان اصلاحیه را در پارسیان هم وارد کند.`, [item]);
+  }
+  recordOverdraftApproval(database, [item], approval, 'export');
+  return { ...values, memo: `اصلاحیهٔ سند صادرشده به پارسیان (${item.name}) — ${values.memo || ''}`.trim() };
+}
+
+function insertJournal(database, rawValues) {
+  const values = assertExportedEntryCorrection(database, rawValues);
   // نگاشت قدیمیِ اشتباهِ بانک، صندوق یا تنخواه پیش از ثبت اصلاح می‌شود، اگر جواب
   // معلوم باشد؛ وگرنه ثبت با پیامی که دقیقاً می‌گوید چه کنی متوقف می‌شود.
   // سند افتتاحیه و معکوس، تاریخچه‌اند و همان‌طور قابل استفاده می‌مانند.
