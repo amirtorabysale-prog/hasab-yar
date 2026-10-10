@@ -8,7 +8,7 @@ import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, da
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal, transactionJournalIsPlain } from '../accounting.js';
 import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
-import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
+import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian, describesUnperformedCondition, UNPERFORMED_CONDITION_MESSAGE } from '../../shared/parser.js';
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
@@ -526,6 +526,8 @@ export function recordCapitalEntry(values = {}) {
 
 export function insertTransactions(payload) {
   if (hasCompositeAmounts(payload.transcript)) throw invalidInput(COMPOSITE_AMOUNT_MESSAGE);
+  // کاری که هنوز انجام نشده و شرطی است، ردیف نقدی نمی‌سازد؛ حتی اگر کلاینت قدیمی ردیف فرستاده باشد.
+  if (describesUnperformedCondition(payload.transcript)) throw invalidInput(UNPERFORMED_CONDITION_MESSAGE);
   if (priorSettlementDirection(payload.transcript)) throw invalidInput('این دریافت یا پرداخت مربوط به طلب یا بدهی قبلی است. ابتدا سند باز را در بخش تسویه انتخاب کن؛ درآمد یا هزینهٔ تازه ثبت نشد.');
   db.exec('BEGIN IMMEDIATE');
   try {

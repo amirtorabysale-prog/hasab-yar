@@ -68,8 +68,19 @@ export function hasCompositeAmounts(input) {
   return /سرمایه.*(?:افزایش|کاهش)|بدهکار.*(?:ببخش|می بخشم|می‌بخشم)/.test(normalized)
     || /شامل|از این مبلغ|جمع کل|مجموع|تفکیک|ناخالص|(?:اصل\s*(?:وام|قسط|تسهیلات)?\s*و\s*(?:سود|بهره))/.test(normalized)
     || /(?:قسط|وام).*(?:اصل).*(?:سود|بهره)/.test(normalized)
-    || /(?:اصل\s*(?:وام|قسط|تسهیلات)|سهم\s*کارمند|بهای\s*کالا).*(?:سود|بهره|مالیات|بیمه)/.test(normalized);
+    || /(?:اصل\s*(?:وام|قسط|تسهیلات)|سهم\s*کارمند|بهای\s*کالا).*(?:سود|بهره|مالیات|بیمه)/.test(normalized)
+    || PART_OF_TOTAL.test(normalized);
 }
+
+/**
+ * جزء یک کل، به زبان محاوره.
+ *
+ * «۸۰ میلیون فروختیم؛ ۳۰ میلیونش رو واریز کرد و بقیه‌اش رو آخر ماه می‌ده»
+ * دو فروش ۸۰ و ۳۰ به بانک ثبت می‌کرد: ۱۱۰ میلیون فروش، و ۵۰ میلیونِ نسیه هم
+ * نقد. «میلیونش»، «تاش» و «بقیه/مابقی/باقیمانده» یعنی عدد دوم بخشی از اولی است،
+ * نه رویداد تازه — همان نشانهٔ «شامل» و «جمع کل»، فقط به زبان گفتار.
+ */
+const PART_OF_TOTAL = /(?:هزار|میلیون|میلیارد|تومن|تومان|تا)ی?(?:ش|شو|شم|شون)(?![آ-ی])|(?<![آ-ی])(?:بقیه|بقیش|بقیشو|مابقی|الباقی|باقیش|باقیمانده|باقی\s*مانده)(?![آ-ی])/;
 
 // موتور تشخیص گفتار عدد و مقیاس را گاهی سرِ هم می‌نویسد («دوهزار»، «دومیلیون»)
 // یا «و» را به عدد می‌چسباند («سیصدو»). بدون این ترمیم، هیچ مبلغی پیدا نمی‌شد.
@@ -547,8 +558,55 @@ function collapseRepeatedTransactions(transactions) {
   });
 }
 
-export function parseFinancialText(input, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
+const NUMBER_START = '(?:[0-9]|یک|یه|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه|ده|یازده|دوازده|سیزده|چهارده|پانزده|پونزده|شانزده|شونزده|هفده|هیفده|هجده|هیجده|نوزده|بیست|سی|چهل|پنجاه|شصت|هفتاد|هشتاد|نود|صد|یکصد|دویست|سیصد|چهارصد|پانصد|پونصد|ششصد|هفتصد|هشتصد|نهصد)(?![آ-ی])';
+// «نه» به‌تنهایی فقط وقتی اصلاح است که پس از واژهٔ مقیاس و پیش از عدد بیاید؛
+// «ده میلیون نه هزار» یعنی ده میلیون و نه هزار و دست نمی‌خورد.
+const SPOKEN_CORRECTION = new RegExp(`(هزار|میلیون|میلیارد|تومن|تومان|ریال)\\s*[،,]?\\s*(?:نه\\s*(?:ببخشید|ببخشین|ببخش)|نه|ببخشید|ببخشین|اشتباه\\s*گفتم|منظورم|یعنی\\s*نه)\\s*[،,]?\\s+(?=${NUMBER_START})`);
+
+/**
+ * گوینده وسط جمله عدد را اصلاح کرده: «۱۲ میلیون، نه ببخشید ۱۸ میلیون».
+ *
+ * پارسر دو ردیف ۱۲ و ۱۸ می‌ساخت، و «دوازده میلیون نه هجده میلیون» را
+ * ۳۹ میلیون می‌خواند — «نه»ی اصلاح را عددِ نه می‌شمرد و هر سه را جمع می‌کرد.
+ * عددِ پیش از نشانهٔ اصلاح از جمله برداشته می‌شود و فقط عدد اصلاح‌شده می‌ماند.
+ */
+export function applySpokenCorrection(input) {
+  let text = repairNumberSpeech(normalizePersian(input));
+  for (let guard = 0; guard < 3; guard += 1) {
+    const marker = SPOKEN_CORRECTION.exec(text);
+    if (!marker) break;
+    // نشانه با یک جداکننده جایگزین می‌شود تا دو عدد در هم جمع نشوند.
+    const markerEnd = marker.index + marker[0].length;
+    const split = `${text.slice(0, marker.index + marker[1].length)} ؛ ${text.slice(markerEnd)}`;
+    const cut = marker.index + marker[1].length;
+    const previous = extractAmounts(split).spans.filter((span) => span.end <= cut).at(-1);
+    if (!previous) break;
+    text = `${split.slice(0, previous.start)}${split.slice(cut + 3)}`.replace(/\s+/g, ' ').trim();
+  }
+  return text === repairNumberSpeech(normalizePersian(input)) ? input : text;
+}
+
+const CONDITION_MARKER = /(?:^|\s)(?:اگر|اگه|در\s*صورت(?:ی\s*که)?|به\s*شرط(?:ی\s*که)?|مشروط\s*به)(?:\s|$)/;
+const FUTURE_MONEY_VERB = /(?<![آ-ی])(?:می\s?(?:ریز|ده|د|پرداز|گیر|خر|فروش|زن|فرست|کن)[آ-ی]*|خواه(?:یم|ند|د|م)|قرار\s*(?:ه|است)?\s*(?:بد|بری|بپرداز|بریز|بگیر))/;
+
+export const UNPERFORMED_CONDITION_MESSAGE = 'این کار شرطی است و هنوز انجام نشده؛ چیزی ثبت نشد. وقتی پول واقعاً جابه‌جا شد همان را بگو.';
+
+/**
+ * «اگر سفارش رو تأیید کنه، هفتهٔ بعد ۲۰ میلیون پیش‌پرداخت می‌ریزیم.»
+ *
+ * این جمله یک پیش‌پرداخت ۲۰ میلیونی از صندوق ثبت می‌کرد، درحالی‌که هیچ پولی
+ * جابه‌جا نشده و شاید هیچ‌وقت نشود. شرط + فعل آینده، بدون هیچ فعل انجام‌شده،
+ * رویداد مالی نیست.
+ */
+export function describesUnperformedCondition(input) {
+  const text = normalizePersian(input);
+  return CONDITION_MARKER.test(text) && FUTURE_MONEY_VERB.test(text) && !PAST_MONEY_VERB.test(text);
+}
+
+export function parseFinancialText(rawInput, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
+  const input = applySpokenCorrection(rawInput);
   if (hasCompositeAmounts(input)) return { transcript: normalizePersian(input), transactions: [], clarification: COMPOSITE_AMOUNT_MESSAGE };
+  if (describesUnperformedCondition(input)) return { transcript: normalizePersian(input), transactions: [], clarification: UNPERFORMED_CONDITION_MESSAGE };
   // تاریخ پیش از مبلغ خوانده می‌شود، چون رقم‌های تاریخ نباید مبلغ شمرده شوند.
   //
   // «در تاریخ 15 5 1405 13 میلیون تومان» مبلغ را ۱٬۴۳۸٬۰۰۰٬۰۰۰ می‌خواند:

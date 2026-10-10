@@ -143,6 +143,7 @@ function hasSeveralAmounts(input) {
 // پرداختِ انجام‌شده، نه صدور فاکتور. «سی میلیون به حساب کاظمی زدیم ولی نمیدونم
 // فاکتور خریدش قبلاً ثبت شده» دربارهٔ پولی است که رفته؛ پیش‌نویس فاکتور خرید
 // برایش ساختن یعنی یک خرید دوم.
+const MONEY_ARRIVED = /واریز\s*(?:شده|شد|کرد|کردن)|ریخته(?:ن)?(?![آ-ی])|اومده\s*(?:تو|به)\s*حساب|دریافت\s*(?:شد|کردیم|کردم)|وصول\s*شد/;
 const PAYMENT_DONE = /(?:زدیم|زدم|ریختیم|ریختم|واریز\s*کرد(?:یم|م)|پرداخت\s*کرد(?:یم|م)|دادیم|دادم)(?![آ-ی])/;
 
 /**
@@ -240,7 +241,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   if (isChequeEndorsement(input)) return null;
   // کاربر خودش گفته نمی‌داند، یا چک ضمانت است. کارت ساختاری فقط بین دو گزینهٔ
   // از پیش تعیین‌شده می‌پرساند و هیچ‌کدام درست نیست؛ این‌ها به حسابدار می‌روند.
-  if (/نمی\s*دونم|نمیدونم|نمی\s*دانم|معلوم\s*نیس|مشخص\s*نیس|مطمئن\s*نیستم/.test(text)) return null;
+  if (/نمی\s*دونم|نمیدونم|نمی\s*دانم|معلوم\s*نیس|مشخص\s*نیس|مطمئن\s*نیست(?:م|یم|ن)?|احتمالا|احتمالاً|(?<![آ-ی])شاید(?![آ-ی])/.test(text)) return null;
   if (/ضمانت|تضمین|وثیقه|نه\s*تاریخ\s*داره|در\s*وجه\s*کسی|دستت\s*باشه/.test(text)) return null;
 
   const amount = spokenAmount(input);
@@ -249,7 +250,8 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   // یک چک؛ کارت چک برایش سؤال «بابت فروش تازه یا طلب قبلی؟» می‌پرسید.
   const isCheque = matchesAny(text, CHEQUE_PATTERNS) && !/دسته\s*چک/.test(text);
 
-  if ((matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) && !PAYMENT_DONE.test(text)) {
+  // پولی که آمده «بابت فاکتور فروش»، وصول همان فاکتور است، نه صدور فاکتور تازه.
+  if ((matchesAny(text, INVOICE_PURCHASE_PATTERNS) || matchesAny(text, INVOICE_SALES_PATTERNS)) && !PAYMENT_DONE.test(text) && !MONEY_ARRIVED.test(text)) {
     if (!amount) return null;
     const documentType = matchesAny(text, INVOICE_PURCHASE_PATTERNS) ? 'purchase' : 'sales';
     return {
