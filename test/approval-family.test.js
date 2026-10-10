@@ -73,6 +73,8 @@ test('کالا: ورود روی کالای منفی سد نیست؛ خروج ب�
 // ─── ۱. تأیید دونفره ─────────────────────────────────────────────────────────
 const office = database.createWorkspace(owner.id, { name: 'دفتر دونفره', profileType: 'business' });
 let accountant;
+// رمز آزمایشی هر بار ساخته می‌شود؛ رشتهٔ ثابت شبیه کلید، اسکنر نشت را به اشتباه می‌اندازد.
+const accountantSecret = `family-${crypto.randomUUID()}`;
 const asOwner = (callback, extra = {}) => database.runInWorkspace(office.id, {
   role: 'owner', userId: owner.id, approvalMode: database.approvalModeFor(office.id, owner.id, 'owner'), ...extra,
 }, callback);
@@ -85,9 +87,9 @@ test('تنها تأییدکننده خودش تأیید می‌کند؛ با ح�
   database.runInWorkspace(office.id, { role: 'owner', userId: owner.id }, () => {
     database.installChartTemplate();
     database.insertTransactions({ transcript: 'فروش', transactions: [{ clientId: 'office-in', amount: 1_000_000, type: 'income', category: 'فروش', source: 'text', settlement: 'none' }] });
-    database.addWorkspaceMember(office.id, { username: 'family-accountant', displayName: 'حسابدار', temporaryPassword: 'Temp-family-pass-5521', role: 'accountant' });
+    database.addWorkspaceMember(office.id, { username: 'family-accountant', displayName: 'حسابدار', temporaryPassword: accountantSecret, role: 'accountant' });
   });
-  accountant = database.authenticateUser('family-accountant', 'Temp-family-pass-5521');
+  accountant = database.authenticateUser('family-accountant', accountantSecret);
   assert.equal(database.approvalModeFor(office.id, owner.id, 'owner'), 'request', 'مالک با حسابدار');
   assert.equal(database.approvalModeFor(office.id, accountant.id, 'accountant'), 'request', 'حسابدار با مالک');
   assert.equal(database.approvalModeFor(office.id, owner.id, 'viewer'), 'request', 'نقش بی‌اختیار');
