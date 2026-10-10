@@ -7,7 +7,7 @@ import { describeVoiceAvailability, pointerReleaseAction, voicePathLabel } from 
 import { liveSpeechSupported } from '../../lib/liveSpeech.js';
 import { profileDefinition } from '../../../shared/product.js';
 
-export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple' }) {
+export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple', aiForAll = null, onToggleAiForAll }) {
   const profileType = data.settings.profileType || 'business';
   const examples = todayExamples(profileType);
   const composerState = todayComposerState({ recordState, manualText, reviewing, savedRecently });
@@ -55,6 +55,7 @@ export function TodayPage({ data, loading, manualText, setManualText, parseManua
               {commercial.monthEndsAt && <span className="mt-1 block text-muted">سهمیهٔ تازه از {persianDate(commercial.monthEndsAt)}.</span>}
             </div>
           )}
+          {!readOnly && aiForAll && <AiForAllToggle state={aiForAll} toggle={onToggleAiForAll} />}
           <Recorder state={recordState} start={beginRecording} stop={stopRecording} cancel={cancelProcessing} levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable} voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} disabled={readOnly} showDiagnostics={experience === 'professional'} />
 
           <div className="my-2 flex items-center gap-3 text-[11px] text-muted"><span className="h-px flex-1 bg-line" /><span>یا بنویس</span><span className="h-px flex-1 bg-line" /></div>
@@ -294,3 +295,29 @@ function Recorder({ state, start, stop, cancel, levels, liveTranscript, liveVoic
   );
 }
 
+/**
+ * کلید «همه را اول AI بفهمد».
+ *
+ * روشن: هر گفته اول به فهم رویداد با AI می‌رود و خروجی ساخت‌یافته‌اش به موتور
+ * قاعده و پارسر داده می‌شود؛ خاموش: فقط گفته‌های مرکب. تغییرش سیاست دفتر است،
+ * پس فقط مالک و مدیر می‌توانند؛ بقیه وضعیت را می‌بینند.
+ */
+function AiForAllToggle({ state, toggle }) {
+  const blocked = !state.available ? 'کلید سرویس AI روی سرور تنظیم نشده است.'
+    : !state.canManage ? 'فقط مالک یا مدیر دفتر می‌تواند این را تغییر دهد.'
+      : '';
+  const note = state.on && !state.online ? 'آفلاین هستی؛ تا وصل شوی گفته‌ها از مسیر سریع بررسی می‌شوند.'
+    : state.on ? 'هر گفته اول با AI فهمیده می‌شود و بعد موتور قاعده سندش را می‌سازد. کمی کندتر و از سهمیهٔ AI.'
+      : 'فقط گفته‌های مرکب به AI می‌روند؛ بقیه از مسیر سریع و رایگان.';
+  return <div className="mt-3 flex items-center justify-between gap-3 rounded-[10px] border border-line bg-surface/70 px-3 py-2">
+    <div className="min-w-0">
+      <p className="text-[12px] font-extrabold">همه را اول AI بفهمد</p>
+      <p className="mt-0.5 text-[11px] leading-5 text-muted">{blocked || note}</p>
+    </div>
+    <button type="button" role="switch" aria-checked={state.on} aria-label="همه را اول AI بفهمد"
+      disabled={Boolean(blocked) || state.busy} onClick={toggle}
+      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-40 ${state.on ? 'bg-accent' : 'bg-line'}`}>
+      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${state.on ? 'right-1' : 'right-6'}`} />
+    </button>
+  </div>;
+}

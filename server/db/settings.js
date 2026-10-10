@@ -68,3 +68,22 @@ export function saveSettings(values) {
   if (values.profileType != null) setWorkspaceProfileType(currentWorkspace()?.id || 'primary', values.profileType);
   return getSettings();
 }
+
+/**
+ * کلید «همه را اول AI بفهمد» در صفحهٔ ثبت.
+ *
+ * روشن: هر گفته — ساده یا مرکب، صوتی یا تایپی — اول به فهم رویداد می‌رود و
+ * خروجی ساخت‌یافته‌اش به موتور قاعده داده می‌شود؛ موتور تصمیم (نسخهٔ ۲) هم که
+ * پیش‌نیاز این مسیر است روشن می‌شود. خاموش: فقط گفته‌های مرکب به AI می‌روند و
+ * بقیه از مسیر قطعی و رایگان. بقیهٔ سیاست دفتر دست نمی‌خورد.
+ */
+export function setUnderstandingForAll(on) {
+  const current = automationPolicy();
+  return saveAutomationPolicy({
+    ...current,
+    neverAutomatic: [...current.neverAutomatic],
+    understandingMode: on ? 'active' : current.understandingMode,
+    understandingScope: on ? 'all' : 'composite',
+    engineV2: on ? true : current.engineV2,
+  });
+}

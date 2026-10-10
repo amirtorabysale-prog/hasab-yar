@@ -324,6 +324,7 @@ export const api = {
   journalWorklist: () => request('/api/accounting/journal/worklist'),
   setJournalApproval: (id, state, reason = '') => request(`/api/accounting/journal/${encodeURIComponent(id)}/approval`, { method: 'POST', body: JSON.stringify({ state, reason }) }),
   automationPolicy: () => request('/api/automation-policy'),
+  setUnderstandingForAll: (all) => request('/api/automation-policy/understanding', { method: 'PUT', body: JSON.stringify({ all: Boolean(all) }) }),
   saveAutomationPolicy: (payload) => request('/api/automation-policy', { method: 'PUT', body: JSON.stringify(payload) }),
   // فهم رویداد با AI — docs/ai-event-understanding.md
   createUnderstandingCase: (payload) => request('/api/understanding/cases', { method: 'POST', body: JSON.stringify(payload) }),
