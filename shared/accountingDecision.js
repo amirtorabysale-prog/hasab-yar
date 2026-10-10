@@ -356,6 +356,22 @@ export const DEFAULT_POLICIES = Object.freeze([
    * فقط نام تأمین‌کننده را لازم دارد. تسویه‌اش با فاکتوری که بعداً می‌آید، کار
    * نگهبان تسویه است و این سند را دست نمی‌زند.
    */
+  /**
+   * مساعدهٔ کارمند.
+   *
+   * «۵ میلیون به آقای کاظمی مساعده دادیم که از حقوق آبانش کم کنیم» به صف حقوق
+   * می‌رفت، چون دسته‌اش «حقوق» بود. حقوق نیست: طلب شرکت از همان کارمند است و
+   * با حقوق بعدی تسویه می‌شود. نام کارمند لازم است تا ماندهٔ هر نفر جدا بماند.
+   */
+  Object.freeze({
+    policyKey: 'employee-advance',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.ASSET_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.EMPLOYEE_ADVANCE]),
+    appliesTo(facts) { return facts?.paymentPurpose === 'employee-advance'; },
+    resolve() { return { treatment: TREATMENTS.EMPLOYEE_ADVANCE }; },
+  }),
   Object.freeze({
     policyKey: 'supplier-advance',
     version: '1.0.0',

@@ -190,7 +190,7 @@ export function isTimeBoundService(facts) {
  */
 function signalsFutureBenefit(facts) {
   // ثبت‌کننده خودش گفته پیش‌پرداخت یا ودیعه است، یا گفته پول برمی‌گردد.
-  if (['advance', 'deposit'].includes(facts?.paymentPurpose) || facts?.refundable === true) return true;
+  if (['advance', 'deposit', 'employee-advance'].includes(facts?.paymentPurpose) || facts?.refundable === true) return true;
   if (has(facts, 'servicePeriodStart') || has(facts, 'servicePeriodEnd') || has(facts, 'contractReference')) return true;
   if (has(facts, 'assetName') || has(facts, 'readyForUseDate')) return true;
   if (['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)) return true;

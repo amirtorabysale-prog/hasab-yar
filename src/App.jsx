@@ -820,10 +820,10 @@ export default function App() {
       }
       if (draft.intent === 'transfer') {
         await api.transferBetweenAccounts({ fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId,
-          amount: draft.amount, note: draft.transcript, occurredAt: draft.occurredAt || undefined });
+          amount: draft.amount, fee: draft.fee || 0, note: draft.transcript, occurredAt: draft.occurredAt || undefined });
         setIntentDraft(null);
         await load();
-        notify('انتقال بین حساب‌ها ثبت شد؛ درآمد یا هزینه‌ای ساخته نشد.');
+        notify(draft.fee > 0 ? 'انتقال ثبت شد و کارمزدش هزینهٔ کارمزد بانکی حساب مبدأ شد.' : 'انتقال بین حساب‌ها ثبت شد؛ درآمد یا هزینه‌ای ساخته نشد.');
         return;
       }
       if (draft.intent === 'invoice') {

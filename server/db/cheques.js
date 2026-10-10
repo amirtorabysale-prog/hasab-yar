@@ -99,6 +99,22 @@ export function recordCheque(values = {}) {
     });
     return {...item,queuedForAccountant:true,queuedReason:reason};
   }
+  // چک بابت خرید یا فروش تازه که ارزش افزوده دارد: کل مبلغ چک بهای کالا یا
+  // درآمد نیست. «۵۰ میلیون به‌علاوه ۱۰ درصد… چک ۵۵ میلیونی دادیم» کل ۵۵ را
+  // «مواد و کالا» می‌کرد و اعتبار مالیاتی خرید گم می‌شد.
+  if (values.against === 'income' && /ارزش\s*افزوده|مالیات\s*بر\s*ارزش/.test(evidence)) {
+    const reason = direction === 'payable'
+      ? 'خرید با ارزش افزوده و چک: بهای کالا و اعتبار مالیات خرید باید جدا ثبت شوند؛ سند ساخته نشد و به صف حسابدار رفت.'
+      : 'فروش با ارزش افزوده و چک: درآمد و مالیات فروش باید جدا ثبت شوند؛ سند ساخته نشد و به صف حسابدار رفت.';
+    const item = recordFinancialEvent(db_, normalizeFinancialEvent({ kind: direction === 'payable' ? 'cash-expense' : 'cash-income', amount,
+      occurredAt: values.occurredAt || new Date().toISOString(), dueAt: values.dueAt,
+      evidence, utterance: evidence, counterparty: values.counterpartyName, counterpartyId: values.contactId,
+      category: values.category || (direction === 'payable' ? 'مواد و کالا' : 'فروش'), source: 'text' }), {
+      sourceEventId: `vat-cheque:${randomUUID()}`, decision: { route: 'accountant-review', guardBlocked: true, reasons: [reason] },
+      actor: currentWorkspace()?.userId || null, transcript: evidence, rawInput: evidence, timeZone: currentTimeZone(),
+    });
+    return { ...item, queuedForAccountant: true, queuedReason: reason };
+  }
   const contactId = values.contactId || (values.counterpartyName ? contactIdForName(values.counterpartyName, values.counterpartyResolution) : null);
   const counterpartyName = String(values.counterpartyName || '').trim().slice(0, 120)
     || (contactId ? db_.prepare('SELECT name FROM contacts WHERE id=?').get(contactId)?.name || '' : '');

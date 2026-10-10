@@ -44,9 +44,21 @@ export function receiptPurposeFromSpeech(input) {
   return null;
 }
 
+/**
+ * مساعده: پولی که به کارمند داده شده و از حقوق بعدی‌اش کم می‌شود.
+ *
+ * هزینهٔ حقوق نیست — حقوقِ آن ماه هنوز تحقق نیافته — و پرداخت حقوق هم نیست
+ * که کسور بیمه و مالیات بخواهد. طلب شرکت از همان کارمند است.
+ */
+const EMPLOYEE_ADVANCE = new RegExp([
+  `مساعده`, `علی${GAP}ا?لحساب${GAP}حقوق`, `پیش${GAP}(?:پرداخت${GAP})?حقوق`,
+  `(?:وام|قرض)${GAP}(?:به${GAP})?(?:کارمند|کارگر|پرسنل|همکار)`,
+].join('|'));
+
 export function paymentPurposeFromSpeech(input) {
   const text = String(input || '');
   if (!text) return null;
+  if (EMPLOYEE_ADVANCE.test(text)) return 'employee-advance';
   if (OWNER_DRAWING.test(text)) return 'owner-drawing';
   return null;
 }
@@ -88,7 +100,8 @@ export function lenderFromSpeech(input) {
  */
 const UNCERTAIN = new RegExp([
   `نمی${GAP}(?:دونم|دانم|دونیم|دانیم)`, `نمیدونم`, `بعدا${GAP}(?:بهت${GAP})?(?:میگم|می${GAP}گم|میگیم)`,
-  `مطمئن${GAP}نیستم`, `نگاه${GAP}کن${GAP}(?:تو|در)${GAP}سیستم`, `(?:چطور|چجوری|چه${GAP}جوری)${GAP}ثبت`,
+  // «احتمالاً مال خانم توکلیه، ولی مطمئن نیستیم»: حدسِ خودِ گوینده، مبنای فروش نیست.
+  `مطمئن${GAP}نیست(?:م|یم|ن)?`, `احتمالا`, `(?<![آ-ی])شاید(?![آ-ی])`, `نگاه${GAP}کن${GAP}(?:تو|در)${GAP}سیستم`, `(?:چطور|چجوری|چه${GAP}جوری)${GAP}ثبت`,
 ].join('|'));
 const SUSPICIOUS = /مشکوک|کسی\s*نفهمه|نفهمن|پنهان|زیر\s*میزی/;
 const PARTNER = /شریک|سهامدار|سهام\s*دار/;

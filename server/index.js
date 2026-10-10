@@ -16,7 +16,7 @@ import {
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
-  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferBetweenAccounts,
+  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
   answerUnderstandingCase, commitUnderstandingCase, createUnderstandingCase, dismissUnderstandingCase, getUnderstandingCase, legacySnapshot,
   listUnderstandingCases, retryUnderstandingCase, scheduleShadowUnderstanding, sendUnderstandingToAccountant, understandingReport,
   closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling,
@@ -546,7 +546,7 @@ app.post('/api/petty-cash/:id/close', (request, response, next) => {
   try { return response.json({ item: closePettyCashFund(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
 });
 app.post('/api/accounts/transfer', (request, response, next) => {
-  try { return response.status(201).json({ item: transferBetweenAccounts(request.body || {}) }); } catch (error) { return next(error); }
+  try { return response.status(201).json({ item: transferWithFee(request.body || {}) }); } catch (error) { return next(error); }
 });
 app.post('/api/tax/settle-vat', (request, response, next) => {
   try { return response.json(settleVatPeriod(request.body || {})); } catch (error) { return next(error); }

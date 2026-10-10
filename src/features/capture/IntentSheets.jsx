@@ -46,7 +46,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
   // دو بار در درآمد می‌آورد وقتی چک بابت طلب قبلی بود.
   const chequeReady = !isCheque || (['income', 'receivable'].includes(draft.against) && Boolean(String(draft.contactName || '').trim()));
   const ready = isPetty ? hasAmount && Boolean(draft.fromAccountId) && String(draft.holder || '').trim().length >= 2
-    : isTransfer ? hasAmount && Boolean(draft.fromAccountId && draft.toAccountId && draft.fromAccountId!==draft.toAccountId)
+    : isTransfer ? hasAmount && Boolean(draft.fromAccountId && draft.toAccountId && draft.fromAccountId!==draft.toAccountId) && !(Number(draft.fee || 0) >= Number(draft.amount))
     : isInvoice ? true
     : isEquityMove ? Boolean(String(draft.title || '').trim())
       : Boolean(draft.direction) && hasAmount && chequeReady;
@@ -111,7 +111,14 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             </select>
           </label>)}
         </div>
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">فقط ماندهٔ مبدأ و مقصد جابه‌جا می‌شود؛ این انتقال درآمد یا هزینه نیست.</p>
+        <label className="mt-3 block text-xs font-bold text-muted">کارمزد بانکی (اگر کم شده)
+          <input dir="ltr" inputMode="numeric" value={draft.fee || ''} placeholder="۰"
+            onChange={(event) => setDraft({ ...draft, fee: Number(String(event.target.value).replace(/[^\d]/g, '')) || 0 })}
+            className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left text-sm numbers" />
+        </label>
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">{draft.fee > 0
+          ? `مبلغ انتقال فقط ماندهٔ دو حساب را جابه‌جا می‌کند؛ کارمزد ${Number(draft.fee).toLocaleString('fa-IR')} تومان هزینهٔ کارمزد بانکیِ حساب مبدأ ثبت می‌شود.`
+          : 'فقط ماندهٔ مبدأ و مقصد جابه‌جا می‌شود؛ این انتقال درآمد یا هزینه نیست.'}</p>
       </> : isEquityMove ? <>
         <label className="mt-3 block text-xs font-bold text-muted">{isCapital ? 'عنوان آورده' : 'نام دارایی'}
           <input value={draft.title || ''} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
@@ -246,6 +253,8 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-[11px] leading-6 text-accent">
               {draft.against === 'receivable'
                 ? 'بابت حساب قبلی است، پس درآمد یا هزینهٔ تازه‌ای شناسایی نمی‌شود؛ فقط شکل طلب یا بدهی به چک عوض می‌شود.'
+                : draft.against === 'income' && draft.vatMentioned
+                  ? 'این معامله ارزش افزوده دارد؛ کل مبلغ چک بهای کالا یا درآمد نیست. چک ثبت می‌شود و تفکیک ارزش افزوده به صف حسابدار می‌رود.'
                 : draft.against === 'income'
                   ? 'بابت معاملهٔ تازه است، پس همین حالا درآمد یا هزینه شناسایی می‌شود. اگر بابت حساب قبلی است، گزینه را عوض کن وگرنه همان معامله دو بار در سود می‌آید.'
                   : 'تا انتخاب نکنی ثبت نمی‌شود: اگر بابت حساب قبلی باشد و «تازه» ثبت شود، همان معامله دو بار در سود دوره می‌آید.'}

@@ -1,14 +1,14 @@
 import { runGuards, GUARD_VERDICTS } from '../../shared/guards.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
 import { randomUUID } from 'node:crypto';
-import { accountForBank, resolveAccountId } from './accounts.js';
+import { accountForBank, resolveAccountId, transferBetweenAccounts } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
 import { settlementDirection } from '../../shared/counterpartySettlement.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal, transactionJournalIsPlain } from '../accounting.js';
 import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
-import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
+import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian, describesUnperformedCondition, UNPERFORMED_CONDITION_MESSAGE } from '../../shared/parser.js';
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
@@ -526,6 +526,8 @@ export function recordCapitalEntry(values = {}) {
 
 export function insertTransactions(payload) {
   if (hasCompositeAmounts(payload.transcript)) throw invalidInput(COMPOSITE_AMOUNT_MESSAGE);
+  // کاری که هنوز انجام نشده و شرطی است، ردیف نقدی نمی‌سازد؛ حتی اگر کلاینت قدیمی ردیف فرستاده باشد.
+  if (describesUnperformedCondition(payload.transcript)) throw invalidInput(UNPERFORMED_CONDITION_MESSAGE);
   if (priorSettlementDirection(payload.transcript)) throw invalidInput('این دریافت یا پرداخت مربوط به طلب یا بدهی قبلی است. ابتدا سند باز را در بخش تسویه انتخاب کن؛ درآمد یا هزینهٔ تازه ثبت نشد.');
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -849,4 +851,28 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
       treatment: decision?.treatment || null, family: decision?.family || null,
     };
   });
+}
+
+/**
+ * انتقال بین دو حساب خودِ شرکت، همراه کارمزد بانکی‌اش.
+ *
+ * «۴۰ میلیون از ملت به تجارت پایا زدیم و ۲۵ هزار کارمزدش از ملت کم شد» یک
+ * انتقال است و یک هزینه. هر دو با هم ثبت می‌شوند یا هیچ‌کدام: انتقالِ بی‌کارمزد
+ * ماندهٔ بانک مبدأ را ۲۵ هزار بیشتر از صورت‌حساب نشان می‌داد.
+ */
+export function transferWithFee({ fee = 0, ...values } = {}) {
+  const charge = cleanAmount(fee);
+  if (!(charge > 0)) return transferBetweenAccounts(values);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = transferBetweenAccounts(values, { withinTransaction: true });
+    if (charge >= result.amount) throw invalidInput('کارمزد نمی‌تواند از مبلغ انتقال بیشتر باشد.');
+    const [feeTransactionId] = insertTransactionRows({ transcript: result.memo, transactions: [{
+      amount: charge, type: 'expense', category: 'کارمزد بانکی', rawText: `کارمزد انتقال به ${result.to.name}`,
+      source: 'text', accountId: result.from.id, occurredAt: result.occurredAt, status: 'confirmed',
+      userConfirmed: true, needsReview: false, reviewReasons: [], restoredFrom: null, journalManaged: false, capitalFlow: '',
+    }] });
+    db.exec('COMMIT');
+    return { ...result, fee: charge, feeTransactionId };
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
