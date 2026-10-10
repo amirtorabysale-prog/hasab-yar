@@ -24,6 +24,7 @@ import { classifyCategory } from './categoryRules.js';
 import { detectBank } from './banks.js';
 import { normalizePersian } from './normalize.js';
 import { persianMonthRange, todayPersian } from './persianDate.js';
+import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -293,9 +294,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   const movementOf = (id) => facts.movements.find((movement) => movement.amountRef === id) || null;
   const priorBalance = amounts.find((amount) => amount.role === 'prior-balance');
 
-  if (partnerPaid) planPartnerPaid({ facts, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant });
+  // پول شخصی دو شکل دارد: بستن طلب یا بدهیِ موجود (کارت تسویه)، یا هزینه و خریدی
+  // که همان مسیر عادی را می‌رود و فقط منبع پولش جاری شریک یا پرداختنیِ کارمند است.
+  const funder = partnerPaid ? fundingOf(facts, said) : null;
+  if (partnerPaid && !funder) planPartnerPaid({ facts, said, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant });
 
-  for (const amount of partnerPaid ? [] : amounts) {
+  for (const amount of partnerPaid && !funder ? [] : amounts) {
     const label = amount.evidence || amount.role;
     if (retracted.has(amount.id)) { notes.push({ amountRef: amount.id, kind: 'retracted', text: `«${label}» در همان گفته اصلاح شد و کنار گذاشته شد.` }); continue; }
     if (amount.status === 'context') {
@@ -380,7 +384,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       // ثبت‌نشده را این پرونده نمی‌سازد و از ماندهٔ خالی حدس نمی‌زند؛ آن قضاوت
       // حسابدار است.
       const documents = (resolution.documents?.[contactId] || [])
-        .filter((document) => document.direction === direction && ['obligation', 'invoice'].includes(document.kind) && document.remaining > 0);
+        .filter((document) => document.direction === direction && ['obligation', 'invoice', 'ledger-balance'].includes(document.kind) && document.remaining > 0);
       const pickedDocument = answers[`settlements.${amount.id}`]?.valueId;
       const target = pickedDocument ? documents.find((document) => document.id === pickedDocument) : documents.length === 1 ? documents[0] : null;
       if (!documents.length) {
@@ -446,7 +450,9 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
     const answeredAccount = answers[`movements.${movement.id}.account`]?.valueId;
-    const accountId = movement.direction === 'none' ? null : answeredAccount || endpoint?.accountId || null;
+    // پول از جیب شریک یا کارمند رفته: حسابی از شرکت پرسیده نمی‌شود؛ سطر نقد در سند
+    // جایش را به جاری او می‌دهد (`fundedBy`).
+    const accountId = movement.direction === 'none' ? null : funder && type === 'expense' ? 'cash' : answeredAccount || endpoint?.accountId || null;
     if (movement.direction !== 'none' && !accountId) {
       question({
         id: `movements.${movement.id}.account`, kind: 'information', picker: 'account', options: [],
@@ -487,6 +493,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       eventNature: 'new', factSource: 'understanding', userConfirmed: true, needsReview: false, reviewReasons: [],
       confidenceDetails: { amount: { score: 1, reason: amount.provenance === 'user' ? 'مبلغ را ثبت‌کننده تعیین کرد.' : 'مبلغ از شاهدِ جمله خوانده و کنترل شد.' } },
       usefulLifeMonths: facts.subject.usefulLifeMonths || null,
+      ...(funder && type === 'expense' && movement.direction !== 'none' ? { fundedBy: funder } : {}),
     };
     const verb = movement.direction === 'none' ? (type === 'income' ? 'طلب' : 'بدهی') : type === 'income' ? 'دریافت' : 'پرداخت';
     components.push({
@@ -514,18 +521,34 @@ const OUR_ACCOUNT_SIDES = new Set(['bank', 'cash', 'petty-cash']);
  * اندازه به شریک بدهکار می‌شود. همان قاعدهٔ کارت تسویه: فقط روی یک بدهیِ بازِ
  * ثبت‌شده، بی‌حدس. بهای داراییِ شخصی‌ای که فروخته شد زمینه است و سندی ندارد.
  */
-function planPartnerPaid({ facts, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant }) {
+/**
+ * هزینه یا خرید از پول شخصی، نه بستن طلب و بدهی: نه بدهیِ قبلی گفته شده و نه
+ * نشانهٔ بستن آن. همان تشخیص قطعیِ مسیر کارت داور است تا دو مسیر یک جور بفهمند.
+ */
+function fundingOf(facts, said) {
+  if (facts.amounts.some((item) => item.role === 'prior-balance')) return null;
+  const spoken = detectPartnerFundedSpend(said);
+  if (!spoken) return null;
+  const person = facts.counterparties.find((item) => ['owner', 'partner', 'employee'].includes(item.role));
+  return { kind: person?.role === 'employee' ? 'employee' : spoken.kind, name: person?.name || spoken.name, role: spoken.role };
+}
+
+function planPartnerPaid({ facts, said, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant }) {
   const parties = facts.counterparties.filter((item) => !detectBank(item.name) && item.role !== 'bank');
   const payer = parties.find((item) => ['owner', 'partner'].includes(item.role)) || null;
   const creditor = parties.find((item) => item !== payer && !['owner', 'partner', 'employee'].includes(item.role)) || null;
-  if (!payer) { toAccountant('پرداخت‌کننده از پول شخصی در جمله معلوم نیست؛ جاری کدام شریک؟ با حسابدار است.'); return; }
-  if (!creditor) { toAccountant('طلبکاری که بدهی‌اش بسته شد در جمله نیست؛ تسویه بدون طرف حساب ثبت نمی‌شود.'); return; }
+  // پول مشتری به حساب شخصی شریک رفت: طلب ما بسته می‌شود، شریک بدهکار می‌شود.
+  const direction = creditor?.role === 'customer' || detectPartnerPaidDebt(said)?.direction === 'receivable'
+    || facts.movements.some((movement) => movement.direction === 'in') ? 'receivable' : 'payable';
+  const side = direction === 'payable' ? 'بدهی' : 'طلب';
+  if (!payer) { toAccountant('شریکی که پول از حساب شخصی او گذشت در جمله معلوم نیست؛ جاری کدام شریک؟ با حسابدار است.'); return; }
+  if (!creditor) { toAccountant(`طرف حسابی که ${side}ش بسته شد در جمله نیست؛ تسویه بدون طرف حساب ثبت نمی‌شود.`); return; }
 
   const live = amounts.filter((item) => item.accepted && !retracted.has(item.id));
   for (const item of live.filter((amount) => amount.status === 'context' && amount.role !== 'prior-balance')) {
     notes.push({ amountRef: item.id, kind: 'context', text: `«${item.evidence || item.role}» پولِ شخصی است، نه رویداد شرکت؛ ثبت نمی‌شود.` });
   }
-  const paid = live.filter((item) => item.status === 'done' && ['paid-now', 'total', 'part'].includes(item.role));
+  const paid = live.filter((item) => item.status === 'done' && ['paid-now', 'received-now', 'total', 'part'].includes(item.role));
   const prior = live.find((item) => item.role === 'prior-balance');
   const values = [...new Set(paid.map((item) => item.value))];
   if (values.length > 1) { toAccountant('چند مبلغ پرداخت در جمله است؛ کدام بدهی با کدام مبلغ بسته شد، با حسابدار است.'); return; }
@@ -548,13 +571,14 @@ function planPartnerPaid({ facts, amounts, retracted, resolution, answers, payme
     });
     return;
   }
-  const open = (resolution.documents?.[contactId] || []).filter((document) => document.direction === 'payable' && document.remaining > 0);
+  const open = (resolution.documents?.[contactId] || []).filter((document) => document.direction === direction && document.remaining > 0);
   // بدهیِ ثبت‌شده در «طلب و بدهی»، یا ماندهٔ دفتر کل که سندی ندارد.
   const documents = open.filter((document) => ['obligation', 'ledger-balance'].includes(document.kind));
+  // طلبی که پولش به حساب شخصی شریک رفت هم از همین مسیر است، با جهت وارونه.
   if (!documents.length) {
     toAccountant(open.length
-      ? `بدهیِ «${creditor.name}» فاکتور خرید است؛ تسویهٔ فاکتور از پول شخصی شریک با حسابدار است.`
-      : `بدهیِ باز «${creditor.name}» در دفتر پیدا نشد؛ بدون سند مبنا، سند از پول شخصی شریک با حسابدار است.`);
+      ? `${side}ِ «${creditor.name}» فاکتور است؛ تسویهٔ فاکتور از حساب شخصی شریک با حسابدار است.`
+      : `${side}ِ باز «${creditor.name}» نه در سندها پیدا شد نه در ماندهٔ دفتر کل؛ بدون مبنا، سند با حسابدار است.`);
     return;
   }
   const pickedDocument = answers[`settlements.${amount.id}`]?.valueId;
@@ -562,7 +586,7 @@ function planPartnerPaid({ facts, amounts, retracted, resolution, answers, payme
   if (!target) {
     question({
       id: `settlements.${amount.id}`, kind: 'information', picker: 'document',
-      text: `این ${money(amount.value)} تومان کدام بدهیِ «${creditor.name}» را بست؟`,
+      text: `این ${money(amount.value)} تومان کدام ${side}ِ «${creditor.name}» را بست؟`,
       options: documents.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} تومان` })),
     });
     return;
@@ -574,8 +598,10 @@ function planPartnerPaid({ facts, amounts, retracted, resolution, answers, payme
   const payerResolved = resolution.counterparties?.[payer.id];
   components.push({
     id: amount.id, amountRef: amount.id, kind: 'partner-settlement', amount: amount.value, contactId, occurredAt: paymentDate,
-    target: { kind: target.kind, id: target.id, reference: target.reference, remaining: target.remaining }, direction: 'payable',
+    target: { kind: target.kind, id: target.id, reference: target.reference, remaining: target.remaining }, direction,
     paidBy: { name: payer.name, contactId: payerResolved?.status === 'exact' ? payerResolved.contactId : null }, item: null,
-    label: `بستن ${money(amount.value)} تومان بدهی «${creditor.name}» (${target.reference}) از پول شخصی ${payer.name} — بدون برداشت از صندوق یا بانک`,
+    label: direction === 'payable'
+      ? `بستن ${money(amount.value)} تومان بدهی «${creditor.name}» (${target.reference}) از پول شخصی ${payer.name} — بدون برداشت از صندوق یا بانک`
+      : `وصول ${money(amount.value)} تومان طلب از «${creditor.name}» (${target.reference}) به حساب شخصی ${payer.name} — بدون ورود به صندوق یا بانک`,
   });
 }

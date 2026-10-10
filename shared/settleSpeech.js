@@ -168,22 +168,31 @@ function includesName(haystack, needle) {
  * نه این تابع.
  */
 /**
- * بدهیِ دفتر کل که سند «طلب و بدهی» ندارد — فقط برای تسویه از پول شریک.
+ * طلب یا بدهیِ دفتر کل که سند بازی ندارد — هدف تسویه، نقدی یا از پول شریک.
  *
- * خریدی که حسابدار از صف تأیید کرده مستقیم در دفتر کل می‌نشیند؛ کارت حساب
- * طرف آن را نشان می‌دهد ولی فهرست تعهدها نه. وقتی سند بازی برای همان شخص
- * نیست، ماندهٔ بستانکارِ کارت حساب او خودش هدف تسویه است. مقدار نهایی را سرور
- * با ماندهٔ حساب پرداختنیِ دفتر کل دوباره می‌سنجد.
+ * خریدی که حسابدار از صف تأیید کرد، یا ماندهٔ افتتاحیه، مستقیم در دفتر کل
+ * می‌نشیند؛ کارت حساب طرف آن را نشان می‌دهد ولی فهرست تعهدها و فاکتورها نه.
+ * `uncoveredPayable` و `uncoveredReceivable` را سرور می‌سازد: ماندهٔ دفتر کل منهای
+ * سندهای باز همان جهت. سرور هنگام ثبت دوباره همین سقف را می‌سنجد.
  */
-export function ledgerBalanceTargets(intent = {}, { contacts = [], documentTargets = [] } = {}) {
-  if (!intent?.paidBy || intent.direction !== 'payable') return [];
-  return contacts.filter((contact) => Number(contact.balance) < 0)
-    .filter((contact) => !intent.contactName || includesName(contact.name, intent.contactName))
-    .filter((contact) => !documentTargets.some((target) => target.contactId === contact.id || includesName(target.name, contact.name)))
-    .map((contact) => ({ kind: 'ledger-balance', id: contact.id, contactId: contact.id, label: `ماندهٔ بدهی به ${contact.name} در دفتر کل`,
-      name: contact.name, amount: -Number(contact.balance), number: '', direction: 'payable' }))
-    .filter((target) => !intent.amount || target.amount >= intent.amount)
-    .map((target) => ({ ...target, paymentAmount: intent.amount || target.amount }));
+export function ledgerBalanceTargets(intent = {}, { contacts = [] } = {}) {
+  if (!intent || intent.intent !== 'settle' || intent.bounced) return [];
+  if (!['any', 'obligation'].includes(intent.kind || 'any')) return [];
+  const directions = intent.direction ? [intent.direction] : ['payable', 'receivable'];
+  const targets = [];
+  for (const contact of contacts) {
+    if (intent.contactName && !includesName(contact.name, intent.contactName)) continue;
+    for (const direction of directions) {
+      const amount = Number(direction === 'payable' ? contact.uncoveredPayable : contact.uncoveredReceivable) || 0;
+      if (amount <= 0 || (intent.amount && amount < intent.amount)) continue;
+      targets.push({
+        kind: 'ledger-balance', id: `${contact.id}:${direction}`, contactId: contact.id, direction, name: contact.name, number: '',
+        label: direction === 'payable' ? `ماندهٔ بدهی به ${contact.name} در دفتر کل` : `ماندهٔ طلب از ${contact.name} در دفتر کل`,
+        amount, paymentAmount: intent.amount || amount,
+      });
+    }
+  }
+  return targets;
 }
 
 export function matchSettleTargets(intent = {}, { invoices = [], obligations = [] } = {}) {

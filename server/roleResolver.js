@@ -82,7 +82,9 @@ function counterpartyRoleAccount(database, sourceKind, event, key, label, type) 
   return linkedAccount(database, sourceKind, accountKey, `${label} — ${name}`, type);
 }
 
-const partnerSide = (event) => (event.payerName ? { ...event, counterpartyId: event.payerId || null } : event);
+// سطری که کلیدش نام پرداخت‌کننده است (شریک یا کارمندی که از جیبش داد) با
+// شناسهٔ خودِ او زیرحساب می‌گیرد، نه شناسهٔ طرف حساب رویداد.
+const partnerSide = (event, key) => (event.payerName && (key === undefined || key === event.payerName) ? { ...event, counterpartyId: event.payerId || null } : event);
 
 export function resolveEventRole(database, role, key, event = {}) {
   switch (role) {
@@ -99,7 +101,7 @@ export function resolveEventRole(database, role, key, event = {}) {
       return counterpartyRoleAccount(database, 'customer-receivable', event, key || 'مشتری متفرقه', 'حساب دریافتنی', 'asset');
 
     case ROLES.PAYABLE:
-      return counterpartyRoleAccount(database, 'vendor-payable', event, key || 'تأمین‌کننده متفرقه', 'حساب پرداختنی', 'liability');
+      return counterpartyRoleAccount(database, 'vendor-payable', partnerSide(event, key), key || 'تأمین‌کننده متفرقه', 'حساب پرداختنی', 'liability');
 
     // چک حساب جدا دارد تا در تراز از مطالبات عادی قابل تفکیک باشد.
     case ROLES.CHEQUE_RECEIVABLE:

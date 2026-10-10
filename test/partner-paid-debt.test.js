@@ -8,6 +8,7 @@ import { EVENT_KINDS, eventMovesCash, normalizeFinancialEvent } from '../shared/
 import { ROLES, affectsProfit, planJournal } from '../shared/accountingRules.js';
 import { understandingReasons } from '../shared/understandingScope.js';
 import { validateUnderstanding } from '../shared/eventUnderstanding.js';
+import { parseFinancialText } from '../shared/parser.js';
 
 /**
  * بدهی شرکت که مدیرعامل یا شریک از پول شخصی‌اش داد.
@@ -54,7 +55,8 @@ test('بدون پولِ شخصی یا با جهتِ وارونه، این مسی
     '۲۸۰ میلیون به شرکت آریا پرداخت شد',
     'آقای سهرابی ۲۸۰ میلیون به آریا داد',
     'آقای سهرابی ۵۰ میلیون از حساب شرکت برداشت شخصی کرد',
-    'مشتری ۲۰ میلیون به حساب شخصی مدیرعامل ریخت',
+    'مدیرعامل ۲۰ میلیون از حساب شرکت به حساب شخصی خودش ریخت',
+    'آقای سهرابی ۵۰ میلیون به شرکت قرض داد',
     'آقای سهرابی ماشین شخصیش رو فروخت',
     'ماشین شرکت رو فروختیم ۴۰۰ میلیون',
     'مدیرعامل ۱۰۰ میلیون از پول شخصی خودش به حساب شرکت واریز کرد',
@@ -275,15 +277,21 @@ const reviewedPurchase = (contact, amount, key) => {
 };
 const payableOf = (name) => -(balances()[`حساب پرداختنی — ${name}`] || 0);
 
-test('کارت تسویه ماندهٔ بستانکار کارت حساب را هدف می‌کند، وقتی سند بازی نیست', () => {
-  const intent = detectPartnerPaidDebt(SAID.spoken, { now: NOW });
-  const contacts = [{ id: 'k1', name: 'شرکت آریا', balance: -280_000_000 }, { id: 'k2', name: 'شرکت نوین', balance: -500_000_000 }, { id: 'k3', name: 'آریا تجارت', balance: 40_000_000 }];
-  assert.deepEqual(ledgerBalanceTargets(intent, { contacts }).map((item) => [item.kind, item.contactId, item.amount, item.paymentAmount]),
-    [['ledger-balance', 'k1', 280_000_000, 280_000_000]]);
-  // اگر سند بازِ همان شخص هست، همان سند هدف است و مانده دوبار پیشنهاد نمی‌شود.
-  assert.deepEqual(ledgerBalanceTargets(intent, { contacts, documentTargets: [{ contactId: 'k1', name: 'شرکت آریا' }] }), []);
-  // بدهی کمتر از مبلغ گفته‌شده هدف نیست.
-  assert.deepEqual(ledgerBalanceTargets(intent, { contacts: [{ id: 'k1', name: 'شرکت آریا', balance: -100_000_000 }] }), []);
+test('کارت تسویه ماندهٔ بی‌سندِ کارت حساب را هدف می‌کند — هر دو جهت، نقدی یا از پول شریک', () => {
+  const contacts = [
+    { id: 'k1', name: 'شرکت آریا', uncoveredPayable: 280_000_000, uncoveredReceivable: 0 },
+    { id: 'k2', name: 'شرکت نوین', uncoveredPayable: 0, uncoveredReceivable: 70_000_000 },
+    { id: 'k3', name: 'آریا تجارت', uncoveredPayable: 0, uncoveredReceivable: 0 },
+  ];
+  const pick = (intent) => ledgerBalanceTargets(intent, { contacts }).map((item) => [item.contactId, item.direction, item.paymentAmount]);
+  assert.deepEqual(pick(detectPartnerPaidDebt(SAID.spoken, { now: NOW })), [['k1', 'payable', 280_000_000]]);
+  // تسویهٔ نقدی هم همان مانده را می‌بیند.
+  assert.deepEqual(pick({ intent: 'settle', kind: 'any', direction: 'payable', contactName: 'شرکت آریا', amount: 50_000_000 }), [['k1', 'payable', 50_000_000]]);
+  assert.deepEqual(pick({ intent: 'settle', kind: 'any', direction: 'receivable', contactName: 'شرکت نوین', amount: 20_000_000 }), [['k2', 'receivable', 20_000_000]]);
+  // مبلغ بیش از مانده، یا شخصِ دیگر، هدف نیست.
+  assert.deepEqual(pick({ intent: 'settle', kind: 'any', direction: 'payable', contactName: 'شرکت آریا', amount: 300_000_000 }), []);
+  // فاکتور یا چک خواسته شده: ماندهٔ دفتر کل جای آن نیست.
+  assert.deepEqual(pick({ intent: 'settle', kind: 'invoice', direction: 'payable', contactName: 'شرکت آریا' }), []);
 });
 
 test('روی دفتر: بدهیِ دفتر کل بی‌سند از پول شریک بسته می‌شود', () => inWorkspace(() => {
@@ -321,5 +329,120 @@ test('فهم با AI: بدهیِ دفتر کل بی‌سند هدف تسویه �
     const posted = database.commitUnderstandingCase(item.id, { now: NOW });
     assert.equal(posted.status, 'posted');
     assert.equal(payableOf('شرکت کیان'), 20_000_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// کل خانواده: پولی که از حساب شخصیِ کسی جز شرکت گذشت، و تسویهٔ ماندهٔ بی‌سند.
+// ---------------------------------------------------------------------------
+
+const FAMILY = {
+  partnerExpense: 'مدیرعامل هزینه تعمیر کولر دفتر رو ۸ میلیون از جیب خودش داد',
+  partnerGoods: 'آقای سهرابی با پول شخصی خودش ۱۰۰ میلیون مواد اولیه برای شرکت خرید',
+  employeeExpense: 'آقای رضایی کارمندمون ۲ میلیون بنزین ماشین شرکت رو از جیب خودش داد',
+  customerToPartner: 'شرکت نوین ۵۰ میلیون از بدهیش رو به حساب شخصی مدیرعامل ریخت',
+  partnerCollected: 'آقای سهرابی ۳۰ میلیون طلب ما از شرکت نوین رو خودش نقد گرفت',
+  theirDebtPaid: 'شرکت نوین ۲۰ میلیون از بدهیش رو واریز کرد',
+};
+
+test('خانواده در مسیر گفته: هیچ ردیف نقدی برای پولی که از حساب شرکت نگذشت', () => {
+  const run = (text) => runVoice(text, { today: NOW.toISOString() });
+  const goods = run(FAMILY.partnerGoods).items[0];
+  assert.equal(goods.fundedBy, 'partner');
+  assert.deepEqual(goods.plan.lines.map((line) => [line.role, line.debit > 0]), [[ROLES.INVENTORY_UNSPLIT, true], [ROLES.PARTNER_PAYABLE, false]]);
+  const employee = run(FAMILY.employeeExpense).items[0];
+  assert.equal(employee.outcome, 'post', 'جهت پرداخت از جیب کارمند قطعی است');
+  assert.deepEqual(employee.plan.lines.map((line) => [line.role, line.key]), [[ROLES.EXPENSE_CATEGORY, employee.category], [ROLES.PAYABLE, 'آقای رضایی']]);
+  const expense = run(FAMILY.partnerExpense).items[0];
+  assert.equal(expense.fundedBy, 'partner');
+  assert.ok(!(expense.plan?.lines || []).some((line) => line.role === ROLES.CASH), 'سطر صندوق ندارد');
+  for (const key of ['customerToPartner', 'partnerCollected']) {
+    const result = run(FAMILY[key]);
+    assert.equal(result.path, 'partner-settle', key);
+    assert.equal(detectPartnerPaidDebt(FAMILY[key], { now: NOW }).direction, 'receivable', key);
+    assert.equal(detectPartnerPaidDebt(FAMILY[key], { now: NOW }).contactName, 'شرکت نوین', key);
+  }
+  assert.equal(run(FAMILY.theirDebtPaid).path, 'settle');
+});
+
+test('روی دفتر: هزینه و خرید از پول شریک یا کارمند، بی‌ردیف نقدی', () => inWorkspace(() => {
+  const rows = transactionCount();
+  const cash = cashBalance();
+  const before = balances()['جاری شریک — بدهی شرکت — آقای سهرابی'] || 0;
+  // همان ردیفی که پارسر برنامه می‌سازد و کارت تأیید می‌فرستد.
+  const parsed = (text, clientId) => parseFinancialText(text, { source: 'voice' }).transactions.map((item) => ({ ...item, clientId, userConfirmed: true }));
+  const goods = database.insertTransactions({ transcript: FAMILY.partnerGoods, transactions: parsed(FAMILY.partnerGoods, 'fam-goods') });
+  assert.deepEqual([...goods], []);
+  assert.equal(goods.nonCash[0].fundedBy, 'partner');
+  const employee = database.insertTransactions({ transcript: FAMILY.employeeExpense, transactions: parsed(FAMILY.employeeExpense, 'fam-fuel') });
+  assert.equal(employee.nonCash[0].fundedBy, 'employee');
+  assert.equal(transactionCount(), rows, 'هیچ ردیف نقدی');
+  assert.equal(cashBalance(), cash, 'صندوق و بانک دست‌نخورده');
+  const after = balances();
+  assert.equal(goods.nonCash[0].status, 'posted', JSON.stringify(db().prepare('SELECT route,confidence FROM financial_events WHERE id=?').get(goods.nonCash[0].eventId)));
+  assert.equal(employee.nonCash[0].status, 'posted', JSON.stringify(employee.nonCash));
+  assert.equal(after['جاری شریک — بدهی شرکت — آقای سهرابی'], before - 100_000_000);
+  assert.equal(after['حساب پرداختنی — آقای رضایی'], -2_000_000);
+  assert.equal(accounting.trialBalance(db()).balanced, true);
+}));
+
+test('روی دفتر: طلب ما به حساب شخصی شریک وصول شد — سند و دفتر کل', () => inWorkspace(() => {
+  const novin = database.saveContact({ name: 'شرکت نوین' });
+  const sale = database.saveObligation({ title: 'فروش قالب', amount: 50_000_000, direction: 'receivable', contactId: novin.id });
+  const cash = cashBalance();
+  database.settleObligation(sale.id, { paidBy: { name: 'آقای سهرابی' } });
+  assert.equal(database.listObligations({ status: 'all' }).find((item) => item.id === sale.id).status, 'paid');
+  assert.equal(balances()['جاری شریک — طلب شرکت — آقای سهرابی'], 50_000_000, 'شریک به شرکت بدهکار شد');
+  assert.equal(cashBalance(), cash);
+  // طلبِ دفتر کل بی‌سند (فروش تأییدشده از صف حسابدار).
+  const event = normalizeFinancialEvent({ kind: EVENT_KINDS.RECEIVABLE_OPENED, amount: 70_000_000, occurredAt: NOW.toISOString(),
+    counterparty: novin.name, counterpartyId: novin.id, category: 'فروش', source: 'text' });
+  recordFinancialEvent(db(), event, { sourceEventId: 'review-approved:novin-sale', decision: routeEvent(event, { components: { amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1, counterpartyCertainty: 1 } }) });
+  assert.equal(database.ledgerSideBalances(novin.id).uncoveredReceivable, 70_000_000);
+  database.settleLedgerBalance(novin.id, { direction: 'receivable', amount: 30_000_000, paidBy: { name: 'آقای سهرابی' }, clientId: 'fam-recv' });
+  assert.equal(balances()['جاری شریک — طلب شرکت — آقای سهرابی'], 80_000_000);
+  assert.equal(database.ledgerSideBalances(novin.id).uncoveredReceivable, 40_000_000);
+  assert.equal(cashBalance(), cash);
+}));
+
+test('روی دفتر: تسویهٔ نقدیِ ماندهٔ بی‌سند — ردیف نقدی و سند نقد در برابر طرف حساب', () => inWorkspace(() => {
+  const sepehr = database.saveContact({ name: 'شرکت سپهر' });
+  reviewedPurchase(sepehr, 90_000_000, 'sepehr-1');
+  const rows = transactionCount();
+  const cash = cashBalance();
+  const paid = database.settleLedgerBalance(sepehr.id, { direction: 'payable', amount: 40_000_000, clientId: 'fam-cash' });
+  assert.ok(paid.transactionId, 'پول واقعاً از صندوق رفت، پس ردیف نقدی دارد');
+  assert.equal(transactionCount(), rows + 1);
+  assert.equal(cashBalance(), cash - 40_000_000);
+  assert.equal(payableOf('شرکت سپهر'), 50_000_000);
+  // سند باز همان شخص از مسیر خودش بسته می‌شود؛ ماندهٔ بی‌سند آن را دوباره پیشنهاد نمی‌کند.
+  database.saveObligation({ title: 'خرید ورق', amount: 30_000_000, direction: 'payable', contactId: sepehr.id });
+  assert.equal(database.ledgerSideBalances(sepehr.id).uncoveredPayable, 50_000_000);
+  assert.throws(() => database.settleLedgerBalance(sepehr.id, { direction: 'payable', amount: 60_000_000 }), /بیشتر است/);
+  assert.equal(accounting.trialBalance(db()).balanced, true);
+}));
+
+test('فهم با AI: پول مشتری به حساب شخصی شریک — طلب بسته، جاری شریک بدهکار', async () => {
+  await inWorkspace(async () => {
+    const tara = database.saveContact({ name: 'شرکت تارا' });
+    const sale = database.saveObligation({ title: 'فروش لوله', amount: 60_000_000, direction: 'receivable', contactId: tara.id });
+    const text = 'شرکت تارا ۶۰ میلیون از بدهیش رو به حساب شخصی آقای سهرابی ریخت';
+    outputs.set(text, {
+      ...understood(),
+      event: { kind: 'paid-by-partner', description: 'وصول طلب به حساب شخصی شریک', status: 'done' },
+      amounts: [{ id: 'a1', value: 60_000_000, currency: null, role: 'received-now', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence: '۶۰ میلیون' }],
+      counterparties: [
+        { id: 'c1', name: 'آقای سهرابی', role: 'owner', evidence: 'حساب شخصی آقای سهرابی' },
+        { id: 'c2', name: 'شرکت تارا', role: 'customer', evidence: 'شرکت تارا' },
+      ],
+      movements: [{ id: 'm1', amountRef: 'a1', direction: 'none', from: { kind: 'counterparty', name: 'شرکت تارا' }, to: { kind: 'counterparty', name: 'آقای سهرابی' }, evidence: 'ریخت' }],
+    });
+    const cash = cashBalance();
+    const item = await database.createUnderstandingCase({ text, clientId: 'ai-recv-partner' }, options);
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan));
+    assert.deepEqual(item.plan.components[0].preview.lines.map((line) => line.role), ['partner-receivable', 'receivable']);
+    database.commitUnderstandingCase(item.id, { now: NOW });
+    assert.equal(database.listObligations({ status: 'all' }).find((row) => row.id === sale.id).status, 'paid');
+    assert.equal(cashBalance(), cash);
   });
 });

@@ -8,6 +8,7 @@ import { REVIEW_FIELD_LABELS, assessTransactionReview, reviewBatchSummary } from
 import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { pickBankAccount } from '../../../shared/banks.js';
 import { pickPettyCashAccount } from '../../../shared/pettyCashSpeech.js';
+import { detectPartnerFundedSpend } from '../../../shared/partnerPaidSpeech.js';
 import { counterpartyChoice, settlementPreview } from '../../../shared/counterpartySettlement.js';
 
 
@@ -125,6 +126,16 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         <div className="mb-3 grid grid-cols-3 gap-2" aria-label="وضعیت برداشت‌ها">{statusCards.map(([key, label, count, classes]) => <div key={key} className={`rounded-lg border px-2 py-2 text-center ${classes}`}><b className="numbers block text-base">{toPersianDigits(count)}</b><span className="mt-0.5 block text-[10px] font-bold">{label}</span></div>)}</div>
         {!previewReady && <div role="status" className="my-3 text-sm text-accent">{preflight?.error ? 'بررسی سرور انجام نشد؛ اتصال را بررسی و دوباره تلاش کن.' : 'در حال بررسی با اطلاعات دفتر…'}{preflight?.error && <button type="button" onClick={() => setPreviewAttempt(value => value + 1)} className="tap px-3">تلاش دوباره</button>}</div>}
         <blockquote className="rounded-lg border border-line bg-surface/65 px-3 py-3 text-[14px] leading-7 text-muted">«{result.transcript}»</blockquote>
+        {(() => {
+          // همان تشخیصی که سرور هنگام ثبت می‌کند: پول از جیب شریک یا کارمند رفته، نه از صندوق.
+          const funder = detectPartnerFundedSpend(result.transcript);
+          if (!funder) return null;
+          const who = funder.name || funder.role || (funder.kind === 'employee' ? 'کارمند' : 'شریک');
+          return <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">
+            این پرداخت از پول شخصی {who} است: از صندوق و بانک کم نمی‌شود و شرکت همین مبلغ را به او بدهکار می‌شود
+            ({funder.kind === 'employee' ? 'پرداختنی کارمند' : 'جاری شریک'}). حساب پرداخت در این کارت نادیده گرفته می‌شود.
+          </p>;
+        })()}
         {Number.isFinite(result.responseMs) && <p className="mt-2 text-center text-[12px] font-medium text-income">{result.engine === 'browser-live' ? 'تشخیص زنده' : 'تشخیص از صدای اصلی'}؛ نتیجه در {toPersianDigits((Math.max(1, result.responseMs) / 1000).toFixed(1))} ثانیه آماده شد</p>}
 
         {quickConfirm ? <div className="mt-5"><div className="divide-y divide-line rounded-[10px] border border-line bg-surface px-3">{items.map((entry) => <div key={`${entry.amount}-${entry.rawText}`} className="flex items-center justify-between gap-3 py-3"><div><b className={`numbers text-lg ${entry.type === 'income' ? 'text-income' : 'text-expense'}`}>{formatSignedAmount(entry)}</b>{/* حساب و تاریخ باید پیش از تأیید دیده شوند، وگرنه «تأیید سریع» یعنی

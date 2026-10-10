@@ -1,6 +1,6 @@
 import { runGuards, GUARD_VERDICTS } from '../../shared/guards.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
-import { detectPartnerPaidDebt } from '../../shared/partnerPaidSpeech.js';
+import { asFundedSpend, detectPartnerFundedSpend, detectPartnerPaidDebt } from '../../shared/partnerPaidSpeech.js';
 import { randomUUID } from 'node:crypto';
 import { accountForBank, resolveAccountId, transferBetweenAccounts } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
@@ -11,7 +11,7 @@ import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
 import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian, describesUnperformedCondition, UNPERFORMED_CONDITION_MESSAGE } from '../../shared/parser.js';
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
-import { saveContact } from './contacts.js';
+import { contactIdForName, saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
 import { approveFinancialEvent, recordFinancialEvent, recordShadowRun } from '../financialEventStore.js';
 import { openDocumentsFor } from './counterpartyCard.js';
@@ -404,6 +404,21 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
   // بدهی شرکت که شریک از پول شخصی‌اش داد هیچ ردیف نقدی ندارد. کارت تسویه
   // مسیر درست است؛ اگر گفته از آن رد نشده (کلاینت قدیمی، آفلاین)، به‌جای
   // پرداخت یا دریافتِ صندوق، با سند پیشنهادی به صف حسابدار می‌رود.
+  // هزینه یا خریدی که شریک یا کارمند از پول شخصی‌اش داد: همان تصمیم موتور، بی
+  // ردیف نقدی، با منبع پولِ درست (جاری شریک یا پرداختنیِ کارمند).
+  const funder = fromUtterance && transactions.length ? detectPartnerFundedSpend(transcript) : null;
+  const funded = (item) => item.fundedBy || funder;
+  if (transactions.length && transactions.every((item) => funded(item) && (item.type === 'expense' || !item.fundedBy))) {
+    for (const item of transactions) {
+      const recorded = recordFundedSpend(item, transcript, transactions.length === 1 ? transcript : '', funded(item));
+      nonCash.push({ eventId: recorded.id, status: recorded.status, route: recorded.route, fundedBy: funded(item).kind });
+      if (recorded.status !== 'posted') {
+        queuedForAccountant += 1;
+        queuedReasons.push(`از پول شخصی ${funded(item).name || funded(item).role || 'پرداخت‌کننده'} پرداخت شده؛ از صندوق کم نشد و سندش با حسابدار است.`);
+      }
+    }
+    return Object.assign(ids, { queuedForAccountant, queuedReasons, nonCash });
+  }
   if (fromUtterance && transactions.length && detectPartnerPaidDebt(transcript)) {
     queueUnmatchedSettlement(transcript, { clientId: transactions[0]?.clientId || '', source: transactions[0]?.source });
     return Object.assign(ids, { queuedForAccountant: 1, queuedReasons: ['بدهی شرکت از پول شخصی شریک پرداخت شده؛ از صندوق و بانک وجهی نرفته. با سند پیشنهادی به صف حسابدار رفت.'] });
@@ -550,8 +565,9 @@ export function insertTransactions(payload) {
     // internal restore link, allocation status or bypass the accounting journal.
     // `factSource` فقط از پروندهٔ فهم رویداد روی سرور می‌آید؛ از بیرون پذیرفته
     // نمی‌شود، وگرنه یک درخواست می‌توانست کنترل‌های الگویی قضاوت را خاموش کند.
+    // `fundedBy` هم فقط از سرور (تشخیص جمله یا پروندهٔ فهم) می‌آید، نه از بیرون.
     const transactions = (payload.transactions || []).map((item) => ({
-      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false, capitalFlow: '', factSource: undefined,
+      ...item, status: 'confirmed', restoredFrom: null, journalManaged: false, capitalFlow: '', factSource: undefined, fundedBy: undefined,
     }));
     const ids = insertTransactionRows({ ...payload, transactions, fromUtterance: true });
     db.exec('COMMIT');
@@ -892,4 +908,35 @@ export function transferWithFee({ fee = 0, ...values } = {}) {
     db.exec('COMMIT');
     return { ...result, fee: charge, feeTransactionId };
   } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+/**
+ * هزینه یا خریدی که شریک یا کارمند از پول شخصی‌اش داد.
+ *
+ * همان رویداد و همان تصمیمی که ردیف نقدی می‌گرفت — هزینه، پیش‌پرداخت، موجودی یا
+ * دارایی ثابت — فقط با منبع پولِ درست. ردیف `transactions` ساخته نمی‌شود چون
+ * پولی از صندوق یا بانک شرکت نرفته؛ سند به خودِ رویداد لنگر می‌خورد.
+ */
+function recordFundedSpend(item, transcript, sentence, funder) {
+  const amount = Math.round(Number(item.amount));
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');
+  const occurredAt = item.occurredAt || new Date().toISOString();
+  assertAccountingPeriodOpen(db, periodForDate(occurredAt, currentTimeZone()));
+  const payerName = funder.name || (funder.kind === 'employee' ? `کارمند (${funder.role || 'بی‌نام'})` : funder.role || 'شریک');
+  const payerId = funder.name ? contactIdForName(funder.name) : null;
+  const draft = transactionEventDecision({ ...asFundedSpend(item, funder), amount, occurredAt, accountId: 'cash', rawText: item.rawText || transcript },
+    { transcript, sentence, policy: automationPolicy(), counterpartyBalance: null });
+  if (!draft) throw invalidInput('این هزینه از پول شخصی قابل ثبت نشد؛ گفته را به صف حسابدار بفرست.');
+  const event = normalizeFinancialEvent({ ...draft.event, fundedBy: funder.kind, payerName, payerId });
+  let result = recordFinancialEvent(db, event, {
+    sourceEventId: `funded:${String(item.clientId || randomUUID()).slice(0, 100)}`,
+    decision: draft.decision, actor: currentWorkspace()?.userId || null, transcript, rawInput: item.rawText || transcript,
+    timeZone: currentTimeZone(), withinTransaction: true, accountingDecision: draft.accountingDecision || null,
+  });
+  if (item.userConfirmed === true && result.status === 'pending' && result.route === ROUTES.CONFIRM && !draft.decision.reasons.length
+    && (!draft.accountingDecision || draft.accountingDecision.decisionStatus === 'decided')) {
+    result = approveFinancialEvent(db, result.id, { actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), withinTransaction: true });
+  }
+  audit('create', 'funded-spend', result.id, { amount, fundedBy: funder.kind, payerName, status: result.status });
+  return result;
 }

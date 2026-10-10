@@ -801,15 +801,23 @@ export default function App() {
   /** تسویهٔ سندی که کاربر روی کارت انتخاب کرده؛ هیچ سندی خودکار بسته نمی‌شود. */
   const applySettlement = async (target, { occurredAt = null, paidBy = null } = {}) => {
     try {
+      if (target.kind === 'ledger-balance') {
+        await api.settleLedgerBalance(target.contactId, { direction: target.direction, amount: target.paymentAmount, clientId: crypto.randomUUID(),
+          ...(paidBy ? { paidBy } : {}), ...(occurredAt ? { occurredAt } : {}) });
+        setSettleDraft(null);
+        await load();
+        notify(paidBy ? `${target.label} از حساب شخصی ${paidBy.name} تسویه شد؛ صندوق و بانک دست نخورد.` : `${target.label} تسویه شد.`);
+        return;
+      }
       if (paidBy) {
-        if (target.kind === 'ledger-balance') {
-          await api.settlePayableBalanceByPartner(target.contactId, { amount: target.paymentAmount, paidBy, clientId: crypto.randomUUID(), ...(occurredAt ? { occurredAt } : {}) });
-        } else {
+        {
           await api.settleObligation(target.id, { amount: target.paymentAmount, paidBy, ...(occurredAt ? { occurredAt } : {}) });
         }
         setSettleDraft(null);
         await load();
-        notify(`${target.label} از پول شخصی ${paidBy.name} تسویه شد؛ از صندوق و بانک پولی کم نشد.`);
+        notify(target.direction === 'receivable'
+          ? `${target.label} به حساب شخصی ${paidBy.name} وصول شد؛ ${paidBy.name} همین مبلغ را به شرکت بدهکار شد.`
+          : `${target.label} از پول شخصی ${paidBy.name} تسویه شد؛ از صندوق و بانک پولی کم نشد.`);
         return;
       }
       if (target.kind === 'invoice') {
