@@ -5,6 +5,7 @@ import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
 import { CounterpartyCardPanel } from './CounterpartyCardPanel.jsx';
+import { JournalEntrySheet } from '../accounting/JournalEntrySheet.jsx';
 
 /**
  * کارت حساب برای همهٔ حساب‌ها — بانک، صندوق و تنخواه، اشخاص و شرکت‌ها.
@@ -35,9 +36,12 @@ function Stat({ label, value, tone = '' }) {
 }
 
 /** یک ردیف گردشِ بانک یا صندوق: ورود سبز، خروج قرمز، و مانده پس از آن. */
-function MoneyRow({ line }) {
+function MoneyRow({ line, open }) {
+  // هر ردیف به سند خودش ارجاع می‌دهد.
   return (
-    <article className="py-3">
+    <article role="button" tabIndex={0} onClick={() => open(line)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(line); } }}
+      title={line.entryId ? 'نمایش سند حسابداری' : 'این ردیف هنوز سند قطعی ندارد'}
+      className="-mx-2 cursor-pointer rounded-lg px-2 py-3 hover:bg-accent/5 focus:bg-accent/5 focus:outline-none">
       <div className="flex items-baseline justify-between gap-3">
         <time className="numbers shrink-0 text-[11px] text-muted">{shortDate(line.occurredAt)}</time>
         <div className="min-w-0 flex-1">
@@ -56,6 +60,7 @@ function MoneyRow({ line }) {
 }
 
 function MoneyCard({ account, onBack, notify }) {
+  const [openLine, setOpenLine] = useState(null);
   const [card, setCard] = useState(null);
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
@@ -115,10 +120,11 @@ function MoneyCard({ account, onBack, notify }) {
             <p className="text-[11px] text-muted">{toPersianDigits(card.lines.length)} ردیف از {toPersianDigits(card.totals.documents)} سند</p>
           </div>
           <div className="mt-2 divide-y divide-line border-y border-line">
-            {[...card.lines].reverse().map((line) => <MoneyRow key={line.id} line={line} />)}
+            {[...card.lines].reverse().map((line) => <MoneyRow key={line.id} line={line} open={setOpenLine} />)}
           </div>
         </>
       )}
+      {openLine && <JournalEntrySheet line={openLine} close={() => setOpenLine(null)} />}
     </section>
   );
 }

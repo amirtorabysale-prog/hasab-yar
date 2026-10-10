@@ -64,6 +64,7 @@ export function moneyAccountCard(accountId, { from = '', to = '' } = {}) {
       occurredAt: row.occurredAt,
       title: String(row.description || row.memo || '').trim(),
       counterpart: (counterSides.get(row.entryId) || []).join('، '),
+      entryId: row.entryId || null,
       sourceType: row.sourceType,
       sourceId: row.sourceId,
       entryKind: row.entryKind,

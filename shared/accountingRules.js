@@ -266,9 +266,13 @@ function planJournalCore(event, decision = null) {
     // داد — طلب از مشتری را می‌بندد و شریک به شرکت بدهکار می‌شود.
     case EVENT_KINDS.OBLIGATION_SETTLED_BY_PARTNER: {
       const partner = event.payerName || 'شریک';
+      // شرح سند هر دو طرف را می‌گوید؛ روی کارت شریک «خرید مواد» به‌تنهایی یعنی او چیزی خریده.
+      const about = reference ? ` (${reference})` : '';
       return event.settlementDirection === 'receivable'
-        ? plan(event.kind, { role: ROLES.PARTNER_RECEIVABLE, key: partner }, { role: ROLES.RECEIVABLE, key: counterparty }, amount, reference)
-        : plan(event.kind, { role: ROLES.PAYABLE, key: counterparty }, { role: ROLES.PARTNER_PAYABLE, key: partner }, amount, reference);
+        ? plan(event.kind, { role: ROLES.PARTNER_RECEIVABLE, key: partner }, { role: ROLES.RECEIVABLE, key: counterparty }, amount,
+          `وصول طلب از ${counterparty || 'طرف حساب'}${about} به حساب شخصی ${partner}`)
+        : plan(event.kind, { role: ROLES.PAYABLE, key: counterparty }, { role: ROLES.PARTNER_PAYABLE, key: partner }, amount,
+          `تسویهٔ بدهی به ${counterparty || 'طرف حساب'}${about} از پول شخصی ${partner}`);
     }
 
     // آوردهٔ مالک درآمد نیست: اگر به درآمد می‌خورد، سود دوره به اندازهٔ پولی که

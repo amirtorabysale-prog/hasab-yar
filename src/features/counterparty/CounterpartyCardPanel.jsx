@@ -1,4 +1,5 @@
 import { ArrowRight, Search, TriangleAlert, Wallet } from 'lucide-react';
+import { JournalEntrySheet } from '../accounting/JournalEntrySheet.jsx';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
@@ -66,10 +67,13 @@ function Stat({ label, value, tone = '' }) {
  * بدهکار شد، منفی یعنی بستانکار. بدون علامت، دو عددِ بی‌برچسب کنار هم
  * می‌نشستند و خواندنشان حدس می‌خواست.
  */
-function StatementRow({ line, showAccount }) {
+function StatementRow({ line, showAccount, open }) {
   const tone = balanceTone(line.balance);
+  // هر ردیف به سند خودش ارجاع می‌دهد.
   return (
-    <article className="py-3 sm:grid sm:grid-cols-[74px_1fr_118px_118px_150px] sm:items-baseline sm:gap-x-3">
+    <article role="button" tabIndex={0} onClick={() => open(line)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(line); } }}
+      title={line.entryId ? 'نمایش سند حسابداری' : 'این ردیف هنوز سند قطعی ندارد'}
+      className="-mx-2 cursor-pointer rounded-lg px-2 py-3 hover:bg-accent/5 focus:bg-accent/5 focus:outline-none sm:grid sm:grid-cols-[74px_1fr_118px_118px_150px] sm:items-baseline sm:gap-x-3">
       <div className="flex items-baseline justify-between gap-3 sm:contents">
         <time className="numbers shrink-0 text-[11px] text-muted">{shortDate(line.occurredAt)}</time>
         <div className="min-w-0 flex-1 sm:order-none">
@@ -182,6 +186,7 @@ function ContactList({ contacts, onOpen }) {
 
 function Card({ contact, onBack, notify }) {
   const [card, setCard] = useState(null);
+  const [openLine, setOpenLine] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -270,10 +275,11 @@ function Card({ contact, onBack, notify }) {
             <span className="text-right">بدهکار</span><span className="text-right">بستانکار</span><span className="text-right">مانده</span>
           </div>
           <div className="divide-y divide-line border-b border-line sm:border-t-0">
-            {card.lines.map((line) => <StatementRow key={line.id} line={line} showAccount={manyAccounts} />)}
+            {card.lines.map((line) => <StatementRow key={line.id} line={line} showAccount={manyAccounts} open={setOpenLine} />)}
           </div>
         </>
       )}
+      {openLine && <JournalEntrySheet line={openLine} close={() => setOpenLine(null)} />}
     </section>
   );
 }
