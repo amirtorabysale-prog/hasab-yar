@@ -460,7 +460,7 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
 
     {dnaSummary && <p className="mt-3 rounded border border-accent/30 bg-accent/5 p-3 text-xs leading-6"><b>DNA حسابداری همین شرکت</b> · {toPersianDigits(dnaSummary.accepted)} پیشنهاد تأییدشده · {toPersianDigits(dnaSummary.rejected)} اصلاح با دلیل · {toPersianDigits(dnaSummary.messages)} پیام حسابدار. تصمیم‌های شما در پیشنهادهای مرتبط بعدی استفاده می‌شوند.</p>}
 
-    <AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} />
+    <div id="automation-policy" className="scroll-mt-4"><AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} /></div>
 
     <UnidentifiedFundsPanel notify={notify} />
 

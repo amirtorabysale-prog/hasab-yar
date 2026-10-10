@@ -1,7 +1,9 @@
 import { needsUnquantifiedReview, UNQUANTIFIED_REVIEW_REASON } from '../shared/reviewIntake.js';
 import { Check, Menu, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { BottomNav, DesktopNav, Drawer, InsightRail, allowedScreens } from './app/navigation.jsx';
+import { BottomNav, DesktopNav, Drawer, allowedScreens } from './app/navigation.jsx';
+import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_REQUIRES, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
+import { profileDefinition } from '../shared/product.js';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
 import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet } from './features/capture/CaptureSheets.jsx';
 import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
@@ -113,7 +115,9 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [access, setAccess] = useState({ user: null, workspaces: [], workspace: null });
   const [screen, setScreen] = useState('today');
-  const [ledgerTab, setLedgerTab] = useState('transactions');
+  // بخش داخل صفحه: زبانهٔ دفتر مالی، حسابداری، کدینگ، همکاری یا تنظیمات.
+  const [section, setSection] = useState('');
+  const menuSearchRef = useRef(null);
   const [drawer, setDrawer] = useState(false);
   const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, dnaProfiles: null, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
   const [loading, setLoading] = useState(true);
@@ -130,7 +134,6 @@ export default function App() {
   const [duplicatePrompt, setDuplicatePrompt] = useState(null);
   const [learningSuggestion, setLearningSuggestion] = useState(null);
   const [selectedDecision, setSelectedDecision] = useState(null);
-  const [insightsOpen, setInsightsOpen] = useState(false);
   const [recordState, setRecordState] = useState('idle');
   const [voicePath, setVoicePath] = useState('ready');
   const [voiceSystemStatus, setVoiceSystemStatus] = useState(null);
@@ -817,10 +820,10 @@ export default function App() {
       }
       if (draft.intent === 'transfer') {
         await api.transferBetweenAccounts({ fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId,
-          amount: draft.amount, note: draft.transcript, occurredAt: draft.occurredAt || undefined });
+          amount: draft.amount, fee: draft.fee || 0, note: draft.transcript, occurredAt: draft.occurredAt || undefined });
         setIntentDraft(null);
         await load();
-        notify('انتقال بین حساب‌ها ثبت شد؛ درآمد یا هزینه‌ای ساخته نشد.');
+        notify(draft.fee > 0 ? 'انتقال ثبت شد و کارمزدش هزینهٔ کارمزد بانکی حساب مبدأ شد.' : 'انتقال بین حساب‌ها ثبت شد؛ درآمد یا هزینه‌ای ساخته نشد.');
         return;
       }
       if (draft.intent === 'invoice') {
@@ -1015,15 +1018,38 @@ export default function App() {
     catch (error) { notify(error.message); }
   };
 
+  // Ctrl+K: جست‌وجوی منو، مثل نوار جست‌وجوی نرم‌افزارهای حسابداری.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      if (window.matchMedia('(min-width: 1024px)').matches && menuSearchRef.current) menuSearchRef.current.focus();
+      else setDrawer(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const navigate = (target, section = '') => {
     // صفحه‌ای که این کاربر اجازه‌اش را ندارد حتی با ناوبری مستقیم باز نمی‌شود.
     // سرور هم همین مرز را دارد، پس این فقط تجربه را تمیز نگه می‌دارد — ولی
     // نبودش یعنی کاربر ساده می‌تواند به صفحه‌ای برود که همهٔ درخواست‌هایش ۴۰۳
     // می‌گیرند و فقط خطا می‌بیند.
     if (allowedScreens(access).length && !allowedScreens(access).some((item) => item.id === target)) return;
-    if (target === 'ledger' && ['transactions', 'obligations', 'invoices', 'reconciliation', 'recurring', 'inventory', 'tools'].includes(section)) setLedgerTab(section);
+    // یادگیری‌ها زبانهٔ تنظیمات شد؛ پیوندهای قدیمی همان‌جا می‌روند.
+    if (target === 'learning') { target = 'settings'; section = 'learning'; }
+    setSection(section);
     setScreen(target); setDrawer(false);
-    window.setTimeout(() => section && document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
+    // صفحه‌ها تنبل بارگذاری می‌شوند؛ بخش مقصد چند لحظه بعد ساخته می‌شود.
+    if (section) {
+      let tries = 0;
+      const seek = () => {
+        const target = document.getElementById(section);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        else if ((tries += 1) < 20) window.setTimeout(seek, 100);
+      };
+      window.setTimeout(seek, 40);
+    }
     // صفحهٔ تازه از بالا باز می‌شود، فوری. اسکرول نرم پیش از عوض‌شدن محتوا شروع
     // می‌شد و جابه‌جایی صفحه آن را نیمه‌راه قطع می‌کرد؛ کاربر از پایین تنظیمات
     // مستقیم به پایین «همکاری حسابدار» می‌رسید و بخش اصلی را نمی‌دید.
@@ -1091,10 +1117,10 @@ export default function App() {
   return (
     <div dir="rtl" className="min-h-screen bg-paper text-ink">
       {!online && <div className="sticky top-0 z-50 flex h-9 items-center justify-center gap-2 bg-ink px-4 text-[13px] text-white"><WifiOff size={15} /> آفلاین — ضبط ذخیره می‌شود و بعداً ارسال</div>}
-      <div className={`app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper ${insightsOpen ? 'insights-open' : ''}`}>
-        <DesktopNav screen={screen} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
+      <div className="app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper">
+        <DesktopNav screen={screen} section={section} searchRef={menuSearchRef} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div className="safe-bottom min-w-0 lg:col-start-2">
-          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden"><Menu size={21} /></button><div className="min-w-0"><p className="text-[11px] text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><p className="mt-1 text-sm font-extrabold">{allowedScreens(access).find((item) => item.id === screen)?.label || 'حساب‌یار'}</p></div></div><span className="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-muted">مبالغ به تومان</span></header>
+          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden"><Menu size={21} /></button><div className="min-w-0"><p className="text-[11px] text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><span className="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-muted">مبالغ به تومان</span></header>
           <Suspense fallback={<ScreenLoading />}>
           {screen === 'today' && (
             <TodayPage
@@ -1102,31 +1128,47 @@ export default function App() {
               parseManual={parseManual} recordState={recordState}
               stopRecording={stopRecording} cancelProcessing={cancelProcessing} beginRecording={() => { holdingRef.current = true; startRecording(); }}
               levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable}
-              voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} openDrawer={() => setDrawer(true)} readOnly={!canWrite}
+              voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} readOnly={!canWrite}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
               navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision} onSnoozeAlert={snoozeAlert}
               notify={notify} refreshToday={load} experience={access.experience}
             />
           )}
-          {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={ledgerTab} />}
+          {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={LEDGER_SECTIONS[section] || 'transactions'} cardSection={CARD_SECTIONS[section] || ''} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
           {screen === 'review' && <ReviewQueuePage notify={notify} access={access} navigate={navigate} refresh={load} />}
-          {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} />}
+          {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} initialSection={section} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} />}
-          {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} />}
-          {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} />}
+          {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} initialTab={section} />}
+          {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} initialTab={section} />}
           {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} />}
-          {screen === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
-          {screen === 'settings' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={['owner', 'manager'].includes(access.workspace?.role)} /><AccountsPanel accounts={data.accounts} canManage={['owner', 'manager'].includes(access.workspace?.role)} notify={notify} refresh={load} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} /></Suspense><BackupPanel access={access} notify={notify} refresh={load} /><DataPrivacyPanel access={access} notify={notify} /><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+          {screen === 'settings' && (() => {
+            // تنظیمات یک ستون بلند بود: پشتیبان و رمز ته صفحه گم می‌شدند. حالا هر
+            // بخش زبانهٔ خودش را دارد و از منو مستقیم باز می‌شود.
+            const screens = allowedScreens(access);
+            const tabs = SETTINGS_SECTIONS.filter(([id]) => !SETTINGS_REQUIRES[id] || screens.some((item) => item.id === SETTINGS_REQUIRES[id]));
+            const part = tabs.some(([id]) => id === section) ? section : 'general';
+            const canManageWorkspace = ['owner', 'manager'].includes(access.workspace?.role);
+            const refreshAccess = async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); };
+            return <>
+              <div className="mx-auto w-full max-w-[900px] px-4"><nav aria-label="بخش‌های تنظیمات" className="section-navigation">{tabs.map(([id, label]) => <button type="button" key={id} aria-current={part === id ? 'page' : undefined} onClick={() => navigate('settings', id)}>{label}</button>)}</nav></div>
+              {part === 'general' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={canManageWorkspace} /></>}
+              {part === 'accounts' && <AccountsPanel accounts={data.accounts} canManage={canManageWorkspace} notify={notify} refresh={load} />}
+              {part === 'team' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={refreshAccess} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={refreshAccess} /></Suspense></>}
+              {part === 'backup' && <BackupPanel access={access} notify={notify} refresh={load} />}
+              {part === 'privacy' && <DataPrivacyPanel access={access} notify={notify} />}
+              {part === 'security' && <><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
+              {part === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
+            </>;
+          })()}
           </Suspense>
         </div>
-        <InsightRail overview={data.overview} navigate={navigate} open={insightsOpen} setOpen={setInsightsOpen} />
         <CounterpartyMatchSheet />
       </div>
 
       <BottomNav screen={screen} navigate={navigate} access={access} />
-      {drawer && <Drawer screen={screen} profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
+      {drawer && <Drawer screen={screen} section={section} profileType={data.settings.profileType} close={() => setDrawer(false)} navigate={navigate} access={access} switchWorkspace={switchWorkspace} />}
       {parseResult && (
         <ConfirmationSheet
           result={parseResult} categories={data.categories} accounts={data.accounts} contacts={data.contacts || []}
@@ -1151,3 +1193,13 @@ export default function App() {
   );
 }
 
+
+/** مسیر بالای صفحه: «گروه › بخش»، تا کاربر همیشه بداند کجای منوست. */
+function Breadcrumb({ access, screen, section, profileType }) {
+  const groups = visibleMenu(allowedScreens(access), { ledgerTabs: profileDefinition(profileType).ledgerTabs });
+  const found = findMenuItem(groups, screen, section);
+  const fallback = allowedScreens(access).find((item) => item.id === screen)?.label || 'حساب‌یار';
+  return <p className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-sm font-extrabold">
+    {found ? <><span className="font-bold text-muted">{found.group.label}</span><span aria-hidden="true" className="text-muted">›</span><span>{found.item.label}</span></> : fallback}
+  </p>;
+}

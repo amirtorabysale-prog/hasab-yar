@@ -10,6 +10,11 @@
  * ثبت اجرا می‌شود، نه در تایپ زنده، ولی ارزان ماندنش خرجی ندارد.
  */
 import { readPettyCash } from './pettyCashSpeech.js';
+import { normalizePersian } from './normalize.js';
+
+// همهٔ الگوهای این فایل روی متن یکدست‌شده اجرا می‌شوند: «کهنهٔ» با همزه، ی و ک
+// عربی و نیم‌فاصله هر کدام یک الگو را بی‌صدا از کار می‌انداختند.
+const clean = (input) => normalizePersian(String(input || ''));
 
 const GAP = '[\\s\\u200c]*';
 
@@ -35,7 +40,7 @@ const OWNER_DRAWING = new RegExp([
 ].join('|'));
 
 export function receiptPurposeFromSpeech(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (!text) return null;
   if (UNKNOWN_ORIGIN.test(text)) return 'unknown';
   if (LOAN_IN.test(text) && !LOAN_OUT.test(text.replace(/قسط[^.؛،]*(?:شروع|بعد|آینده)/g, ''))) return 'loan';
@@ -44,9 +49,21 @@ export function receiptPurposeFromSpeech(input) {
   return null;
 }
 
+/**
+ * مساعده: پولی که به کارمند داده شده و از حقوق بعدی‌اش کم می‌شود.
+ *
+ * هزینهٔ حقوق نیست — حقوقِ آن ماه هنوز تحقق نیافته — و پرداخت حقوق هم نیست
+ * که کسور بیمه و مالیات بخواهد. طلب شرکت از همان کارمند است.
+ */
+const EMPLOYEE_ADVANCE = new RegExp([
+  `مساعده`, `علی${GAP}ا?لحساب${GAP}حقوق`, `پیش${GAP}(?:پرداخت${GAP})?حقوق`,
+  `(?:وام|قرض)${GAP}(?:به${GAP})?(?:کارمند|کارگر|پرسنل|همکار)`,
+].join('|'));
+
 export function paymentPurposeFromSpeech(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (!text) return null;
+  if (EMPLOYEE_ADVANCE.test(text)) return 'employee-advance';
   if (OWNER_DRAWING.test(text)) return 'owner-drawing';
   return null;
 }
@@ -59,7 +76,7 @@ export function paymentPurposeFromSpeech(input) {
  */
 const LENDER = new RegExp(`از${GAP}(بانک${GAP}[آ-ی]+)`);
 export function lenderFromSpeech(input) {
-  const match = LENDER.exec(String(input || ''));
+  const match = LENDER.exec(clean(input));
   return match ? match[1].replace(/[\s‌]+/g, ' ').trim() : null;
 }
 
@@ -88,7 +105,8 @@ export function lenderFromSpeech(input) {
  */
 const UNCERTAIN = new RegExp([
   `نمی${GAP}(?:دونم|دانم|دونیم|دانیم)`, `نمیدونم`, `بعدا${GAP}(?:بهت${GAP})?(?:میگم|می${GAP}گم|میگیم)`,
-  `مطمئن${GAP}نیستم`, `نگاه${GAP}کن${GAP}(?:تو|در)${GAP}سیستم`, `(?:چطور|چجوری|چه${GAP}جوری)${GAP}ثبت`,
+  // «احتمالاً مال خانم توکلیه، ولی مطمئن نیستیم»: حدسِ خودِ گوینده، مبنای فروش نیست.
+  `مطمئن${GAP}نیست(?:م|یم|ن)?`, `احتمالا`, `(?<![آ-ی])شاید(?![آ-ی])`, `نگاه${GAP}کن${GAP}(?:تو|در)${GAP}سیستم`, `(?:چطور|چجوری|چه${GAP}جوری)${GAP}ثبت`,
 ].join('|'));
 const SUSPICIOUS = /مشکوک|کسی\s*نفهمه|نفهمن|پنهان|زیر\s*میزی/;
 const PARTNER = /شریک|سهامدار|سهام\s*دار/;
@@ -98,16 +116,22 @@ const LOAN_SERVICE = /اصل\s*(?:وام|تسهیلات)|قسط/;
 const TAX_REFUND = /(?:مالیات|ارزش\s*افزوده)[^.؛]*(?:استرداد|اضافه\s*پرداخت|برگشت)/;
 const PAYROLL_LIST = /لیست\s*بیمه|تامین\s*اجتماعی|تأمین\s*اجتماعی/;
 const ASSET_DISPOSAL = /(?:قیمت|ارزش)\s*دفتری|(?:وانت|ماشین|خودرو|دستگاه|تجهیزات|اموال|سوله)\s*(?:\S+\s*){0,3}(?:شرکت|دفتر|کارگاه)\s*(?:\S+\s*){0,6}?(?:رو|را)?\s*فروختیم/;
+// «پرینتر قدیمی دفتر رو ۳ میلیون فروختیم» فروش کالا ثبت می‌شد. وسیلهٔ کارکرده
+// یا وسیلهٔ خودِ دفتر، کالای فروش نیست؛ «سه تا پرینتر به مشتری فروختیم» هست.
+const USED_ASSET_SALE = /(?<![آ-ی])(?:وانت|ماشین|خودرو|دستگاه|پرینتر|چاپگر|کامپیوتر|رایانه|لپ\s*تاپ|میز|صندلی|کولر|یخچال|مبلمان|لیفتراک|کامیون|موتورسیکلت)(?:\s*\S+){0,3}?\s*(?:قدیمی|کهنه|دست\s*دوم|مستعمل|کارکرده|اسقاطی|شرکت|دفتر|کارگاه|خودمون)(?![آ-ی])(?:\s*\S+){0,8}?\s*فروخت(?:یم|م)(?![آ-ی])/;
 const PORTION = /(?:تومنش|تومانش|میلیونش|هزارش)\s*(?:مال|بابت|برای)|بقیه(?:\s*اش|ش)?\s*(?:مال|بابت|برای)/;
 // برگشت از فروش یا خرید: کم‌کردن فروش قبلی است، نه دریافت یا پرداخت تازه.
-const RETURNED = /مرجوع|برگشت\s*از\s*(?:فروش|خرید)|برگردوند|برگرداند|پس\s*آورد/;
+// «از مواد اولیه‌ای که خریده بودیم پس دادیم» خرید تازهٔ موجودی ثبت می‌شد.
+// یک مفهوم، نه یک عبارت: «پس/عودت/مرجوع» + «داد/فرستاد/آورد/کرد» در هر صیغه.
+// «پس بدیم» (آینده) برگشت نیست.
+const RETURNED = /مرجوع|برگشت\s*از\s*(?:فروش|خرید)|برگردوند|برگرداند|(?<![آ-ی])(?:پس|عودت)\s*(?:داد|فرستاد|آورد|کرد|زد)(?:یم|م|ن|ند|ه)?(?![آ-ی])/;
 // ضایعات و اسقاط درآمد فروش نیست؛ «سایر درآمدها»ست و گاهی موجودی را هم کم می‌کند.
 const SCRAP = /ضایعات|اسقاط|آهن\s*قراضه/;
 // ضمانت‌نامه و وثیقه: مبلغ اسمی‌شان پول جابه‌جاشده نیست و ثبتشان انتظامی است.
 const GUARANTEE = /ضمانت[\s‌]*نامه|وثیقه|تضمین|سپرده[\s‌]*(?:نقدی|حسن)/;
 
 export function judgmentReason(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (!text) return null;
   // سدِ آخر: «تنخواه به رضایی دادیم» در مسیر ثبت روزانه هزینه یا پیش‌پرداخت
   // خوانده می‌شد. برگهٔ «پرداخت تنخواه» جلوتر جلویش را می‌گیرد؛ اگر از آن رد شد،
@@ -120,7 +144,7 @@ export function judgmentReason(input) {
   if (LOAN_SERVICE.test(text) && !LOAN_IN.test(text)) return 'قسط یا اصل وام، اصل و سود جدا دارد؛ حسابدار تفکیک می‌کند.';
   if (TAX_REFUND.test(text)) return 'استرداد مالیات طلب قبلی را می‌بندد؛ حسابدار با سند مبنا تطبیق می‌دهد.';
   if (PAYROLL_LIST.test(text)) return 'پرداخت لیست بیمه، بدهی حقوق را تسویه می‌کند و سهم کارفرما و کارکنان دارد.';
-  if (ASSET_DISPOSAL.test(text)) return 'فروش دارایی شرکت درآمد عادی نیست؛ سود یا زیان فروش و استهلاک انباشته باید حساب شود.';
+  if (ASSET_DISPOSAL.test(text) || USED_ASSET_SALE.test(text)) return 'فروش دارایی شرکت درآمد عادی نیست؛ سود یا زیان فروش و استهلاک انباشته باید حساب شود.';
   if (PORTION.test(text)) return 'یک مبلغ چند بخش با ماهیت متفاوت دارد؛ تفکیکش با حسابدار است.';
   if (RETURNED.test(text)) return 'برگشت کالا، فروش یا خرید قبلی را کم می‌کند؛ دریافت یا پرداخت تازه نیست.';
   if (SCRAP.test(text)) return 'فروش ضایعات یا اسقاط درآمد فروش نیست؛ حسابدار حساب و اثر موجودی‌اش را تعیین می‌کند.';
@@ -131,7 +155,7 @@ export function judgmentReason(input) {
 /** «که آخر قرارداد پس می‌گیریم» — صریحاً می‌گوید پول برمی‌گردد. */
 const RETURNS = new RegExp(`پس${GAP}می${GAP}(?:گیریم|گیرم|دن|دهند)|برمی${GAP}(?:گرده|گردد|گردونن)|مسترد|قابل${GAP}استرداد`);
 export function saysRefundable(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (/غیر\s*قابل\s*استرداد|قابل\s*استرداد\s*نیست/.test(text)) return false;
   return RETURNS.test(text) ? true : null;
 }

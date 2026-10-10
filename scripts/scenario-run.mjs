@@ -143,8 +143,8 @@ for (const scenario of scenarios) {
     } else if (detectCaptureTransfer(text, { accounts })) {
       const draft = detectCaptureTransfer(text, { accounts });
       row.path = 'برگهٔ انتقال بین حساب‌ها';
-      row.steps.push(`از ${accounts.find((a) => a.id === draft.fromAccountId)?.name} به ${accounts.find((a) => a.id === draft.toAccountId)?.name}، ${draft.amount}`);
-      await call('POST', '/api/accounts/transfer', { fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, amount: draft.amount, note: text });
+      row.steps.push(`از ${accounts.find((a) => a.id === draft.fromAccountId)?.name} به ${accounts.find((a) => a.id === draft.toAccountId)?.name}، ${draft.amount}${draft.fee ? ` + کارمزد ${draft.fee}` : ''}`);
+      await call('POST', '/api/accounts/transfer', { fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, amount: draft.amount, fee: draft.fee || 0, note: text });
     } else if (detectSettleIntent(text)) {
       row.path = 'کارت تسویه (سند باز پیدا نشد → صف حسابدار)';
       await call('POST', '/api/transactions/unmatched-settlement-review', { transcript: text, clientId: crypto.randomUUID() });

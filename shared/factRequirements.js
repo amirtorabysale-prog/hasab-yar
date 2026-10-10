@@ -196,6 +196,8 @@ export const TREATMENTS = Object.freeze({
   // پیش‌پرداخت به تأمین‌کننده: پول رفته، کالا یا خدمت هنوز نیامده. دارایی است
   // نه هزینه، و تا تحویل، هیچ سود و زیانی نمی‌سازد.
   SUPPLIER_ADVANCE: 'supplier-advance',
+  // مساعدهٔ کارمند: طلب شرکت از همان کارمند، تا از حقوق بعدی کم شود.
+  EMPLOYEE_ADVANCE: 'employee-advance',
   // درآمد تحقق‌یافته: تعهد انجام شده، پول نیامده.
   ACCRUED_REVENUE: 'accrued-revenue',
   // پیش‌دریافت بدون دورهٔ مشخص: بدهی، بدون برنامهٔ پخش.
@@ -222,6 +224,7 @@ export const TREATMENT_EXTRA_REQUIREMENTS = Object.freeze({
   // به تفکیک صاحبخانه دیده شود.
   [TREATMENTS.REFUNDABLE_DEPOSIT]: Object.freeze([FACT_KEYS.COUNTERPARTY]),
   [TREATMENTS.SUPPLIER_ADVANCE]: Object.freeze([FACT_KEYS.COUNTERPARTY]),
+  [TREATMENTS.EMPLOYEE_ADVANCE]: Object.freeze([FACT_KEYS.COUNTERPARTY]),
   // نام و تعداد اقلام شرط ثبت موجودی نیست: ارزش خرید در «موجودی کالا —
   // تفکیک‌نشده» می‌نشیند و تفکیکش به کارت کالا بعداً انجام می‌شود (تصمیم مهر ۱۴۰۵).
   [TREATMENTS.INVENTORY_PURCHASE]: Object.freeze([]),

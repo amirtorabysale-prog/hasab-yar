@@ -145,6 +145,9 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.SUPPLIER_ADVANCE:
       return counterpartyRoleAccount(database, 'prepaid-asset', event, key || 'تأمین‌کننده متفرقه', 'پیش‌پرداخت خرید', 'asset');
 
+    case ROLES.EMPLOYEE_ADVANCE:
+      return counterpartyRoleAccount(database, 'employee-advance', event, key || 'کارمند متفرقه', 'مساعده و طلب از کارکنان', 'asset');
+
     case ROLES.INVENTORY_UNSPLIT:
       return linkedAccount(database, 'inventory-unsplit', 'unsplit', 'موجودی کالا — تفکیک‌نشده', 'asset');
 
@@ -191,7 +194,7 @@ export function resolveEventRole(database, role, key, event = {}) {
 const COUNTERPARTY_ROLES = new Set([
   ROLES.PARTNER_PAYABLE,ROLES.PARTNER_RECEIVABLE,
   ROLES.RECEIVABLE, ROLES.PAYABLE, ROLES.CHEQUE_RECEIVABLE, ROLES.CHEQUE_PAYABLE, ROLES.CUSTOMER_ADVANCE, ROLES.DEFERRED_REVENUE, ROLES.REFUNDABLE_DEPOSIT, ROLES.LOAN_PAYABLE,
-  ROLES.SUPPLIER_ADVANCE,
+  ROLES.SUPPLIER_ADVANCE, ROLES.EMPLOYEE_ADVANCE,
 ]);
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {

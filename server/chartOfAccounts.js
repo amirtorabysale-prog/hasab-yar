@@ -44,7 +44,7 @@ export const CHART_ROLES = Object.freeze([
   // حساب‌هایی که مسیر بررسی حسابدار می‌سازد. بدون نقش در کدینگ، سندشان متوازن
   // بود ولی در خروجی پارسیان «بدون نگاشت» می‌ماند: پیش‌پرداخت، پیش‌دریافت،
   // درآمد انتقالی، وجوه تعیین‌تکلیف‌نشده و استهلاک.
-  'prepaid-asset', 'customer-advance', 'deferred-revenue', 'unidentified-receipt',
+  'prepaid-asset', 'customer-advance', 'deferred-revenue', 'unidentified-receipt', 'employee-advance',
   'accumulated-depreciation', 'depreciation-expense',
   // تنخواه پولِ شرکت است که دست یک نفر است؛ نه صندوق اصلی است و نه بانک.
   'petty-cash',
@@ -412,6 +412,7 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['1201', 'حساب‌های دریافتنی تجاری', 'subsidiary', '12', 'asset', 'receivable'],
   ['1204', 'جاری شرکا — طلب شرکت', 'subsidiary', '12', 'asset', 'partner-receivable'],
   ['1203', 'اسناد دریافتنی (چک)', 'subsidiary', '12', 'asset', 'note-receivable'],
+  ['1205', 'مساعده و طلب از کارکنان', 'subsidiary', '12', 'asset', 'employee-advance'],
   ['1202', 'اسناد دریافتنی', 'subsidiary', '12', 'asset', ''],
   ['13', 'موجودی کالا', 'general', '1', 'asset', ''],
   ['1301', 'موجودی کالا و مواد', 'subsidiary', '13', 'asset', 'inventory'],
@@ -647,6 +648,8 @@ const ROLE_BY_SOURCE_KIND = {
   'fixed-asset': ['fixed-asset'],
   'accumulated-depreciation': ['accumulated-depreciation'],
   'prepaid-asset': ['prepaid-asset'],
+  // دفتری که کدینگش پیش از این معین نصب شده، مساعده را زیر دریافتنی‌ها می‌بیند.
+  'employee-advance': ['employee-advance', 'receivable'],
   'customer-advance': ['customer-advance'],
   'deferred-revenue': ['deferred-revenue'],
   'unidentified-receipt': ['unidentified-receipt'],

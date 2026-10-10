@@ -59,6 +59,8 @@ export const ROLES = Object.freeze({
   // موجودی کالایی که نام و تعدادش هنوز گفته نشده. ارزشش درست می‌نشیند و
   // تفکیکش به کارت کالا بعداً انجام می‌شود؛ بهتر از اینکه کل خرید منتظر بماند.
   INVENTORY_UNSPLIT: 'inventory-unsplit',
+  // مساعده و طلب از کارکنان، به تفکیک هر کارمند.
+  EMPLOYEE_ADVANCE: 'employee-advance',
 });
 
 function ruleError(message, code = 'RULE_UNSUPPORTED') {
@@ -151,6 +153,9 @@ const TREATMENT_PLANS = Object.freeze({
     { role: ROLES.CASH, key: event.accountId }, amount, 'برداشت شخصی مالک'),
 
   // پول رفته و کالا یا خدمت هنوز نرسیده: دارایی است، نه هزینه و نه موجودی.
+  'employee-advance': (event, amount) => plan(event.kind,
+    { role: ROLES.EMPLOYEE_ADVANCE, key: event.counterparty },
+    { role: ROLES.CASH, key: event.accountId }, amount, event.counterparty),
   'supplier-advance': (event, amount) => plan(event.kind,
     { role: ROLES.SUPPLIER_ADVANCE, key: event.counterparty },
     { role: ROLES.CASH, key: event.accountId }, amount, event.counterparty),

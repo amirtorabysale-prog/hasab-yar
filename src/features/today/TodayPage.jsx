@@ -1,4 +1,4 @@
-import { Check, CircleAlert, Menu, Mic, ReceiptText, X } from 'lucide-react';
+import { Check, CircleAlert, Mic, ReceiptText, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from '../../lib/todayExperience.js';
@@ -7,7 +7,7 @@ import { describeVoiceAvailability, pointerReleaseAction, voicePathLabel } from 
 import { liveSpeechSupported } from '../../lib/liveSpeech.js';
 import { profileDefinition } from '../../../shared/product.js';
 
-export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, openDrawer, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple' }) {
+export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple' }) {
   const profileType = data.settings.profileType || 'business';
   const examples = todayExamples(profileType);
   const composerState = todayComposerState({ recordState, manualText, reviewing, savedRecently });
@@ -35,7 +35,6 @@ export function TodayPage({ data, loading, manualText, setManualText, parseManua
     <main className="mx-auto w-full max-w-[920px]">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line/80 bg-paper/95 px-4 py-3 backdrop-blur-sm">
         <div><div className="flex items-center gap-2"><h1 className="text-xl font-extrabold">امروز</h1>{latestClosing && <span className="rounded-full bg-income/10 px-2 py-1 text-[10px] font-extrabold text-income">روز بسته شد</span>}</div><p className="mt-0.5 text-[13px] text-muted">{persianDate()}</p></div>
-        <button className="tap grid place-items-center rounded-lg border border-line bg-surface" onClick={openDrawer} aria-label="بازکردن منو"><Menu size={23} /></button>
       </header>
 
       <div className="space-y-5 px-4 py-4 sm:py-5">

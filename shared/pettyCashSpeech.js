@@ -19,6 +19,7 @@
  * میلی‌ثانیه‌ای دارد.
  */
 import { NUMBER_WORDS } from './counterpartySpeech.js';
+import { normalizePersian } from './normalize.js';
 
 const GAP = '[\\s\\u200c]*';
 const TITLES = 'آقای|اقای|خانم|مهندس|دکتر|حاج|حاجی';
@@ -52,7 +53,7 @@ const clean = (word) => String(word || '').replace(/[،,.؛:!؟?]+$/, '').trim()
  * آقای کریمی بابت تعمیر دادیم» کریمی تعمیرکار است.
  */
 export function pettyCashHolder(input, { spend = false } = {}) {
-  const text = String(input || '').replace(/‌/g, ' ');
+  const text = normalizePersian(String(input || '')).replace(/‌/g, ' ');
   const patterns = [
     new RegExp(`تنخواه(?:\\s*گردان)?\\s+${spend ? '' : '(?:به\\s+)?'}(?:${TITLES})?\\s*([آ-ی]{2,})`),
     ...(spend ? [] : [
@@ -73,7 +74,7 @@ export function pettyCashHolder(input, { spend = false } = {}) {
 
 /** «تنخواه» در جمله چه نقشی دارد؟ `null` یعنی اصلاً از تنخواه حرفی نیست. */
 export function readPettyCash(input) {
-  const text = String(input || '');
+  const text = normalizePersian(String(input || ''));
   if (!text.includes('تنخواه')) return null;
   if (SPEND.test(text)) return { action: 'spend', holder: pettyCashHolder(text, { spend: true }) };
   if (FUND_VERB.test(text)) return { action: 'fund', holder: pettyCashHolder(text) };

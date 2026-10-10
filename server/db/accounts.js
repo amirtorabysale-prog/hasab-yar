@@ -107,7 +107,7 @@ export function resolveAccountId(item = {}) {
  * مبدأ و مقصد هر دو اجباری‌اند و حدس زده نمی‌شوند: پول از حسابی که کسی
  * نگفته نباید کم شود.
  */
-export function transferBetweenAccounts({ fromAccountId, toAccountId, amount, occurredAt = '', note = '' } = {}) {
+export function transferBetweenAccounts({ fromAccountId, toAccountId, amount, occurredAt = '', note = '' } = {}, { withinTransaction = false } = {}) {
   const value = cleanAmount(amount);
   if (value <= 0) throw invalidInput('مبلغ انتقال را وارد کن.');
   const from = db.prepare('SELECT id,name FROM accounts WHERE id=? AND active=1').get(String(fromAccountId || ''));
@@ -119,13 +119,13 @@ export function transferBetweenAccounts({ fromAccountId, toAccountId, amount, oc
   const id = randomUUID();
   const memo = String(note || '').trim().slice(0, 200) || `انتقال از ${from.name} به ${to.name}`;
   const at = occurredAt || new Date().toISOString();
-  db.exec('BEGIN IMMEDIATE');
+  if (!withinTransaction) db.exec('BEGIN IMMEDIATE');
   try {
     postAccountTransferJournal(db, {
       transferId: id, fromAccountId: from.id, toAccountId: to.id, amount: value, occurredAt: at, memo,
     }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+    if (!withinTransaction) db.exec('COMMIT');
+  } catch (error) { if (!withinTransaction) db.exec('ROLLBACK'); throw error; }
   audit('transfer', 'account', id, { from: from.id, to: to.id, amount: value });
   return { id, from, to, amount: value, occurredAt: at, memo };
 }

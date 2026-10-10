@@ -1,14 +1,14 @@
 import { runGuards, GUARD_VERDICTS } from '../../shared/guards.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
 import { randomUUID } from 'node:crypto';
-import { accountForBank, resolveAccountId } from './accounts.js';
+import { accountForBank, resolveAccountId, transferBetweenAccounts } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
 import { settlementDirection } from '../../shared/counterpartySettlement.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal, transactionJournalIsPlain } from '../accounting.js';
 import { automationPolicy } from './settings.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
-import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian } from '../../shared/parser.js';
+import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian, describesUnperformedCondition, UNPERFORMED_CONDITION_MESSAGE } from '../../shared/parser.js';
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
 import { saveContact } from './contacts.js';
 import { matchCounterparty } from '../counterparties.js';
@@ -368,11 +368,15 @@ export function queueCompositeUtterance(transcript, { clientId = '', source = 't
 /** A failed match is an auditable case, never a guessed settlement. */
 export function queueUnmatchedSettlement(transcript, { clientId = '', source = 'text' } = {}) {
   const text=String(transcript || '').trim().slice(0,1000),draft=detectSettleIntent(text);
-  if(!draft || draft.bounced) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
+  if(!draft) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
   const amounts=extractAmounts(text).spans.map(s=>s.amount).filter(n=>Number.isSafeInteger(n) && n>0);
   const amount=Math.max(...amounts);
   if(!Number.isSafeInteger(amount) || amount>999_999_999_999) throw invalidInput('مبلغ مرجع معتبر لازم است.');
-  const reason='سند مبنای تسویه انتخاب نشده؛ حسابدار باید مانده و مرجع واقعی را بررسی کند. هیچ وجه یا سندی ثبت نشده است.';
+  // چک برگشتی هم تسویه نیست و هم نباید گم شود: چک از اسناد دریافتنی (یا
+  // پرداختنی) برمی‌گردد و طلب یا بدهی دوباره باز می‌شود؛ کدام چک، با حسابدار.
+  const reason=draft.bounced
+    ? 'چک برگشت خورده؛ چک از اسناد دریافتنی یا پرداختنی برمی‌گردد و طلب یا بدهی دوباره باز می‌شود. حسابدار چک مربوط را پیدا و ثبت می‌کند. هیچ سندی ثبت نشده است.'
+    : 'سند مبنای تسویه انتخاب نشده؛ حسابدار باید مانده و مرجع واقعی را بررسی کند. هیچ وجه یا سندی ثبت نشده است.';
   const event=normalizeFinancialEvent({kind:EVENT_KINDS.REVIEW_PLACEHOLDER,amount,amountReferenceOnly:true,
     occurredAt:draft.occurredAt || new Date().toISOString(),source:source==='voice'?'voice':'text',evidence:text,utterance:text,description:reason});
   return recordFinancialEvent(db,event,{sourceEventId:`unmatched-settlement:${String(clientId || randomUUID()).slice(0,100)}`,
@@ -526,6 +530,8 @@ export function recordCapitalEntry(values = {}) {
 
 export function insertTransactions(payload) {
   if (hasCompositeAmounts(payload.transcript)) throw invalidInput(COMPOSITE_AMOUNT_MESSAGE);
+  // کاری که هنوز انجام نشده و شرطی است، ردیف نقدی نمی‌سازد؛ حتی اگر کلاینت قدیمی ردیف فرستاده باشد.
+  if (describesUnperformedCondition(payload.transcript)) throw invalidInput(UNPERFORMED_CONDITION_MESSAGE);
   if (priorSettlementDirection(payload.transcript)) throw invalidInput('این دریافت یا پرداخت مربوط به طلب یا بدهی قبلی است. ابتدا سند باز را در بخش تسویه انتخاب کن؛ درآمد یا هزینهٔ تازه ثبت نشد.');
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -849,4 +855,30 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
       treatment: decision?.treatment || null, family: decision?.family || null,
     };
   });
+}
+
+/**
+ * انتقال بین دو حساب خودِ شرکت، همراه کارمزد بانکی‌اش.
+ *
+ * «۴۰ میلیون از ملت به تجارت پایا زدیم و ۲۵ هزار کارمزدش از ملت کم شد» یک
+ * انتقال است و یک هزینه. هر دو با هم ثبت می‌شوند یا هیچ‌کدام: انتقالِ بی‌کارمزد
+ * ماندهٔ بانک مبدأ را ۲۵ هزار بیشتر از صورت‌حساب نشان می‌داد.
+ */
+export function transferWithFee({ fee = 0, ...values } = {}) {
+  // کارمزد صفر یا خالی یعنی انتقال ساده؛ `cleanAmount(0)` خطا می‌دهد و هر
+  // انتقال بی‌کارمزدِ برگهٔ انتقال را رد می‌کرد.
+  if (fee === '' || fee === null || Number(fee) === 0) return transferBetweenAccounts(values);
+  const charge = cleanAmount(fee);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = transferBetweenAccounts(values, { withinTransaction: true });
+    if (charge >= result.amount) throw invalidInput('کارمزد نمی‌تواند از مبلغ انتقال بیشتر باشد.');
+    const [feeTransactionId] = insertTransactionRows({ transcript: result.memo, transactions: [{
+      amount: charge, type: 'expense', category: 'کارمزد بانکی', rawText: `کارمزد انتقال به ${result.to.name}`,
+      source: 'text', accountId: result.from.id, occurredAt: result.occurredAt, status: 'confirmed',
+      userConfirmed: true, needsReview: false, reviewReasons: [], restoredFrom: null, journalManaged: false, capitalFlow: '',
+    }] });
+    db.exec('COMMIT');
+    return { ...result, fee: charge, feeTransactionId };
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }

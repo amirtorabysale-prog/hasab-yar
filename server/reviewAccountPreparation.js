@@ -14,7 +14,7 @@ export const REVIEW_ACCOUNT_TYPES = Object.freeze({
   'refundable-deposit':'asset','loan-payable':'liability','owner-capital':'equity','customer-advance':'liability','deferred-revenue':'liability',
   'accumulated-depreciation':'asset','depreciation-expense':'expense','vat-input':'asset','vat-output':'liability',
   // نقش‌های موتور تصمیم (مهر ۱۴۰۵) که AI هم ممکن است پیشنهاد دهد.
-  'supplier-advance':'asset','inventory-unsplit':'asset','owner-drawing':'equity',
+  'supplier-advance':'asset','employee-advance':'asset','inventory-unsplit':'asset','owner-drawing':'equity',
 });
 // برداشت مالک کاهندهٔ حقوق صاحبان سهام است: نوعش سرمایه، ماهیتش بدهکار.
 export const reviewNormalSide = role => role==='accumulated-depreciation' ? 'credit' : role==='owner-drawing' ? 'debit' : ['asset','expense'].includes(REVIEW_ACCOUNT_TYPES[role]) ? 'debit' : 'credit';

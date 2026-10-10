@@ -56,7 +56,9 @@ const EXPECTED = {
   T068: { allow: [ACCOUNTANT] },
   // ---- تسویه
   T031: { allow: [ACCOUNTANT, ask('settlement-target')], amount: 50_000_000, direction: 'income' },
-  T032: { allow: [ask('settlement-target')] },
+  // تخفیف خوش‌حسابی بخشی از همان طلب است: کارت تسویه فقط ۷۰ را می‌بست و ۵ باز
+  // می‌ماند؛ حسابدار ۷۰ بانک + ۵ تخفیف را در برابر ۷۵ طلب می‌نشاند.
+  T032: { allow: [ask('settlement-target'), ACCOUNTANT] },
   T033: { allow: [ACCOUNTANT] },
   T035: { allow: [ACCOUNTANT, ask('amountScale')] },
   // ---- چک
@@ -133,6 +135,8 @@ for (const [id, expected] of Object.entries(EXPECTED)) {
  * نگاه کند و به این فهرست اضافه‌اش کند؛ نه اینکه بی‌صدا شروع به ثبت کند.
  */
 const APPROVED_POSTINGS = {
+  // مساعده طلب از کارمند است، نه هزینهٔ حقوق؛ همان سند مورد انتظار برگهٔ سناریو.
+  T063: 'Dr employee-advance 10000000 / Cr cash 10000000',
   T001: 'Dr expense-category 12000000 / Cr cash 12000000',
   T009: 'Dr prepaid-asset 15000000 / Cr cash 15000000',
   // کارمزد بانکی هزینهٔ همان دوره است و سؤالی لازم ندارد؛ «پنجاه برگه» شمارش

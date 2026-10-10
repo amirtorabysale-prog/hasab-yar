@@ -11,8 +11,12 @@ function currentPersianPeriod(date = new Date()) {
   return `${parts.year}-${parts.month}`;
 }
 
-export function AccountingPage({ access, notify }) {
-  const [section, setSection] = useState('journals');
+const ACCOUNTING_SECTIONS = ['journals', 'trial', 'entry', 'worklist', 'payroll', 'period'];
+
+export function AccountingPage({ access, notify, initialSection = '' }) {
+  const [section, setSection] = useState(ACCOUNTING_SECTIONS.includes(initialSection) ? initialSection : 'journals');
+  // انتخاب از منو در حالی که همین صفحه باز است، زبانه را عوض می‌کند.
+  useEffect(() => { if (ACCOUNTING_SECTIONS.includes(initialSection)) setSection(initialSection); }, [initialSection]);
   const [trial, setTrial] = useState({ rows: [], totals: {}, balanced: true });
   const [journal, setJournal] = useState({ items: [], total: 0 });
   const [accounts, setAccounts] = useState([]);

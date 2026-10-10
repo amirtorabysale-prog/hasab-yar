@@ -230,8 +230,10 @@ function AccountList({ items, empty, onOpen }) {
   );
 }
 
-export function AccountCardsPanel({ accounts = [], contacts = [], notify, refresh }) {
-  const [section, setSection] = useState('banks');
+export function AccountCardsPanel({ accounts = [], contacts = [], notify, refresh, initialSection = '' }) {
+  const [section, setSection] = useState(initialSection || 'banks');
+  // برگ منو («کارت بانک‌ها»، «کارت اشخاص» …) همان بخش را باز می‌کند.
+  useEffect(() => { if (initialSection) setSection(initialSection); }, [initialSection]);
   const [adding, setAdding] = useState(false);
   const [opened, setOpened] = useState(null);
   const banks = useMemo(() => accounts.filter((account) => account.kind === 'bank'), [accounts]);
