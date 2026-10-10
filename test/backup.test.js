@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('backup');
 const backupDirectory = join(dirname(databasePath), 'backups');
@@ -20,7 +21,7 @@ let encrypted;
 const passphrase = 'portable-secret-phrase-7429';
 
 test('creates a complete encrypted backup including receipt bytes', () => {
-  database.runInWorkspace('primary', { role: 'owner' }, () => {
+  database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner' }, () => {
     database.insertTransactions({ transcript: 'عبارت کاملاً محرمانه', transactions: [{ amount: 345_678, type: 'income', category: 'فروش', rawText: 'عبارت کاملاً محرمانه' }] });
     database.saveReceipt({ buffer: Buffer.from('private-receipt-bytes'), fileName: 'receipt.png', mimeType: 'image/png', note: 'رسید محرمانه', amount: 345_678, type: 'income', category: 'فروش' });
     database.saveTaxRate({ name: 'نرخ پشتیبان آزمون', rate: 10, treatment: 'taxable', active: true, isDefault: true });
@@ -42,20 +43,20 @@ test('creates a complete encrypted backup including receipt bytes', () => {
 
 test('rejects a wrong password and a structurally incomplete backup', () => {
   assert.throws(() => backup.openEncryptedBackup(encrypted, 'this-password-is-wrong-999'), (error) => error.code === 'BACKUP_DECRYPT_FAILED');
-  const valid = database.runInWorkspace('primary', { role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
+  const valid = database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
   delete valid.tables.accounts;
   assert.throws(() => backup.validateFinancialBackup(valid), /accounts/);
 });
 
 test('keeps backups from before the ledger upgrade restorable', () => {
-  const legacy = database.runInWorkspace('primary', { role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
+  const legacy = database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner' }, () => database.financialBackupSnapshot({ id: 'primary' }));
   for (const table of ['ledger_accounts', 'journal_entries', 'journal_lines', 'accounting_periods', 'tax_rates', 'financial_alert_feedback', 'provider_usage', 'collaboration_requests', 'pilot_checkins', 'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations']) delete legacy.tables[table];
   assert.doesNotThrow(() => backup.validateFinancialBackup(legacy));
   assert.deepEqual(legacy.tables.journal_entries, []);
 });
 
 test('restores atomically and writes a decrypt-tested checkpoint first', async () => {
-  await database.runInWorkspace('primary', { role: 'owner' }, async () => {
+  await database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner' }, async () => {
     database.insertTransactions({ transcript: 'بعد از پشتیبان', transactions: [{ amount: 999_000, type: 'expense', category: 'مواد و کالا', rawText: 'بعد از پشتیبان' }] });
     assert.equal(database.getToday().summary.expense, 999_000);
     const result = await backup.restorePortableBackup(encrypted, passphrase, { id: 'primary' });
@@ -70,7 +71,7 @@ test('restores atomically and writes a decrypt-tested checkpoint first', async (
 });
 
 test('writes and reports an automated encrypted snapshot', async () => {
-  await database.runInWorkspace('primary', { role: 'owner' }, async () => {
+  await database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner' }, async () => {
     const saved = await backup.writeServerBackup({ id: 'primary' }, { reason: 'daily' });
     assert.ok(saved.bytes > 100);
     const status = await backup.automaticBackupStatus('primary');

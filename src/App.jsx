@@ -11,7 +11,8 @@ import { EMPTY_SUMMARY } from './components/common.jsx';
 import { IntentSheet, SettleSheet } from './features/capture/IntentSheets.jsx';
 import { inUnderstandingScope } from '../shared/understandingScope.js';
 import { LoginPage, Onboarding } from './features/auth/AuthScreens.jsx';
-import { api, flushTransactionQueue, queueTransactions } from './lib/api.js';
+import { api, flushTransactionQueue, queueTransactions, setOverdraftApprover } from './lib/api.js';
+import { OverdraftApprovalSheet } from './features/capture/OverdraftApprovalSheet.jsx';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
 import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported, mergeSpeechSegments } from './lib/liveSpeech.js';
@@ -142,6 +143,12 @@ export default function App() {
   const [understandingDraft, setUnderstandingDraft] = useState(null);
   const [settleDraft, setSettleDraft] = useState(null);
   const [aiToggleBusy, setAiToggleBusy] = useState(false);
+  // برگهٔ تأیید حسابدار برای منفی شدن موجودی؛ هر درخواستی که سرور برگرداند منتظر جوابش می‌ماند.
+  const [overdraftPrompt, setOverdraftPrompt] = useState(null);
+  useEffect(() => {
+    setOverdraftApprover((info) => new Promise((resolve) => setOverdraftPrompt({ ...info, resolve })));
+    return () => setOverdraftApprover(null);
+  }, []);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
   const voiceSystemStatusRef = useRef(null);
@@ -1231,6 +1238,8 @@ export default function App() {
           onCreateBankAccount={createBankAccount} onCancel={discardParseResult} onConfirm={saveConfirmed}
         />
       )}
+      {overdraftPrompt && <OverdraftApprovalSheet prompt={overdraftPrompt} canApprove={['owner', 'manager', 'accountant'].includes(access.workspace?.role)}
+        close={(reason) => { overdraftPrompt.resolve(reason); setOverdraftPrompt(null); }} />}
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}
       {correctionDraft && <CorrectionSheet draft={correctionDraft} accounts={data.accounts} close={() => setCorrectionDraft(null)} confirm={applyCorrection} />}
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}

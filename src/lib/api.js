@@ -97,6 +97,17 @@ async function reachServer(path, init) {
   }
 }
 
+/**
+ * تأیید حسابدار برای منفی شدن موجودی صندوق یا بانک.
+ *
+ * سرور هر عملیاتی را که حسابی را منفی‌تر کند کامل برمی‌گرداند (`NEGATIVE_BALANCE`).
+ * این‌جا، برای همهٔ فرم‌ها یک‌جا، برگهٔ تأیید باز می‌شود؛ اگر حسابدار با دلیل تأیید
+ * کند، همان درخواست با دلیلش دوباره فرستاده می‌شود. بار اول هیچ چیزی ثبت نشده
+ * بود، پس فرستادن دوباره امن است.
+ */
+let overdraftApprover = null;
+export function setOverdraftApprover(approver) { overdraftApprover = approver; }
+
 async function request(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
@@ -128,6 +139,11 @@ async function request(path, options = {}) {
     window.dispatchEvent(new CustomEvent('hesabyar:auth-required'));
   }
   if (response.status === 403 && body.code === 'CSRF_INVALID') rememberCsrfToken('');
+  if (response.status === 409 && body.code === 'NEGATIVE_BALANCE' && overdraftApprover && !options.headers?.['X-Overdraft-Approval']) {
+    const reason = await overdraftApprover({ message: body.message, accounts: body.details?.accounts || [] });
+    if (reason) return request(path, { ...options, headers: { ...options.headers, 'X-Overdraft-Approval': encodeURIComponent(reason) } });
+    throw Object.assign(new Error('ثبت انجام نشد؛ موجودی منفی نشد.'), { status: 409, code: 'NEGATIVE_BALANCE_DECLINED', details: body.details });
+  }
   if (!response.ok) {
     const retryAfterHeader = Number(response.headers.get('retry-after'));
     throw Object.assign(new Error(body.message || 'خطا در ارتباط با سرور'), {

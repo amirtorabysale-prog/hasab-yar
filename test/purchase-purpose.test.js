@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 import { decide, DECISION_STATUS } from '../shared/accountingDecision.js';
 import { purchasePurposeFromSpeech } from '../shared/purchasePurpose.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * هدف خرید: هزینه، موجودی یا دارایی ثابت.
@@ -22,7 +23,7 @@ const { parseFinancialText } = await import('../shared/parser.js');
 database.ensureAdmin();
 const owner = database.authenticateUser('purpose-owner', 'purpose-strong-password-4471');
 const workspace = database.createWorkspace(owner.id, { name: 'دفتر هدف خرید', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 const facts = (values) => ({ moneyDirection: 'out', occurredAt: '2026-10-07T08:00:00.000Z', cashAccountId: 'cash', ...values });

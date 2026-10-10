@@ -36,6 +36,7 @@ export function saveRecurringRule(values = {}) {
 export function materializeRecurringRules(now = new Date()) {
   const due = db.prepare('SELECT * FROM recurring_rules WHERE active=1 AND next_due_at<=?').all(now.toISOString());
   let created = 0;
+  const held = [];
   for (const item of due) {
     let nextDue = item.next_due_at;
     db.exec('BEGIN IMMEDIATE');
@@ -52,8 +53,16 @@ export function materializeRecurringRules(now = new Date()) {
       }
       db.prepare('UPDATE recurring_rules SET next_due_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(nextDue, item.id);
       db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) {
+      db.exec('ROLLBACK');
+      // ثبت دوره‌ای که صندوق یا بانک را منفی می‌کند، خودکار نمی‌خورد و سررسیدش
+      // سر جایش می‌ماند تا وقتی موجودی برسد یا حسابدار آن را دستی تأیید کند. باز
+      // شدن برنامه و بقیهٔ قاعده‌ها نباید پشت آن بمانند.
+      if (error.code === 'NEGATIVE_BALANCE') { held.push({ ruleId: item.id, title: item.title, amount: item.amount }); continue; }
+      throw error;
+    }
   }
+  materializeRecurringRules.lastHeld = held;
   return created;
 }
 

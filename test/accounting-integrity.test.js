@@ -5,6 +5,7 @@ import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 const databasePath = tempDatabase('accounting');
 process.env.DATABASE_PATH = databasePath;
 const core = await import(`../server/db.js?accounting=${process.pid}`);
+core.approveOverdraftsForScript('آزمون: داده‌های ساختگی بدون موجودی اولیه');
 
 test('builds Tehran day boundaries from IANA timezone rules', () => {
   const bounds = core.dayBounds('2026-08-22', 'Asia/Tehran');

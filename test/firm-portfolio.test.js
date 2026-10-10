@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('firm');
 process.env.DATABASE_PATH = databasePath;
@@ -24,7 +25,7 @@ test('the desk lists every file the user is a member of', () => {
 });
 
 test('an open explanation request pushes exactly that client to blocked', () => {
-  database.runInWorkspace(clientA.id, { role: 'accountant', userId: accountant.id }, () => {
+  database.runInWorkspace(clientA.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'accountant', userId: accountant.id }, () => {
     database.createCollaborationRequest({ entityType: 'general', question: 'سند این واریز چیست؟' });
   });
   const portfolio = database.firmPortfolio(accountant.id, { refresh: true });
@@ -37,7 +38,7 @@ test('an open explanation request pushes exactly that client to blocked', () => 
 });
 
 test('recorded activity is counted for the right client only', () => {
-  database.runInWorkspace(clientB.id, { role: 'owner', userId: accountant.id }, () => {
+  database.runInWorkspace(clientB.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: accountant.id }, () => {
     database.insertTransactions({
       transcript: 'فروش نقدی',
       transactions: [{ amount: 5_000_000, type: 'income', category: 'فروش', rawText: 'فروش نقدی' }],
@@ -69,7 +70,7 @@ test('another accountant never sees a file they were not added to', () => {
 test('the cache is reused until it is explicitly refreshed', () => {
   const first = database.firmPortfolio(accountant.id, { refresh: true });
   const beforeCount = first.clients.find((item) => item.workspace.id === clientB.id).activity.transactionCount;
-  database.runInWorkspace(clientB.id, { role: 'owner', userId: accountant.id }, () => {
+  database.runInWorkspace(clientB.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: accountant.id }, () => {
     database.insertTransactions({
       transcript: 'فروش دوم',
       transactions: [{ amount: 1_000_000, type: 'income', category: 'فروش', rawText: 'فروش دوم' }],
@@ -82,7 +83,7 @@ test('the cache is reused until it is explicitly refreshed', () => {
 });
 
 test('invalidating one client forces only that client to be recomputed', () => {
-  database.runInWorkspace(clientA.id, { role: 'owner', userId: accountant.id }, () => {
+  database.runInWorkspace(clientA.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: accountant.id }, () => {
     database.insertTransactions({
       transcript: 'هزینه پیک',
       transactions: [{ amount: 300_000, type: 'expense', category: 'حمل‌ونقل', rawText: 'هزینه پیک' }],

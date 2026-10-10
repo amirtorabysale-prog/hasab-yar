@@ -38,6 +38,7 @@ import { minimumRoleForRequest, roleAllows } from './access.js';
 import { EXPERIENCES, canChooseExperience, experienceForRole, pathNeedsProfessional, screensFor } from '../shared/experience.js';
 import { DEFAULT_AUTOMATION_POLICY } from '../shared/automationPolicy.js';
 import { understandingProvider } from './eventUnderstandingAi.js';
+import { readOverdraftApproval } from './balanceGuard.js';
 import {
   automaticBackupConfigured, automaticBackupStatus, backupSummary, createPortableBackup,
   openEncryptedBackup, restorePortableBackup, writeServerBackup,
@@ -165,7 +166,9 @@ app.use('/api', (request, response, next) => {
   if (!workspace) return response.status(403).json({ code: 'WORKSPACE_FORBIDDEN', message: 'به این دفتر دسترسی نداری.' });
   request.workspace = workspace;
   response.append('Set-Cookie', workspaceCookie(workspace.id));
-  return runInWorkspace(workspace.id, { ...workspace, userId: user.id }, next);
+  // تأیید حسابدار برای منفی شدن موجودی: فقط با نقش مجاز و دلیلِ نوشته‌شده.
+  const overdraftApproval = readOverdraftApproval(request.get('x-overdraft-approval'), { role: workspace.role, userId: user.id });
+  return runInWorkspace(workspace.id, { ...workspace, userId: user.id, overdraftApproval }, next);
 });
 app.use('/api', (request, response, next) => {
   const path = request.path;

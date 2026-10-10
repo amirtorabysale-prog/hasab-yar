@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('depreciation');
 process.env.DATABASE_PATH = databasePath;
@@ -11,7 +12,7 @@ const database = await import(`../server/db.js?depreciation=${process.pid}`);
 const accounting = await import(`../server/accounting.js?depreciation=${process.pid}`);
 database.ensureAdmin();
 const owner = database.authenticateUser(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD);
-const inPrimary = (callback) => database.runInWorkspace('primary', { role: 'owner', userId: owner.id }, callback);
+const inPrimary = (callback) => database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 
 const ASSET = 'دستگاه چاپ';
 const assetOf = (items) => items.find((item) => item.assetKey === ASSET);

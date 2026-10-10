@@ -13,6 +13,7 @@ import { ensureReconciliationSchema } from '../reconciliation.js';
 import { ensureTaxAssistantSchema } from '../taxAssistant.js';
 import { ensureTaxKnowledgeSchema, migrateTaxKnowledgeSources } from '../taxKnowledge.js';
 import { ensureTaxSchema } from '../tax.js';
+import { balanceSnapshot, ensureOverdraftSchema, negativeViolations, overdraftError, recordOverdraftApproval } from '../balanceGuard.js';
 
 const databasePath = resolve(process.env.DATABASE_PATH || './data/hesab-yar.sqlite');
 
@@ -39,9 +40,49 @@ const workspaceConnections = new Map();
 
 // Financial functions keep using `db`, but each authenticated request receives an
 // isolated SQLite connection. Authentication and membership always use controlDb.
+//
+// `exec` از همین‌جا رد می‌شود تا قاعدهٔ «صندوق و بانک منفی نمی‌شوند مگر با تأیید
+// حسابدار» روی هر تراکنشی که با `db` باز و بسته می‌شود بنشیند (`balanceGuard.js`):
+// عکسِ مانده‌ها در BEGIN، سنجش پیش از COMMIT، و برگرداندن کل عملیات اگر حسابی
+// با همین عملیات منفی‌تر شده و تأییدی نیامده.
+const openTransactions = new WeakMap();
+function guardedExec(active, sql) {
+  const statement = String(sql || '').trim().toUpperCase();
+  if (/^BEGIN\b/.test(statement) && !openTransactions.has(active)) {
+    const result = active.exec(sql);
+    openTransactions.set(active, balanceSnapshot(active));
+    return result;
+  }
+  if (/^COMMIT\b/.test(statement) && openTransactions.has(active)) {
+    const before = openTransactions.get(active);
+    openTransactions.delete(active);
+    const violations = negativeViolations(active, before);
+    if (violations.length) {
+      const approval = workspaceContext.getStore()?.member?.overdraftApproval || null;
+      if (!approval) {
+        active.exec('ROLLBACK');
+        throw overdraftError(violations);
+      }
+      recordOverdraftApproval(active, violations, approval);
+    }
+    return active.exec(sql);
+  }
+  if (/^ROLLBACK\b/.test(statement)) {
+    openTransactions.delete(active);
+    // نگهبان خودش برگردانده باشد، ROLLBACK دومِ فراخوان نباید خطای «تراکنشی باز
+    // نیست» بسازد و خطای اصلی را بپوشاند.
+    try { return active.exec(sql); } catch (error) {
+      if (/no transaction is active/i.test(error.message)) return undefined;
+      throw error;
+    }
+  }
+  return active.exec(sql);
+}
+
 export const db = new Proxy(controlDb, {
   get(target, property) {
     const active = workspaceContext.getStore()?.database || target;
+    if (property === 'exec') return (sql) => guardedExec(active, sql);
     const value = active[property];
     return typeof value === 'function' ? value.bind(active) : value;
   },
@@ -594,6 +635,9 @@ ensureColumn('transactions', 'journal_deferred INTEGER NOT NULL DEFAULT 0');
 // شناسهٔ مشترک، این دو هیچ‌وقت به هم نمی‌رسند و هر ثبت بانکی در صندوق می‌نشیند.
 ensureColumn('accounts', 'bank_id TEXT');
 
+// اجازهٔ منفی شدن (اضافه‌برداشت) برای هر حساب، و ردِ تأییدهای حسابدار.
+ensureOverdraftSchema(controlDb);
+
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 
 ensureColumn('users', "display_name TEXT NOT NULL DEFAULT ''");
@@ -747,6 +791,7 @@ export function workspaceDatabase(workspaceId) {
   ensureTaxKnowledgeSchema(database);
   migrateTaxKnowledgeSources(database);
   ensureCounterpartyIdentitySchema(database);
+  ensureOverdraftSchema(database);
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   repairWorkspaceProfileType(workspaceId, database);
@@ -756,6 +801,20 @@ export function workspaceDatabase(workspaceId) {
 
 export function runInWorkspace(workspaceId, member, callback) {
   return workspaceContext.run({ workspaceId, member, database: workspaceDatabase(workspaceId) }, callback);
+}
+
+/**
+ * تأیید منفی شدن موجودی برای اسکریپت یا آزمونی که بیرون از درخواست HTTP روی
+ * دفتر اصلی کار می‌کند — همیشه با دلیلِ صریح، تا جایی که نگهبان را دور می‌زند
+ * در کد دیده شود.
+ */
+export function approveOverdraftsForScript(reason) {
+  const store = workspaceContext.getStore();
+  const overdraftApproval = { reason: String(reason || '').trim(), role: 'owner', userId: null };
+  if (overdraftApproval.reason.length < 3) throw invalidInput('دلیل تأیید منفی شدن موجودی لازم است.');
+  workspaceContext.enterWith(store
+    ? { ...store, member: { ...store.member, overdraftApproval } }
+    : { workspaceId: 'primary', member: { role: 'owner', overdraftApproval }, database: controlDb });
 }
 
 export function currentWorkspace() {

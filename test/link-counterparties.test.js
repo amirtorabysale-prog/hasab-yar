@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
 import { removeTempDatabase, tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * اجرای اصلاحیِ وصل‌کردن ثبت‌های قدیمی به طرف حساب.
@@ -29,7 +30,7 @@ const workspace = db.workspaceForUser(user.id);
 
 let knownId = '';
 let taggedId = '';
-db.runInWorkspace(workspace.id, { userId: user.id, role: 'owner' }, () => {
+db.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, userId: user.id, role: 'owner' }, () => {
   knownId = db.saveContact({ name: 'شرکت آراد گستر آسیا', kind: 'vendor' }).id;
   const other = db.saveContact({ name: 'شرکت دیگر', kind: 'vendor' });
   for (const [rawText, amount, type] of [
@@ -49,14 +50,14 @@ db.runInWorkspace(workspace.id, { userId: user.id, role: 'owner' }, () => {
 
 const linkedContactOf = (id) => {
   let value = null;
-  db.runInWorkspace(workspace.id, { userId: user.id, role: 'owner' }, () => {
+  db.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, userId: user.id, role: 'owner' }, () => {
     value = db.db.prepare('SELECT contact_id AS contactId FROM transactions WHERE id=?').get(id)?.contactId || null;
   });
   return value;
 };
 const unlinkedCount = () => {
   let value = 0;
-  db.runInWorkspace(workspace.id, { userId: user.id, role: 'owner' }, () => {
+  db.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, userId: user.id, role: 'owner' }, () => {
     value = db.db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE contact_id IS NULL").get().count;
   });
   return value;
@@ -76,7 +77,7 @@ test('بدون --apply هیچ‌چیز نوشته نمی‌شود', async () => 
 test('با --apply ثبتِ نام‌دار به طرف حساب موجود وصل می‌شود', async () => {
   await run('node', [script, '--apply'], { cwd: projectRoot, env: process.env });
   let linked = null;
-  db.runInWorkspace(workspace.id, { userId: user.id, role: 'owner' }, () => {
+  db.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, userId: user.id, role: 'owner' }, () => {
     linked = db.db.prepare("SELECT contact_id AS contactId FROM transactions WHERE raw_text LIKE '%پرداخت شد%'").get();
   });
   assert.equal(linked.contactId, knownId);
@@ -90,7 +91,7 @@ test('ثبتی که کاربر خودش وصل کرده دست نمی‌خورد
 
 test('جملهٔ بدون عنوان صریح وصل نمی‌شود', () => {
   let pik = null;
-  db.runInWorkspace(workspace.id, { userId: user.id, role: 'owner' }, () => {
+  db.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, userId: user.id, role: 'owner' }, () => {
     pik = db.db.prepare("SELECT contact_id AS contactId FROM transactions WHERE raw_text LIKE '%پیک%'").get();
   });
   assert.equal(pik.contactId, null, '«به پیک دادم» نباید طرف حساب بگیرد');

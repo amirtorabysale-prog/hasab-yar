@@ -6,6 +6,7 @@ import { readPettyCash, pickPettyCashAccount } from '../shared/pettyCashSpeech.j
 import { detectCaptureTransfer, detectPettyCashFunding } from '../shared/bankSpeech.js';
 import { detectTransferBanks } from '../shared/banks.js';
 import { judgmentReason } from '../shared/moneyPurpose.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * تنخواه‌گردان — مهر ۱۴۰۵.
@@ -91,7 +92,7 @@ const accounting = await import('../server/accounting.js');
 database.ensureAdmin();
 const owner = database.authenticateUser('petty-owner', 'petty-strong-password-7713');
 const workspace = database.createWorkspace(owner.id, { name: 'دفتر تنخواه', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 const balanceOf = (id) => database.listAccounts().find((account) => account.id === id).balance;

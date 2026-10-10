@@ -5,6 +5,7 @@ import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 const databasePath = tempDatabase('core');
 process.env.DATABASE_PATH = databasePath;
 const core = await import(`../server/db.js?core=${process.pid}`);
+core.approveOverdraftsForScript('آزمون: داده‌های ساختگی بدون موجودی اولیه');
 
 test('supports searchable transactions with safe update and soft delete', () => {
   const [id] = core.insertTransactions({ transcript: 'هفت میلیون فروش داشتم', transactions: [{ amount: 7_000_000, type: 'income', category: 'فروش', rawText: 'هفت میلیون فروش داشتم' }] });

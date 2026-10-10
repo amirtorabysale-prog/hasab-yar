@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * هر ردیف کارت حساب به سند حسابداری خودش ارجاع می‌دهد.
@@ -16,7 +17,7 @@ const accounting = await import('../server/accounting.js');
 database.ensureAdmin();
 const owner = database.authenticateUser('card-entry-owner', 'card-entry-strong-password-4471');
 const workspace = database.createWorkspace(owner.id, { name: 'دفتر ارجاع سند', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 const entry = (id) => accounting.listJournal(database.activeWorkspaceDatabase(), { entryId: id }).items[0];
 
 test('کارت اشخاص: ردیف دفتر کل و ردیف جاری شریک هر کدام سند خودشان را دارند', () => inWorkspace(() => {

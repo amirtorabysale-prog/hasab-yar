@@ -9,7 +9,7 @@ export function listAccounts() {
   // دیده می‌شود تا برگهٔ تأیید و صفحهٔ تنخواه آن را از صندوق و بانک جدا کنند.
   return db.prepare(`SELECT accounts.id,accounts.name,CASE WHEN petty.account_id IS NULL THEN accounts.kind ELSE 'petty' END AS kind,
     accounts.opening_balance AS openingBalance,accounts.active,petty.holder_name AS holderName,petty.ceiling AS pettyCeiling,
-    accounts.created_at AS createdAt,accounts.bank_id AS bankId,
+    accounts.created_at AS createdAt,accounts.bank_id AS bankId,COALESCE(accounts.allow_negative,0) AS allowNegative,
     accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' AND COALESCE(transactions.journal_deferred,0)=0 THEN
       CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0)
       + COALESCE((SELECT SUM(l.debit-l.credit) FROM journal_lines l
@@ -42,18 +42,21 @@ export function saveAccount(values = {}) {
     if (chosen && !bankId) throw invalidInput('بانک انتخاب‌شده در فهرست نیست.');
   }
   if (!Number.isSafeInteger(openingBalance)) throw invalidInput('ماندهٔ ابتدای دوره معتبر نیست.');
+  // اجازهٔ منفی شدن فقط با تصمیم صریح؛ نفرستادنش یعنی همان مقدار قبلی، نه «خاموش».
+  const previousAllow = db.prepare('SELECT COALESCE(allow_negative,0) AS allow FROM accounts WHERE id=?').get(id)?.allow || 0;
+  const allowNegative = values.allowNegative === undefined ? previousAllow : values.allowNegative === true ? 1 : 0;
   const current = db.prepare('SELECT created_at AS createdAt,opening_balance AS openingBalance FROM accounts WHERE id=?').get(id);
   if (current && Number(current.openingBalance) !== openingBalance) assertAccountingPeriodOpen(db, periodForDate(current.createdAt, currentTimeZone()));
   if (!current && openingBalance !== 0) assertAccountingPeriodOpen(db, periodForDate(new Date(), currentTimeZone()));
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active,bank_id) VALUES (?,?,?,?,?,?)
+    db.prepare(`INSERT INTO accounts (id,name,kind,opening_balance,active,bank_id,allow_negative) VALUES (?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,opening_balance=excluded.opening_balance,
-        active=excluded.active,bank_id=excluded.bank_id,updated_at=CURRENT_TIMESTAMP`)
-      .run(id, name, kind, openingBalance, values.active === false ? 0 : 1, bankId);
+        active=excluded.active,bank_id=excluded.bank_id,allow_negative=excluded.allow_negative,updated_at=CURRENT_TIMESTAMP`)
+      .run(id, name, kind, openingBalance, values.active === false ? 0 : 1, bankId, allowNegative);
     if (id === 'cash') insertSetting.run('openingBalance', String(openingBalance));
     if (!current || Number(current.openingBalance) !== openingBalance) syncOpeningBalanceJournal(db, id, { createdBy: currentWorkspace()?.userId });
-    audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance, bankId });
+    audit(values.id ? 'update' : 'create', 'account', id, { name, kind, openingBalance, bankId, allowNegative: Boolean(allowNegative) });
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return listAccounts().find((item) => item.id === id);

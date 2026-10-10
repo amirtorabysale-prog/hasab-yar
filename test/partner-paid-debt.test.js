@@ -9,6 +9,7 @@ import { ROLES, affectsProfit, planJournal } from '../shared/accountingRules.js'
 import { understandingReasons } from '../shared/understandingScope.js';
 import { validateUnderstanding } from '../shared/eventUnderstanding.js';
 import { parseFinancialText } from '../shared/parser.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * بدهی شرکت که مدیرعامل یا شریک از پول شخصی‌اش داد.
@@ -121,7 +122,7 @@ const accounting = await import('../server/accounting.js');
 database.ensureAdmin();
 const owner = database.authenticateUser('partner-paid-owner', 'partner-paid-strong-password-5521');
 const workspace = database.createWorkspace(owner.id, { name: 'شرکت سهرابی', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
 const db = () => database.activeWorkspaceDatabase();
 const balances = () => Object.fromEntries(db().prepare(`SELECT a.name,SUM(l.debit)-SUM(l.credit) AS balance FROM journal_lines l
   JOIN ledger_accounts a ON a.id=l.account_id GROUP BY a.id`).all().map((row) => [row.name, row.balance]));

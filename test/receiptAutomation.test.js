@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('receipts');
 process.env.DATABASE_PATH = databasePath;
@@ -12,7 +13,7 @@ const database = await import(`../server/db.js?receipts=${process.pid}`);
 database.ensureAdmin();
 
 function inPrimary(callback) {
-  return database.runInWorkspace('primary', { role: 'owner', userId: 'receipt-test-owner' }, callback);
+  return database.runInWorkspace('primary', { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: 'receipt-test-owner' }, callback);
 }
 
 test('keeps OCR suggestions in review and learns merchant rules only after an explicit save', () => inPrimary(() => {

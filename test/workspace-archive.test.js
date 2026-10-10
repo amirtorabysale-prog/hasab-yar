@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * بایگانی دفتر — نه حذف.
@@ -22,7 +23,7 @@ const owner = database.authenticateUser('archive-owner', 'archive-strong-passwor
 test('بایگانی دفتر را از فهرست برمی‌دارد، داده‌اش می‌ماند و برمی‌گردد', () => {
   const main = database.createWorkspace(owner.id, { name: 'اصلی آزمون', profileType: 'business' });
   const extra = database.createWorkspace(owner.id, { name: 'دفتر اضافه', profileType: 'business' });
-  database.runInWorkspace(extra.id, { role: 'owner', userId: owner.id }, () => {
+  database.runInWorkspace(extra.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, () => {
     database.insertTransactions({ transcript: 'قبض برق', transactions: [{ amount: 3_000_000, type: 'expense', category: 'قبوض و انرژی', rawText: 'قبض برق' }] });
   });
   database.archiveWorkspace(owner.id, extra.id);
@@ -32,7 +33,7 @@ test('بایگانی دفتر را از فهرست برمی‌دارد، داد�
 
   const restored = database.restoreArchivedWorkspace(owner.id, extra.id);
   assert.equal(restored.id, extra.id);
-  database.runInWorkspace(extra.id, { role: 'owner', userId: owner.id }, () => {
+  database.runInWorkspace(extra.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, () => {
     assert.equal(database.listTransactions({}).items.length, 1, 'داده پس از بازگرداندن همان است');
   });
   assert.ok(main.id);
@@ -43,11 +44,11 @@ test('نام دفتر عوض می‌شود؛ فقط مالک؛ آخرین دفت
   const target = workspaces.find((item) => item.name === 'دفتر اضافه');
   database.renameWorkspace(owner.id, target.id, 'ازمایشی');
   assert.equal(database.listUserWorkspaces(owner.id).find((item) => item.id === target.id).name, 'ازمایشی');
-  database.runInWorkspace(target.id, { role: 'owner', userId: owner.id }, () => {
+  database.runInWorkspace(target.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, () => {
     assert.equal(database.getSettings().businessName, 'ازمایشی');
   });
 
-  database.runInWorkspace(target.id, { role: 'owner', userId: owner.id }, () => {
+  database.runInWorkspace(target.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, () => {
     database.addWorkspaceMember(target.id, { username: 'archive-accountant', displayName: 'حسابدار', temporaryPassword: 'Temp-archive-pass-9921', role: 'accountant' });
   });
   const accountant = database.authenticateUser('archive-accountant', 'Temp-archive-pass-9921');
