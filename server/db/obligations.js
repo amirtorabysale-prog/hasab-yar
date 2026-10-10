@@ -61,7 +61,11 @@ export function saveObligation(values = {}) {
  * می‌شود که ماندهٔ صفر داشته باشد، نه وقتی یک بار دستش زده‌اند.
  */
 // `withinTransaction`: همان قاعدهٔ `recordInvoicePayment` — تراکنش تودرتو نه.
-export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested, withinTransaction = false } = {}) {
+//
+// `paidBy`: شریک یا مدیرعاملی که از پول شخصی خودش این تعهد را بست. آن‌وقت هیچ
+// ردیف نقدی ساخته نمی‌شود — پولی از صندوق یا بانک شرکت نرفته — و سند، بدهی
+// طلبکار را در برابر جاری همان شریک می‌بندد.
+export function settleObligation(id, { occurredAt, account = 'cash', accountId, amount: requested, withinTransaction = false, paidBy = null } = {}) {
   const item = db.prepare("SELECT * FROM obligations WHERE id=? AND status='open'").get(id);
   if (!item) return null;
   // تعهدهای قدیمی ممکن است قبلاً در دفتر یا در فاکتور دیگری شناسایی شده باشند.
@@ -80,9 +84,26 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
   if (amount > remaining) {
     throw invalidInput(`مبلغ تسویه از ماندهٔ این تعهد بیشتر است؛ مانده ${remaining.toLocaleString('en-US')} تومان است.`);
   }
+  const payerName = String(paidBy?.name || '').trim().slice(0, 120);
+  if (paidBy && !payerName) throw invalidInput('نام شریکی که از پول شخصی پرداخت کرده لازم است.');
   let transactionId;
   if (!withinTransaction) db.exec('BEGIN IMMEDIATE');
   try {
+    if (payerName) {
+      const payerId = paidBy.contactId || contactIdForName(payerName, paidBy.counterpartyResolution);
+      if (payerId && payerId === item.contact_id) throw invalidInput('پرداخت‌کننده همان طرف حساب این تعهد است؛ این تسویه از پول شریک نیست.');
+      const posted = postObligationSettledByPartner(id, item, { occurredAt, amount, payerName, payerId });
+      if (!posted || posted.status !== 'posted') {
+        throw invalidInput('سند تسویه از پول شریک قطعی نشد؛ هیچ تغییری در بدهی ثبت نشد. گفته را به صف حسابدار بفرست.');
+      }
+      const updated = db.prepare(`UPDATE obligations SET paid_amount=COALESCE(paid_amount,0)+?,
+        status=CASE WHEN COALESCE(paid_amount,0)+? >= amount THEN 'paid' ELSE 'open' END,updated_at=CURRENT_TIMESTAMP
+        WHERE id=? AND status='open' AND COALESCE(paid_amount,0)+? <= amount`).run(amount, amount, id, amount);
+      if (!updated.changes) throw invalidInput('این طلب یا بدهی قبلاً تسویه شده است.');
+      audit('settle-by-partner', 'obligation', id, { amount, payerName, eventId: posted.id, partial: amount < remaining });
+      if (!withinTransaction) db.exec('COMMIT');
+      return { item: listObligations({ status: 'all' }).find((row) => row.id === id), transaction: null, event: { id: posted.id, status: posted.status }, paidBy: { name: payerName, contactId: payerId } };
+    }
     // تعهدی که خودش سند خورده، درآمد یا هزینه‌اش همان موقع شناخته شده. اگر تسویه
     // دوباره به دستهٔ درآمد/هزینه بخورد، همان مبلغ دو بار در سود دوره می‌آید.
     // ردیف تراکنش می‌ماند — مانده و گزارش نقدی به آن نیاز دارند — ولی سندش را
@@ -197,5 +218,39 @@ function postObligationSettled(obligationId, item, { occurredAt, accountId, tran
     decision,
     actor: currentWorkspace()?.userId || null,
     rawInput: `تسویه ${item.title}`,
+  });
+}
+
+/**
+ * سند تسویهٔ تعهد از پول شخصی شریک: نه ردیف نقدی، نه درآمد یا هزینه.
+ *
+ * مثل `postObligationSettled` از مسیر رویداد و قاعدهٔ `accountingRules` می‌رود،
+ * ولی سندش به خودِ رویداد لنگر می‌خورد؛ تراکنشی نیست که مهاجرت دفتر بخواهد
+ * دوباره سندش بزند.
+ */
+function postObligationSettledByPartner(obligationId, item, { occurredAt, amount, payerName, payerId }) {
+  const contact = item.contact_id ? db.prepare('SELECT name FROM contacts WHERE id=?').get(item.contact_id) : null;
+  const event = normalizeFinancialEvent({
+    kind: EVENT_KINDS.OBLIGATION_SETTLED_BY_PARTNER,
+    amount,
+    occurredAt: occurredAt || new Date().toISOString(),
+    counterparty: contact?.name || item.title,
+    counterpartyId: item.contact_id || null,
+    reference: item.title,
+    settlementDirection: item.direction,
+    payerName,
+    payerId,
+    source: 'text',
+  });
+  const decision = routeEvent(event, {
+    components: { amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1, counterpartyCertainty: 1 },
+    policy: automationPolicy(),
+  });
+  return recordFinancialEvent(db, event, {
+    withinTransaction: true,
+    sourceEventId: `obligation-settled-by-partner:${obligationId}:${(item.paid_amount || 0) + amount}`,
+    decision,
+    actor: currentWorkspace()?.userId || null,
+    rawInput: `تسویه ${item.title} از پول شخصی ${payerName}`,
   });
 }

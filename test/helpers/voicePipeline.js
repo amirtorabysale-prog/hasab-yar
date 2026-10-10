@@ -1,6 +1,7 @@
 import { extractAmounts, hasCompositeAmounts, parseFinancialText } from '../../shared/parser.js';
 import { detectVoiceIntent, intentToFinancialEvent } from '../../shared/voiceIntent.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
+import { detectPartnerPaidDebt } from '../../shared/partnerPaidSpeech.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
 import { planJournal } from '../../shared/accountingRules.js';
 import { DECISION_STATUS } from '../../shared/accountingDecision.js';
@@ -35,6 +36,11 @@ export function runVoice(text, {
   if (hasCompositeAmounts(text)) {
     const amounts = extractAmounts(text).spans.map((span) => span.amount).filter((amount) => Number.isSafeInteger(amount) && amount > 0);
     return { path: 'composite-review', items: [{ outcome: 'accountant', amount: Math.max(...amounts), amountReferenceOnly: true, noCashRow: true }] };
+  }
+  // بدهی شرکت از پول شخصی شریک: کارت تسویه با «پرداخت‌کننده»؛ هیچ ردیف نقدی.
+  const partnerPaid = detectPartnerPaidDebt(text, { now });
+  if (partnerPaid) {
+    return { path: 'partner-settle', items: [{ outcome: 'ask', fact: 'settlement-target', amount: partnerPaid.amount, noCashRow: true, paidBy: partnerPaid.paidBy, contactName: partnerPaid.contactName }] };
   }
   const settle = detectSettleIntent(text, { now });
   if (settle) {

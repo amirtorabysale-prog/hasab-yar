@@ -15,6 +15,7 @@ import { readEventNature, readExplicitNonCash, readMixedSettlement } from './eve
 import { priorSettlementDirection } from './priorSettlement.js';
 import { conditionalWaiver } from './reviewSettlement.js';
 import { judgmentReason } from './moneyPurpose.js';
+import { mentionsPersonalMoney } from './partnerPaidSpeech.js';
 
 const NEGATION = /(?:هنوز\s*(?:\S+\s*){0,3}(?:ن[آ-ی]+(?:یم|م|ه|ند|ن))|(?:نکردیم|ندادیم|نگرفتیم|نشده|نیومده|نرسیده)(?![آ-ی])|برای\s*فروش\s*نیست)/;
 const CONDITION = /(?:^|\s)(?:اگر|اگه|در\s*صورت|به\s*شرط|مشروط)(?:\s|$)/;
@@ -37,6 +38,8 @@ export function understandingReasons(input) {
   if (readExplicitNonCash(text)) reasons.push('non-cash');
   if (priorSettlementDirection(text)) reasons.push('prior-settlement');
   if (judgmentReason(text)) reasons.push('judgment-signal');
+  // پولِ شخصیِ شریک یا مدیرعامل: پارسر هر جمله را پولِ صندوق شرکت می‌خواند.
+  if (mentionsPersonalMoney(text)) reasons.push('personal-money');
   return reasons;
 }
 

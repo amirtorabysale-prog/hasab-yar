@@ -31,6 +31,7 @@ const LINE_ROLES = {
   'inventory-unsplit': 'موجودی کالا', 'inventory-asset': 'موجودی کالا', 'prepaid-asset': 'پیش‌پرداخت', 'customer-advance': 'پیش‌دریافت',
   'loan-payable': 'وام پرداختنی', 'owner-capital': 'سرمایه', 'owner-drawing': 'برداشت مالک', 'fixed-asset': 'دارایی ثابت',
   'refundable-deposit': 'ودیعه', 'supplier-advance': 'پیش‌پرداخت خرید', 'employee-advance': 'مساعدهٔ کارمند', 'unidentified-receipt': 'وجوه تعیین‌تکلیف‌نشده',
+  'partner-payable': 'جاری شریک (بدهی شرکت به او)', 'partner-receivable': 'جاری شریک (طلب شرکت از او)',
 };
 const PROVENANCE = { computed: 'محاسبه از مبالغ گفته‌شده', 'explicit-scale-from-sentence': 'مقیاس از همین جمله', 'whole-balance': 'همهٔ ماندهٔ گفته‌شده', user: 'تعیین‌شده توسط تو' };
 

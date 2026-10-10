@@ -245,7 +245,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   if (PURPOSE_UNSAID.test(said)) toAccountant('بابتِ این پول گفته نشده؛ بی‌بابت سندی ساخته نمی‌شود.');
   if (PAYROLL_CUE.test(said)) toAccountant(ACCOUNTANT_KINDS.payroll);
   if (CAPITAL_CHANGE.test(said)) toAccountant('تغییرِ سرمایهٔ ثبت‌شده سند حقوقی دارد و مبلغش تفاوتِ دو عدد است؛ با حسابدار است.');
-  if (PARTNER_CUE.test(said) && !/افزایش\s*سرمایه/.test(said)) toAccountant('حساب جاری شریک یا سهامدار با حسابدار است.');
+  // بدهیِ شرکت که شریک از پول شخصی‌اش داد مسیر خودش را دارد (پایین)؛ بقیهٔ
+  // جابه‌جایی‌های جاری شریک همچنان با حسابدار است.
+  const partnerPaid = facts.event.kind === 'paid-by-partner';
+  if (PARTNER_CUE.test(said) && !partnerPaid && !/افزایش\s*سرمایه/.test(said)) toAccountant('حساب جاری شریک یا سهامدار با حسابدار است.');
   if (ADJUSTING_CUE.test(said)) toAccountant('ثبتِ تعدیلیِ پایان دوره (ذخیره یا سودِ تحقق‌یافته) قضاوت حسابدار است.');
   // «۱۲ میلیون، نه ببخشید ۱۵»: اصلاحِ همان گفته است، نه اصلاح یک ثبت قبلی.
   // مبلغِ پس‌گرفته‌شده کنار می‌رود و یادداشت می‌شود؛ اصلاح سند قبلی (نوع رویداد
@@ -290,7 +293,9 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   const movementOf = (id) => facts.movements.find((movement) => movement.amountRef === id) || null;
   const priorBalance = amounts.find((amount) => amount.role === 'prior-balance');
 
-  for (const amount of amounts) {
+  if (partnerPaid) planPartnerPaid({ facts, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant });
+
+  for (const amount of partnerPaid ? [] : amounts) {
     const label = amount.evidence || amount.role;
     if (retracted.has(amount.id)) { notes.push({ amountRef: amount.id, kind: 'retracted', text: `«${label}» در همان گفته اصلاح شد و کنار گذاشته شد.` }); continue; }
     if (amount.status === 'context') {
@@ -498,4 +503,78 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       : components.length ? 'ready' : 'no-entry';
   if (route === 'no-entry') reasons.push('در این گفته هیچ دریافت، پرداخت یا تعهدِ انجام‌شده‌ای نیست؛ سندی ساخته نمی‌شود.');
   return { route, components, notes, questions: openQuestions, reasons, facts };
+}
+
+const OUR_ACCOUNT_SIDES = new Set(['bank', 'cash', 'petty-cash']);
+
+/**
+ * بدهیِ کسب‌وکار که شریک یا مدیرعامل از پول شخصی‌اش داد.
+ *
+ * از حساب‌های شرکت پولی نرفته؛ بدهیِ باز طلبکار بسته می‌شود و شرکت به همان
+ * اندازه به شریک بدهکار می‌شود. همان قاعدهٔ کارت تسویه: فقط روی یک بدهیِ بازِ
+ * ثبت‌شده، بی‌حدس. بهای داراییِ شخصی‌ای که فروخته شد زمینه است و سندی ندارد.
+ */
+function planPartnerPaid({ facts, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant }) {
+  const parties = facts.counterparties.filter((item) => !detectBank(item.name) && item.role !== 'bank');
+  const payer = parties.find((item) => ['owner', 'partner'].includes(item.role)) || null;
+  const creditor = parties.find((item) => item !== payer && !['owner', 'partner', 'employee'].includes(item.role)) || null;
+  if (!payer) { toAccountant('پرداخت‌کننده از پول شخصی در جمله معلوم نیست؛ جاری کدام شریک؟ با حسابدار است.'); return; }
+  if (!creditor) { toAccountant('طلبکاری که بدهی‌اش بسته شد در جمله نیست؛ تسویه بدون طرف حساب ثبت نمی‌شود.'); return; }
+
+  const live = amounts.filter((item) => item.accepted && !retracted.has(item.id));
+  for (const item of live.filter((amount) => amount.status === 'context' && amount.role !== 'prior-balance')) {
+    notes.push({ amountRef: item.id, kind: 'context', text: `«${item.evidence || item.role}» پولِ شخصی است، نه رویداد شرکت؛ ثبت نمی‌شود.` });
+  }
+  const paid = live.filter((item) => item.status === 'done' && ['paid-now', 'total', 'part'].includes(item.role));
+  const prior = live.find((item) => item.role === 'prior-balance');
+  const values = [...new Set(paid.map((item) => item.value))];
+  if (values.length > 1) { toAccountant('چند مبلغ پرداخت در جمله است؛ کدام بدهی با کدام مبلغ بسته شد، با حسابدار است.'); return; }
+  const amount = paid[0] || prior || null;
+  if (!amount) { toAccountant('مبلغی که از پول شخصی پرداخت شد در جمله نیست.'); return; }
+
+  // جمله‌ای که هم از پول شخصی می‌گوید و هم از حساب شرکت، دو رویداد است.
+  const fromOurs = facts.movements.some((movement) => ['in', 'out'].includes(movement.direction)
+    && (OUR_ACCOUNT_SIDES.has(movement.from?.kind) || OUR_ACCOUNT_SIDES.has(movement.to?.kind)));
+  if (fromOurs) { toAccountant('جمله هم از پول شخصی شریک می‌گوید هم از حساب شرکت؛ سهم هر کدام با حسابدار است.'); return; }
+
+  const resolved = resolution.counterparties?.[creditor.id];
+  const picked = answers[`counterparties.${creditor.id}`]?.valueId;
+  const contactId = picked && picked !== 'new' ? picked : resolved?.status === 'exact' ? resolved.contactId : null;
+  if (!contactId) {
+    question({
+      id: `counterparties.${creditor.id}`, kind: 'information', picker: 'contact',
+      text: resolved?.status === 'similar' ? `«${creditor.name}» همان «${resolved.candidates?.[0]?.name}» است؟` : `«${creditor.name}» کدام طرف حساب است؟`,
+      options: (resolved?.candidates || []).map((item) => ({ value: item.id, label: item.name })),
+    });
+    return;
+  }
+  const open = (resolution.documents?.[contactId] || []).filter((document) => document.direction === 'payable' && document.remaining > 0);
+  const documents = open.filter((document) => document.kind === 'obligation');
+  if (!documents.length) {
+    toAccountant(open.length
+      ? `بدهیِ «${creditor.name}» فاکتور خرید است؛ تسویهٔ فاکتور از پول شخصی شریک با حسابدار است.`
+      : `بدهیِ باز «${creditor.name}» در دفتر پیدا نشد؛ بدون سند مبنا، سند از پول شخصی شریک با حسابدار است.`);
+    return;
+  }
+  const pickedDocument = answers[`settlements.${amount.id}`]?.valueId;
+  const target = pickedDocument ? documents.find((document) => document.id === pickedDocument) : documents.length === 1 ? documents[0] : null;
+  if (!target) {
+    question({
+      id: `settlements.${amount.id}`, kind: 'information', picker: 'document',
+      text: `این ${money(amount.value)} تومان کدام بدهیِ «${creditor.name}» را بست؟`,
+      options: documents.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} تومان` })),
+    });
+    return;
+  }
+  if (target.remaining < amount.value) {
+    toAccountant(`ماندهٔ «${target.reference}» (${money(target.remaining)} تومان) از مبلغ این پرداخت کمتر است.`);
+    return;
+  }
+  const payerResolved = resolution.counterparties?.[payer.id];
+  components.push({
+    id: amount.id, amountRef: amount.id, kind: 'partner-settlement', amount: amount.value, contactId, occurredAt: paymentDate,
+    target: { kind: target.kind, id: target.id, reference: target.reference, remaining: target.remaining }, direction: 'payable',
+    paidBy: { name: payer.name, contactId: payerResolved?.status === 'exact' ? payerResolved.contactId : null }, item: null,
+    label: `بستن ${money(amount.value)} تومان بدهی «${creditor.name}» (${target.reference}) از پول شخصی ${payer.name} — بدون برداشت از صندوق یا بانک`,
+  });
 }

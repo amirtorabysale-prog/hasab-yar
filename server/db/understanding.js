@@ -137,6 +137,12 @@ function planCase(understanding, answers, row, now = new Date()) {
           : [{ role: 'cash', debit: component.amount, credit: 0 }, { role: 'receivable', debit: 0, credit: component.amount }] };
       continue;
     }
+    // بدهی از پول شخصی شریک: هیچ سطر نقدی؛ طلبکار در برابر جاری شریک.
+    if (component.kind === 'partner-settlement') {
+      component.preview = { route: ROUTES.CONFIRM, eventKind: 'obligation-settled-by-partner', decisionStatus: 'decided', treatment: 'partner-settlement',
+        lines: [{ role: 'payable', debit: component.amount, credit: 0 }, { role: 'partner-payable', debit: 0, credit: component.amount }] };
+      continue;
+    }
     // انتقال بین حساب‌های خودِ شرکت: نه درآمد، نه هزینه؛ سندش همان سند کارت انتقال است.
     if (component.kind === 'transfer') {
       component.preview = { route: ROUTES.CONFIRM, eventKind: 'transfer', decisionStatus: 'decided', treatment: 'account-transfer',
@@ -242,12 +248,13 @@ export function getUnderstandingCase(id) {
       components: plan.components.map((component) => ({
         id: component.id, kind: component.kind, amount: component.amount, label: component.label,
         // جهت پول یا تعهد، یک‌دست برای همهٔ انواع جزء.
-        flow: component.kind === 'transfer' ? 'transfer' : component.kind === 'settlement' ? component.direction
+        flow: component.kind === 'transfer' ? 'transfer' : ['settlement', 'partner-settlement'].includes(component.kind) ? component.direction
           : component.kind === 'obligation' ? (component.item?.type === 'income' ? 'receivable' : 'payable')
             : component.item?.type === 'income' ? 'in' : 'out',
         accountId: component.item?.accountId || component.accountId || component.fromAccountId || null, toAccountId: component.toAccountId || null,
         contactId: component.item?.contactId || component.contactId || null, category: component.item?.category || null, target: component.target || null,
         occurredAt: component.item?.occurredAt || component.occurredAt || null, preview: component.preview || null,
+        paidBy: component.paidBy || null,
       })),
       accounts: plan.accounts,
       counterparties: plan.counterparties,
@@ -399,6 +406,12 @@ export function commitUnderstandingCase(id, { now } = {}) {
           amount: component.amount, occurredAt: component.occurredAt || new Date().toISOString(), memo: row.transcript.slice(0, 200),
         }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
         results.push({ component: component.id, kind: 'transfer', journalEntryId: transfer?.id || null });
+        continue;
+      }
+      if (component.kind === 'partner-settlement') {
+        const settled = settleObligation(component.target.id, { amount: component.amount, occurredAt: component.occurredAt || undefined, paidBy: component.paidBy, withinTransaction: true });
+        if (!settled) throw fail('بدهی مبنا دیگر باز نیست؛ هیچ سندی ثبت نشد.', 'UNDERSTANDING_TARGET_CLOSED');
+        results.push({ component: component.id, kind: 'partner-settlement', target: component.target, eventId: settled.event?.id || null, status: settled.event?.status || 'posted' });
         continue;
       }
       if (component.kind === 'settlement') {

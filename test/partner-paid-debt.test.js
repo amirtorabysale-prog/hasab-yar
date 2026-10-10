@@ -1,0 +1,257 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { tempDatabase } from './helpers/tempPath.js';
+import { runVoice } from './helpers/voicePipeline.js';
+import { detectPartnerPaidDebt, mentionsPersonalMoney } from '../shared/partnerPaidSpeech.js';
+import { matchSettleTargets } from '../shared/settleSpeech.js';
+import { EVENT_KINDS, eventMovesCash, normalizeFinancialEvent } from '../shared/financialEvent.js';
+import { ROLES, affectsProfit, planJournal } from '../shared/accountingRules.js';
+import { understandingReasons } from '../shared/understandingScope.js';
+import { validateUnderstanding } from '../shared/eventUnderstanding.js';
+
+/**
+ * بدهی شرکت که مدیرعامل یا شریک از پول شخصی‌اش داد.
+ *
+ * «آقای سهرابی مدیرعامل ماشین شخصی خودش رو فروخت و ۲۸۰ میلیون بدهی شرکت آریا رو
+ * پرداخت کرد.» پیش از این، پارسر جمله را «دریافت — سایر درآمدها» یا «پرداخت —
+ * سایر هزینه‌ها» می‌خواند و در هر دو حالت ماندهٔ صندوق ۲۸۰ میلیون جابه‌جا می‌شد،
+ * درحالی‌که از حساب شرکت ریالی نرفته است. سند درست: بدهکار پرداختنیِ آریا،
+ * بستانکار جاری شریکِ سهرابی؛ فروش ماشینِ شخصی هیچ‌جای دفتر نیست.
+ */
+
+const NOW = new Date('2026-10-10T09:00:00.000Z');
+
+const SAID = {
+  sold: 'آقای سهرابی مدیرعامل ماشین شخصی خودش رو فروخت و ۲۸۰ میلیون بدهی شرکت آریا رو پرداخت کرد',
+  personal: 'بدهی ۲۸۰ میلیونی شرکت آریا رو آقای سهرابی از پول شخصی خودش پرداخت کرد',
+  pocket: 'مدیرعامل از جیب خودش ۲۸۰ میلیون بدهی آریا رو صاف کرد',
+  suffix: 'آقای سهرابی ماشینشو فروخت و ۲۸۰ میلیون بدهی آریا رو داد',
+  house: 'مدیرعامل آقای سهرابی خونه‌اش رو فروخت و بدهی شرکت به آریا رو تسویه کرد',
+  firstPerson: 'از جیب خودم ۵۰ میلیون بدهی شرکت نوین رو دادم',
+  // عین گفتهٔ ثبت‌شده در برنامه (۱۸ مهر ۱۴۰۵): فعل «داشتیم» به نام طلبکار چسبیده بود.
+  spoken: 'بدهی 280 میلیونی به شرکت آریا داشتیم مدیر عامل اقای سهرابی ماشین شخصی خودشون رو فروختن و بدهی رو پرداخت کردند',
+};
+
+test('هر شکل گفتن به کارت تسویه از پول شریک می‌رسد، با طلبکار و پرداخت‌کننده', () => {
+  const read = (text) => {
+    const found = detectPartnerPaidDebt(text, { now: NOW });
+    return found && { creditor: found.contactName, amount: found.amount, payer: found.paidBy.name, role: found.paidBy.role, direction: found.direction };
+  };
+  assert.deepEqual(read(SAID.sold), { creditor: 'شرکت آریا', amount: 280_000_000, payer: 'آقای سهرابی', role: 'مدیرعامل', direction: 'payable' });
+  assert.deepEqual(read(SAID.personal), { creditor: 'شرکت آریا', amount: 280_000_000, payer: 'آقای سهرابی', role: '', direction: 'payable' });
+  assert.deepEqual(read(SAID.pocket), { creditor: 'آریا', amount: 280_000_000, payer: '', role: 'مدیرعامل', direction: 'payable' });
+  assert.deepEqual(read(SAID.suffix), { creditor: 'آریا', amount: 280_000_000, payer: 'آقای سهرابی', role: '', direction: 'payable' });
+  // مبلغ گفته نشده: کارت از ماندهٔ بدهیِ باز می‌گیرد.
+  assert.deepEqual(read(SAID.house), { creditor: 'آریا', amount: 0, payer: 'آقای سهرابی', role: 'مدیرعامل', direction: 'payable' });
+  assert.deepEqual(read(SAID.spoken), { creditor: 'شرکت آریا', amount: 280_000_000, payer: 'آقای سهرابی', role: 'مدیرعامل', direction: 'payable' });
+  const self = detectPartnerPaidDebt(SAID.firstPerson, { now: NOW });
+  assert.equal(self.contactName, 'شرکت نوین');
+  assert.equal(self.paidBy.firstPerson, true);
+});
+
+test('بدون پولِ شخصی یا با جهتِ وارونه، این مسیر نیست', () => {
+  for (const text of [
+    '۲۸۰ میلیون به شرکت آریا پرداخت شد',
+    'آقای سهرابی ۲۸۰ میلیون به آریا داد',
+    'آقای سهرابی ۵۰ میلیون از حساب شرکت برداشت شخصی کرد',
+    'مشتری ۲۰ میلیون به حساب شخصی مدیرعامل ریخت',
+    'آقای سهرابی ماشین شخصیش رو فروخت',
+    'ماشین شرکت رو فروختیم ۴۰۰ میلیون',
+    'مدیرعامل ۱۰۰ میلیون از پول شخصی خودش به حساب شرکت واریز کرد',
+  ]) assert.equal(detectPartnerPaidDebt(text, { now: NOW }), null, text);
+});
+
+test('مسیر گفته: هیچ ردیف نقدی، هیچ درآمد یا هزینه', () => {
+  for (const text of [SAID.sold, SAID.personal, SAID.pocket, SAID.suffix, SAID.spoken]) {
+    const result = runVoice(text, { today: NOW.toISOString() });
+    assert.equal(result.path, 'partner-settle', text);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].noCashRow, true);
+    assert.equal(result.items[0].outcome, 'ask');
+    assert.equal(result.items[0].amount, 280_000_000);
+  }
+});
+
+test('کارت تسویه فقط بدهیِ بازِ همان طلبکار را نشان می‌دهد', () => {
+  const intent = detectPartnerPaidDebt(SAID.sold, { now: NOW });
+  const obligations = [
+    { id: 'o1', title: 'خرید مواد', contactName: 'شرکت آریا', remaining: 280_000_000, direction: 'payable', status: 'open', journalStatus: 'posted' },
+    { id: 'o2', title: 'فروش', contactName: 'شرکت آریا', remaining: 300_000_000, direction: 'receivable', status: 'open', journalStatus: 'posted' },
+    { id: 'o3', title: 'اجاره', contactName: 'آقای کریمی', remaining: 400_000_000, direction: 'payable', status: 'open', journalStatus: 'posted' },
+  ];
+  assert.deepEqual(matchSettleTargets(intent, { obligations }).map((item) => [item.id, item.paymentAmount]), [['o1', 280_000_000]]);
+});
+
+test('قاعدهٔ سند: پرداختنیِ طلبکار در برابر جاری شریک؛ نقد و سود دست نمی‌خورند', () => {
+  const event = normalizeFinancialEvent({
+    kind: EVENT_KINDS.OBLIGATION_SETTLED_BY_PARTNER, amount: 280_000_000, occurredAt: NOW.toISOString(),
+    counterparty: 'شرکت آریا', reference: 'خرید مواد', settlementDirection: 'payable', payerName: 'آقای سهرابی',
+  });
+  assert.equal(event.accountId, null, 'حساب نقدی ندارد');
+  assert.equal(eventMovesCash(event.kind), false);
+  assert.deepEqual(planJournal(event).lines.map((line) => [line.role, line.key, line.debit, line.credit]), [
+    [ROLES.PAYABLE, 'شرکت آریا', 280_000_000, 0],
+    [ROLES.PARTNER_PAYABLE, 'آقای سهرابی', 0, 280_000_000],
+  ]);
+  assert.equal(affectsProfit(EVENT_KINDS.OBLIGATION_SETTLED_BY_PARTNER), false);
+  // وارونه: مشتری طلب ما را به شریک داد؛ شریک به شرکت بدهکار می‌شود.
+  const received = normalizeFinancialEvent({ ...event, settlementDirection: 'receivable' });
+  assert.deepEqual(planJournal(received).lines.map((line) => [line.role, line.debit > 0]), [[ROLES.PARTNER_RECEIVABLE, true], [ROLES.RECEIVABLE, false]]);
+});
+
+test('فهم با AI: جملهٔ پول شخصی در محدودهٔ مرکب است', () => {
+  for (const text of Object.values(SAID)) {
+    assert.equal(mentionsPersonalMoney(text), true, text);
+    assert.ok(understandingReasons(text).includes('personal-money'), text);
+  }
+  assert.equal(understandingReasons('۲۸۰ میلیون به شرکت آریا پرداخت شد').includes('personal-money'), false);
+});
+
+// ---------------------------------------------------------------------------
+// روی دفتر
+// ---------------------------------------------------------------------------
+
+process.env.DATABASE_PATH = tempDatabase('partner-paid');
+process.env.ADMIN_USERNAME = 'partner-paid-owner';
+process.env.ADMIN_PASSWORD = 'partner-paid-strong-password-5521';
+const database = await import('../server/db.js');
+const accounting = await import('../server/accounting.js');
+database.ensureAdmin();
+const owner = database.authenticateUser('partner-paid-owner', 'partner-paid-strong-password-5521');
+const workspace = database.createWorkspace(owner.id, { name: 'شرکت سهرابی', profileType: 'business' });
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const db = () => database.activeWorkspaceDatabase();
+const balances = () => Object.fromEntries(db().prepare(`SELECT a.name,SUM(l.debit)-SUM(l.credit) AS balance FROM journal_lines l
+  JOIN ledger_accounts a ON a.id=l.account_id GROUP BY a.id`).all().map((row) => [row.name, row.balance]));
+const cashBalance = () => database.listAccounts().reduce((sum, account) => sum + Number(account.balance || 0), 0);
+const transactionCount = () => db().prepare('SELECT COUNT(*) AS n FROM transactions').get().n;
+
+let aria;
+test('آماده‌سازی دفتر', () => inWorkspace(() => {
+  database.installChartTemplate();
+  database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true, understandingMode: 'active' });
+  aria = database.saveContact({ name: 'شرکت آریا' });
+}));
+
+test('تسویه از پول شخصی: بدهی آریا بسته، جاری سهرابی بستانکار، صندوق دست‌نخورده', () => inWorkspace(() => {
+  const debt = database.saveObligation({ title: 'خرید مواد اولیه', amount: 280_000_000, direction: 'payable', contactId: aria.id });
+  const cash = cashBalance();
+  const rows = transactionCount();
+  const result = database.settleObligation(debt.id, { paidBy: { name: 'آقای سهرابی' }, occurredAt: NOW.toISOString() });
+  assert.equal(result.item.status, 'paid');
+  assert.equal(result.item.remaining, 0);
+  assert.equal(result.transaction, null);
+  assert.equal(result.event.status, 'posted');
+  assert.equal(transactionCount(), rows, 'هیچ ردیف نقدی ساخته نشد');
+  assert.equal(cashBalance(), cash, 'ماندهٔ صندوق و بانک عوض نشد');
+  const after = balances();
+  assert.equal(after['حساب پرداختنی — شرکت آریا'], 0, 'بدهی به آریا صفر شد');
+  assert.equal(after['جاری شریک — بدهی شرکت — آقای سهرابی'], -280_000_000, 'شرکت به سهرابی بدهکار شد');
+  assert.equal(accounting.trialBalance(db()).balanced, true);
+  // سهرابی کارت شخص دارد تا ماندهٔ جاری‌اش قابل پیگیری باشد.
+  assert.ok(database.listContacts().some((contact) => contact.name === 'آقای سهرابی'));
+}));
+
+test('تسویهٔ جزئی از پول شریک، و دو شریک دو جاری جدا دارند', () => inWorkspace(() => {
+  const debt = database.saveObligation({ title: 'خرید قالب', amount: 100_000_000, direction: 'payable', contactId: aria.id });
+  database.settleObligation(debt.id, { amount: 40_000_000, paidBy: { name: 'آقای سهرابی' } });
+  const partial = database.listObligations({ status: 'all' }).find((item) => item.id === debt.id);
+  assert.equal(partial.status, 'open');
+  assert.equal(partial.remaining, 60_000_000);
+  database.settleObligation(debt.id, { amount: 60_000_000, paidBy: { name: 'خانم رحیمی' } });
+  const after = balances();
+  assert.equal(after['جاری شریک — بدهی شرکت — آقای سهرابی'], -320_000_000);
+  assert.equal(after['جاری شریک — بدهی شرکت — خانم رحیمی'], -60_000_000);
+  assert.equal(after['حساب پرداختنی — شرکت آریا'], 0);
+}));
+
+test('پرداخت‌کننده نمی‌تواند خودِ طلبکار باشد و بی‌نام ثبت نمی‌شود', () => inWorkspace(() => {
+  const debt = database.saveObligation({ title: 'خرید ابزار', amount: 5_000_000, direction: 'payable', contactId: aria.id });
+  assert.throws(() => database.settleObligation(debt.id, { paidBy: { name: 'شرکت آریا', contactId: aria.id } }), /همان طرف حساب/);
+  assert.throws(() => database.settleObligation(debt.id, { paidBy: { name: '  ' } }), /نام شریک/);
+  assert.equal(database.listObligations({ status: 'all' }).find((item) => item.id === debt.id).remaining, 5_000_000, 'چیزی تغییر نکرد');
+}));
+
+test('اگر گفته از کارت رد نشود، سرور ردیف نقدی نمی‌سازد و به صف حسابدار می‌فرستد', () => inWorkspace(() => {
+  const rows = transactionCount();
+  const cash = cashBalance();
+  const ids = database.insertTransactionRows({
+    transcript: SAID.sold, fromUtterance: true,
+    transactions: [{ clientId: 'legacy-row', amount: 280_000_000, type: 'income', category: 'سایر درآمدها', rawText: SAID.sold, source: 'voice' }],
+  });
+  assert.deepEqual([...ids], []);
+  assert.equal(ids.queuedForAccountant, 1);
+  assert.equal(transactionCount(), rows);
+  assert.equal(cashBalance(), cash);
+  const queued = db().prepare("SELECT payload,route FROM financial_events WHERE source_event_id='unmatched-settlement:legacy-row'").get();
+  assert.equal(queued.route, 'accountant-review');
+  assert.match(JSON.parse(queued.payload).description, /پول شخصی آقای سهرابی/);
+}));
+
+// ---------------------------------------------------------------------------
+// فهم با AI (مدل شبیه‌سازی‌شده)
+// ---------------------------------------------------------------------------
+
+const none = { op: null, of: [] };
+const understood = ({ kind = 'paid-by-partner', movementFrom = { kind: 'counterparty', name: 'آقای سهرابی' } } = {}) => ({
+  event: { kind, description: 'بدهی شرکت از پول شخصی مدیرعامل پرداخت شد', status: 'done' },
+  amounts: [{ id: 'a1', value: 280_000_000, currency: null, role: 'paid-now', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence: '۲۸۰ میلیون' }],
+  nonAmountNumbers: [], dates: [],
+  counterparties: [
+    { id: 'c1', name: 'آقای سهرابی', role: 'owner', evidence: 'آقای سهرابی مدیرعامل' },
+    { id: 'c2', name: 'شرکت آریا', role: 'supplier', evidence: 'بدهی شرکت آریا' },
+  ],
+  movements: [{ id: 'm1', amountRef: 'a1', direction: 'none', from: movementFrom, to: { kind: 'counterparty', name: 'شرکت آریا' }, evidence: 'پرداخت کرد' }],
+  subject: { what: null, kind: null, use: 'unknown', delivered: 'unknown', usefulLifeMonths: null, evidence: null }, conditions: [], ambiguities: [],
+});
+const outputs = new Map();
+const fetcher = async (_url, init) => {
+  const said = JSON.parse(JSON.parse(init.body).input[1].content[0].text)['گفتهٔ کاربر'];
+  return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(outputs.get(said)) }] }], usage: { input_tokens: 1, output_tokens: 1 } }) };
+};
+const options = { fetcher, env: { OPENAI_API_KEY: 'test-key-not-real', OPENAI_UNDERSTANDING_MODEL: 'test-model' }, now: NOW };
+
+test('قرارداد AI: «پرداخت از پول شریک» بی‌نشانهٔ پول شخصی پذیرفته نمی‌شود', () => {
+  const plain = '۲۸۰ میلیون بدهی شرکت آریا رو آقای سهرابی پرداخت کرد';
+  const { understanding, violations } = validateUnderstanding(understood(), { text: plain, now: NOW });
+  assert.notEqual(understanding.event.kind, 'paid-by-partner');
+  assert.ok(violations.includes('event:paid-by-partner-without-cue'));
+  assert.equal(validateUnderstanding(understood(), { text: SAID.sold, now: NOW }).understanding.event.kind, 'paid-by-partner');
+});
+
+test('فهم با AI روی دفتر: پرونده آماده، پیش‌نمایش بی‌سطر نقدی، ثبت درست', async () => {
+  await inWorkspace(async () => {
+    const debt = database.saveObligation({ title: 'خرید ورق', amount: 280_000_000, direction: 'payable', contactId: aria.id });
+    // بدهی‌های قبلیِ آریا بسته‌اند؛ فقط همین یکی باز است، پس سؤالی نمی‌ماند.
+    for (const item of database.listObligations().filter((row) => row.contactId === aria.id && row.id !== debt.id)) {
+      database.settleObligation(item.id, { paidBy: { name: 'آقای سهرابی' } });
+    }
+    outputs.set(SAID.sold, understood());
+    const rows = transactionCount();
+    const cash = cashBalance();
+    const before = balances()['جاری شریک — بدهی شرکت — آقای سهرابی'] || 0;
+    const item = await database.createUnderstandingCase({ text: SAID.sold, clientId: 'ai-partner' }, options);
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan));
+    assert.deepEqual(item.plan.components.map((component) => [component.kind, component.amount, component.target.id, component.paidBy.name]),
+      [['partner-settlement', 280_000_000, debt.id, 'آقای سهرابی']]);
+    assert.deepEqual(item.plan.components[0].preview.lines.map((line) => line.role), ['payable', 'partner-payable']);
+    const posted = database.commitUnderstandingCase(item.id, { now: NOW });
+    assert.equal(posted.status, 'posted');
+    assert.equal(transactionCount(), rows);
+    assert.equal(cashBalance(), cash);
+    assert.equal(database.listObligations({ status: 'all' }).find((row) => row.id === debt.id).status, 'paid');
+    assert.equal(balances()['جاری شریک — بدهی شرکت — آقای سهرابی'], before - 280_000_000);
+    assert.equal(accounting.trialBalance(db()).balanced, true);
+  });
+});
+
+test('فهم با AI: اگر مدل پول را از حساب شرکت بداند، به حسابدار می‌رود', async () => {
+  await inWorkspace(async () => {
+    const text = 'آقای سهرابی از جیب خودش ۲۸۰ میلیون بدهی شرکت آریا رو داد';
+    const output = understood({ movementFrom: { kind: 'bank', name: 'بانک ملت' } });
+    output.movements[0].direction = 'out';
+    outputs.set(text, output);
+    const item = await database.createUnderstandingCase({ text, clientId: 'ai-partner-bank' }, options);
+    assert.equal(item.status, 'needs-accountant', JSON.stringify(item.plan));
+  });
+});

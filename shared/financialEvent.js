@@ -43,6 +43,10 @@ export const EVENT_KINDS = Object.freeze({
   CHEQUE_RECEIVED: 'cheque-received',
   CHEQUE_ISSUED: 'cheque-issued',
   OBLIGATION_SETTLED: 'obligation-settled',
+  // طلب یا بدهیِ شرکت را شریک یا مدیرعامل از پول شخصی خودش بست: «آقای سهرابی
+  // ماشین خودش را فروخت و بدهی آریا را داد». از صندوق و بانک شرکت ریالی جابه‌جا
+  // نشده؛ فقط طرف بدهی عوض شده — از آریا به جاری همان شریک.
+  OBLIGATION_SETTLED_BY_PARTNER: 'obligation-settled-by-partner',
   CAPITAL_CONTRIBUTION: 'capital-contribution',
   FIXED_ASSET_PURCHASE: 'fixed-asset-purchase',
   SALES_INVOICE: 'sales-invoice',
@@ -126,6 +130,10 @@ export function normalizeFinancialEvent(raw = {}) {
     // طرف باید نقد شود، و چسباندنش بیرون از نرمال‌سازی یعنی رویدادی که از
     // دیتابیس خوانده می‌شود آن را ندارد.
     settlementDirection: ['receivable', 'payable'].includes(raw.settlementDirection) ? raw.settlementDirection : null,
+    // شریکی که از پول شخصی خودش تعهد شرکت را بست. طرف حساب اصلی (`counterparty`)
+    // همان طلبکار یا بدهکار است؛ این نام و شناسه، زیرحسابِ جاری شریک را می‌سازد.
+    payerName: kind === 'obligation-settled-by-partner' ? (cleanText(raw.payerName, 120) || null) : null,
+    payerId: kind === 'obligation-settled-by-partner' ? (cleanText(raw.payerId, 64) || null) : null,
     description: cleanText(raw.description, 300) || null,
     // منشأ رویداد: صدا، متن، ایمپورت، یا خودکار. برای ردیابی و برای DNA.
     source: ['voice', 'text', 'import', 'system'].includes(raw.source) ? raw.source : 'text',
@@ -205,6 +213,7 @@ export function describeEvent(event) {
     case EVENT_KINDS.CHEQUE_RECEIVED: return `چک دریافتی از${who || ' طرف حساب'}`;
     case EVENT_KINDS.CHEQUE_ISSUED: return `چک پرداختی به${who || ' طرف حساب'}`;
     case EVENT_KINDS.OBLIGATION_SETTLED: return `تسویهٔ ${event.reference || 'تعهد'}`;
+    case EVENT_KINDS.OBLIGATION_SETTLED_BY_PARTNER: return `تسویهٔ ${event.reference || 'تعهد'} از پول شخصی ${event.payerName || 'شریک'}`;
     case EVENT_KINDS.CAPITAL_CONTRIBUTION: return 'آوردهٔ مالک';
     case EVENT_KINDS.FIXED_ASSET_PURCHASE: return `خرید ${event.description || 'دارایی ثابت'}`;
     case EVENT_KINDS.SALES_INVOICE: return `فاکتور فروش${who ? ` برای${who}` : ''}`;
