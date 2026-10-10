@@ -10,6 +10,11 @@
  * ثبت اجرا می‌شود، نه در تایپ زنده، ولی ارزان ماندنش خرجی ندارد.
  */
 import { readPettyCash } from './pettyCashSpeech.js';
+import { normalizePersian } from './normalize.js';
+
+// همهٔ الگوهای این فایل روی متن یکدست‌شده اجرا می‌شوند: «کهنهٔ» با همزه، ی و ک
+// عربی و نیم‌فاصله هر کدام یک الگو را بی‌صدا از کار می‌انداختند.
+const clean = (input) => normalizePersian(String(input || ''));
 
 const GAP = '[\\s\\u200c]*';
 
@@ -35,7 +40,7 @@ const OWNER_DRAWING = new RegExp([
 ].join('|'));
 
 export function receiptPurposeFromSpeech(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (!text) return null;
   if (UNKNOWN_ORIGIN.test(text)) return 'unknown';
   if (LOAN_IN.test(text) && !LOAN_OUT.test(text.replace(/قسط[^.؛،]*(?:شروع|بعد|آینده)/g, ''))) return 'loan';
@@ -56,7 +61,7 @@ const EMPLOYEE_ADVANCE = new RegExp([
 ].join('|'));
 
 export function paymentPurposeFromSpeech(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (!text) return null;
   if (EMPLOYEE_ADVANCE.test(text)) return 'employee-advance';
   if (OWNER_DRAWING.test(text)) return 'owner-drawing';
@@ -71,7 +76,7 @@ export function paymentPurposeFromSpeech(input) {
  */
 const LENDER = new RegExp(`از${GAP}(بانک${GAP}[آ-ی]+)`);
 export function lenderFromSpeech(input) {
-  const match = LENDER.exec(String(input || ''));
+  const match = LENDER.exec(clean(input));
   return match ? match[1].replace(/[\s‌]+/g, ' ').trim() : null;
 }
 
@@ -117,14 +122,16 @@ const USED_ASSET_SALE = /(?<![آ-ی])(?:وانت|ماشین|خودرو|دستگ�
 const PORTION = /(?:تومنش|تومانش|میلیونش|هزارش)\s*(?:مال|بابت|برای)|بقیه(?:\s*اش|ش)?\s*(?:مال|بابت|برای)/;
 // برگشت از فروش یا خرید: کم‌کردن فروش قبلی است، نه دریافت یا پرداخت تازه.
 // «از مواد اولیه‌ای که خریده بودیم پس دادیم» خرید تازهٔ موجودی ثبت می‌شد.
-const RETURNED = /مرجوع|برگشت\s*از\s*(?:فروش|خرید)|برگردوند|برگرداند|پس\s*آورد|پس\s*داد(?:یم|م)(?![آ-ی])/;
+// یک مفهوم، نه یک عبارت: «پس/عودت/مرجوع» + «داد/فرستاد/آورد/کرد» در هر صیغه.
+// «پس بدیم» (آینده) برگشت نیست.
+const RETURNED = /مرجوع|برگشت\s*از\s*(?:فروش|خرید)|برگردوند|برگرداند|(?<![آ-ی])(?:پس|عودت)\s*(?:داد|فرستاد|آورد|کرد|زد)(?:یم|م|ن|ند|ه)?(?![آ-ی])/;
 // ضایعات و اسقاط درآمد فروش نیست؛ «سایر درآمدها»ست و گاهی موجودی را هم کم می‌کند.
 const SCRAP = /ضایعات|اسقاط|آهن\s*قراضه/;
 // ضمانت‌نامه و وثیقه: مبلغ اسمی‌شان پول جابه‌جاشده نیست و ثبتشان انتظامی است.
 const GUARANTEE = /ضمانت[\s‌]*نامه|وثیقه|تضمین|سپرده[\s‌]*(?:نقدی|حسن)/;
 
 export function judgmentReason(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (!text) return null;
   // سدِ آخر: «تنخواه به رضایی دادیم» در مسیر ثبت روزانه هزینه یا پیش‌پرداخت
   // خوانده می‌شد. برگهٔ «پرداخت تنخواه» جلوتر جلویش را می‌گیرد؛ اگر از آن رد شد،
@@ -148,7 +155,7 @@ export function judgmentReason(input) {
 /** «که آخر قرارداد پس می‌گیریم» — صریحاً می‌گوید پول برمی‌گردد. */
 const RETURNS = new RegExp(`پس${GAP}می${GAP}(?:گیریم|گیرم|دن|دهند)|برمی${GAP}(?:گرده|گردد|گردونن)|مسترد|قابل${GAP}استرداد`);
 export function saysRefundable(input) {
-  const text = String(input || '');
+  const text = clean(input);
   if (/غیر\s*قابل\s*استرداد|قابل\s*استرداد\s*نیست/.test(text)) return false;
   return RETURNS.test(text) ? true : null;
 }

@@ -78,7 +78,9 @@ export function hasCompositeAmounts(input) {
     // «۱۵ میلیون فروختیم، ۱ میلیون تخفیف دادیم و ۱۴ میلیون زد»: ۱۵ به بانک
     // می‌نشست، در حالی که ۱۴ آمده بود. تخفیف با چند مبلغ، کل و جزء است. جملهٔ
     // چک بیرون می‌ماند: کارت چک خودش مبلغِ مانده را از ثبت‌کننده می‌پرسد.
-    || (/(?<![آ-ی])تخفیف/.test(normalized) && !/(?<![آ-ی])چک(?![آ-ی])/.test(normalized));
+    // «۱ میلیون ازش کم کردیم» همان تخفیف است؛ «کارمزدش کم شد» (مجهول، کار بانک)
+    // نیست و کارت انتقال خودش کارمزد را جدا می‌کند.
+    || (/(?<![آ-ی])(?:تخفیف|(?:کم|کسر)\s*کرد(?:یم|م|ن|ند)?(?![آ-ی]))/.test(normalized) && !/(?<![آ-ی])چک(?![آ-ی])/.test(normalized));
 }
 
 /**
@@ -428,6 +430,25 @@ const RECEIVABLE_STATEMENT = /قرار(?:ه)?\s*(?:بدن|بده|بدهند|پر
 // ورود را نمی‌گیرد.
 const MONEY_OUT_VERB = /(?:دادم|دادیم|ریختم|ریختیم|زدم|زدیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم)|برداشت\s*کرد)/;
 
+/**
+ * «مشتری ۹ میلیون داد»، «خانم توکلی از بدهیش پرداخت کرد»، «کارت به کارت کرد» —
+ * فعل سوم‌شخص یعنی طرف مقابل پول داده، پس پول به ما آمده.
+ *
+ * فهرست واژه‌ها «پرداخت» را هزینه می‌شمرد و فعل سوم‌شخص را نمی‌شناخت؛ هر
+ * اصلاح قبلی فقط یک شکل («آورد») را می‌گرفت. اینجا قاعده روی صیغهٔ فعل است، نه
+ * روی یک واژه. فقط وقتی گیرنده کس دیگری نیست («به آقای رضایی داد») و فعل
+ * پرداختِ اول‌شخص در جمله نیست؛ و فقط وقتی دستهٔ هزینه‌ای روشنی پیدا نشده
+ * (برای «قبض رو پرداخت کرد» کسی از طرف ما پرداخته).
+ */
+// «آورد» اینجا نیست: «جنس آورد» تحویل کالاست؛ «پول/نقد آورد» را BROUGHT_MONEY_IN
+// می‌گیرد. «پس داد/عودت داد» هم برگشت کالاست، نه پرداخت.
+const THIRD_PERSON_GAVE = /(?<![آ-ی])(?<!(?:پس|عودت)\s*)(?:نقد\s*)?(?:داد|دادن|پرداخت\s*کرد(?:ن)?|کارت\s*به\s*کارت\s*کرد(?:ن)?|واریز\s*کرد(?:ن)?|تسویه\s*کرد(?:ن)?|ریخت(?:ن)?)(?![آ-ی])/;
+const OTHER_RECIPIENT = /(?<![آ-ی])به\s*(?:آقای|خانم|جناب|شرکت|فروشنده|تامین|کارگر|کارمند|پرسنل|پیمانکار|راننده|صاحبخونه|صاحبخانه|موجر)(?![آ-ی])/;
+function thirdPersonGave(input) {
+  const text = normalizePersian(input).replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
+  return THIRD_PERSON_GAVE.test(text) && !OTHER_RECIPIENT.test(text) && !MONEY_OUT_VERB.test(text);
+}
+
 function sentenceMoneyIn(input) {
   const text = normalizePersian(input);
   // «تحویل دادیم» و «انجام دادیم» دربارهٔ کار است، نه پول.
@@ -720,7 +741,8 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     // بیست و دو میلیون، معلوم نیس کی ریخته» را خروج پول می‌خواند چون نشانهٔ
     // ورود پیش از مبلغ آمده. ردیف تراکنش با جهت غلط، ماندهٔ بانک را غلط
     // می‌گذارد — حتی وقتی سندش به صف حسابدار رفته.
-    if (spans.length === 1 && classified.type === 'expense' && sentenceMoneyIn(input)) {
+    if (spans.length === 1 && classified.type === 'expense'
+      && (sentenceMoneyIn(input) || (classified.category === 'سایر هزینه‌ها' && thirdPersonGave(input)))) {
       const incomeCategory = classifyCategory(normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' '), 'income');
       classified = {
         ...classified, type: 'income', category: incomeCategory.category, chartCode: chartCodeForCategory(incomeCategory.category),

@@ -1,3 +1,4 @@
+import { normalizePersian } from './normalize.js';
 /**
  * نشانهٔ «پول هنوز جابه‌جا نشده».
  *
@@ -42,7 +43,7 @@ const INSTRUMENT = /چک|سفته|برات/;
 const PAID_NOW = new RegExp(`(?:داد${YA}م|دادم|ر${YA}خت${YA}م|ر${YA}ختم|زد${YA}م|پرداخت${GAP}(?:شد|کرد${YA}م|کردم)|وار${YA}ز${GAP}(?:شد|کرد${YA}م|کردم)|کسر${GAP}شد|تسو${YA}ه${GAP}(?:شد|کرد${YA}م|کردم))`);
 
 export function readUnpaidSignal(input) {
-  const text = String(input || '');
+  const text = normalizePersian(String(input || ''));
   if (!/هنوز|موعد|سررس|بدم|بدیم|نکرد|نشده|قراره/.test(text)) return false;
   if (UNPAID.test(text)) return true;
   // «قسط اول سررسید شد، بیست و سه میلیون قسط دادیم» پرداخت شده است؛ سررسید
