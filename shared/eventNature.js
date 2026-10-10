@@ -1,3 +1,4 @@
+import { normalizePersian } from './normalize.js';
 /**
  * نوع رویداد در دوره — هفت چیز که شبیه هم‌اند و سند متفاوتی دارند.
  *
@@ -71,7 +72,7 @@ const PATTERNS = Object.freeze([
 const CHEAP_HINT = /اشتباه|غلط|درستش|اصلاح|برآورد|تخمین|عمر|ابطال|باطل|برگشت|افتتاح|تعدیل|بستن|گزارشگر|افتاده|جابجا|جا\s*به\s*جا|محاسبه|سنواتی|برگردون/;
 
 export function readEventNature(input) {
-  const text = String(input || '');
+  const text = normalizePersian(String(input || ''));
   if (!CHEAP_HINT.test(text)) return EVENT_NATURES.NEW;
   for (const [nature, pattern] of PATTERNS) {
     if (pattern.test(text)) return nature;
@@ -127,20 +128,20 @@ const CHEQUE_WORD = /(?<![آ-ی])چک(?![آ-ی])|(?<![آ-ی])سفته/;
 const CHEQUE_CLEARED = /پاس\s*(?:شد|کرد)|وصول\s*(?:شد|کرد)|نقد\s*(?:شد|کرد)|خوابوند|دسته\s*چک/;
 
 export function readNonCashInstrument(input) {
-  const text = String(input || '').replace(/\u200c/g, ' ');
+  const text = normalizePersian(String(input || '')).replace(/\u200c/g, ' ');
   return CHEQUE_WORD.test(text) && !CHEQUE_CLEARED.test(text);
 }
 
 /** تصریح «هنوز پولی جابه‌جا نشده» نباید حتی ردیف نقدیِ در انتظار بسازد. */
 export function readExplicitNonCash(input) {
-  const text = String(input || '').replace(/\u200c/g, ' ');
+  const text = normalizePersian(String(input || '')).replace(/\u200c/g, ' ');
   if (/سود|بهره/.test(text) && /تسهیلات|وام/.test(text) && /سررسید\s+نشده/.test(text) && /تحقق|تعلق/.test(text)) return true;
   return /(?:بدون\s+(?:پرداخت|دریافت)\s+(?:وجه|پول)|پولی\s+(?:ندادیم|نگرفتیم|پرداخت\s+نشد|دریافت\s+نشد)|هنوز\s+(?:پرداخت|دریافت)\s+(?:نکردیم|نکردم|نشده)|نسیه)/.test(text);
 }
 
 
 export function readMixedSettlement(input) {
-  const text = String(input || '').replace(/\u200c/g, ' ');
+  const text = normalizePersian(String(input || '')).replace(/\u200c/g, ' ');
   return /نسیه|بقیه.*(?:بدهی|بعد|مانده)/.test(text)
     && /نصف|بخشی|قسمتی|درصد|بقیه/.test(text)
     && /کارت\s*کش|پرداخت\s*(?:شد|کرد)|نقدی|واریز\s*(?:شد|کرد)/.test(text);

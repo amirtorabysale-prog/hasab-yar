@@ -1,4 +1,5 @@
 import { PERSIAN_MONTHS, normalizeSpokenYears, persianToISO, todayPersian } from './persianDate.js';
+import { normalizePersian } from './normalize.js';
 
 /**
  * دورهٔ پوششِ گفته‌شده در جمله.
@@ -157,7 +158,7 @@ function namedMonths(text, occurredAt) {
 export function readServicePeriod(input, { occurredAt } = {}) {
   // «مهر هزار و چهارصد و پنج» همان «مهر 1405» است؛ بی‌این، بازه شناخته نمی‌شد.
   // آزمون ارزان پیش از تبدیل: تایپ زنده بودجهٔ میلی‌ثانیه‌ای دارد.
-  const raw = String(input || '');
+  const raw = normalizePersian(String(input || ''));
   const text = /هزار\s+و\s+(?:سیصد|چهارصد)/.test(raw) ? normalizeSpokenYears(raw) : raw;
   if (!/ماه|سال|فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند/.test(text)) return null;
   if (PAST.test(text)) return null;
