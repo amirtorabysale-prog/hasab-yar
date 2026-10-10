@@ -293,6 +293,9 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
   const [loadingInvoices, setLoadingInvoices] = useState(true);
   const [selectedId, setSelectedId] = useState('');
   const [busy, setBusy] = useState(false);
+  // تسویه از پول شخصی شریک: نام پرداخت‌کننده زیرحساب جاری اوست و بی‌نام ثبت نمی‌شود.
+  const byPartner = Boolean(draft.paidBy);
+  const [payerName, setPayerName] = useState(draft.paidBy?.name || '');
 
   useEffect(() => {
     if (draft.bounced) { setLoadingInvoices(false); return undefined; }
@@ -304,12 +307,15 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
     return () => { cancelled = true; };
   }, [draft.bounced]);
 
-  const targets = draft.bounced ? [] : matchSettleTargets(draft, { invoices, obligations });
+  // جاری شریک فقط طلب و بدهیِ ثبت‌شده را می‌بندد؛ تسویهٔ فاکتور از پول شریک هنوز
+  // مسیر ندارد و به صف حسابدار می‌رود.
+  const targets = draft.bounced ? [] : matchSettleTargets(draft, { invoices: byPartner ? [] : invoices, obligations });
   const selected = targets.find((item) => item.id === selectedId) || null;
+  const payer = payerName.trim();
   const submit = async () => {
-    if (!selected) return;
+    if (!selected || (byPartner && !payer)) return;
     setBusy(true);
-    await confirm(selected, { occurredAt: draft.occurredAt });
+    await confirm(selected, { occurredAt: draft.occurredAt, ...(byPartner ? { paidBy: { name: payer } } : {}) });
     setBusy(false);
   };
 
@@ -317,8 +323,18 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
     <section role="dialog" aria-modal="true" aria-label="تأیید تسویه" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">تسویه</span>
-      <h2 className="mt-3 text-xl font-extrabold">{draft.bounced ? 'چک برگشتی تسویه نمی‌شود' : 'کدام سند تسویه شود؟'}</h2>
+      <h2 className="mt-3 text-xl font-extrabold">{draft.bounced ? 'چک برگشتی تسویه نمی‌شود' : byPartner ? 'کدام بدهی از پول شخصی شریک تسویه شد؟' : 'کدام سند تسویه شود؟'}</h2>
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
+
+      {byPartner && <div className="mt-4 rounded-lg border border-line bg-surface px-3 py-3">
+        <label className="block text-[12px] font-bold" htmlFor="settle-payer">چه کسی از پول شخصی‌اش پرداخت کرد؟{draft.paidBy.role ? ` (${draft.paidBy.role})` : ''}</label>
+        <input id="settle-payer" value={payerName} onChange={(event) => setPayerName(event.target.value)} placeholder="مثلاً آقای سهرابی"
+          className="mt-2 w-full rounded-lg border border-line bg-paper px-3 py-2 text-sm" />
+        <p className="mt-2 text-[12px] leading-6 text-muted">
+          از صندوق و بانک شرکت پولی کم نمی‌شود. بدهی انتخاب‌شده بسته می‌شود و شرکت همین مبلغ را به
+          {payer ? ` ${payer}` : ' این شخص'} بدهکار می‌شود (جاری شریک). فروش داراییِ شخصیِ او درآمد شرکت نیست و ثبت نمی‌شود.
+        </p>
+      </div>}
 
       {draft.bounced ? <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
         برگشت چک، تسویه نیست: چک از اسناد دریافتنی یا پرداختنی برمی‌گردد و طلب یا بدهی دوباره باز می‌شود.
@@ -358,7 +374,7 @@ export function SettleSheet({ draft, obligations = [], close, confirm, queueRevi
       </>}
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
-        {!draft.bounced && <button disabled={busy || !selected} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
+        {!draft.bounced && <button disabled={busy || !selected || (byPartner && !payer)} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
         <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''}`}>{draft.bounced ? 'بستن' : 'لغو'}</button>
       </div>
     </section>

@@ -1,5 +1,6 @@
 import { runGuards, GUARD_VERDICTS } from '../../shared/guards.js';
 import { detectSettleIntent } from '../../shared/settleSpeech.js';
+import { detectPartnerPaidDebt } from '../../shared/partnerPaidSpeech.js';
 import { randomUUID } from 'node:crypto';
 import { accountForBank, resolveAccountId, transferBetweenAccounts } from './accounts.js';
 import { counterpartyLedgerBalance } from './counterpartyCard.js';
@@ -367,14 +368,17 @@ export function queueCompositeUtterance(transcript, { clientId = '', source = 't
 
 /** A failed match is an auditable case, never a guessed settlement. */
 export function queueUnmatchedSettlement(transcript, { clientId = '', source = 'text' } = {}) {
-  const text=String(transcript || '').trim().slice(0,1000),draft=detectSettleIntent(text);
+  const text=String(transcript || '').trim().slice(0,1000),draft=detectSettleIntent(text) || detectPartnerPaidDebt(text);
   if(!draft) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
   const amounts=extractAmounts(text).spans.map(s=>s.amount).filter(n=>Number.isSafeInteger(n) && n>0);
   const amount=Math.max(...amounts);
   if(!Number.isSafeInteger(amount) || amount>999_999_999_999) throw invalidInput('مبلغ مرجع معتبر لازم است.');
   // چک برگشتی هم تسویه نیست و هم نباید گم شود: چک از اسناد دریافتنی (یا
   // پرداختنی) برمی‌گردد و طلب یا بدهی دوباره باز می‌شود؛ کدام چک، با حسابدار.
-  const reason=draft.bounced
+  const payer=draft.paidBy ? (draft.paidBy.name || draft.paidBy.role || 'شریک') : '';
+  const reason=draft.paidBy
+    ? `بدهی شرکت${draft.contactName ? ` به ${draft.contactName}` : ''} از پول شخصی ${payer} پرداخت شده و بدهی ثبت‌شدهٔ بازی برایش پیدا نشد. از صندوق و بانک شرکت وجهی نرفته و فروش داراییِ شخصیِ او درآمد شرکت نیست. سند پیشنهادی: بدهکار حساب پرداختنی طلبکار، بستانکار جاری ${payer}. هیچ سندی ثبت نشده است.`
+    : draft.bounced
     ? 'چک برگشت خورده؛ چک از اسناد دریافتنی یا پرداختنی برمی‌گردد و طلب یا بدهی دوباره باز می‌شود. حسابدار چک مربوط را پیدا و ثبت می‌کند. هیچ سندی ثبت نشده است.'
     : 'سند مبنای تسویه انتخاب نشده؛ حسابدار باید مانده و مرجع واقعی را بررسی کند. هیچ وجه یا سندی ثبت نشده است.';
   const event=normalizeFinancialEvent({kind:EVENT_KINDS.REVIEW_PLACEHOLDER,amount,amountReferenceOnly:true,
@@ -397,6 +401,13 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
   const queuedReasons = [];
   // طلب و بدهی‌هایی که از جملهٔ بدون جابه‌جایی پول ساخته شدند.
   const nonCash = [];
+  // بدهی شرکت که شریک از پول شخصی‌اش داد هیچ ردیف نقدی ندارد. کارت تسویه
+  // مسیر درست است؛ اگر گفته از آن رد نشده (کلاینت قدیمی، آفلاین)، به‌جای
+  // پرداخت یا دریافتِ صندوق، با سند پیشنهادی به صف حسابدار می‌رود.
+  if (fromUtterance && transactions.length && detectPartnerPaidDebt(transcript)) {
+    queueUnmatchedSettlement(transcript, { clientId: transactions[0]?.clientId || '', source: transactions[0]?.source });
+    return Object.assign(ids, { queuedForAccountant: 1, queuedReasons: ['بدهی شرکت از پول شخصی شریک پرداخت شده؛ از صندوق و بانک وجهی نرفته. با سند پیشنهادی به صف حسابدار رفت.'] });
+  }
   // «اشتباه ۲۱ میلیون ثبت شد، درست ۱۲ میلیون است» دو مبلغ است اما فقط یک
   // درخواست اصلاح. چند ردیف صف با مبالغ متناقض می‌تواند دو اصلاح مستقل بسازد.
   const correction = fromUtterance && transactions.length > 1 && correctionNature(transactions[0], transcript);

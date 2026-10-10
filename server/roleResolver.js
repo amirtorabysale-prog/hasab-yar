@@ -82,6 +82,8 @@ function counterpartyRoleAccount(database, sourceKind, event, key, label, type) 
   return linkedAccount(database, sourceKind, accountKey, `${label} — ${name}`, type);
 }
 
+const partnerSide = (event) => (event.payerName ? { ...event, counterpartyId: event.payerId || null } : event);
+
 export function resolveEventRole(database, role, key, event = {}) {
   switch (role) {
     case ROLES.CASH:
@@ -129,10 +131,12 @@ export function resolveEventRole(database, role, key, event = {}) {
     case ROLES.UNIDENTIFIED_RECEIPT:
       return linkedAccount(database, 'unidentified-receipt', 'unidentified-receipt', 'وجوه دریافتی تعیین‌تکلیف‌نشده', 'liability');
 
+    // در تسویه از پول شریک، طرف حساب رویداد طلبکار است و شریک نفر دوم؛ زیرحساب
+    // جاری باید با شناسهٔ خودِ شریک ساخته شود، نه شناسهٔ طلبکار.
     case ROLES.PARTNER_PAYABLE:
-      return counterpartyRoleAccount(database,'partner-payable',event,key,'جاری شریک — بدهی شرکت','liability');
+      return counterpartyRoleAccount(database,'partner-payable',partnerSide(event),key,'جاری شریک — بدهی شرکت','liability');
     case ROLES.PARTNER_RECEIVABLE:
-      return counterpartyRoleAccount(database,'partner-receivable',event,key,'جاری شریک — طلب شرکت','asset');
+      return counterpartyRoleAccount(database,'partner-receivable',partnerSide(event),key,'جاری شریک — طلب شرکت','asset');
 
     case ROLES.OWNER_CAPITAL:
       return linkedAccount(database, 'system', 'owner-capital', 'سرمایه — آوردهٔ مالک', 'equity');

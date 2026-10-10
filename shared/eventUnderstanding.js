@@ -30,13 +30,14 @@ import { extractDateMention, persianToISO, readJalaliExpression, todayPersian } 
 import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
 import { detectBank } from './banks.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
+import { mentionsPersonalMoney } from './partnerPaidSpeech.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
 export const UNDERSTANDING_EVENT_KINDS = Object.freeze([
   'purchase', 'sale', 'expense', 'income', 'settlement', 'loan-received', 'loan-repayment', 'capital-in',
   'owner-drawing', 'transfer', 'payroll', 'asset-purchase', 'advance-paid', 'advance-received', 'deposit',
-  'refund', 'correction', 'obligation', 'cheque', 'other',
+  'refund', 'correction', 'obligation', 'cheque', 'paid-by-partner', 'other',
 ]);
 export const EVENT_STATUSES = Object.freeze(['done', 'future', 'conditional', 'mixed']);
 
@@ -105,6 +106,8 @@ const KIND_CUES = Object.freeze({
   correction: /اشتباه|اصلاح|تصحیح|غلط/,
   refund: /برگشت|مرجوع|استرداد|عودت|پس\s*(?:دادیم|گرفتیم|دادن|داد)/,
   cheque: /چک/,
+  // بدون نشانهٔ پولِ شخصی، «پرداخت کرد» همان پرداختِ کسب‌وکار است.
+  'paid-by-partner': { test: (text) => mentionsPersonalMoney(text) },
 });
 
 /** «نه»، «ببخشید»، «منظورم» میان دو عدد: عدد اول پس گرفته شد. */

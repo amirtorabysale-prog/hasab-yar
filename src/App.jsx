@@ -20,6 +20,7 @@ import { countOfflineAudio, failOfflineAudio, markOfflineAudioForReview, pending
 import { createRealtimeTranscriber, realtimeSpeechAvailable, rememberRealtimeFailure } from './lib/realtimeSpeech.js';
 import { decideVoiceRoute } from './lib/voiceDecision.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
+import { detectPartnerPaidDebt } from '../shared/partnerPaidSpeech.js';
 import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, inferLearningKeyword, parseFinancialText, parseRecognitionCandidates } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
 import { detectCaptureTransfer, detectPettyCashFunding } from '../shared/bankSpeech.js';
@@ -731,6 +732,11 @@ export default function App() {
     // در حساب‌های عادی نیست. هیچ‌کدام هزینه نیست.
     const pettyFunding = detectPettyCashFunding(transcript, { accounts: data.accounts || [] });
     if (pettyFunding) { setIntentDraft(pettyFunding); return true; }
+    // بدهی شرکت که شریک یا مدیرعامل از پول شخصی‌اش داد: نه پولی از صندوق رفته،
+    // نه فروش داراییِ او درآمد شرکت است. کارت تسویه سند باز را می‌بندد و طرفش
+    // جاری همان شریک می‌شود.
+    const partnerPaid = detectPartnerPaidDebt(transcript);
+    if (partnerPaid) { setSettleDraft(partnerPaid); return true; }
     // فهم گفتهٔ مرکب با AI، فقط وقتی دفتر آن را فعال کرده. همان گفته‌هایی که
     // مسیر قطعی امروز به حسابدار می‌داد یا تکه‌تکه می‌کرد؛ گفتهٔ ساده همان مسیر
     // رایگان می‌ماند.
@@ -793,8 +799,15 @@ export default function App() {
   };
 
   /** تسویهٔ سندی که کاربر روی کارت انتخاب کرده؛ هیچ سندی خودکار بسته نمی‌شود. */
-  const applySettlement = async (target, { occurredAt = null } = {}) => {
+  const applySettlement = async (target, { occurredAt = null, paidBy = null } = {}) => {
     try {
+      if (paidBy) {
+        await api.settleObligation(target.id, { amount: target.paymentAmount, paidBy, ...(occurredAt ? { occurredAt } : {}) });
+        setSettleDraft(null);
+        await load();
+        notify(`${target.label} از پول شخصی ${paidBy.name} تسویه شد؛ از صندوق و بانک پولی کم نشد.`);
+        return;
+      }
       if (target.kind === 'invoice') {
         await api.recordInvoicePayment(target.id, { amount: target.paymentAmount, occurredAt: occurredAt || undefined });
       } else {

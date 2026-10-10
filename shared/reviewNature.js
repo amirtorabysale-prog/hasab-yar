@@ -40,8 +40,12 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   if(n.vatRefund && lines.length && (!roles.has('tax-receivable') || lines.some(l=>!['cash','tax-receivable'].includes(l.role)))) add('nature.vat-refund','استرداد مالیات درآمد یا هزینه تازه نیست؛ طلب مالیاتی قبلی و سند ایجاد آن باید تطبیق داده شود.');
   if(n.partner && /به حساب شرکت/.test(normalizePersian(text)) && lines.some(l=>l.role==='cash' && l.credit>0)) add('nature.partner-direction','متن از ورود وجه به حساب شرکت می‌گوید؛ پیشنهاد خروج وجه با آن سازگار نیست.');
   const partnerRoles=lines.some(l=>['partner-payable','partner-receivable'].includes(l.role));
-  if(partnerRoles && !n.partner) add('nature.partner-identity','رابطه شریک در متن رویداد مشخص نیست؛ حساب جاری شریک جای حساب تجاری نیست.');
-  if(n.partner && lines.length) {
+  // تسویه از پول شخصی شریک: شریک را ثبت‌کننده روی کارت نام برده و تأیید کرده، و
+  // سند هیچ سطر نقدی ندارد. کنترل‌های انتقال وجه شریک دربارهٔ پولی است که به
+  // حساب شرکت آمده یا از آن رفته، و این‌جا چنین پولی نیست.
+  const settledByPartner=facts.kind==='obligation-settled-by-partner' && !lines.some(l=>l.role==='cash');
+  if(partnerRoles && !n.partner && !settledByPartner) add('nature.partner-identity','رابطه شریک در متن رویداد مشخص نیست؛ حساب جاری شریک جای حساب تجاری نیست.');
+  if(n.partner && lines.length && !settledByPartner) {
     const expected=partnerTransferProposal(text,lines.find(l=>l.role==='cash')?.debit || lines.find(l=>l.role==='cash')?.credit || 1,facts);
     if(!partnerTreatment(text,facts)) add('nature.partner-transfer','نوع انتقال را مشخص کن: وجه در اختیار شرکت، افزایش سرمایه مصوب، بازپرداخت بدهی شرکت، برداشت شخصی یا بازپرداخت طلب شرکت؟');
     else {
