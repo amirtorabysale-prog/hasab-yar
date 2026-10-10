@@ -60,6 +60,8 @@ function takeName(words, from, limit = 2) {
     if (STOP.has(word) || isNumberish(word) || PERSON_TITLES.includes(word) || COMPANY_TITLES.includes(word)) break;
     // «آقای سهرابی ماشینشو فروخت»: داراییِ ضمیردار جزء نام نیست.
     if (/^(?:ماشین|خودرو|خون|خانه|ملک|زمین|طلا|آپارتمان|پول|جیب|حساب|مدیر)/.test(word)) break;
+    // «به شرکت آریا داشتیم»: فعل جزء نام نیست.
+    if (/^(?:ن?(?:داشت|بود|هست|شد|کرد|داد|گرفت|خرید|فروخت)(?:یم|م|ند|ن|ه|ی)?|است|نیست|دار(?:یم|م|ه|ند))$/.test(word)) break;
     picked.push(word);
   }
   return picked.join(' ');

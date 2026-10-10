@@ -28,6 +28,8 @@ const SAID = {
   suffix: 'آقای سهرابی ماشینشو فروخت و ۲۸۰ میلیون بدهی آریا رو داد',
   house: 'مدیرعامل آقای سهرابی خونه‌اش رو فروخت و بدهی شرکت به آریا رو تسویه کرد',
   firstPerson: 'از جیب خودم ۵۰ میلیون بدهی شرکت نوین رو دادم',
+  // عین گفتهٔ ثبت‌شده در برنامه (۱۸ مهر ۱۴۰۵): فعل «داشتیم» به نام طلبکار چسبیده بود.
+  spoken: 'بدهی 280 میلیونی به شرکت آریا داشتیم مدیر عامل اقای سهرابی ماشین شخصی خودشون رو فروختن و بدهی رو پرداخت کردند',
 };
 
 test('هر شکل گفتن به کارت تسویه از پول شریک می‌رسد، با طلبکار و پرداخت‌کننده', () => {
@@ -41,6 +43,7 @@ test('هر شکل گفتن به کارت تسویه از پول شریک می‌
   assert.deepEqual(read(SAID.suffix), { creditor: 'آریا', amount: 280_000_000, payer: 'آقای سهرابی', role: '', direction: 'payable' });
   // مبلغ گفته نشده: کارت از ماندهٔ بدهیِ باز می‌گیرد.
   assert.deepEqual(read(SAID.house), { creditor: 'آریا', amount: 0, payer: 'آقای سهرابی', role: 'مدیرعامل', direction: 'payable' });
+  assert.deepEqual(read(SAID.spoken), { creditor: 'شرکت آریا', amount: 280_000_000, payer: 'آقای سهرابی', role: 'مدیرعامل', direction: 'payable' });
   const self = detectPartnerPaidDebt(SAID.firstPerson, { now: NOW });
   assert.equal(self.contactName, 'شرکت نوین');
   assert.equal(self.paidBy.firstPerson, true);
@@ -59,7 +62,7 @@ test('بدون پولِ شخصی یا با جهتِ وارونه، این مسی
 });
 
 test('مسیر گفته: هیچ ردیف نقدی، هیچ درآمد یا هزینه', () => {
-  for (const text of [SAID.sold, SAID.personal, SAID.pocket, SAID.suffix]) {
+  for (const text of [SAID.sold, SAID.personal, SAID.pocket, SAID.suffix, SAID.spoken]) {
     const result = runVoice(text, { today: NOW.toISOString() });
     assert.equal(result.path, 'partner-settle', text);
     assert.equal(result.items.length, 1);
