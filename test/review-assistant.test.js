@@ -489,26 +489,63 @@ test('category semantics override unrelated same-type AI chart bindings',()=>run
  assert.ok(p.bindingCorrections.length);
 }));
 
-test('direct transfer rejects an old bank mapped to cash atomically, then succeeds after explicit repair',()=>{
- const workspace=db.createWorkspace(owner.id,{name:'تست گارد انتقال',profileType:'business'});
+// نگاشت قدیمیِ اشتباهِ بانک به معین صندوق (گزارش کاربر، ۱۸ مهر ۱۴۰۵: «حساب بانکی
+// جاری سامان به معین صندوق نگاشت شده است»). وقتی جواب معلوم است — کدینگ یک معین
+// بانک دارد، یا معینِ هم‌نامِ همان بانک — خودکار اصلاح و ثبت می‌شود و ردش می‌ماند.
+// وقتی معلوم نیست، یا دورهٔ بسته را عوض می‌کند، ثبت اتمی متوقف می‌شود.
+const mappingCase=(name,setup)=>{
+ const workspace=db.createWorkspace(owner.id,{name,profileType:'business'});
  return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{
   db.installChartTemplate();
-  const from=db.saveAccount({name:'سامان',kind:'bank',bankId:'saman',openingBalance:1000000});
-  const to=db.saveAccount({name:'پاسارگاد',kind:'bank',bankId:'pasargad'});
+  const from=db.saveAccount({name:'جاری سامان',kind:'bank',bankId:'saman',openingBalance:1000000});
+  const to=db.saveAccount({name:'جاری تجارت',kind:'bank',bankId:'tejarat'});
   const cash=database().prepare("SELECT id FROM chart_accounts WHERE role='cash' AND level='subsidiary'").get();
-  const bank=database().prepare("SELECT id FROM chart_accounts WHERE role='bank' AND level='subsidiary'").get();
+  const bank=database().prepare("SELECT * FROM chart_accounts WHERE role='bank' AND level='subsidiary'").get();
   const ledger=database().prepare("SELECT id FROM ledger_accounts WHERE source_kind='operational-account' AND source_key=?").get(from.id);
   db.mapLedgerAccount(ledger.id,cash.id);
-  const before=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
-  assert.throws(()=>db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'}),{code:'BANK_CHART_MAPPING_INVALID'});
-  assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,before);
-  assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,1000000);
-  assert.equal(database().prepare('SELECT chart_account_id FROM ledger_accounts WHERE id=?').get(ledger.id).chart_account_id,cash.id);
-  db.mapLedgerAccount(ledger.id,bank.id);
-  db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'});
-  assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,500000);
+  const mapped=()=>database().prepare('SELECT chart_account_id FROM ledger_accounts WHERE id=?').get(ledger.id).chart_account_id;
+  return setup({from,to,cash,bank,ledger,mapped});
  });
-});
+};
+const addBankChart=(bank,code,name)=>database().prepare(`INSERT INTO chart_accounts (id,code,name,level,type,normal_side,role,active,source,parent_id,level_code)
+  SELECT ?,?,?,level,type,normal_side,role,active,source,parent_id,? FROM chart_accounts WHERE id=?`).run(`chart-${code}`,code,name,code.slice(-2),bank.id);
+
+test('transfer: an old bank mapped to cash is repaired automatically when the chart has one bank account',()=>mappingCase('تست اصلاح خودکار نگاشت',({from,to,bank,ledger,mapped})=>{
+ db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'});
+ assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,500000);
+ assert.equal(mapped(),bank.id,'نگاشت به معین بانک اصلاح شد');
+ const log=database().prepare('SELECT * FROM chart_mapping_repairs WHERE ledger_account_id=?').all(ledger.id);
+ assert.equal(log.length,1,'اصلاح خودکار ردِ قابل حسابرسی دارد');
+ assert.match(log[0].reason,/جاری سامان/);
+}));
+
+test('transfer: with several bank accounts, the one named after the bank is chosen',()=>mappingCase('تست انتخاب معین هم‌نام',({from,to,bank,mapped})=>{
+ addBankChart(bank,`${bank.code}91`,'بانک سامان');
+ addBankChart(bank,`${bank.code}92`,'بانک ملت');
+ db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'});
+ assert.equal(database().prepare('SELECT name FROM chart_accounts WHERE id=?').get(mapped()).name,'بانک سامان');
+}));
+
+test('transfer: ambiguous bank accounts stop the posting atomically with an exact instruction',()=>mappingCase('تست نگاشت مبهم',({from,to,bank,cash,mapped})=>{
+ addBankChart(bank,`${bank.code}93`,'بانک الف');
+ const before=database().prepare('SELECT count(*) n FROM journal_entries').get().n;
+ assert.throws(()=>db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:500000,occurredAt:'2026-10-04'}),
+  (error)=>error.code==='BANK_CHART_MAPPING_INVALID' && /چند معین بانک/.test(error.message));
+ assert.equal(database().prepare('SELECT count(*) n FROM journal_entries').get().n,before);
+ assert.equal(db.listAccounts().find(a=>a.id===from.id).balance,1000000);
+ assert.equal(mapped(),cash.id,'بی‌حدس، نگاشت دست نخورد');
+}));
+
+test('transfer: a mapping whose history is in a locked period is not changed silently',()=>mappingCase('تست دورهٔ بسته',({from,to,cash,ledger,mapped})=>{
+ database().prepare('UPDATE ledger_accounts SET chart_account_id=NULL WHERE id=?').run(ledger.id);
+ db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:100000,occurredAt:'2026-08-04'});
+ db.mapLedgerAccount(ledger.id,cash.id);
+ database().exec("CREATE TABLE IF NOT EXISTS accounting_periods (period TEXT PRIMARY KEY, status TEXT NOT NULL, locked_by TEXT, locked_at TEXT)");
+ database().prepare("INSERT INTO accounting_periods (period,status) VALUES ('1405-05','locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run();
+ assert.throws(()=>db.transferBetweenAccounts({fromAccountId:from.id,toAccountId:to.id,amount:100000,occurredAt:'2026-10-04'}),
+  (error)=>error.code==='BANK_CHART_MAPPING_INVALID' && /دورهٔ بسته/.test(error.message));
+ assert.equal(mapped(),cash.id);
+}));
 
 test('DNA similarity cannot come only from shared bank, party and capture wording',()=>run(async()=>{
  const bank=db.saveAccount({name:'بانک سامان مشترک',kind:'bank',bankId:'saman'});
