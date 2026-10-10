@@ -141,6 +141,7 @@ export default function App() {
   const [intentDraft, setIntentDraft] = useState(null);
   const [understandingDraft, setUnderstandingDraft] = useState(null);
   const [settleDraft, setSettleDraft] = useState(null);
+  const [aiToggleBusy, setAiToggleBusy] = useState(false);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
   const voiceSystemStatusRef = useRef(null);
@@ -725,8 +726,37 @@ export default function App() {
    * گفته‌ای که طلب، بدهی، چک یا فاکتور است نباید به‌عنوان تراکنش ساده ثبت شود.
    * هیچ‌چیز خودکار ذخیره نمی‌شود؛ فقط کارت تأیید باز می‌شود.
    */
+  // وضعیت کلید «همه را اول AI بفهمد» از سیاست دفتر، و آیا اجرا شدنی است.
+  const aiForAll = (() => {
+    const understanding = data.understanding || {};
+    const on = understanding.mode === 'active' && understanding.scope === 'all';
+    return {
+      on, available: Boolean(understanding.available), engineV2: Boolean(understanding.engineV2),
+      ready: on && Boolean(understanding.available) && Boolean(understanding.engineV2),
+      canManage: ['owner', 'manager'].includes(access.workspace?.role),
+    };
+  })();
+  const toggleAiForAll = async () => {
+    if (aiToggleBusy) return;
+    setAiToggleBusy(true);
+    try {
+      await api.setUnderstandingForAll(!aiForAll.on);
+      await load();
+      notify(!aiForAll.on
+        ? 'از این به بعد همهٔ گفته‌ها اول با AI فهمیده می‌شوند و بعد به موتور قاعده می‌روند.'
+        : 'فقط گفته‌های مرکب به AI می‌روند؛ بقیه از مسیر سریع و رایگان.');
+    } catch (error) { notify(error.message); } finally { setAiToggleBusy(false); }
+  };
+
   const routeIntent = (transcript, source = 'voice') => {
     if (!canWrite) return false;
+    // «همه را اول AI بفهمد» روشن است: هر گفته — حتی ساده و حتی آن‌هایی که کارت قطعی
+    // دارند — اول به فهم رویداد می‌رود و خروجی ساخت‌یافته‌اش به موتور قاعده. آفلاین
+    // یا بی‌کلید AI، همان مسیر قطعی کار می‌کند؛ گفته گم نمی‌شود.
+    if (aiForAll.on && aiForAll.ready && online) {
+      void openUnderstanding(transcript, source);
+      return true;
+    }
     // پرداخت یا شارژ تنخواه پیش از همه: «تنخواه رو شارژ کردیم» مبلغ ندارد ولی
     // مبلغش معلوم است (همان خرج‌شده)، و «از ملت به تنخواه منتقل کردیم» مقصدش
     // در حساب‌های عادی نیست. هیچ‌کدام هزینه نیست.
@@ -1154,6 +1184,7 @@ export default function App() {
               stopRecording={stopRecording} cancelProcessing={cancelProcessing} beginRecording={() => { holdingRef.current = true; startRecording(); }}
               levels={levels} liveTranscript={liveTranscript} liveVoiceNote={liveVoiceNote} livePreview={livePreview} fastVoiceAvailable={fastVoiceAvailable}
               voicePath={voicePath} voiceSystemStatus={voiceSystemStatus} readOnly={!canWrite}
+              aiForAll={{ ...aiForAll, busy: aiToggleBusy, online }} onToggleAiForAll={toggleAiForAll}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
               navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision} onSnoozeAlert={snoozeAlert}
               notify={notify} refreshToday={load} experience={access.experience}

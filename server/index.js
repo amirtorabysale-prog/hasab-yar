@@ -13,7 +13,7 @@ import {
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
-  pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
   bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
@@ -661,6 +661,9 @@ app.post('/api/confirmations/:id/handover', (request, response, next) => {
 });
 app.get('/api/automation-policy', (_request, response, next) => {
   try { return response.json({ policy: automationPolicy(), defaults: DEFAULT_AUTOMATION_POLICY }); } catch (error) { return next(error); }
+});
+app.put('/api/automation-policy/understanding', (request, response, next) => {
+  try { return response.json({ policy: setUnderstandingForAll(request.body?.all === true) }); } catch (error) { return next(error); }
 });
 app.put('/api/automation-policy', (request, response, next) => {
   try { return response.json({ policy: saveAutomationPolicy(request.body || {}) }); } catch (error) { return next(error); }
