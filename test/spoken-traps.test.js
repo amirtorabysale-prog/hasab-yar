@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 import { applySpokenCorrection, describesUnperformedCondition, hasCompositeAmounts, parseFinancialText } from '../shared/parser.js';
 import { detectVoiceIntent } from '../shared/voiceIntent.js';
-import { judgmentReason } from '../shared/moneyPurpose.js';
+import { judgmentReason, paymentPurposeFromSpeech } from '../shared/moneyPurpose.js';
+import { detectCaptureTransfer } from '../shared/bankSpeech.js';
+import { transactionEventDecision } from '../shared/transactionEvent.js';
+import { planJournal } from '../shared/accountingRules.js';
 import { understandingReasons } from '../shared/understandingScope.js';
 
 /**
@@ -86,6 +89,60 @@ test('واریزی که منشأش حدس است، نه فاکتور می‌سا
   assert.deepEqual(parseFinancialText(sentence).transactions.map((item) => item.amount), [9_750_000], 'تاریخ مبلغ نیست');
   // پولِ آمده بابت فاکتور، وصول است نه صدور فاکتور تازه.
   assert.equal(detectVoiceIntent('۵ میلیون بابت فاکتور فروش شرکت آریا به حساب ملت واریز شد'), null);
+});
+
+test('پایا با کارمزد: یک انتقال و یک هزینهٔ کارمزد، فقط بین حساب‌های خودِ شرکت', () => {
+  const accounts = [{ id: 'cash', name: 'صندوق', kind: 'cash' }, { id: 'b1', name: 'بانک ملت', kind: 'bank', bankId: 'mellat' }, { id: 'b2', name: 'بانک تجارت', kind: 'bank', bankId: 'tejarat' }];
+  const draft = detectCaptureTransfer('۴۰ میلیون از ملت به تجارت پایا زدیم و ۲۵ هزار تومان کارمزدش هم از ملت کم شد.', { accounts });
+  assert.deepEqual({ amount: draft.amount, fee: draft.fee, from: draft.fromAccountId, to: draft.toAccountId }, { amount: 40_000_000, fee: 25_000, from: 'b1', to: 'b2' });
+  assert.equal(detectCaptureTransfer('۱۰ میلیون از ملت به تجارت ساتنا کردیم', { accounts }).amount, 10_000_000);
+  // پایا به حساب شخص دیگر، پرداخت است نه انتقال داخلی.
+  assert.equal(detectCaptureTransfer('به آقای رضایی ۱۰ میلیون از ملت به حساب تجارتش پایا زدیم', { accounts }), null);
+});
+
+test('مساعده طلب از کارمند است، نه هزینهٔ حقوق', () => {
+  const sentence = '۵ میلیون تومان از صندوق به آقای کاظمی، کارمندمون، مساعده دادیم که از حقوق آبانش کم کنیم.';
+  assert.equal(paymentPurposeFromSpeech(sentence), 'employee-advance');
+  const [item] = parseFinancialText(sentence).transactions;
+  const { event, accountingDecision } = transactionEventDecision({ ...item, accountId: 'cash', occurredAt: '2026-10-07T08:00:00.000Z' }, { transcript: sentence, policy: { engineV2: true } });
+  assert.equal(accountingDecision.treatment, 'employee-advance');
+  assert.equal(accountingDecision.decisionStatus, 'decided');
+  assert.deepEqual(planJournal(event, accountingDecision).lines.map((line) => line.role), ['employee-advance', 'cash']);
+  // بی‌نام، نام کارمند پرسیده می‌شود؛ حقوق همچنان به حسابدار می‌رود.
+  const [bare] = parseFinancialText('۳ میلیون مساعده دادیم').transactions;
+  assert.equal(transactionEventDecision({ ...bare, accountId: 'cash', occurredAt: '2026-10-07T08:00:00.000Z' }, { transcript: '۳ میلیون مساعده دادیم', policy: { engineV2: true } }).accountingDecision.question?.fact, 'counterparty');
+  const [salary] = parseFinancialText('حقوق مهر رو ۶۰ میلیون دادیم').transactions;
+  assert.equal(transactionEventDecision({ ...salary, accountId: 'cash', occurredAt: '2026-10-07T08:00:00.000Z' }, { transcript: 'حقوق مهر رو ۶۰ میلیون دادیم', policy: { engineV2: true } }).decision.route, 'accountant-review');
+});
+
+test('کارت چک مبلغ و جهت را از جملهٔ خودِ چک می‌خواند', () => {
+  const intent = detectVoiceIntent('از شرکت پخش البرز ۵۰ میلیون کالا به‌علاوه ۱۰ درصد ارزش افزوده خریدیم و تحویل گرفتیم؛ یه چک ۵۵ میلیونی به تاریخ ۳۰ آبان بهشون دادیم.');
+  assert.deepEqual({ d: intent.direction, a: intent.amount, need: intent.needsAmount, vat: intent.vatMentioned, c: intent.contactName },
+    { d: 'payable', a: 55_000_000, need: false, vat: true, c: 'شرکت پخش البرز' });
+  // چکی که مبلغ خودش را نگفته، همچنان مبلغ پرسیده می‌شود.
+  assert.equal(detectVoiceIntent('جمع فاکتور هشتاد میلیون شد، پنج میلیون تخفیف دادیم، مانده رو چک دادن').needsAmount, true);
+});
+
+test('سرور: کارمزد با انتقال یک‌جا ثبت می‌شود و چکِ معاملهٔ دارای ارزش افزوده به حسابدار می‌رود', async () => {
+  const database = await import('../server/db.js');
+  const owner = database.authenticateUser('part-owner', 'part-of-total-strong-password-5520');
+  const workspace = database.createWorkspace(owner.id, { name: 'دفتر کارمزد و چک', profileType: 'business' });
+  await database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, () => {
+    const mellat = database.saveAccount({ name: 'بانک ملت', kind: 'bank', openingBalance: 100_000_000 });
+    const tejarat = database.saveAccount({ name: 'بانک تجارت', kind: 'bank', openingBalance: 0 });
+    const balance = (id) => database.listAccounts().find((item) => item.id === id).balance;
+    assert.throws(() => database.transferWithFee({ fromAccountId: mellat.id, toAccountId: tejarat.id, amount: 1_000, fee: 5_000 }));
+    assert.equal(balance(mellat.id), 100_000_000, 'کارمزد نامعتبر: هیچ‌چیز ثبت نشد');
+    const result = database.transferWithFee({ fromAccountId: mellat.id, toAccountId: tejarat.id, amount: 40_000_000, fee: 25_000 });
+    assert.ok(result.feeTransactionId);
+    assert.equal(balance(mellat.id), 100_000_000 - 40_000_000 - 25_000);
+    assert.equal(balance(tejarat.id), 40_000_000);
+
+    const cheque = database.recordCheque({ direction: 'payable', counterpartyName: 'شرکت پخش البرز', amount: 55_000_000, against: 'income',
+      dueAt: '2026-11-21T08:30:00.000Z', note: 'از شرکت پخش البرز ۵۰ میلیون کالا به‌علاوه ۱۰ درصد ارزش افزوده خریدیم؛ یه چک ۵۵ میلیونی دادیم' });
+    assert.equal(cheque.queuedForAccountant, true);
+    assert.match(cheque.queuedReason, /ارزش افزوده/);
+  });
 });
 
 test.after(() => removeTempDatabase(databasePath));

@@ -25,7 +25,7 @@
  * ودیعهٔ برگشت‌پذیر، یا «هیچ‌کدام».
  */
 export const RECEIPT_PURPOSES = Object.freeze(['sale', 'other-income', 'advance', 'loan', 'owner', 'unknown', 'other']);
-export const PAYMENT_PURPOSES = Object.freeze(['expense', 'goods', 'owner-drawing', 'advance', 'deposit', 'other']);
+export const PAYMENT_PURPOSES = Object.freeze(['expense', 'goods', 'owner-drawing', 'advance', 'deposit', 'employee-advance', 'other']);
 
 /**
  * انواع رویداد.

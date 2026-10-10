@@ -304,24 +304,40 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   // فعل معمولاً از «چک» فاصله دارد («چک پنج میلیون دادم»)، پس چسبیدگی شرط
   // نیست؛ وجود فعل جهت‌دار در همان جمله کافی است.
   const directionText = isCheque ? text.replace(/تخفیف(?:\s+تجاری)?\s+داد(?:یم|م)/g, '') : text;
-  const receivable = matchesAny(directionText, RECEIVABLE_PATTERNS)
-    || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*(?:\d+\s*روزه\s*)?دادن(?![آ-ی]))/.test(text));
-  const payable = matchesAny(directionText, PAYABLE_PATTERNS)
-    || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(directionText));
+  const readDirection = (part) => ({
+    receivable: matchesAny(part, RECEIVABLE_PATTERNS)
+      || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*(?:\d+\s*روزه\s*)?دادن(?![آ-ی]))/.test(part)),
+    payable: matchesAny(part, PAYABLE_PATTERNS)
+      || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(part)),
+  });
+  // جمله‌ای که هم «جنس را تحویل گرفتیم» دارد و هم «چک دادیم»، دو جهت دارد؛
+  // جهت چک را جملهٔ خودِ چک می‌گوید، نه بقیهٔ گفته.
+  const chequeClause = isCheque ? (directionText.split(/[؛;.،,]/).find((part) => matchesAny(part, CHEQUE_PATTERNS)) || '') : '';
+  const own = isCheque ? readDirection(chequeClause) : null;
+  const whole = readDirection(directionText);
+  const decided = own && own.receivable !== own.payable ? own : whole;
+  const { receivable, payable } = decided;
   if (!receivable && !payable) return null;
   if (!amount && !obligationContext) return null;
 
   // هر دو نشانه یعنی جمله واقعاً مبهم است؛ اجرا نمی‌شود تا کاربر روشنش کند.
   const direction = receivable && payable ? null : receivable ? 'receivable' : 'payable';
-  const severalAmounts = hasSeveralAmounts(input);
+  // «یه چک ۵۵ میلیونی… دادیم»: مبلغ چک همان عددی است که در جملهٔ خودِ چک آمده،
+  // حتی وقتی جمله عددهای دیگری (بهای کالا، درصد) هم دارد.
+  const chequeAmounts = isCheque && chequeClause ? parseFinancialText(chequeClause, { source: 'voice' }).transactions.map((item) => Number(item.amount) || 0).filter(Boolean) : [];
+  const ownAmount = chequeAmounts.length === 1 ? chequeAmounts[0] : 0;
+  const severalAmounts = !ownAmount && hasSeveralAmounts(input);
+  const finalAmount = ownAmount || amount;
   return {
     intent: isCheque ? 'cheque' : 'obligation',
     direction,
     ambiguous: !direction,
-    amount: severalAmounts ? 0 : amount,
+    amount: severalAmounts ? 0 : finalAmount,
     // مبلغ خالی یعنی «هنوز گفته نشده»، نه صفر؛ کارت تأیید تا نوشتنش پیش نمی‌رود.
-    needsAmount: !amount || severalAmounts,
+    needsAmount: !finalAmount || severalAmounts,
     ...(severalAmounts ? { amountHint: amount } : {}),
+    // چک خرید یا فروش با ارزش افزوده: کل مبلغ چک بهای کالا یا درآمد نیست.
+    ...(isCheque && /ارزش\s*افزوده|مالیات\s*بر\s*ارزش/.test(text) ? { vatMentioned: true } : {}),
     contactName,
     ...splitDateRoles(input, { now, isCheque }),
     title: [isCheque ? 'چک' : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),

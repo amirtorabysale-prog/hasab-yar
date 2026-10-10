@@ -47,19 +47,37 @@ export function detectPettyCashFunding(input, { accounts = [], now } = {}) {
 
 /** Main capture only accepts an explicit internal transfer. An ordinary
  * customer payment mentioning a bank must stay on the income/expense path. */
+// «پایا زدیم»، «ساتنا کردیم»، «حواله زدیم»: انتقال بانکی به زبان روزمره، ولی
+// فقط وقتی دو حساب خودِ شرکت در جمله باشند؛ «به آقای رضایی پایا زدیم» پرداخت است.
+const BANK_WIRE = /(?:پایا|ساتنا|حواله)\s*(?:زد|کرد|شد)/;
+const FEE = /کارمزد/;
+
 export function detectCaptureTransfer(input, options = {}) {
-  if (!/(?:انتقال|منتقل|جابه\s*جا|جابجا)\s*(?:داد|ده|کن|کرد|شد|می|بین|از|به)/.test(normalizePersian(input))) return null;
-  const pair=detectTransferBanks(input);
+  const text = normalizePersian(input);
+  const spokenMove = /(?:انتقال|منتقل|جابه\s*جا|جابجا)\s*(?:داد|ده|کن|کرد|شد|می|بین|از|به)/.test(text);
+  // پایا به حساب شخص دیگر پرداخت است؛ با عنوان شخص، انتقال داخلی حدس زده نمی‌شود.
+  const wire = !spokenMove && BANK_WIRE.test(text) && !/(?<![آ-ی])(?:آقای|خانم|شرکت|جناب|مشتری|فروشنده)(?![آ-ی])/.test(text);
+  if (!spokenMove && !wire) return null;
+  const pair = detectTransferBanks(wire ? text.replace(BANK_WIRE, 'منتقل کرد') : input);
+  if (wire && !pair) return null;
   const parsed=parseFinancialText(input,{now:options.now});
-  if(parsed.transactions.length!==1) return null;
+  // کارمزد همان انتقال، مبلغ دوم جمله است، نه انتقال دوم: جدا نگه داشته می‌شود
+  // و هزینهٔ کارمزد بانکیِ حساب مبدأ ثبت می‌شود.
+  const feeRow = parsed.transactions.length === 2 && FEE.test(text)
+    ? parsed.transactions.find((item) => item.category === 'کارمزد بانکی' || FEE.test(String(item.rawText || ''))) : null;
+  const moved = feeRow ? parsed.transactions.filter((item) => item !== feeRow) : parsed.transactions;
+  if(moved.length!==1) return null;
+  if (feeRow && !(Number(feeRow.amount) < Number(moved[0].amount))) return null;
+  const fee = feeRow ? Number(feeRow.amount) : 0;
   if(pair) {
     const unique=side=>{
       const matches=(options.accounts || []).filter(a=>a.active!==false && (side.id==='cash' ? a.kind==='cash' : a.bankId===side.id));
       return matches.length===1 ? matches[0].id : '';
     };
-    return {intent:'transfer',amount:parsed.transactions[0].amount,fromAccountId:unique(pair.from),toAccountId:unique(pair.to),
-      transcript:String(input),occurredAt:parsed.transactions[0].occurredAt || null};
+    return {intent:'transfer',amount:moved[0].amount,fee,fromAccountId:unique(pair.from),toAccountId:unique(pair.to),
+      transcript:String(input),occurredAt:moved[0].occurredAt || null};
   }
+  if (fee) return null;
   const draft=detectBankMovementIntent(input,options);
   return draft?.intent==='transfer' ? { ...draft, transcript: String(input), occurredAt: parsed.transactions[0].occurredAt || null } : null;
 }
