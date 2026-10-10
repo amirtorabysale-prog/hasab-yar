@@ -58,6 +58,22 @@ function counterpartyAccounts(contact) {
 }
 
 /**
+ * ماندهٔ حساب پرداختنیِ یک طرف حساب در دفتر کل — مثبت یعنی ما به او بدهکاریم.
+ *
+ * بدهی همیشه در «طلب و بدهی» یا فاکتور نیست: خریدی که حسابدار از صف تأیید کرد
+ * مستقیم در دفتر کل می‌نشیند. تسویه از پول شریک باید همین مانده را ببیند،
+ * همان عددی که کارت حساب نشان می‌دهد.
+ */
+export function payableLedgerBalance(contactId) {
+  const contact = db.prepare('SELECT id,name FROM contacts WHERE id=?').get(String(contactId || ''));
+  if (!contact) return 0;
+  const accounts = counterpartyAccounts(contact).filter((account) => account.sourceKind === 'vendor-payable');
+  if (!accounts.length) return 0;
+  return Number(db.prepare(`SELECT COALESCE(SUM(credit)-SUM(debit),0) AS net FROM journal_lines
+    WHERE account_id IN (${accounts.map(() => '?').join(',')})`).get(...accounts.map((account) => account.id)).net || 0);
+}
+
+/**
  * ماندهٔ دفتریِ یک طرف حساب — مثبت یعنی او به ما بدهکار است.
  *
  * لازم است تا هنگام ثبت یک پرداخت بدانیم این پول «تسویهٔ بدهی اوست» یا

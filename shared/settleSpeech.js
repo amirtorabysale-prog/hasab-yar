@@ -167,6 +167,25 @@ function includesName(haystack, needle) {
  * خروجی همهٔ گزینه‌های سازگار است — انتخاب میان چند گزینه کار رابط و کاربر است،
  * نه این تابع.
  */
+/**
+ * بدهیِ دفتر کل که سند «طلب و بدهی» ندارد — فقط برای تسویه از پول شریک.
+ *
+ * خریدی که حسابدار از صف تأیید کرده مستقیم در دفتر کل می‌نشیند؛ کارت حساب
+ * طرف آن را نشان می‌دهد ولی فهرست تعهدها نه. وقتی سند بازی برای همان شخص
+ * نیست، ماندهٔ بستانکارِ کارت حساب او خودش هدف تسویه است. مقدار نهایی را سرور
+ * با ماندهٔ حساب پرداختنیِ دفتر کل دوباره می‌سنجد.
+ */
+export function ledgerBalanceTargets(intent = {}, { contacts = [], documentTargets = [] } = {}) {
+  if (!intent?.paidBy || intent.direction !== 'payable') return [];
+  return contacts.filter((contact) => Number(contact.balance) < 0)
+    .filter((contact) => !intent.contactName || includesName(contact.name, intent.contactName))
+    .filter((contact) => !documentTargets.some((target) => target.contactId === contact.id || includesName(target.name, contact.name)))
+    .map((contact) => ({ kind: 'ledger-balance', id: contact.id, contactId: contact.id, label: `ماندهٔ بدهی به ${contact.name} در دفتر کل`,
+      name: contact.name, amount: -Number(contact.balance), number: '', direction: 'payable' }))
+    .filter((target) => !intent.amount || target.amount >= intent.amount)
+    .map((target) => ({ ...target, paymentAmount: intent.amount || target.amount }));
+}
+
 export function matchSettleTargets(intent = {}, { invoices = [], obligations = [] } = {}) {
   if (!intent || intent.intent !== 'settle' || intent.bounced) return [];
   const wantsInvoice = intent.kind === 'invoice' || intent.kind === 'any';
@@ -191,7 +210,7 @@ export function matchSettleTargets(intent = {}, { invoices = [], obligations = [
       // تعهد تاریخیِ بدون سند اولیه با دریافت پول، خودکار به درآمد تبدیل نشود.
       if (obligation.journalStatus && obligation.journalStatus !== 'posted') continue;
       candidates.push({
-        kind: 'obligation', id: obligation.id, label: obligation.title,
+        kind: 'obligation', id: obligation.id, label: obligation.title, contactId: obligation.contactId || null,
         name: obligation.contactName || obligation.title || '',
         amount: Number(obligation.remaining ?? obligation.amount ?? 0),
         number: '',

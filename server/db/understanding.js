@@ -3,8 +3,8 @@ import { audit, currentTimeZone, currentWorkspace, db, invalidInput } from './co
 import { automationPolicy } from './settings.js';
 import { insertTransactionRows, previewTransactions, recordUnderstoodObligation } from './transactions.js';
 import { queueUnderstoodIntake } from './reviewIntakes.js';
-import { openDocumentsFor } from './counterpartyCard.js';
-import { settleObligation } from './obligations.js';
+import { openDocumentsFor, payableLedgerBalance } from './counterpartyCard.js';
+import { settleObligation, settlePayableBalanceByPartner } from './obligations.js';
 import { recordInvoicePayment } from './invoices.js';
 import { postAccountTransferJournal } from '../accounting.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
@@ -124,7 +124,16 @@ function planCase(understanding, answers, row, now = new Date()) {
     ...Object.values(resolution.counterparties).map((item) => item.contactId).filter(Boolean),
     ...Object.entries(answers).filter(([key, answer]) => key.startsWith('counterparties.') && answer.valueId && answer.valueId !== 'new').map(([, answer]) => answer.valueId),
   ]);
-  resolution.documents = Object.fromEntries([...contactIds].map((contactId) => [contactId, openDocumentsFor(contactId)]));
+  resolution.documents = Object.fromEntries([...contactIds].map((contactId) => {
+    const documents = openDocumentsFor(contactId);
+    // بدهیِ دفتر کل که سند ندارد (خرید تأییدشده از صف حسابدار): همان ماندهٔ کارت
+    // حساب، منهای آنچه سندهای باز پرداختنی پوشش می‌دهند. فقط مسیر «پول شریک»
+    // این را می‌پذیرد؛ تسویهٔ نقدی همچنان سند می‌خواهد.
+    const covered = documents.filter((item) => item.direction === 'payable').reduce((sum, item) => sum + Number(item.remaining || 0), 0);
+    const uncovered = payableLedgerBalance(contactId) - covered;
+    if (uncovered > 0) documents.push({ kind: 'ledger-balance', id: contactId, direction: 'payable', remaining: uncovered, reference: 'ماندهٔ بدهی در دفتر کل' });
+    return [contactId, documents];
+  }));
   const plan = buildUnderstandingPlan(understanding, { resolution, answers, transcript: row.transcript, source: row.source, now });
   const today = now.toISOString();
   for (const component of plan.components) {
@@ -406,6 +415,11 @@ export function commitUnderstandingCase(id, { now } = {}) {
           amount: component.amount, occurredAt: component.occurredAt || new Date().toISOString(), memo: row.transcript.slice(0, 200),
         }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
         results.push({ component: component.id, kind: 'transfer', journalEntryId: transfer?.id || null });
+        continue;
+      }
+      if (component.kind === 'partner-settlement' && component.target.kind === 'ledger-balance') {
+        const settled = settlePayableBalanceByPartner(component.target.id, { amount: component.amount, occurredAt: component.occurredAt || undefined, paidBy: component.paidBy, clientId: `understanding:${id}:${component.id}`, withinTransaction: true });
+        results.push({ component: component.id, kind: 'partner-settlement', target: component.target, eventId: settled.event.id, status: settled.event.status });
         continue;
       }
       if (component.kind === 'partner-settlement') {

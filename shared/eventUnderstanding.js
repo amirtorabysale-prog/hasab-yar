@@ -243,7 +243,8 @@ function structuralViolations(value, path = '', found = []) {
  * برمی‌دارد — «۵۰» و «50»، «می‌دهیم» و «می دهیم» — نه تفاوت معنایی.
  */
 export function evidenceKey(value) {
-  return normalizePersian(value).replace(/[«»"'“”()[\]{}،,؛;:!؟?.\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+  // «اقای» تایپی و «آقای» مدل یک واژه‌اند؛ فقط برای تطبیق شاهد، نه برای متنی که ذخیره می‌شود.
+  return normalizePersian(value).replace(/آ/g, 'ا').replace(/[«»"'“”()[\]{}،,؛;:!؟?.\-–—]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**

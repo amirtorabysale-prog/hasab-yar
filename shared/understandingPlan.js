@@ -549,7 +549,8 @@ function planPartnerPaid({ facts, amounts, retracted, resolution, answers, payme
     return;
   }
   const open = (resolution.documents?.[contactId] || []).filter((document) => document.direction === 'payable' && document.remaining > 0);
-  const documents = open.filter((document) => document.kind === 'obligation');
+  // بدهیِ ثبت‌شده در «طلب و بدهی»، یا ماندهٔ دفتر کل که سندی ندارد.
+  const documents = open.filter((document) => ['obligation', 'ledger-balance'].includes(document.kind));
   if (!documents.length) {
     toAccountant(open.length
       ? `بدهیِ «${creditor.name}» فاکتور خرید است؛ تسویهٔ فاکتور از پول شخصی شریک با حسابدار است.`
