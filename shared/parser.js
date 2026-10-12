@@ -190,10 +190,14 @@ const TRAILING_VAV_PATTERN = new RegExp(`(?<![آ-ی])(${JOINABLE_VALUES.join('|'
 // یک ثبت پنجاه‌تومانی می‌ساخت — در آزمون استرس، به صف حسابدار با مبلغی
 // یک‌میلیون‌بار کوچک‌تر.
 const SCALE_SUFFIX_PATTERN = /(?<![آ-ی])(هزار|میلیون|میلیارد)(?:ی(?:ش|شو|شم|شون)|ش|شو|شم|شون)(?![آ-ی])/g;
+// «است»ِ چسبیده به مقیاس، پس از عدد: «قسط اولش ده میلیونه» و «قیمتش دو
+// میلیونه» ده و دو تومان خوانده می‌شدند. فقط پس از عدد، تا «هزاره» مبلغ نشود.
+const SCALE_COPULA_PATTERN = new RegExp(`(?<=(?:\\d|(?<![آ-ی])(?:${JOINABLE_VALUES.join('|')}))\\s*)(هزار|میلیون|میلیارد)(?:ی)?ه(?![آ-ی])`, 'g');
 
 export function repairNumberSpeech(text) {
   return String(text || '')
     .replace(SCALE_SUFFIX_PATTERN, '$1')
+    .replace(SCALE_COPULA_PATTERN, '$1')
     .replace(JOINED_SCALE_PATTERN, '$1 $2')
     .replace(TRAILING_VAV_PATTERN, '$1 و')
     .replace(/\s+/g, ' ')
@@ -1033,10 +1037,11 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     // «اشتراک یک‌ساله رو کنسل کرد» دورهٔ قرارداد قبلی است، نه پوششی که حالا خریده‌ایم.
     const rowPeriod = refund ? null : segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
     const rowPrepayment = segment ? readPrepaymentMention(ownText) : prepayment;
-    // نامی که خودِ بند گفته؛ وگرنه نام جمله، مثل همیشه.
+    // نامی که خودِ بند گفته؛ وگرنه نام جمله، مثل همیشه. نام حدسیِ بند («به
+    // تاریخ ۳۰ آبان»، «به سامان واریز کردند») جای نام مطمئنِ جمله را نمی‌گیرد.
     const ownContact = segment && !petty?.holder ? extractContactCandidate(ownText) : null;
-    const rowCounterparty = ownContact?.name ? ownContact : counterparty;
-    const rowMoneyDirection = ownContact?.name ? counterpartyMoneyDirection(ownText) : moneyDirection;
+    const rowCounterparty = ownContact?.name && (ownContact.confident || !counterparty.name) ? ownContact : counterparty;
+    const rowMoneyDirection = rowCounterparty === ownContact ? counterpartyMoneyDirection(ownText) : moneyDirection;
     let classified = classify(context, learnings, categoryContext, { moneyIn, rentTaken });
     // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
     //
