@@ -255,10 +255,31 @@ function storeDecision(database, eventId, decision, supersedes = null) {
  * ساخته نمی‌شود. این تنها جایی است که idempotency واقعاً تضمین می‌شود، چون در
  * سطح دیتابیس است و هیچ مسیری نمی‌تواند دورش بزند.
  */
-function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Tehran' } = {}) {
+/**
+ * مبلغی که پخش می‌شود: همان مبلغی که دارایی پیش‌پرداخت یا بدهی درآمد انتقالی
+ * را ساخت، نه مبلغی که کاربر گفت.
+ *
+ * این دو فقط وقتی برابرند که نقشه دست نخورده باشد. نگهبان ارزش افزوده سطر
+ * پیش‌پرداخت (یا درآمد انتقالی) را به خالص می‌برد و مالیات را به اعتبار یا بدهی
+ * مالیاتی؛ پخش مبلغِ ناخالص یعنی مالیات یک بار دیگر هزینه یا درآمد می‌شد و
+ * حساب پیش‌پرداخت در پایان دوره منفی می‌ماند.
+ *
+ * نقشه‌ای که سطر حامل ندارد — مثلاً نگهبان تسویه آن را به بستن بدهی برده —
+ * دارایی یا بدهیِ دوره‌داری نساخته و برنامه‌ای هم ندارد. فراخوانی که نقشه
+ * نمی‌دهد (دادهٔ قدیمی) همان مبلغ رویداد را می‌گیرد.
+ */
+function scheduleBase(plan, decision, event) {
+  if (!plan) return event.amount;
+  const deferred = decision?.treatment === 'deferred-revenue';
+  const role = deferred ? ROLES.DEFERRED_REVENUE : ROLES.PREPAID_ASSET;
+  return (plan.lines || []).filter((line) => line.role === role)
+    .reduce((sum, line) => sum + (Number(deferred ? line.credit : line.debit) || 0), 0);
+}
+
+function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Tehran', plan = null } = {}) {
   if (decision?.recognitionMethod !== 'monthly-straight-line') return 0;
   const items = buildMonthlySchedule({
-    amount: event.amount,
+    amount: scheduleBase(plan, decision, event),
     periodStart: event.servicePeriodStart,
     periodEnd: event.servicePeriodEnd,
     sourceId: eventId,
@@ -462,7 +483,7 @@ export function recordFinancialEvent(database, event, {
 
     const decisionId = storeDecision(database, id, accountingDecision);
     if (decisionId) database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, id);
-    storeSchedule(database, id, accountingDecision, event);
+    storeSchedule(database, id, accountingDecision, event, { plan, timeZone });
 
     writeAudit(database, id, 'captured', {
       rawInput: String(rawInput || '').slice(0, 10000),
@@ -620,7 +641,7 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
     }
     const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
     database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, row.id);
-    storeSchedule(database, row.id, decision, event);
+    storeSchedule(database, row.id, decision, event, { plan });
     writeAudit(database, row.id, 'answered', { fact, value, freeText, patch, decision, guards: guards.checks }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }

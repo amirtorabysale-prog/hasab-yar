@@ -263,3 +263,73 @@ test('منفی: حذف یک هزینهٔ سادهٔ بی‌برنامه همان
     assert.equal(balances().expense, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «ارزش افزوده»: برنامه همان خالصی را پخش می‌کند که دارایی یا بدهی را
+// ساخت؛ مالیات یک بار اعتبار یا بدهی مالیاتی است، نه دوباره هزینه یا درآمد.
+// ---------------------------------------------------------------------------
+
+async function vatBook(name, { registered = true } = {}) {
+  const book = await freshBook(name);
+  if (registered) await book.inBook(() => database.saveTaxRate({ name: 'ارزش افزوده ۱۰', rate: 10, treatment: 'taxable', isDefault: true }));
+  return book;
+}
+const plannedTotal = (eventId) => items(eventId).filter((item) => item.status !== 'superseded').reduce((sum, item) => sum + item.amount, 0);
+const planLine = (eventId, role) => JSON.parse(sql().prepare('SELECT posting_plan FROM financial_events WHERE id=?').get(eventId).posting_plan)
+  .lines.find((line) => line.role === role);
+
+test('اشتراک یک‌ساله با ارزش افزوده: برنامه روی خالص پیش‌پرداخت، پیش‌پرداخت در پایان صفر', async () => {
+  const { inBook } = await vatBook('ارزش افزوده — اشتراک');
+  await inBook(() => {
+    const paid = capture('اشتراک یک ساله نرم افزار رو امروز ۱۰۹ میلیون با ارزش افزوده از حساب تجارت پرداخت کردیم');
+    assert.equal(paid.event.status, 'posted');
+    assert.equal(planLine(paid.eventId, 'prepaid-asset').debit, 99_090_909);
+    assert.equal(planLine(paid.eventId, 'vat-input').debit, 9_909_091);
+    assert.equal(plannedTotal(paid.eventId), 99_090_909, 'جمع برنامه = بدهکار پیش‌پرداخت');
+    run('2028-01-01T00:00:00.000Z');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 99_090_909], 'مالیات دوباره هزینه نمی‌شود');
+  });
+});
+
+test('بیمهٔ یک‌ساله با ارزش افزوده از مسیر پاسخ به سؤال: برنامه روی خالص', async () => {
+  const { inBook } = await vatBook('ارزش افزوده — پاسخ');
+  await inBook(() => {
+    const said = capture('حق بیمه یک‌ساله ۱۱۰ میلیون با ارزش افزوده پرداخت کردم', { approve: false });
+    if (said.event.status === 'pending') {
+      database.answerEvent(said.eventId, { fact: 'servicePeriodStart', value: 'this-month' });
+      database.answerEvent(said.eventId, { fact: 'servicePeriodEnd', value: 'one-year' });
+      database.approveEvent(said.eventId, { reason: 'حسابدار: تفکیک بررسی شد' });
+    }
+    assert.equal(planLine(said.eventId, 'prepaid-asset').debit, 100_000_000);
+    assert.equal(plannedTotal(said.eventId), 100_000_000);
+    run('2028-01-01T00:00:00.000Z');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 100_000_000]);
+  });
+});
+
+test('آینه: اجارهٔ پیش‌دریافت با ارزش افزوده — درآمد خالص شناسایی و درآمد انتقالی صفر می‌شود', async () => {
+  const { inBook } = await vatBook('ارزش افزوده — پیش‌دریافت');
+  await inBook(() => {
+    const received = capture('اجاره یک ساله انبار رو از مستاجر امروز ۱۱۰ میلیون با ارزش افزوده پیش دریافت کردیم به حساب تجارت');
+    if (received.event.status !== 'posted') database.approveEvent(received.eventId, { reason: 'حسابدار: تفکیک بررسی شد' });
+    assert.equal(planLine(received.eventId, 'deferred-revenue').credit, 100_000_000);
+    assert.equal(plannedTotal(received.eventId), 100_000_000);
+    run('2028-01-01T00:00:00.000Z');
+    assert.deepEqual([balances().deferred, balances().income], [0, -100_000_000], 'درآمد = خالص، بدهی مالیات جدا می‌ماند');
+  });
+});
+
+test('منفی: دفتر نامشمول و جملهٔ بی‌واژهٔ ارزش افزوده، برنامه همان کل مبلغ است', async () => {
+  const unregistered = await vatBook('ارزش افزوده — نامشمول', { registered: false });
+  await unregistered.inBook(() => {
+    const paid = capture('اشتراک یک ساله نرم افزار رو امروز ۱۰۹ میلیون با ارزش افزوده از حساب تجارت پرداخت کردیم');
+    assert.equal(plannedTotal(paid.eventId), 109_000_000);
+    run('2028-01-01T00:00:00.000Z');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 109_000_000]);
+  });
+  const registered = await vatBook('ارزش افزوده — بی‌واژه');
+  await registered.inBook(() => {
+    const paid = capture('اشتراک یک ساله نرم افزار رو امروز ۱۲۰ میلیون از حساب تجارت پرداخت کردیم');
+    assert.equal(plannedTotal(paid.eventId), 120_000_000);
+  });
+});
