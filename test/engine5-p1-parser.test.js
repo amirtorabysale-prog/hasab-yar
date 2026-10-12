@@ -9,6 +9,9 @@ import { ROLES } from '../shared/accountingRules.js';
 import { classifyCategory } from '../shared/categoryRules.js';
 import { detectBank, detectTransferBanks, mentionsMultipleBanks } from '../shared/banks.js';
 import { detectCaptureTransfer } from '../shared/bankSpeech.js';
+import { extractContactCandidate, extractContactName } from '../shared/counterpartySpeech.js';
+import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * موتور ۵ — پارسر قطعی: جهت، مبلغ، نرخ، بند هر ردیف، دسته و نام بانک.
@@ -528,3 +531,88 @@ test('منفی: بانک‌های واقعی و انتقال میان دو با�
   const transfer = detectTransferBanks('از ملت به پاسارگاد منتقل کردیم');
   assert.deepEqual([transfer.from.id, transfer.to.id], ['mellat', 'pasargad']);
 });
+
+// ---------------------------------------------------------------------------
+// counterparty-role-noun-glued — نقش و موضوع بخشی از نام طرف حساب نیستند
+// ---------------------------------------------------------------------------
+
+test('نام طرف حساب در نقش (مستاجر، صاحبخانه، پیمانکار…) و موضوع (اجاره…) بسته می‌شود', () => {
+  const said = 'از آقای احمدی مستاجر بابت اجاره شش ماهه چک ۶۰ میلیونی گرفتیم';
+  assert.equal(extractContactCandidate(said).name, 'احمدی');
+  assert.equal(detectVoiceIntent(said, { now: new Date(NOW) }).contactName, 'احمدی');
+  assert.equal(parse(said)[0].contactName, 'احمدی');
+  for (const [text, name] of [
+    ['چک ۶۰ میلیونی اجاره شش ماه آینده رو از آقای احمدی گرفتیم', 'احمدی'],
+    ['از آقای رضایی مستاجر ۶۰ میلیون اجاره شش ماه آینده رو گرفتیم', 'رضایی'],
+    ['به آقای کاظمی صاحبخونه ۱۲۰ میلیون بابت اجاره یک ساله دادیم', 'کاظمی'],
+    ['به آقای کاظمی صاحب‌خانه ۱۲۰ میلیون دادیم', 'کاظمی'],
+    ['به آقای کاظمی صاحب خونه ۱۲۰ میلیون دادیم', 'کاظمی'],
+    ['به آقای رضایی موجر ۱۰ میلیون دادیم', 'رضایی'],
+    ['از آقای احمدی مستأجر ۱۰ میلیون گرفتیم', 'احمدی'],
+    ['آقای احمدی مستاجرمون اجاره شش ماهه ۳۰ میلیون واریز کرد', 'احمدی'],
+    ['به آقای رضایی اجاره یک سال رو ۱۲۰ میلیون دادیم', 'رضایی'],
+    ['به اقای رضایی پیمانکار ۵ میلیون دادیم', 'رضایی'],
+    ['به آقای کریمی کارمندمون ۱۰ میلیون مساعده دادیم', 'کریمی'],
+    ['به آقای نوری مدیرعامل ۵ میلیون دادیم', 'نوری'],
+    ['از آقای صالحی مشتری ۲۰ میلیون گرفتیم', 'صالحی'],
+    ['به آقای احمدی بیمه‌گذار ۵ میلیون دادیم', 'احمدی'],
+    ['از رضا مستاجر ۱۰ میلیون گرفتیم', 'رضا'],
+  ]) {
+    assert.equal(extractContactCandidate(text).name, name, text);
+  }
+  // صفحهٔ طلب و بدهی: نام بی‌عنوان پیش از نقش.
+  assert.equal(extractContactName('احمدی مستاجر ۶۰ میلیون بدهکار شد', { allowBare: true }), 'احمدی');
+  // فعل و نام بانک نام نیستند.
+  assert.equal(parse('اجاره شش ماهه ۳۰ میلیون از مستاجر وصول شد')[0].contactName, 'مستاجر');
+  assert.equal(parse('اجاره دفتر ۶ ماهه ۳۰ میلیون در ماه ۵ میلیون از ملت دادیم')[0].contactName, undefined);
+});
+
+test('منفی: نام‌های چندبخشی و شرکت‌هایی که با واژهٔ نقش شروع می‌شوند کامل می‌مانند', () => {
+  for (const [text, name] of [
+    ['۹۳ میلیون تومان به شرکت آراد گستر آسیا پرداخت شد', 'شرکت آراد گستر آسیا'],
+    ['آقای علی احمدی ۵ میلیون داد', 'علی احمدی'],
+    ['خانم سارا محمدی نیا ۵ میلیون داد', 'سارا محمدی نیا'],
+    ['به شرکت بیمه ایران ۱۲ میلیون دادیم', 'شرکت بیمه ایران'],
+    ['به شرکت پیمانکاری آبادگران ۱۲ میلیون دادیم', 'شرکت پیمانکاری آبادگران'],
+  ]) {
+    assert.equal(extractContactCandidate(text).name, name, text);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// دفتر: سه گفته از یک مستاجر، یک طرف حساب و یک حساب تفصیلی.
+// ---------------------------------------------------------------------------
+
+process.env.DATABASE_PATH = tempDatabase('engine5-p1-parser');
+process.env.ADMIN_USERNAME = 'e5-parser-owner';
+process.env.ADMIN_PASSWORD = 'e5-parser-strong-password-5521';
+const database = await import('../server/db.js');
+database.ensureAdmin();
+const owner = database.authenticateUser('e5-parser-owner', 'e5-parser-strong-password-5521');
+const workspace = database.createWorkspace(owner.id, { name: 'دفتر مستاجر', profileType: 'business' });
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
+
+test('دفتر: دو چک و یک دریافت نقدی از «آقای احمدی مستاجر» روی یک طرف حساب می‌نشینند', () => {
+  inWorkspace(() => {
+    database.installChartTemplate();
+    for (const sentence of [
+      'از آقای احمدی مستاجر بابت اجاره شش ماهه چک ۶۰ میلیونی گرفتیم',
+      'چک ۶۰ میلیونی اجاره شش ماه آینده رو از آقای احمدی گرفتیم',
+    ]) {
+      const intent = detectVoiceIntent(sentence, { now: new Date(NOW) });
+      database.recordCheque({
+        direction: intent.direction, counterpartyName: intent.contactName, amount: intent.amount,
+        against: 'income', category: 'درآمد اجاره', note: sentence,
+      });
+    }
+    const receipt = 'از آقای احمدی مستاجر ۱۰ میلیون اجاره مهر رو گرفتیم';
+    const [item] = parseFinancialText(receipt, { source: 'voice', now: new Date(NOW) }).transactions;
+    database.insertTransactions({ transcript: receipt, transactions: [item] });
+    const names = database.listContacts().map((contact) => contact.name);
+    assert.deepEqual(names.filter((name) => name.includes('احمدی')), ['احمدی']);
+    const split = database.activeWorkspaceDatabase().prepare("SELECT COUNT(*) AS count FROM ledger_accounts WHERE name LIKE '%احمدی مستاجر%'").get().count;
+    assert.equal(split, 0);
+  });
+});
+
+test.after(() => removeTempDatabase(process.env.DATABASE_PATH));

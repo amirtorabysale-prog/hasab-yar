@@ -13,6 +13,7 @@
  */
 
 import { normalizePersian } from './normalize.js';
+import { detectBank } from './banks.js';
 
 export const CONTACT_STOP_WORDS = new Set([
   'آقای', 'اقای', 'خانم', 'جناب', 'شرکت', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار',
@@ -43,6 +44,9 @@ export const CONTACT_STOP_WORDS = new Set([
   // «از تنخواه پذیرایی خریدیم» طرف حسابی به نام «تنخواه» می‌ساخت؛ تنخواه حسابِ
   // پرداخت است، نه کسی که پول را گرفته.
   'تنخواه', 'تنخواه‌گردان', 'گردان', 'منتقل', 'انتقال',
+  // «… از مستاجر وصول شد» طرف حسابی به نام «مستاجر وصول» و «کالا رو به انبار
+  // بردیم» یکی به نام «انبار بردیم» می‌ساخت.
+  'وصول', 'بردیم', 'بردم', 'بردن', 'برد',
 ]);
 
 // واژه‌های عددی نباید بخشی از نام شوند: «آقای احمدی سه میلیون» نام را
@@ -55,6 +59,36 @@ export const NUMBER_WORDS = new Set(['صفر', 'یک', 'یه', 'دو', 'سه', '
 // واژه‌هایی که خودشان جهت را می‌سازند؛ نام طرف حساب کنارشان می‌نشیند، نه رویشان.
 export const DIRECTION_WORDS = new Set(['بدهکار', 'بدهکاره', 'بدهکارم', 'بدهکاریم', 'بدهکارند',
   'طلبکار', 'طلبکاره', 'طلبکارم', 'طلبکارند', 'طلب', 'طلبم', 'بدهی', 'بدهیم', 'قرض', 'قرضی']);
+
+/**
+ * نقش طرف حساب و موضوعِ پرداخت، بخشی از نام نیستند.
+ *
+ * «از آقای احمدی مستاجر بابت اجاره… چک گرفتیم» طرف حسابی به نام «احمدی مستاجر»
+ * می‌ساخت، جدا از «احمدی» که همان شخص با جملهٔ دیگری ساخته بود: حساب تفصیلی و
+ * حساب اسناد دریافتنیِ دوم، و کارت مستاجر دو تکه. همین است «کاظمی صاحبخونه»،
+ * «احمدی مستاجرمون اجاره»، «رضایی اجاره» و «رضا مستاجر». نقش (مستاجر، موجر،
+ * صاحبخانه، پیمانکار، کارمند، مشتری…) با ضمیر چسبیده («مستاجرمون»، «کارمندمون»)
+ * و موضوعی که بعد از نام می‌آید (اجاره، بیمه، اشتراک…) نام را می‌بندند. فقط پس از
+ * دست‌کم یک واژهٔ نام: «شرکت بیمه ایران» و «شرکت پیمانکاری آبادگران» نام‌اند.
+ *
+ * ادغام دو طرف حسابِ موجود تصمیم کاربر است؛ اینجا فقط نام تازه بد ساخته نمی‌شود.
+ */
+export const COUNTERPARTY_ROLE_NOUNS = new Set([
+  'مستاجر', 'مستأجر', 'موجر', 'مؤجر', 'صاحبخونه', 'صاحبخانه', 'پیمانکار', 'کارمند', 'کارگر', 'پرسنل',
+  'راننده', 'مدیرعامل', 'مدیر', 'مشتری', 'همکار', 'وکیل', 'حسابدار', 'بیمه‌گذار', 'تامین‌کننده', 'تأمین‌کننده',
+]);
+const ROLE_TWO_WORDS = Object.freeze({ صاحب: ['خانه', 'خونه', 'ملک', 'مغازه'], بیمه: ['گذار'], تامین: ['کننده'], تأمین: ['کننده'] });
+const SUBJECT_HEADS = new Set(['اجاره', 'کرایه', 'بیمه', 'اشتراک', 'لایسنس', 'ودیعه', 'رهن', 'قسط', 'اقساط', 'حقوق']);
+const POSSESSIVE = /(?:مون|مان|تون|شون|م|ت|ش)$/;
+
+/** واژه‌ای که نقش یا موضوع است، نه بخشی از نام؛ با ضمیر چسبیده هم. */
+export function isRoleOrSubjectWord(word, next = '') {
+  if (!word) return false;
+  if (ROLE_TWO_WORDS[word]?.includes(next)) return true;
+  if (COUNTERPARTY_ROLE_NOUNS.has(word) || SUBJECT_HEADS.has(word)) return true;
+  const stem = word.replace(POSSESSIVE, '');
+  return stem !== word && (COUNTERPARTY_ROLE_NOUNS.has(stem) || SUBJECT_HEADS.has(stem));
+}
 
 export const TITLE_PREFIXES = ['آقای', 'اقای', 'خانم', 'جناب', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار خانم', 'شرکت', 'سازمان', 'مؤسسه', 'موسسه'];
 
@@ -86,9 +120,11 @@ function bareContactName(text) {
     const picked = [];
     for (let ahead = index + 1; ahead < words.length && picked.length < 2; ahead += 1) {
       if (!usable(words[ahead])) break;
+      if (picked.length && isRoleOrSubjectWord(words[ahead], words[ahead + 1])) break;
       picked.push(words[ahead]);
     }
-    if (picked.length) return picked.join(' ');
+    // «از ملت دادیم»: نام بانک حسابِ پرداخت است، نه طرف حساب.
+    if (picked.length && !detectBank(picked.join(' '))) return picked.join(' ');
   }
   for (let index = 0; index < words.length; index += 1) {
     if (!DIRECTION_WORDS.has(words[index])) continue;
@@ -97,6 +133,8 @@ function bareContactName(text) {
     // ایستادن روی اولین واژهٔ عددی، نام را از دست می‌داد.
     let back = index - 1;
     while (back >= 0 && (NUMBER_WORDS.has(words[back]) || CURRENCY_WORDS.has(words[back]) || /\d/.test(words[back]) || words[back] === 'و')) back -= 1;
+    // «احمدی مستاجر ۶۰ میلیون بدهکار شد»: نقشِ پس از نام کنار می‌رود.
+    if (back > 0 && isRoleOrSubjectWord(words[back], words[back + 1]) && usable(words[back - 1])) back -= 1;
     const before = [];
     for (; back >= 0 && before.length < 2; back -= 1) {
       if (!usable(words[back])) break;
@@ -141,6 +179,7 @@ export function extractContactName(input, { allowBare = false } = {}) {
       // «شرکت آزاد بدهکار» می‌ساخت و همان نام، یک طرف حساب جعلی در دفتر
       // می‌ساخت که با طرف حساب واقعی یکی نمی‌شد.
       if (/^[،,؛.!؟]$/.test(word) || CONTACT_STOP_WORDS.has(word) || NUMBER_WORDS.has(word) || DIRECTION_WORDS.has(word) || /\d/.test(word)) break;
+      if (picked.length && isRoleOrSubjectWord(word, words[offset + 1])) break;
       picked.push(word);
     }
     if (picked.length) return `${['شرکت','سازمان','مؤسسه','موسسه'].includes(prefix) ? `${prefix} ` : ''}${picked.join(' ')}`.trim();
