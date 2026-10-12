@@ -10,7 +10,8 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listReviewQueue, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listReviewQueue, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
 import { todayPersian } from '../../shared/persianDate.js';
@@ -67,7 +68,30 @@ function actorName(id) {return id ? controlDb.prepare('SELECT display_name,usern
 function labelHistory(proposal) {return proposal ? {...proposal,conversation:proposal.conversation?.map(m=>({...m,actorName:actorName(m.actor)})),dnaEvidence:proposal.dnaEvidence?.map(d=>({...d,actorName:actorName(d.actor)}))} : null;}
 function preparedProposal(database,eventId,proposal = latestReviewProposal(database,eventId)) {
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
-  return proposal && row ? labelHistory(prepareReviewProposal(database,row,proposal)) : null;
+  return proposal && row ? labelHistory(withTimingCoverage(database,row,prepareReviewProposal(database,row,proposal))) : null;
+}
+
+/**
+ * سطر پیش‌پرداخت خدمت یا درآمد انتقالی بدون دورهٔ پوشش، پیش از «قبول» مانع است.
+ *
+ * چنین سطری دارایی یا بدهی دوره‌دار می‌سازد که بدون برنامه هرگز هزینه یا درآمد
+ * نمی‌شود. ثبت نهایی (`postReviewedComposite`) آن را رد می‌کند؛ اینجا همان مانع
+ * پیش از کلیک دیده می‌شود تا حسابدار دوره را بگوید — در گفت‌وگو یا با کارت
+ * سؤال — نه اینکه با خطای لحظهٔ ثبت روبه‌رو شود. پیش‌پرداخت خرید کالا دوره
+ * ندارد و بیرون است.
+ */
+function withTimingCoverage(database,row,prepared) {
+  if(!prepared?.lines?.length) return prepared;
+  const evidence=originalReviewTranscript(database,row);
+  const supplierAdvance=isReviewSupplierAdvance([evidence,...reviewConversation(database,row.id).filter(m=>m.speaker==='accountant').map(m=>m.body)].join(' '),prepared.lines);
+  const kind=prepared.lines.some(l=>l.role==='deferred-revenue' && l.credit>0) ? 'deferred'
+    : !supplierAdvance && prepared.lines.some(l=>l.role==='prepaid-asset' && l.debit>0) ? 'prepaid' : null;
+  if(!kind) return prepared;
+  const event=reviewedEvent(database,row);
+  const coverage=reviewTimingCoverage(database,row.id,{...event,evidence:event.evidence || evidence});
+  if(coverage.start && coverage.end) return {...prepared,coverage};
+  const text=coverageQuestion(kind);
+  return {...prepared,postingBlockers:[...new Set([...(prepared.postingBlockers || []),text])],canPost:false};
 }
 export function reviewAssistantHistory(eventId) {
   const database = activeWorkspaceDatabase();
@@ -96,7 +120,7 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
   if (!proposal || proposal.id !== proposalId || proposal.state !== 'proposed' || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صفحه را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
   const actor = currentWorkspace()?.userId || null;
   if (accepted) {
-    const prepared=prepareReviewProposal(database,row,proposal);
+    const prepared=withTimingCoverage(database,row,prepareReviewProposal(database,row,proposal));
     if (prepared.canPost && prepared.useLockedPlan) {
       database.exec('BEGIN IMMEDIATE');
       try {
@@ -364,7 +388,7 @@ export function eventDecision(eventId) {
 
 /** تمام اثرهای دفتر، ردیف نقدی و چک در یک تراکنش؛ پیشنهاد، مجوزِ دور زدن اعتبار حساب/دوره نیست. */
 function acceptPreparedProposal(database,row,proposal,actor) {
-  const prepared = prepareReviewProposal(database,row,proposal);
+  const prepared = withTimingCoverage(database,row,prepareReviewProposal(database,row,proposal));
   if (!prepared.canPost) throw Object.assign(new Error(prepared.postingBlockers.join(' — ') || 'پیشنهاد هنوز قطعی نیست.'), {code:'REVIEW_DETAILS_REQUIRED',status:409});
   database.exec('BEGIN IMMEDIATE');
   try {

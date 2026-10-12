@@ -30,7 +30,8 @@ export const SCHEDULE_ITEM_STATUS = Object.freeze({
   SUPERSEDED: 'superseded',
 });
 
-import { persianToISO, todayPersian } from './persianDate.js';
+import { persianToISO, readJalaliExpression, readTypedDate, todayPersian } from './persianDate.js';
+import { normalizePersian } from './normalize.js';
 
 /**
  * شمارهٔ مطلق ماه شمسی — برای شمردن و مقایسه.
@@ -138,4 +139,101 @@ export function buildMonthlySchedule({ amount, periodStart, periodEnd, sourceId,
     }));
   }
   return items;
+}
+
+// ---------------------------------------------------------------------------
+// دورهٔ پوششی که حسابدار گفته
+// ---------------------------------------------------------------------------
+
+const COUNT_WORDS = Object.freeze({
+  یک: 1, یه: 1, دو: 2, سه: 3, چهار: 4, چار: 4, پنج: 5, شش: 6, شیش: 6, هفت: 7, هشت: 8, نه: 9, ده: 10,
+  یازده: 11, دوازده: 12, پانزده: 15, پونزده: 15, هجده: 18, بیست: 20, سی: 30, سی‌وشش: 36, 'سی و شش': 36,
+});
+const COUNT_PATTERN = `(\\d{1,3}|${Object.keys(COUNT_WORDS).sort((a, b) => b.length - a.length).join('|')})`;
+/** «به مدت ۱۲ ماه»، «یک‌ساله»، «شش ماهه»، «دو سال» — طول پوشش. */
+const DURATION = new RegExp(`(?<![\\d])${COUNT_PATTERN}\\s*(ماهه|ماه|ساله|سال)(?![آ-ی])`);
+/** مرز «از … تا …» در جواب. */
+const RANGE_SPLIT = /\s(?:تا|الی|لغایت)\s/;
+
+/** پایان دوره: همان روز، چند ماه شمسی بعد، منهای یک روز. */
+function coverageEnd(startIso, months) {
+  const parts = todayPersian(new Date(startIso));
+  const total = (parts.year * 12) + (parts.month - 1) + months;
+  const next = persianToISO(Math.floor(total / 12), (total % 12) + 1, Math.min(parts.day, 29));
+  return next ? new Date(new Date(next).getTime() - 86_400_000).toISOString() : null;
+}
+
+function lastDayOfMonth(year, month) {
+  const next = month === 12 ? persianToISO(year + 1, 1, 1) : persianToISO(year, month + 1, 1);
+  return next ? new Date(new Date(next).getTime() - 86_400_000).toISOString() : null;
+}
+
+/**
+ * یک سرِ دوره: «اول مهر ۱۴۰۵»، «۳۱ شهریور ۱۴۰۶»، «آخر شهریور سال بعد»، «۱۴۰۵/۰۷/۰۱».
+ *
+ * ماهِ بی‌روز برای شروع اول ماه است و برای پایان آخر ماه — «مهر ۱۴۰۵ تا شهریور
+ * ۱۴۰۶» دوازده ماه کامل است، نه یازده ماه و یک روز. سالِ نگفته از تاریخ رویداد
+ * می‌آید و پایانی که ماهش پیش از ماه شروع است، سال بعد است.
+ */
+function coverageBound(text, { reference, end = false, after = null }) {
+  const named = readJalaliExpression(text);
+  if (named) {
+    const base = todayPersian(new Date(after || reference));
+    let year = named.year || (base.year + (named.yearOffset || 0));
+    if (!named.year && named.yearOffset == null && after && named.month < base.month) year += 1;
+    if (named.end || (end && !named.day)) return lastDayOfMonth(year, named.month);
+    return persianToISO(year, named.month, named.day || 1);
+  }
+  return readTypedDate(text, { now: new Date(reference) });
+}
+
+/**
+ * دورهٔ پوشش از جواب‌های حسابدار.
+ *
+ * چرا جدا از `readServicePeriod` گفتار: جواب یک سؤال صریح است، نه یک جملهٔ
+ * پرداخت. «از اول مهر ۱۴۰۵ به مدت ۱۲ ماه» در گفتار نشانهٔ آینده ندارد و آنجا
+ * عمداً دوره خوانده نمی‌شود؛ اینجا خودِ سؤال گفته بود «دوره از کی تا کی؟».
+ *
+ * ورودی: جواب‌ها به ترتیب اولویت، هرکدام `{ text, side }` که `side` یکی از
+ * `start`، `end` یا `any` است؛ و آنچه از قبل معلوم است (`start`، `end`).
+ * خروجی: `{ start, end }` — هرکدام که خوانده نشد `null` می‌ماند. چیزی حدس زده
+ * نمی‌شود: شروعی که گفته نشده از تاریخ پرداخت ساخته نمی‌شود.
+ */
+export function readCoverageAnswers(answers = [], { occurredAt = null, start = null, end = null, months: knownMonths = null } = {}) {
+  const reference = occurredAt || new Date().toISOString();
+  let from = null;
+  let to = null;
+  let months = null;
+  for (const answer of answers) {
+    const text = normalizePersian(String(answer?.text || '')).trim();
+    if (!text) continue;
+    const side = answer.side || 'any';
+    const duration = DURATION.exec(text);
+    const count = duration ? (/^\d+$/.test(duration[1]) ? Number(duration[1]) : COUNT_WORDS[duration[1]] || 0) : 0;
+    const length = duration && count > 0 ? (/سال/.test(duration[2]) ? count * 12 : count) : 0;
+    if (!months && length > 0 && length <= 120) months = length;
+    // عدد مدت تاریخ نیست: «۱۲ ماه» نباید «۱۲ مهر» خوانده شود.
+    const dated = duration ? text.replace(duration[0], ' ') : text;
+    const [head, tail] = dated.split(RANGE_SPLIT);
+    if (tail !== undefined) {
+      const first = coverageBound(head, { reference });
+      if (first && !from) from = first;
+      const last = coverageBound(tail, { reference, end: true, after: first || from || start });
+      if (last && !to) to = last;
+    } else if (/\d|اول|آخر|پایان|ابتدا|فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند/.test(head)) {
+      const isEnd = side === 'end' || /پایان|آخر|انتها|اتمام/.test(head);
+      const bound = coverageBound(head, { reference, end: isEnd, after: isEnd ? (from || start) : null });
+      if (bound && isEnd && !to) to = bound;
+      else if (bound && !isEnd && !from) from = bound;
+    }
+  }
+  const startIso = from || start || null;
+  // طولی که از پیش معلوم بود («یک‌ساله» در متن) با شروعِ تازهٔ جواب: «از اول
+  // مهر» یعنی همان دوازده ماه از اول مهر، نه پایانِ کهنه‌ای که از روز پرداخت
+  // حساب شده بود.
+  const length = months || (from && !to ? (knownMonths || (start && end ? periodMonths(start, end) : null)) : null);
+  let endIso = to || end || null;
+  if (startIso && !to && length) endIso = coverageEnd(startIso, length);
+  if (startIso && endIso && !(Date.parse(endIso) >= Date.parse(startIso))) return { start: startIso, end: null };
+  return { start: startIso, end: endIso };
 }

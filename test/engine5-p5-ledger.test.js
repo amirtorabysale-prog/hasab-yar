@@ -614,3 +614,293 @@ test('بستن دوره با قلم شناسایی سندنخورده رد می�
     assert.ok(inside.length && inside.every((item) => item.status === 'posted'), 'هیچ قلم برنامه‌ریزی‌شده یا منتظری در ماه بسته نمی‌ماند');
   });
 });
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «ثبت حسابدار»: وقتی حسابدار سطرهای خودش را ثبت می‌کند — قبول پیشنهاد
+// دستیار، ثبت دستیِ گفتهٔ چندمبلغی — همان سطرها حقیقت دفترند. برنامهٔ لحظهٔ ضبط
+// جایش را به برنامه‌ای می‌دهد که از سطر واقعی پیش‌پرداخت (یا درآمد انتقالی)
+// ساخته شده، یا اگر حسابدار هزینه ثبت کرد، باطل می‌شود. دورهٔ نامعلوم پرسیده
+// می‌شود، نه حدس زده.
+// ---------------------------------------------------------------------------
+
+const { proposeReview } = await import('../server/accountingReviewAi.js');
+const { readCoverageAnswers } = await import('../shared/recognitionSchedule.js');
+const previousAiKey = process.env.OPENAI_API_KEY;
+process.env.OPENAI_API_KEY = 'test-key-not-real';
+test.after(() => { if (previousAiKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousAiKey; });
+
+/** پاسخ ساختگی مدل؛ شبکه‌ای در کار نیست. */
+const fakeAi = (proposal) => async () => ({ ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({
+  summary: 'ثبت پیشنهادی حسابدار', explanation: 'بر اساس متن اصلی', counterpartyName: null, missingFacts: [], questions: [], inventoryItems: [], lines: [], ...proposal,
+}) }] }], usage: { input_tokens: 1, output_tokens: 1 } }) });
+const LINES = {
+  prepaid: (amount, key) => [{ role: 'prepaid-asset', key, debit: amount, credit: 0 }, { role: 'cash', key: null, debit: 0, credit: amount }],
+  expense: (amount, key) => [{ role: 'expense-category', key, debit: amount, credit: 0 }, { role: 'cash', key: null, debit: 0, credit: amount }],
+  deferred: (amount, key) => [{ role: 'cash', key: null, debit: amount, credit: 0 }, { role: 'deferred-revenue', key, debit: 0, credit: amount }],
+};
+
+/** ماندهٔ هر حساب دوره‌دار (منشأ یا معین کدینگ)، جدا جدا — نه جمع که خطا را بپوشاند. */
+const timingBalances = (role) => sql().prepare(`SELECT a.name, SUM(l.debit)-SUM(l.credit) AS n FROM journal_lines l
+  JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id LEFT JOIN chart_accounts c ON c.id=a.chart_account_id
+  WHERE (a.source_kind=? OR c.role=?) AND j.approval_state='approved' GROUP BY a.id HAVING n<>0`).all(role, role);
+const byType = (type) => Number(sql().prepare(`SELECT COALESCE(SUM(l.debit)-SUM(l.credit),0) AS n FROM journal_lines l
+  JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id WHERE a.type=? AND j.approval_state='approved'`).get(type).n);
+const liveItems = (eventId) => items(eventId).filter((item) => item.status !== 'superseded');
+
+/** «مطمئن نیستم» → «تحلیل کن» (با سؤال و جواب اختیاری) → پیشنهاد آماده در صف. */
+async function accountantReview(eventId, lines, { bank, ask = null, answers = null, message = '' } = {}) {
+  if (sql().prepare('SELECT route FROM financial_events WHERE id=?').get(eventId).route !== 'accountant-review') database.handOverPending(eventId);
+  const facts = { accountId: bank.id };
+  if (ask) await proposeReview(sql(), eventId, { fetcher: fakeAi({ questions: ask }), facts });
+  const proposal = await proposeReview(sql(), eventId, { message, fetcher: fakeAi({ lines }), facts: answers ? { ...facts, questionAnswers: answers } : facts });
+  const prepared = database.reviewQueue().items.find((item) => item.id === eventId).aiProposal;
+  return { proposal, prepared, accept: () => database.reviewAiFeedback(eventId, proposal.id, { accepted: true }).item };
+}
+
+for (const [sentence, amount, key] of [
+  ['اشتراک یک ساله نرم افزار ۲۴ میلیون از حساب تجارت دادیم', 24_000_000, 'اشتراک نرم افزار'],
+  ['بیمه یک ساله انبار ۱۲ میلیون از حساب تجارت دادیم', 12_000_000, 'بیمه انبار'],
+  ['اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون از حساب تجارت', 30_000_000, 'اجاره دفتر'],
+]) {
+  test(`پیش‌پرداخت قطعی که به حسابدار سپرده شد و با حساب دیگری قبول شد، همان حساب صفر می‌شود: «${sentence}»`, async () => {
+    const { inBook, bank } = await freshBook(`حسابدار — ${key}`);
+    await inBook(async () => {
+      const { eventId } = capture(sentence, { approve: false });
+      assert.ok(items(eventId).length > 1, 'برنامهٔ لحظهٔ ضبط');
+      const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(amount, key), { bank });
+      assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+      const item = accept();
+      const debited = sql().prepare('SELECT account_id AS id FROM journal_lines WHERE entry_id=? AND debit>0').get(item.journalEntryId).id;
+      const live = liveItems(eventId);
+      assert.equal(live.reduce((sum, row) => sum + row.amount, 0), amount, 'جمع برنامه همان سطر پیش‌پرداخت');
+      assert.ok(sql().prepare("SELECT 1 FROM recognition_schedule_items WHERE event_id=? AND status='planned' AND account_id<>?").get(eventId, debited) === undefined, 'حساب برنامه همان حساب بدهکارشده');
+      run(LONG_AFTER);
+      assert.deepEqual(timingBalances('prepaid-asset'), [], 'هیچ حساب پیش‌پرداختی مانده ندارد — نه مثبت ابدی، نه منفی');
+      assert.equal(byType('expense'), amount, 'هزینه یک بار، نه دو بار');
+    });
+  });
+}
+
+test('حسابدار پرداخت قطعیِ پیش‌پرداخت را هزینه ثبت کرد: برنامهٔ ضبط باطل و شناسایی روی آن هزینهٔ دوم نمی‌سازد', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — هزینه');
+  await inBook(async () => {
+    const { eventId } = capture('کرایه شش ماهه انبار رو از اول مهر ۳۰ میلیون از حساب تجارت دادیم', { approve: false });
+    assert.equal(items(eventId).length, 6);
+    const { accept } = await accountantReview(eventId, LINES.expense(30_000_000, 'اجاره'), { bank });
+    accept();
+    assert.deepEqual(liveItems(eventId), []);
+    assert.equal(store.decisionForEvent(sql(), eventId).treatment, 'accountant-reviewed');
+    assert.deepEqual(run(LONG_AFTER), { posted: 0, blocked: 0, skipped: 0 });
+    assert.equal(byType('expense'), 30_000_000, 'نه ۶۰ میلیون');
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+  });
+});
+
+test('نگهبان جلوی اشتراک با ارزش افزوده را گرفت و حسابدار هزینه ثبت کرد: هزینه همان ۲۴ میلیون می‌ماند', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — نگهبان');
+  await inBook(async () => {
+    const text = 'اشتراک یک ساله نرم افزار رو امروز ۲۴ میلیون از حساب تجارت پرداخت کردیم، ارزش افزوده هم داره';
+    const { eventId } = capture(text, { approve: false });
+    const row = sql().prepare('SELECT route,payload FROM financial_events WHERE id=?').get(eventId);
+    assert.equal(row.route, 'accountant-review');
+    const { prepared, accept } = await accountantReview(eventId, LINES.expense(24_000_000, JSON.parse(row.payload).category), { bank });
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    run(LONG_AFTER);
+    assert.equal(byType('expense'), 24_000_000, 'نه ۴۸ میلیون');
+    assert.deepEqual(timingBalances('prepaid-asset'), [], 'نه پیش‌پرداخت منفی');
+  });
+});
+
+test('بیمهٔ بی‌دوره: حسابدار دوره را در جواب سؤال دستیار گفت — دوازده قلم از اول مهر و پیش‌پرداخت صفر', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — جواب دوره');
+  await inBook(async () => {
+    const { eventId } = capture('بیمه انبار ۱۲ میلیون از حساب تجارت دادیم', { approve: false });
+    assert.equal(store.decisionForEvent(sql(), eventId).decisionStatus, 'needs-user-input');
+    assert.deepEqual(items(eventId), []);
+    const ask = [{ id: 'coverage.start', text: 'پوشش بیمه از چه تاریخی شروع شد و چند ماه است؟', field: null }];
+    const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(12_000_000, 'بیمه'), { bank, ask, answers: { 'coverage.start': { value: 'از اول مهر ۱۴۰۵ به مدت ۱۲ ماه' } } });
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    const live = liveItems(eventId);
+    assert.equal(live.length, 12);
+    assert.deepEqual([live[0].periodKey, live.at(-1).periodKey], ['1405-07', '1406-06']);
+    assert.equal(live.reduce((sum, row) => sum + row.amount, 0), 12_000_000);
+    const decision = store.decisionForEvent(sql(), eventId);
+    assert.deepEqual([decision.treatment, decision.decisionStatus, decision.recognitionMethod], ['prepaid-expense', 'decided', 'monthly-straight-line']);
+    const payload = JSON.parse(sql().prepare('SELECT payload FROM financial_events WHERE id=?').get(eventId).payload);
+    assert.ok(payload.servicePeriodStart && payload.servicePeriodEnd, 'دوره روی خودِ رویداد هم نشست');
+    run(LONG_AFTER);
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+    assert.equal(byType('expense'), 12_000_000);
+  });
+});
+
+test('منفی: بیمهٔ بی‌دوره بدون جواب — پیشنهاد پیش‌پرداخت قبول نمی‌شود و هیچ سندی نمی‌خورد', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — بی‌دوره');
+  await inBook(async () => {
+    const { eventId } = capture('بیمه انبار ۱۲ میلیون از حساب تجارت دادیم', { approve: false });
+    // جواب نیمه: فقط شروع، از کارت سؤال موتور.
+    database.answerEvent(eventId, { fact: 'servicePeriodStart', value: 'this-month' });
+    const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(12_000_000, 'بیمه'), { bank });
+    assert.equal(prepared.canPost, false);
+    assert.ok(prepared.postingBlockers.some((text) => /دورهٔ پوشش/.test(text)), prepared.postingBlockers.join(' / '));
+    const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+    assert.throws(accept, { code: 'REVIEW_DETAILS_REQUIRED' });
+    assert.equal(sql().prepare('SELECT status FROM financial_events WHERE id=?').get(eventId).status, 'pending');
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals);
+  });
+});
+
+test('بیمهٔ بی‌دوره با هر دو جواب کارت سؤال، بعد پیشنهاد دستیار با حساب کلی: پیش‌پرداخت‌ها صفر می‌شود', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — کارت سؤال');
+  await inBook(async () => {
+    const { eventId } = capture('بیمه انبار ۱۲ میلیون از حساب تجارت دادیم', { approve: false });
+    database.answerEvent(eventId, { fact: 'servicePeriodStart', value: 'this-month' });
+    database.answerEvent(eventId, { fact: 'servicePeriodEnd', value: 'one-year' });
+    const { accept } = await accountantReview(eventId, LINES.prepaid(12_000_000, 'بیمه'), { bank });
+    accept();
+    run(LONG_AFTER);
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+    assert.equal(byType('expense'), 12_000_000);
+  });
+});
+
+test('گفتهٔ چندمبلغی که حسابدار با پیش‌پرداخت و ارزش افزوده ثبت کرد: برنامه روی خالص و به همان حساب', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — چندمبلغی');
+  await inBook(async () => {
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    database.queueCompositeUtterance('اشتراک یک ساله نرم افزار ۲۶ میلیون و ۴۰۰ دادیم، ۲۴ میلیونش اصل و بقیه مالیات ارزش افزوده', { clientId: 'p5-composite' });
+    const event = sql().prepare("SELECT id,kind FROM financial_events WHERE kind='review-placeholder' ORDER BY rowid DESC").get();
+    assert.ok(event, 'گفته به صف حسابدار رفت');
+    const prepaid = resolveEventRole(sql(), 'prepaid-asset', 'نرم‌افزار و اشتراک', {});
+    const vat = resolveEventRole(sql(), 'vat-input', null, {});
+    const cash = resolveEventRole(sql(), 'cash', bank.id, { accountId: bank.id });
+    database.recordReviewedComposite(event.id, { lines: [
+      { accountId: prepaid, debit: 24_000_000, credit: 0 }, { accountId: vat, debit: 2_400_000, credit: 0 }, { accountId: cash, debit: 0, credit: 26_400_000 },
+    ], reason: 'اشتراک یک ساله؛ تفکیک ارزش افزوده' });
+    const live = liveItems(event.id);
+    assert.equal(live.length, 12);
+    assert.equal(live.reduce((sum, row) => sum + row.amount, 0), 24_000_000, 'خالص، نه ۲۶٫۴ میلیون');
+    run(LONG_AFTER);
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+    assert.equal(byType('expense'), 24_000_000);
+  });
+});
+
+/** گفته‌ای که مستقیم به صف حسابدار رفته (فهم AI، گفتهٔ چندمبلغی): سندش را حسابدار می‌سازد. */
+function placeholder(text, amount, sourceEventId) {
+  return store.recordFinancialEvent(sql(), normalizeFinancialEvent({ kind: 'review-placeholder', amount, amountReferenceOnly: true, occurredAt: NOW, source: 'voice', evidence: text, utterance: text }),
+    { sourceEventId, decision: { route: 'accountant-review', guardBlocked: true, reasons: ['سند این گفته با حسابدار است'] }, transcript: text, rawInput: text });
+}
+
+test('منفی: گفتهٔ چندمبلغی با دو حساب پیش‌پرداخت در یک سند — جدا ثبت شوند، نه یک برنامه برای هر دو', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — دو قرارداد');
+  await inBook(async () => {
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    const event = placeholder('بیمه یک ساله ۱۲ میلیون و اجاره شش ماهه ۳۰ میلیون از حساب تجارت دادیم', 42_000_000, 'p5-two');
+    const cash = resolveEventRole(sql(), 'cash', bank.id, { accountId: bank.id });
+    assert.throws(() => database.recordReviewedComposite(event.id, { lines: [
+      { accountId: resolveEventRole(sql(), 'prepaid-asset', 'بیمه', {}), debit: 12_000_000, credit: 0 },
+      { accountId: resolveEventRole(sql(), 'prepaid-asset', 'اجاره', {}), debit: 30_000_000, credit: 0 },
+      { accountId: cash, debit: 0, credit: 42_000_000 },
+    ], reason: 'دو قرارداد جدا در یک گفته' }), { code: 'REVIEW_DETAILS_REQUIRED' });
+    assert.equal(sql().prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status, 'pending');
+  });
+});
+
+test('آینه: اجارهٔ پیش‌دریافت که به حسابدار سپرده شد و با درآمد انتقالی قبول شد — درآمد انتقالی صفر، درآمد ۳۰ میلیون', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — درآمد انتقالی');
+  await inBook(async () => {
+    const { eventId } = capture('اجاره شش ماه آینده انبار رو ۳۰ میلیون از آقای کریمی پیش دریافت کردیم، ریختن حساب تجارت', { approve: false });
+    const status = sql().prepare('SELECT status FROM financial_events WHERE id=?').get(eventId).status;
+    assert.equal(status, 'pending');
+    const { prepared, accept } = await accountantReview(eventId, LINES.deferred(30_000_000, 'کریمی'), { bank, message: 'پیش‌دریافت اجارهٔ شش ماهه است؛ درآمد انتقالی ثبت کن' });
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    assert.equal(liveItems(eventId).reduce((sum, row) => sum + row.amount, 0), 30_000_000);
+    run(LONG_AFTER);
+    assert.deepEqual(timingBalances('deferred-revenue'), [], 'بدهی پیش‌دریافت صفر — نه مستأجرِ بدهکار');
+    assert.equal(byType('income'), -30_000_000);
+  });
+});
+
+test('منفی: تأیید نقشهٔ قفل‌شده همان رفتار همیشگی را دارد و پیش‌پرداخت صفر می‌شود', async () => {
+  const { inBook } = await freshBook('حسابدار — نقشهٔ قفل');
+  await inBook(() => {
+    const { eventId } = capture('بیمه یک ساله انبار ۱۲ میلیون از حساب تجارت دادیم');
+    assert.equal(store.decisionForEvent(sql(), eventId).treatment, 'prepaid-expense');
+    run(LONG_AFTER);
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+    assert.equal(byType('expense'), 12_000_000);
+  });
+});
+
+test('منفی: پیش‌پرداخت خرید کالا به تأمین‌کننده دورهٔ پوشش نمی‌خواهد و برنامه‌ای نمی‌سازد', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — پیش‌پرداخت خرید');
+  await inBook(async () => {
+    const text = 'صد و بیست میلیون پیش‌پیش ریختیم حساب کارخانه فولاد مبارکه واسه خرید ورق هنوز بار نرسیده';
+    const event = store.recordFinancialEvent(sql(), { kind: 'cash-expense', amount: 120_000_000, occurredAt: NOW, evidence: text, eventNature: 'new', category: 'مواد و کالا' },
+      { sourceEventId: 'p5-supplier-advance', decision: { route: 'accountant-review', guardBlocked: true, reasons: ['بررسی حسابدار لازم است'] } });
+    const proposal = await proposeReview(sql(), event.id, { fetcher: fakeAi({ counterpartyName: 'کارخانه فولاد مبارکه', lines: LINES.prepaid(120_000_000, 'پیش‌پرداخت‌ها') }), facts: { accountId: bank.id, counterpartyName: 'کارخانه فولاد مبارکه' } });
+    const prepared = database.reviewQueue().items.find((item) => item.id === event.id).aiProposal;
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    database.reviewAiFeedback(event.id, proposal.id, { accepted: true });
+    assert.deepEqual(items(event.id), []);
+    assert.equal(run(LONG_AFTER).posted, 0);
+  });
+});
+
+test('آینهٔ چندمبلغی: اجارهٔ پیش‌دریافتی که حسابدار درآمد انتقالی ثبت کرد شش قلم می‌گیرد؛ بی‌دوره پرسیده می‌شود', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — پیش‌دریافت چندمبلغی');
+  await inBook(async () => {
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    const cash = resolveEventRole(sql(), 'cash', bank.id, { accountId: bank.id });
+    const contact = database.saveContact({ name: 'کریمی' });
+    const tenant = { counterparty: 'کریمی', counterpartyId: contact.id };
+    const deferred = resolveEventRole(sql(), 'deferred-revenue', 'کریمی', tenant);
+    const { resolveEventAnalytic } = await import('../server/roleResolver.js');
+    const analyticId = resolveEventAnalytic(sql(), 'deferred-revenue', tenant, 'کریمی');
+    const lines = (amount) => [{ accountId: cash, debit: amount, credit: 0 }, { accountId: deferred, debit: 0, credit: amount, analyticId }];
+    const dated = placeholder('اجاره شش ماه آینده انبار رو ۳۰ میلیون از آقای کریمی پیش دریافت کردیم و ۵ میلیون هم ودیعه داد', 35_000_000, 'p5-deferred');
+    database.recordReviewedComposite(dated.id, { lines: lines(30_000_000), reason: 'پیش‌دریافت اجاره؛ ودیعه جدا ثبت می‌شود' });
+    assert.equal(liveItems(dated.id).length, 6);
+    const undated = placeholder('آقای کریمی ۳۰ میلیون بابت اجاره انبار و ۵ میلیون ودیعه داد', 35_000_000, 'p5-deferred-undated');
+    assert.throws(() => database.recordReviewedComposite(undated.id, { lines: lines(30_000_000), reason: 'پیش‌دریافت اجاره بی‌دوره' }), { code: 'REVIEW_DETAILS_REQUIRED', message: /دورهٔ خدمت/ });
+    run(LONG_AFTER);
+    assert.deepEqual(timingBalances('deferred-revenue'), []);
+    assert.equal(byType('income'), -30_000_000);
+  });
+});
+
+test('منفی: هزینهٔ عادیِ بی‌برنامه که حسابدار ثبت کرد تصمیم تازه یا برنامه‌ای نمی‌گیرد', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — هزینهٔ عادی');
+  await inBook(async () => {
+    const { eventId } = capture('خرید لوازم التحریر ۳ میلیون از حساب تجارت', { approve: false });
+    const before = store.decisionForEvent(sql(), eventId);
+    const { prepared, accept } = await accountantReview(eventId, LINES.expense(3_000_000, 'لوازم التحریر'), { bank, message: 'لوازم التحریر مصرفی همین ماه است' });
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    assert.deepEqual(items(eventId), []);
+    assert.equal(store.decisionForEvent(sql(), eventId)?.id, before?.id);
+  });
+});
+
+test('جواب دورهٔ پوشش به هر شکلی که حسابدار بنویسد، همان دوازده ماه است — و جواب ناقص دوره نمی‌سازد', () => {
+  const at = { occurredAt: NOW };
+  const year = { start: '2026-09-23T08:30:00.000Z', end: '2027-09-22T08:30:00.000Z' };
+  for (const answers of [
+    [{ text: 'از اول مهر ۱۴۰۵ به مدت ۱۲ ماه', side: 'start' }],
+    [{ text: 'از ۱ مهر ۱۴۰۵ تا ۳۱ شهریور ۱۴۰۶', side: 'any' }],
+    [{ text: 'مهر ۱۴۰۵ تا شهریور ۱۴۰۶', side: 'any' }],
+    [{ text: '1405/07/01', side: 'start' }, { text: '1406/06/31', side: 'end' }],
+    [{ text: 'از اول مهر 1405 به مدت يك سال', side: 'start' }],
+    [{ text: 'اول مهر ۱۴۰۵', side: 'start' }, { text: 'یک ساله', side: 'end' }],
+  ]) assert.deepEqual(readCoverageAnswers(answers, at), year, JSON.stringify(answers));
+  // دانستهٔ پیشین (طول از متن) با شروع تازهٔ جواب.
+  assert.deepEqual(readCoverageAnswers([{ text: 'از اول مهر ۱۴۰۵', side: 'start' }], { ...at, start: NOW, end: '2027-10-09T08:30:00.000Z', months: 12 }), year);
+  for (const answers of [[{ text: '۱۲ ماه', side: 'any' }], [{ text: 'نمی‌دانم', side: 'start' }], []]) {
+    const coverage = readCoverageAnswers(answers, at);
+    assert.ok(!(coverage.start && coverage.end), JSON.stringify(answers));
+  }
+});

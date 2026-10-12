@@ -4,7 +4,9 @@ import { ensureReviewIntakeSchema } from './reviewIntakeSchema.js';
 import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal, treatmentHasPlan } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
-import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
+import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule, readCoverageAnswers } from '../shared/recognitionSchedule.js';
+import { readServicePeriod } from '../shared/periodSpeech.js';
+import { normalizePersian } from '../shared/normalize.js';
 import { persianToISO, todayPersian } from '../shared/persianDate.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { DECISION_STATUS, decide } from '../shared/accountingDecision.js';
@@ -132,6 +134,16 @@ export function ensureFinancialEventSchema(database) {
   // سندش را به نام خودِ رویداد می‌زند و `migrateAccountingLedger` که آن تراکنش را
   // همچنان بی‌سند می‌بیند، سند دومی می‌سازد.
   try { database.exec('ALTER TABLE financial_events ADD COLUMN journal_source TEXT'); }
+  catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
+
+  // حسابی که تخصیص از آن کم می‌کند — همان حسابی که پرداخت (یا دریافت) واقعاً
+  // بدهکار (یا بستانکار) کرد.
+  //
+  // برنامهٔ لحظهٔ ضبط حسابش را از نقش و دستهٔ رویداد می‌سازد و ستون خالی می‌ماند.
+  // ولی وقتی حسابدار سطرها را خودش انتخاب می‌کند — «پیش‌پرداخت‌ها»ی کدینگ یا
+  // پیش‌پرداخت دستهٔ دیگر — ساختن دوبارهٔ حساب از دسته یعنی تخصیص از حسابی کم
+  // می‌شد که هرگز بدهکار نشده بود: یکی تا ابد مانده داشت و دیگری ماندهٔ بستانکار.
+  try { database.exec('ALTER TABLE recognition_schedule_items ADD COLUMN account_id TEXT'); }
   catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
 
   // ترمیم یک‌باره برای هر اتصال: دفترهایی که پیش از بازنشستگی برنامه در لحظهٔ
@@ -277,10 +289,12 @@ function scheduleBase(plan, decision, event) {
     .reduce((sum, line) => sum + (Number(deferred ? line.credit : line.debit) || 0), 0);
 }
 
-function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Tehran', plan = null } = {}) {
+function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Tehran', plan = null, amount = null, accountId = null } = {}) {
   if (decision?.recognitionMethod !== 'monthly-straight-line') return 0;
   const items = buildMonthlySchedule({
-    amount: scheduleBase(plan, decision, event),
+    // مبلغ صریح فقط از سند ثبت‌شدهٔ حسابدار می‌آید: همان سطر پیش‌پرداخت یا درآمد
+    // انتقالی که واقعاً در دفتر نشست.
+    amount: amount ?? scheduleBase(plan, decision, event),
     periodStart: event.servicePeriodStart,
     periodEnd: event.servicePeriodEnd,
     sourceId: eventId,
@@ -298,12 +312,18 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
   // قلمی که ثبت شده دست نمی‌خورد؛ آن سند در دفتر است و باطل‌کردن یک ردیف
   // برنامه، سند را برنمی‌گرداند.
   const keeping = new Set(items.map((item) => item.key));
+  // قلمی که برنامهٔ قبلی باطلش کرده و برنامهٔ تازه دوباره همان ماه را می‌خواهد،
+  // زنده می‌شود. کلید یکتاست و `INSERT OR IGNORE` ردیف باطل را کنار نمی‌زند؛ بدون
+  // این، برنامه‌ای که «یک‌ساله → شش‌ماهه → یک‌ساله» شد، یا ثبت حسابدار که برنامهٔ
+  // لحظهٔ ضبط را جایگزین کرد، ماه‌هایی بی‌قلم داشت و دارایی هرگز صفر نمی‌شد.
+  const revive = database.prepare("UPDATE recognition_schedule_items SET status='planned',journal_entry_id=NULL WHERE key=? AND status='superseded'");
+  for (const key of keeping) revive.run(key);
   // قلم منتظرِ دورهٔ بسته هم جزو برنامهٔ زنده است: اگر برنامه عوض شود باطل یا
   // بازقیمت‌گذاری می‌شود، وگرنه با وضعیت کهنه‌اش جا می‌ماند.
-  const existing = database.prepare(`SELECT key,amount,status,recognition_date AS recognitionDate FROM recognition_schedule_items
+  const existing = database.prepare(`SELECT key,amount,status,recognition_date AS recognitionDate,account_id AS accountId FROM recognition_schedule_items
     WHERE event_id=? AND status IN ('planned','blocked-closed-period')`).all(eventId);
   const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
-  const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=?,recognition_date=? WHERE key=?');
+  const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=?,recognition_date=?,account_id=? WHERE key=?');
   for (const row of existing) {
     if (!keeping.has(row.key)) supersede.run(row.key);
   }
@@ -313,10 +333,10 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
     const row = existing.find((entry) => entry.key === item.key);
     // تاریخ هم: جوابی که تاریخ پرداخت را جابه‌جا کند، کف تاریخ اقلام را هم
     // جابه‌جا می‌کند.
-    if (row && (row.amount !== item.amount || row.recognitionDate !== item.recognitionDate)) reprice.run(item.amount, item.recognitionDate, item.key);
+    if (row && (row.amount !== item.amount || row.recognitionDate !== item.recognitionDate || (row.accountId || null) !== accountId)) reprice.run(item.amount, item.recognitionDate, accountId, item.key);
   }
   const insert = database.prepare(`INSERT OR IGNORE INTO recognition_schedule_items
-    (key,event_id,period_key,recognition_date,amount,status) VALUES (?,?,?,?,?,?)`);
+    (key,event_id,period_key,recognition_date,amount,status,account_id) VALUES (?,?,?,?,?,?,?)`);
   // قلمی که در دورهٔ بسته می‌افتد ثبت نمی‌شود و علامت می‌خورد.
   //
   // تصمیم ۳ فاز صفر: نه به دورهٔ بعد منتقل می‌شود — که سود دوره را بدون تأیید
@@ -337,7 +357,7 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
   for (const item of items) {
     const locked = inLockedPeriod(item);
     const status = locked ? SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD : item.status;
-    const changes = insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, status).changes;
+    const changes = insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, status, accountId).changes;
     written += changes;
     if (locked && changes) writeAudit(database, eventId, 'recognition-blocked', blockedDetail(item, timeZone), null);
     if (locked) blocked.push(item);
@@ -767,6 +787,180 @@ export function approveFinancialEvent(database, eventId, { actor = null, timeZon
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
 
+// ---------------------------------------------------------------------------
+// ثبت حسابدار و برنامهٔ شناسایی
+// ---------------------------------------------------------------------------
+
+/** «پیش‌پرداخت خرید — …»: پیش‌پرداخت کالا به تأمین‌کننده، نه خدمت دوره‌دار. */
+const SUPPLIER_ADVANCE_NAME = /^پیش[\s\u200c]*پرداخت[\s\u200c]+خرید/;
+
+/**
+ * حساب دوره‌دارِ یک سطر: پیش‌پرداخت خدمت (`prepaid`)، درآمد انتقالی
+ * (`deferred`) یا هیچ‌کدام.
+ *
+ * از خودِ حساب دفتر کل خوانده می‌شود — منشأ یا نقش معین کدینگ — نه از نقشی که
+ * پیشنهاد گفته بود: حسابدار می‌تواند هر حسابی را انتخاب کند و همان در دفتر
+ * می‌نشیند. پیش‌پرداخت خرید کالا هم در همان معین پیش‌پرداخت‌هاست ولی دورهٔ
+ * پوشش ندارد؛ با رسیدن کالا بسته می‌شود، نه با گذشت ماه.
+ */
+export function timingAccountKind(database, accountId, event = {}) {
+  const account = database.prepare(`SELECT a.name,a.source_kind AS sourceKind,c.role AS chartRole FROM ledger_accounts a
+    LEFT JOIN chart_accounts c ON c.id=a.chart_account_id WHERE a.id=?`).get(String(accountId || ''));
+  if (!account) return null;
+  if (account.sourceKind === 'deferred-revenue' || account.chartRole === 'deferred-revenue') return 'deferred';
+  if (account.sourceKind === 'prepaid-asset' || account.chartRole === 'prepaid-asset') {
+    if (event.reviewSupplierAdvance || SUPPLIER_ADVANCE_NAME.test(account.name || '')) return null;
+    return 'prepaid';
+  }
+  return null;
+}
+
+/**
+ * جواب‌های حسابدار دربارهٔ دورهٔ پوشش، از گفت‌وگوی بررسی.
+ *
+ * دستیار بررسی شروع و پایان پوشش را با شناسهٔ `coverage.start`/`coverage.end`
+ * می‌پرسد (هرگز روی تاریخ پرداخت). شناسه یا متن سؤال گاهی فرق می‌کند؛ هر سؤالی
+ * که دربارهٔ پوشش یا دورهٔ خدمت است خوانده می‌شود و سؤال تاریخ پرداخت نه.
+ */
+function reviewCoverageAnswers(database, eventId, event = {}) {
+  let answers = event.questionAnswers || null;
+  if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accounting_review_context'").get()) {
+    const row = database.prepare('SELECT facts FROM accounting_review_context WHERE event_id=?').get(eventId);
+    if (row) answers = JSON.parse(row.facts || '{}').questionAnswers || answers;
+  }
+  const result = [];
+  for (const [id, answer] of Object.entries(answers || {})) {
+    if (!answer || typeof answer.value !== 'string' || answer.field) continue;
+    const question = normalizePersian(answer.question || '');
+    const coverage = /coverage|service[_.-]?(?:start|end|period)|period[_.-]?(?:start|end)/i.test(id)
+      || /پوشش|دوره(?:\s*ی)?\s*(?:خدمت|اجاره|قرارداد|بیمه|اشتراک)|(?:شروع|پایان)\s*(?:خدمت|قرارداد|اجاره|بیمه|اشتراک)|مدت\s*(?:قرارداد|اجاره|بیمه|اشتراک|پوشش)/.test(question);
+    if (!coverage) continue;
+    const side = /end|پایان|اتمام|انتها/i.test(`${id} ${question}`) ? 'end' : /start|شروع|ابتدا/i.test(`${id} ${question}`) ? 'start' : 'any';
+    result.push({ text: answer.value, side });
+  }
+  return result;
+}
+
+/**
+ * دورهٔ پوشش برای سندی که حسابدار ثبت می‌کند.
+ *
+ * سه منبع، به ترتیب: جواب صریح حسابدار، دورهٔ ذخیره‌شده روی رویداد (از متن یا
+ * از جواب کارت سؤال)، و دورهٔ گفته‌شده در خودِ متن اصلی با همان قاعدهٔ مسیر
+ * قطعی. هیچ‌کدام نبود، دوره ناقص برمی‌گردد — حدسی در کار نیست.
+ */
+export function reviewTimingCoverage(database, eventId, event = {}) {
+  const occurredAt = event.occurredAt || null;
+  const text = event.utterance || event.evidence || '';
+  const spoken = occurredAt ? readServicePeriod(text, { occurredAt }) : null;
+  const start = event.servicePeriodStart || spoken?.start || null;
+  const end = event.servicePeriodStart ? (event.servicePeriodEnd || null) : (spoken?.end || null);
+  const months = !event.servicePeriodStart && spoken ? spoken.months : null;
+  return readCoverageAnswers(reviewCoverageAnswers(database, eventId, event), { occurredAt, start, end, months });
+
+}
+
+export function coverageQuestion(kind) {
+  return kind === 'deferred'
+    ? 'دورهٔ خدمتی که پولش پیشاپیش گرفته شد از کی تا کی است؟ مثلاً «از اول مهر ۱۴۰۵ به مدت ۶ ماه»؛ بدون آن، درآمد انتقالی هیچ‌وقت درآمد نمی‌شود.'
+    : 'دورهٔ پوشش این پیش‌پرداخت از کی تا کی است؟ مثلاً «از اول مهر ۱۴۰۵ به مدت ۱۲ ماه»؛ بدون آن، پیش‌پرداخت هیچ‌وقت هزینه نمی‌شود.';
+}
+
+/**
+ * سطر دوره‌دارِ سندِ حسابدار و دورهٔ پوششش — پیش از ثبت، تا ناقص بودن آن سند
+ * نسازد.
+ *
+ * سطری که پیش‌پرداخت خدمت را بدهکار یا درآمد انتقالی را بستانکار می‌کند،
+ * دارایی یا بدهی دوره‌دار می‌سازد و بدون برنامه تا ابد در ترازنامه می‌ماند.
+ * پس دورهٔ پوشش شرط ثبت است؛ اگر معلوم نیست پرسیده می‌شود (کد
+ * `REVIEW_DETAILS_REQUIRED` با همان سؤال)، نه اینکه از تاریخ پرداخت ساخته شود.
+ *
+ * بیش از یک حساب دوره‌دار در یک سند یعنی دو قرارداد با دو دوره؛ برنامهٔ یک
+ * رویداد یک دوره دارد، پس جدا ثبت شوند.
+ */
+export function reviewedTimingPlan(database, eventId, event, lines) {
+  const totals = new Map();
+  for (const line of lines || []) {
+    const kind = timingAccountKind(database, line.accountId, event);
+    if (!kind) continue;
+    const entry = totals.get(line.accountId) || { accountId: line.accountId, kind, amount: 0 };
+    entry.amount += kind === 'prepaid' ? (line.debit || 0) - (line.credit || 0) : (line.credit || 0) - (line.debit || 0);
+    totals.set(line.accountId, entry);
+  }
+  // جهت کاهنده (استرداد، فسخ) دارایی یا بدهی تازه نمی‌سازد.
+  const creating = [...totals.values()].filter((entry) => entry.amount > 0);
+  if (!creating.length) return null;
+  if (creating.length > 1) {
+    throw storeError('این سند بیش از یک حساب پیش‌پرداخت یا درآمد انتقالی دارد؛ هر قرارداد دوره‌دار را جداگانه ثبت کن تا برنامهٔ تخصیص هرکدام با دورهٔ خودش ساخته شود.', 'REVIEW_DETAILS_REQUIRED', 409);
+  }
+  const [timing] = creating;
+  const coverage = reviewTimingCoverage(database, eventId, event);
+  if (!coverage.start || !coverage.end) {
+    const text = coverageQuestion(timing.kind);
+    throw Object.assign(storeError(text, 'REVIEW_DETAILS_REQUIRED', 409), { question: { id: coverage.start ? 'coverage.end' : 'coverage.start', text } });
+  }
+  return { ...timing, start: coverage.start, end: coverage.end };
+}
+
+/**
+ * سند حسابدار جای برنامهٔ لحظهٔ ضبط را می‌گیرد.
+ *
+ * برنامه‌ای که هنگام ضبط ساخته شد بر تصمیم آن لحظه تکیه داشت؛ وقتی حسابدار
+ * سطرهای خودش را ثبت می‌کند، همان سطرها حقیقت دفترند:
+ *
+ * - سطر دوره‌دار هست: برنامه از **همان سطر** دوباره ساخته می‌شود — مبلغِ همان
+ *   سطر (خالص، بی ارزش افزوده)، حسابِ همان سطر و دورهٔ پوشش. تخصیص بعدی از
+ *   همان حسابی کم می‌کند که پرداخت بدهکار کرد و ماندهٔ آن در پایان دوره صفر
+ *   است. پوششِ گذشته در اجرای بعدی جبران می‌شود.
+ * - نیست (حسابدار همه را هزینه یا چیز دیگر ثبت کرد): اقلام برنامه باطل
+ *   می‌شوند و تصمیم تازه‌ای جای تصمیم کهنه می‌نشیند، تا شناسایی ماهانه روی
+ *   هزینه‌ای که یک بار ثبت شده دوباره هزینه نسازد.
+ */
+function reconcileReviewedRecognition(database, row, event, timing, { actor, timeZone, journalEntryId }) {
+  const previous = decisionForEvent(database, row.id);
+  if (!timing) {
+    const superseded = database.prepare(`UPDATE recognition_schedule_items SET status='superseded'
+      WHERE event_id=? AND status IN ('planned','blocked-closed-period')`).run(row.id).changes;
+    let decisionId = null;
+    if (previous && (previous.recognitionMethod || ALLOCATION_PLANS[previous.treatment])) {
+      decisionId = storeDecision(database, row.id, {
+        family: previous.family, treatment: 'accountant-reviewed', policyKey: previous.policyKey, policyVersion: previous.policyVersion,
+        recognitionMethod: null, riskLevel: previous.riskLevel, decisionStatus: DECISION_STATUS.DECIDED,
+        explanation: 'سند را حسابدار بی‌حساب پیش‌پرداخت یا درآمد انتقالی ثبت کرد؛ تصمیم لحظهٔ ضبط دیگر برنامهٔ شناسایی ندارد.',
+        sourceReferences: [{ type: 'journal-entry', id: journalEntryId }],
+      }, previous.id);
+      database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, row.id);
+    }
+    if (superseded || decisionId) writeAudit(database, row.id, 'schedule-reconciled', { supersededItems: superseded, timing: null, decisionId }, actor);
+    return null;
+  }
+  const deferred = timing.kind === 'deferred';
+  const decision = {
+    family: deferred ? 'advance-received' : 'asset-creation',
+    treatment: deferred ? 'deferred-revenue' : 'prepaid-expense',
+    policyKey: previous?.policyKey || null, policyVersion: previous?.policyVersion || null,
+    recognitionDate: timing.start, recognitionMethod: 'monthly-straight-line',
+    riskLevel: previous?.riskLevel || 'yellow', decisionStatus: DECISION_STATUS.DECIDED,
+    explanation: `حسابدار ${deferred ? 'درآمد انتقالی' : 'پیش‌پرداخت'} ثبت کرد؛ برنامهٔ تخصیص از همان سطر و همان حساب ساخته شد.`,
+    sourceReferences: [{ type: 'journal-entry', id: journalEntryId }, { type: 'ledger-account', id: timing.accountId }],
+  };
+  const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
+  database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, row.id);
+  const scheduled = { ...event, servicePeriodStart: timing.start, servicePeriodEnd: timing.end };
+  // گفتهٔ چندمبلغی گاهی دسته ندارد؛ هزینهٔ ماهانه همان دسته‌ای است که حسابدار
+  // برای پیش‌پرداخت انتخاب کرد («پیش‌پرداخت — بیمه» → هزینهٔ بیمه)، نه «سایر».
+  if (!scheduled.category && !deferred) {
+    const linked = database.prepare("SELECT source_key AS key FROM ledger_accounts WHERE id=? AND source_kind='prepaid-asset'").get(timing.accountId);
+    if (linked?.key && linked.key !== 'عمومی') scheduled.category = linked.key;
+  }
+  database.prepare('UPDATE financial_events SET payload=? WHERE id=?').run(JSON.stringify(scheduled), row.id);
+  const stored = storeSchedule(database, row.id, decision, scheduled, { amount: timing.amount, accountId: timing.accountId, timeZone });
+  writeAudit(database, row.id, 'schedule-reconciled', {
+    timing: { kind: timing.kind, accountId: timing.accountId, amount: timing.amount, start: timing.start, end: timing.end },
+    decisionId, written: stored?.written || 0, blocked: stored?.blocked?.length || 0,
+  }, actor);
+  return scheduled;
+}
+
 /** ثبتِ بررسی‌شدهٔ گفتهٔ چندمبلغی؛ حسابدار حساب‌ها و همهٔ مبالغ را صریح انتخاب می‌کند. */
 export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran', accountantProposal = false, eventOverride = null } = {}) {
   ensureFinancialEventSchema(database);
@@ -796,6 +990,8 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
     analyticId: line.analyticId || null, costCenterId: line.costCenterId || null,
   }));
   const event = eventOverride || JSON.parse(row.payload);
+  // دورهٔ پوشش پیش از سند: سطر دوره‌دارِ بی‌دوره ثبت نمی‌شود.
+  const timing = reviewedTimingPlan(database, row.id, event, safeLines);
   const source = row.journal_source ? JSON.parse(row.journal_source) : null;
   const posted = postJournalEntry(database, {
     sourceType: source?.type || 'financial-event', sourceId: source?.id || row.id, occurredAt: event.occurredAt,
@@ -805,6 +1001,7 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
     kind: 'accountant-reviewed', lines: safeLines, memoHint: explanation,
   }), row.id);
   if (eventOverride) database.prepare('UPDATE financial_events SET payload=?,occurred_at=?,due_at=? WHERE id=?').run(JSON.stringify(event),event.occurredAt,event.dueAt || null,row.id);
+  reconcileReviewedRecognition(database, row, event, timing, { actor, timeZone, journalEntryId: posted.id });
   markEventPosted(database, row.id, posted, safeLines, actor);
   writeAudit(database, row.id, 'accountant-reviewed', { reason: explanation, journalEntryId: posted.id }, actor);
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
@@ -1079,6 +1276,8 @@ export function shadowDisagreementReport(database, options = {}) {
  *
  * برخوردی که اینجا نیست، تخصیص ماهانه ندارد و قلمش اصلاً ساخته نمی‌شود.
  */
+const TIMING_ROLES = new Set([ROLES.PREPAID_ASSET, ROLES.DEFERRED_REVENUE]);
+
 const ALLOCATION_PLANS = Object.freeze({
   'prepaid-expense': (event, amount) => ([
     { role: ROLES.EXPENSE_CATEGORY, key: event.category, debit: amount, credit: 0 },
@@ -1125,7 +1324,8 @@ function postRecognitionItem(database, item, { event, decision, occurredAt, acto
   const build = ALLOCATION_PLANS[decision?.treatment];
   if (!build) return null;
   const lines = build(event, item.amount).map((line) => ({
-    accountId: resolveEventRole(database, line.role, line.key, event),
+    // حسابی که برنامه با آن ساخته شد (سند حسابدار)، وگرنه همان نقش و دسته.
+    accountId: item.accountId && TIMING_ROLES.has(line.role) ? item.accountId : resolveEventRole(database, line.role, line.key, event),
     analyticId: resolveEventAnalytic(database, line.role, event, line.key),
     debit: line.debit,
     credit: line.credit,
@@ -1149,7 +1349,7 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
   const summary = { posted: 0, blocked: 0, skipped: 0 };
   const cap = Math.max(1, Math.min(2000, Number(limit) || 500));
   const select = (status, size) => database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,
-    recognition_date AS recognitionDate,amount,status
+    recognition_date AS recognitionDate,amount,status,account_id AS accountId
     FROM recognition_schedule_items
     WHERE status=? AND recognition_date IS NOT NULL AND recognition_date <= ?
       -- فقط رویدادِ ثبت‌شده. قلم رویداد منتظر، ردشده یا معکوس‌شده هیچ‌وقت ثبت
@@ -1247,7 +1447,7 @@ export function postBlockedRecognitionCatchUp(database, key, { reason = '', acto
   ensureFinancialEventSchema(database);
   const explanation = String(reason || '').trim().slice(0, 500);
   if (explanation.length < 8) throw storeError('دلیل ثبت جبرانی را با حداقل هشت نویسه بنویس.', 'REVIEW_REASON_REQUIRED', 400);
-  const item = database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,recognition_date AS recognitionDate,amount,status
+  const item = database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,recognition_date AS recognitionDate,amount,status,account_id AS accountId
     FROM recognition_schedule_items WHERE key=?`).get(String(key || ''));
   if (!item || item.status !== SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD) throw storeError('این قلم منتظر دورهٔ بسته نیست.', 'RECOGNITION_NOT_BLOCKED', 409);
   const row = database.prepare('SELECT payload,status FROM financial_events WHERE id=?').get(item.eventId);
