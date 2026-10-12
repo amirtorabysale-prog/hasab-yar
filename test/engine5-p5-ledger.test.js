@@ -456,3 +456,105 @@ test('برنامهٔ خالص: کف تاریخ، کلید و ماهِ قلم ر�
   // تاریخِ نامعتبر کف را حذف می‌کند، نه برنامه را.
   assert.deepEqual(buildMonthlySchedule({ ...base, notBefore: 'نامعتبر' }), plain);
 });
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «دورهٔ بسته»: قلمی که دورهٔ بسته جلویش را گرفته زنده می‌ماند، دیده
+// می‌شود، با بازگشایی دوره ثبت می‌شود یا با تأیید صریح حسابدار در نخستین دورهٔ باز.
+// ---------------------------------------------------------------------------
+
+const lock = (period) => sql().prepare("INSERT INTO accounting_periods (period,status) VALUES (?,'locked') ON CONFLICT(period) DO UPDATE SET status='locked'").run(period);
+const reopen = (period) => accounting.reopenAccountingPeriod(sql(), period, owner.id, 'بازگشایی برای ثبت شناسایی جامانده');
+const auditStages = (eventId, stage) => store.financialEventAudit(sql(), eventId).filter((row) => row.stage === stage);
+
+test('پوشش گذشته در ماه‌های بسته: روز پرداخت شناسایی می‌شود و چیزی جا نمی‌ماند', async () => {
+  const { inBook } = await freshBook('دورهٔ بسته — پوشش گذشته');
+  await inBook(() => {
+    for (const month of ['01', '02', '03', '04', '05', '06']) lock(`1405-${month}`);
+    const paid = capture('امروز بیمه یک ساله انبار از اول فروردین تا آخر اسفند رو ۱۲ میلیون دادیم');
+    assert.equal(paid.event.status, 'posted');
+    assert.ok(items(paid.eventId).every((item) => item.status === 'planned'), 'هیچ قلمی در دورهٔ بسته نمی‌افتد');
+    run('2027-04-01T00:00:00.000Z');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 12_000_000]);
+  });
+});
+
+test('ماهی که پیش از اجرا بسته شد و بعد باز شد: بی‌ردپای تکراری منتظر می‌ماند و بعد ثبت می‌شود', async () => {
+  const { inBook } = await freshBook('دورهٔ بسته — بازگشایی');
+  await inBook(() => {
+    const paid = capture('امروز بیمه یک ساله ماشین رو ۱۲ میلیون از حساب تجارت دادیم');
+    lock('1405-08');
+    assert.deepEqual(run(AZAR), { posted: 2, blocked: 1, skipped: 0 });
+    assert.deepEqual(run(AZAR), { posted: 0, blocked: 1, skipped: 0 }, 'اجرای دوباره همان قلم را فقط می‌شمارد');
+    assert.equal(auditStages(paid.eventId, 'recognition-blocked').length, 1, 'ردپای مسدودشدن یک بار');
+    const [listed] = database.blockedRecognition().items;
+    assert.equal(listed.periodKey, '1405-08');
+    assert.match(listed.reason, /1405-08/);
+    assert.equal(database.reviewQueue().blockedRecognition.length, 1, 'در صف حسابدار دیده می‌شود');
+
+    reopen('1405-08');
+    assert.equal(run(AZAR).posted, 1, 'دوره باز شد، قلم ثبت شد');
+    assert.equal(database.blockedRecognition().items.length, 0);
+    run(LONG_AFTER);
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 12_000_000], 'پایان پوشش: هیچ دارایی جامانده‌ای نیست');
+  });
+});
+
+test('آینه: درآمد انتقالی هم با بازگشایی دوره به درآمد می‌رسد', async () => {
+  const { inBook } = await freshBook('دورهٔ بسته — درآمد انتقالی');
+  await inBook(() => {
+    capture(RENT_RECEIVED);
+    lock('1405-08');
+    assert.equal(run(AZAR).blocked, 1);
+    reopen('1405-08');
+    run(LONG_AFTER);
+    assert.deepEqual([balances().deferred, balances().income], [0, -30_000_000], 'هیچ بدهی درآمد انتقالی پس از ارائهٔ خدمت نمی‌ماند');
+  });
+});
+
+test('ثبت جبرانی حسابدار: با دلیل، در نخستین دورهٔ باز و با ردپای دورهٔ اصلی', async () => {
+  const { inBook } = await freshBook('دورهٔ بسته — ثبت جبرانی');
+  await inBook(() => {
+    const paid = capture('امروز بیمه یک ساله ماشین رو ۱۲ میلیون از حساب تجارت دادیم');
+    lock('1405-08');
+    run(AZAR);
+    const [blocked] = database.blockedRecognition().items;
+    assert.throws(() => store.postBlockedRecognitionCatchUp(sql(), blocked.key, { reason: 'کوتاه', today: AZAR }), { code: 'REVIEW_REASON_REQUIRED' });
+    const result = store.postBlockedRecognitionCatchUp(sql(), blocked.key, { reason: 'آبان بسته و گزارش شده؛ در آذر ثبت شود', actor: owner.id, today: AZAR });
+    assert.equal(result.period, '1405-09', 'نخستین دورهٔ باز پس از آبان');
+    assert.equal(accounting.periodForDate(sql().prepare('SELECT occurred_at AS at FROM journal_entries WHERE id=?').get(result.journalEntryId).at), '1405-09');
+    const [trail] = auditStages(paid.eventId, 'recognition-catch-up');
+    assert.equal(trail.detail.originalPeriod, '1405-08');
+    assert.match(trail.detail.reason, /آذر/);
+    assert.throws(() => store.postBlockedRecognitionCatchUp(sql(), blocked.key, { reason: 'دوباره ثبت شود لطفاً', today: AZAR }), { code: 'RECOGNITION_NOT_BLOCKED' });
+    assert.equal(sql().prepare("SELECT COUNT(*) AS n FROM accounting_periods WHERE period='1405-08' AND status='locked'").get().n, 1, 'دورهٔ بسته باز نشد');
+    run(LONG_AFTER);
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 12_000_000]);
+  });
+});
+
+test('قلمی که در لحظهٔ ضبط در دورهٔ بسته می‌افتد، مورد را با نام دوره و تاریخ به صف حسابدار می‌برد', async () => {
+  const { inBook } = await freshBook('دورهٔ بسته — لحظهٔ ضبط');
+  await inBook(() => {
+    lock('1405-09');
+    const paid = capture('امروز بیمه یک ساله ماشین رو ۱۲ میلیون از حساب تجارت دادیم', { approve: false });
+    assert.equal(paid.event.status, 'pending');
+    assert.equal(paid.event.route, 'accountant-review');
+    assert.ok(JSON.parse(paid.event.confidence).reasons.some((reason) => /1405-09/.test(reason)), paid.event.confidence);
+    assert.equal(store.decisionForEvent(sql(), paid.eventId).decisionStatus, 'decided', 'تصمیم حسابداری عوض نشده؛ فقط مسیر');
+    assert.equal(items(paid.eventId).find((item) => item.periodKey === '1405-09').status, 'blocked-closed-period');
+    assert.equal(auditStages(paid.eventId, 'recognition-blocked').length, 1);
+    database.approveEvent(paid.eventId);
+    assert.equal(database.blockedRecognition().items.length, 1);
+  });
+});
+
+test('منفی: ماه آینده در دورهٔ باز دست نمی‌خورد و ردپای مسدودی نمی‌سازد', async () => {
+  const { inBook } = await freshBook('دورهٔ بسته — منفی');
+  await inBook(() => {
+    const paid = capture('امروز بیمه یک ساله ماشین رو ۱۲ میلیون از حساب تجارت دادیم');
+    run(AZAR);
+    assert.equal(items(paid.eventId).filter((item) => item.status === 'planned').length, 9);
+    assert.equal(auditStages(paid.eventId, 'recognition-blocked').length, 0);
+    assert.equal(database.blockedRecognition().items.length, 0);
+  });
+});

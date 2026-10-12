@@ -12,7 +12,7 @@ import {
   correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -722,6 +722,13 @@ app.get('/api/financial-events/:id/audit', (request, response, next) => {
 });
 app.post('/api/financial-events/run-recognition', (_request, response, next) => {
   try { return response.json(runRecognition()); } catch (error) { return next(error); }
+});
+// اقلام شناسایی‌ای که دورهٔ بسته جلویشان را گرفته، و ثبت جبرانیِ تأییدشدهٔ حسابدار.
+app.get('/api/financial-events/blocked-recognition', (_request, response, next) => {
+  try { return response.json(blockedRecognition()); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/recognition-items/:key/catch-up', (request, response, next) => {
+  try { return response.status(201).json(catchUpRecognition(request.params.key, String(request.body?.reason || '').slice(0, 500))); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/:id/decision', (request, response, next) => {
   try { return response.json(eventDecision(request.params.id)); } catch (error) { return next(error); }

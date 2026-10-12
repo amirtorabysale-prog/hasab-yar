@@ -10,7 +10,7 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listReviewQueue, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
 import { todayPersian } from '../../shared/persianDate.js';
@@ -57,7 +57,10 @@ export function reviewQueue(options = {}) {
     return {...item,originalTranscript:originalReviewTranscript(database,row),aiProposal:item.route==='accountant-review'?preparedProposal(database,item.id):null,dnaMatches:item.route==='accountant-review'?relevantDna(database,row).map(d=>({...d,actorName:actorName(d.actor)})):[]};
   })];
   const counts=database.prepare("SELECT state,COUNT(*) count FROM accounting_review_ai WHERE state!='proposed' GROUP BY state").all();
-  return {items,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
+  // اقلام شناسایی رویدادهای ثبت‌شده که دورهٔ بسته جلویشان را گرفته؛ رویداد ثبت‌شده
+  // در صف بالا نیست و بدون این، ماندهٔ دارایی یا بدهی‌اش بی‌صدا می‌ماند.
+  const blockedRecognition=listBlockedRecognition(database,{timeZone:currentTimeZone()});
+  return {items,blockedRecognition,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
 }
 
 function actorName(id) {return id ? controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id)?.display_name || controlDb.prepare('SELECT username FROM users WHERE id=?').get(id)?.username || id : null;}
@@ -331,6 +334,25 @@ export function runRecognition() {
   });
   if (result.posted) audit('recognize', 'recognition-schedule', 'due', result);
   return result;
+}
+
+/** اقلام شناسایی‌ای که دورهٔ بسته جلویشان را گرفته (تصمیم ۳ فاز صفر). */
+export function blockedRecognition() {
+  return { items: listBlockedRecognition(activeWorkspaceDatabase(), { timeZone: currentTimeZone() }) };
+}
+
+/**
+ * ثبت جبرانی یک قلمِ منتظرِ دورهٔ بسته، با دلیل حسابدار.
+ *
+ * جابه‌جایی بی‌صدا نیست: حسابدار دلیلش را می‌نویسد و سند در نخستین دورهٔ باز
+ * می‌نشیند؛ ردپا دورهٔ اصلی و دورهٔ ثبت را هر دو نگه می‌دارد.
+ */
+export function catchUpRecognition(key, reason = '') {
+  const item = postBlockedRecognitionCatchUp(activeWorkspaceDatabase(), key, {
+    reason, actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  });
+  audit('recognition-catch-up', 'recognition-schedule', item.key, { eventId: item.eventId, period: item.period, reason: String(reason).slice(0, 200) });
+  return { item };
 }
 
 export function eventDecision(eventId) {

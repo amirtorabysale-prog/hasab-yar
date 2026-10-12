@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal, treatmentHasPlan } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
 import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule } from '../shared/recognitionSchedule.js';
+import { persianToISO, todayPersian } from '../shared/persianDate.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { DECISION_STATUS, decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
@@ -297,7 +298,10 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
   // قلمی که ثبت شده دست نمی‌خورد؛ آن سند در دفتر است و باطل‌کردن یک ردیف
   // برنامه، سند را برنمی‌گرداند.
   const keeping = new Set(items.map((item) => item.key));
-  const existing = database.prepare("SELECT key,amount,status,recognition_date AS recognitionDate FROM recognition_schedule_items WHERE event_id=? AND status='planned'").all(eventId);
+  // قلم منتظرِ دورهٔ بسته هم جزو برنامهٔ زنده است: اگر برنامه عوض شود باطل یا
+  // بازقیمت‌گذاری می‌شود، وگرنه با وضعیت کهنه‌اش جا می‌ماند.
+  const existing = database.prepare(`SELECT key,amount,status,recognition_date AS recognitionDate FROM recognition_schedule_items
+    WHERE event_id=? AND status IN ('planned','blocked-closed-period')`).all(eventId);
   const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
   const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=?,recognition_date=? WHERE key=?');
   for (const row of existing) {
@@ -318,16 +322,61 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
   // تصمیم ۳ فاز صفر: نه به دورهٔ بعد منتقل می‌شود — که سود دوره را بدون تأیید
   // جابه‌جا می‌کند — و نه دورهٔ بسته را باز می‌کند. با دلیل روشن می‌ماند تا
   // حسابدار تصمیم بگیرد.
-  const lockedPeriods = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'")
-    .all().map((row) => row.period));
+  const lockedPeriods = lockedPeriodSet(database);
+  const inLockedPeriod = (item) => Boolean(item.recognitionDate) && lockedPeriods.has(periodForDate(item.recognitionDate, timeZone));
+  // قلمی که منتظر دورهٔ بسته بود و آن دوره باز شده، دوباره برنامه‌ریزی‌شده است.
+  for (const row of existing) {
+    const item = items.find((entry) => entry.key === row.key);
+    if (row.status === SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD && item && !inLockedPeriod(item)) {
+      database.prepare("UPDATE recognition_schedule_items SET status='planned' WHERE key=?").run(row.key);
+    }
+  }
 
   let written = 0;
+  const blocked = [];
   for (const item of items) {
-    const blocked = item.recognitionDate && lockedPeriods.has(periodForDate(item.recognitionDate, timeZone));
-    const status = blocked ? SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD : item.status;
-    written += insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, status).changes;
+    const locked = inLockedPeriod(item);
+    const status = locked ? SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD : item.status;
+    const changes = insert.run(item.key, eventId, item.periodKey, item.recognitionDate, item.amount, status).changes;
+    written += changes;
+    if (locked && changes) writeAudit(database, eventId, 'recognition-blocked', blockedDetail(item, timeZone), null);
+    if (locked) blocked.push(item);
   }
-  return written;
+  return { written, blocked };
+}
+
+function lockedPeriodSet(database) {
+  return new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'").all().map((row) => row.period));
+}
+
+/** تاریخ شمسیِ خوانا برای پیام حسابدار. */
+function persianDay(iso, timeZone = 'Asia/Tehran') {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? String(iso || '') : date.toLocaleDateString('fa-IR-u-ca-persian', { timeZone });
+}
+
+function blockedDetail(item, timeZone) {
+  return { periodKey: item.periodKey, recognitionDate: item.recognitionDate, period: periodForDate(item.recognitionDate, timeZone), amount: item.amount };
+}
+
+/**
+ * دلیلی که حسابدار در صف می‌خواند (تصمیم ۳ فاز صفر): نام دوره و تاریخ شناسایی،
+ * صریح؛ و دو راهی که پیش رو دارد.
+ */
+function blockedRecognitionReason(blocked, timeZone = 'Asia/Tehran') {
+  const named = blocked.map((item) => `${item.periodKey} به تاریخ ${persianDay(item.recognitionDate, timeZone)} (دورهٔ بستهٔ ${periodForDate(item.recognitionDate, timeZone)})`);
+  return `شناسایی ${named.join('، ')} در دورهٔ بسته می‌افتد و سند نمی‌خورد؛ دوره را باز کن یا ثبت جبرانی را با دلیل در نخستین دورهٔ باز تأیید کن.`;
+}
+
+/** اقلامی از برنامهٔ آینده که در دورهٔ بسته می‌افتند — پیش از ذخیره، برای مسیر. */
+function lockedScheduleItems(database, eventId, decision, event, plan, timeZone) {
+  if (decision?.recognitionMethod !== 'monthly-straight-line') return [];
+  const lockedPeriods = lockedPeriodSet(database);
+  if (!lockedPeriods.size) return [];
+  return buildMonthlySchedule({
+    amount: scheduleBase(plan, decision, event), periodStart: event.servicePeriodStart, periodEnd: event.servicePeriodEnd,
+    sourceId: eventId, notBefore: event.occurredAt,
+  }).filter((item) => item.recognitionDate && lockedPeriods.has(periodForDate(item.recognitionDate, timeZone)));
 }
 
 /** اقلام برنامهٔ شناسایی یک رویداد. */
@@ -446,7 +495,6 @@ export function recordFinancialEvent(database, event, {
   // بین «شکست» و «قبلاً انجام شده» فرق بگذارد.
   if (existing) return { ...describeStored(database, existing), duplicate: true };
 
-  const id = randomUUID();
   // نقشهٔ سند همین‌جا ساخته و ذخیره می‌شود، حتی وقتی قرار نیست همین حالا ثبت
   // شود: حسابرسی باید بداند در لحظهٔ تصمیم، قاعده چه گفته بود.
   // نگهبان‌ها پس از تصمیم و پیش از قاعده. بدون تصمیم — یعنی موتور نسخهٔ دو
@@ -465,9 +513,16 @@ export function recordFinancialEvent(database, event, {
   const held = !reviewNature(event.utterance || event.evidence || '').unknownReceipt ? matchingUnidentifiedHolding(database, event) : null;
   const heldReason = held ? `این واریز با وجه ناشناس ${held.reference} (${Number(held.remaining).toLocaleString('fa-IR')} تومان، همین حساب) می‌خواند. اگر همان پول است، آن وجه را از صف «وجوه ناشناس» تعیین تکلیف کن و این مورد را رد کن.` : '';
   const blocked = natureIssues.length>0 || Boolean(held) || guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
-  const routing = blocked
+  const routed = blocked
     ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), ...natureIssues.map(q=>q.text), ...(heldReason ? [heldReason] : []), guards?.reason || (heldReason ? '' : 'این گفته هنوز نقشهٔ سند قطعی ندارد.')].filter(Boolean))] }
     : decision;
+  // قلمی از برنامه که در دورهٔ بسته می‌افتد، مورد را به صف حسابدار می‌برد (تصمیم
+  // ۳ فاز صفر)؛ نه خودکار ثبت می‌شود و نه بی‌صدا در دورهٔ بعد می‌نشیند.
+  const id = randomUUID();
+  const lockedItems = lockedScheduleItems(database, id, accountingDecision, event, plan, timeZone);
+  const routing = lockedItems.length
+    ? { ...routed, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(routed.reasons || []), blockedRecognitionReason(lockedItems, timeZone)])] }
+    : routed;
   // The proposed plan is retained for audit even when semantic validation holds it.
 
   if (!withinTransaction) database.exec('BEGIN IMMEDIATE');
@@ -646,7 +701,12 @@ export function answerEventQuestion(database, eventId, { fact, value, freeText =
     }
     const decisionId = storeDecision(database, row.id, decision, previous?.id || null);
     database.prepare('UPDATE financial_events SET decision_id=? WHERE id=?').run(decisionId, row.id);
-    storeSchedule(database, row.id, decision, event, { plan });
+    const stored = storeSchedule(database, row.id, decision, event, { plan });
+    if (stored?.blocked?.length) {
+      const current = JSON.parse(database.prepare('SELECT confidence FROM financial_events WHERE id=?').get(row.id).confidence);
+      const routing = { ...current, route: ROUTES.ACCOUNTANT_REVIEW, reasons: [...new Set([...(current.reasons || []), blockedRecognitionReason(stored.blocked)])] };
+      database.prepare('UPDATE financial_events SET route=?,confidence=? WHERE id=?').run(routing.route, JSON.stringify(routing), row.id);
+    }
     writeAudit(database, row.id, 'answered', { fact, value, freeText, patch, decision, guards: guards.checks }, actor);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
@@ -1055,23 +1115,54 @@ function notBeforeDate(date, floor) {
   return minimum.getTime() > value.getTime() ? minimum.toISOString() : date;
 }
 
+/**
+ * سند یک قلم شناسایی — مشترک میان اجرای ماهانه و ثبت جبرانیِ تأییدشدهٔ حسابدار.
+ *
+ * لنگر سند خودِ کلید قلم است: اگر همین قلم دوباره به اینجا برسد،
+ * `postJournalEntry` آن را تکراری می‌بیند. فراخوان تراکنش را باز و بسته می‌کند.
+ */
+function postRecognitionItem(database, item, { event, decision, occurredAt, actor, timeZone, stage = 'recognized', detail = {} }) {
+  const build = ALLOCATION_PLANS[decision?.treatment];
+  if (!build) return null;
+  const lines = build(event, item.amount).map((line) => ({
+    accountId: resolveEventRole(database, line.role, line.key, event),
+    analyticId: resolveEventAnalytic(database, line.role, event, line.key),
+    debit: line.debit,
+    credit: line.credit,
+    description: `شناسایی ${item.periodKey}`,
+  }));
+  const posted = postJournalEntry(database, {
+    sourceType: 'recognition-schedule',
+    sourceId: item.key,
+    occurredAt,
+    memo: `تخصیص ${event.category || ''} — ${item.periodKey}`.trim(),
+    lines,
+  }, { createdBy: actor, timeZone });
+  database.prepare("UPDATE recognition_schedule_items SET status='posted',journal_entry_id=? WHERE key=?").run(posted.id, item.key);
+  writeAudit(database, item.eventId, stage, { periodKey: item.periodKey, amount: item.amount, journalEntryId: posted.id, ...detail }, actor);
+  return posted;
+}
+
 export function postDueRecognitionItems(database, { today = null, actor = null, timeZone = 'Asia/Tehran', limit = 500 } = {}) {
   ensureFinancialEventSchema(database);
   const at = today || new Date().toISOString();
   const summary = { posted: 0, blocked: 0, skipped: 0 };
-
-  const due = database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,
-    recognition_date AS recognitionDate,amount
+  const cap = Math.max(1, Math.min(2000, Number(limit) || 500));
+  const select = (status, size) => database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,
+    recognition_date AS recognitionDate,amount,status
     FROM recognition_schedule_items
-    WHERE status='planned' AND recognition_date IS NOT NULL AND recognition_date <= ?
+    WHERE status=? AND recognition_date IS NOT NULL AND recognition_date <= ?
       -- فقط رویدادِ ثبت‌شده. قلم رویداد منتظر، ردشده یا معکوس‌شده هیچ‌وقت ثبت
       -- نمی‌شود؛ اگر اینجا انتخاب شود فقط سقف اجرا را می‌خورد و بیش از پانصد
       -- قلم کهنه، اقلام واقعیِ بعد از خود را برای همیشه پشت در نگه می‌داشت.
       AND event_id IN (SELECT id FROM financial_events WHERE status='posted')
-    ORDER BY recognition_date LIMIT ?`).all(at, Math.max(1, Math.min(2000, Number(limit) || 500)));
+    ORDER BY recognition_date LIMIT ?`).all(status, at, size);
+  // قلم منتظرِ دورهٔ بسته وضعیتی زنده است، نه پایان راه: هر اجرا دوباره نگاهش
+  // می‌کند و اگر دوره باز شده باشد، در همان دورهٔ خودش ثبتش می‌کند. پرس‌وجوی
+  // جدا دارد تا اقلام بسته‌مانده سقف اقلام برنامه‌ریزی‌شده را نخورند.
+  const due = [...select('planned', cap), ...select('blocked-closed-period', 5000)];
 
-  const lockedPeriods = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'")
-    .all().map((row) => row.period));
+  const lockedPeriods = lockedPeriodSet(database);
 
   for (const item of due) {
     const row = database.prepare('SELECT payload,status FROM financial_events WHERE id=?').get(item.eventId);
@@ -1085,37 +1176,25 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
     if (postAt > at) continue;
 
     if (lockedPeriods.has(periodForDate(postAt, timeZone))) {
-      database.prepare("UPDATE recognition_schedule_items SET status='blocked-closed-period' WHERE key=?").run(item.key);
+      // ردپا فقط وقتی وضعیت عوض می‌شود: اجرای دوبارهٔ همان برنامه نباید مورد
+      // تکراری بسازد (تصمیم ۳ فاز صفر).
+      if (item.status !== SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD) {
+        database.prepare("UPDATE recognition_schedule_items SET status='blocked-closed-period' WHERE key=?").run(item.key);
+        writeAudit(database, item.eventId, 'recognition-blocked', blockedDetail({ ...item, recognitionDate: postAt }, timeZone), actor);
+      }
       summary.blocked += 1;
       continue;
     }
 
     const decision = decisionForEvent(database, item.eventId);
-    const build = ALLOCATION_PLANS[decision?.treatment];
-    if (!build) { summary.skipped += 1; continue; }
+    if (!ALLOCATION_PLANS[decision?.treatment]) { summary.skipped += 1; continue; }
 
     database.exec('BEGIN IMMEDIATE');
     try {
-      const lines = build(event, item.amount).map((line) => ({
-        accountId: resolveEventRole(database, line.role, line.key, event),
-        analyticId: resolveEventAnalytic(database, line.role, event, line.key),
-        debit: line.debit,
-        credit: line.credit,
-        description: `شناسایی ${item.periodKey}`,
-      }));
-      // لنگر سند، خودِ کلید قلم است: اگر همین قلم دوباره به اینجا برسد،
-      // `postJournalEntry` آن را تکراری می‌بیند.
-      const posted = postJournalEntry(database, {
-        sourceType: 'recognition-schedule',
-        sourceId: item.key,
-        occurredAt: postAt,
-        memo: `تخصیص ${event.category || ''} — ${item.periodKey}`.trim(),
-        lines,
-      }, { createdBy: actor, timeZone });
-
-      database.prepare("UPDATE recognition_schedule_items SET status='posted',journal_entry_id=? WHERE key=?")
-        .run(posted.id, item.key);
-      writeAudit(database, item.eventId, 'recognized', { periodKey: item.periodKey, amount: item.amount, journalEntryId: posted.id }, actor);
+      postRecognitionItem(database, item, {
+        event, decision, occurredAt: postAt, actor, timeZone,
+        detail: item.status === SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD ? { resumedAfterReopen: true } : {},
+      });
       database.exec('COMMIT');
       summary.posted += 1;
     } catch (error) {
@@ -1127,4 +1206,76 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
   }
 
   return summary;
+}
+
+/**
+ * اقلامی که دورهٔ بسته جلویشان را گرفته — صف حسابدار برای رویدادِ ثبت‌شده.
+ *
+ * رویداد منتظر در صف بررسی خودش با همین دلیل دیده می‌شود؛ ولی رویدادی که سند
+ * خورده دیگر در آن صف نیست و بدون این فهرست، ماندهٔ دارایی یا بدهی‌اش بی‌صدا
+ * تا ابد در ترازنامه می‌ماند.
+ */
+export function listBlockedRecognition(database, { timeZone = 'Asia/Tehran' } = {}) {
+  ensureFinancialEventSchema(database);
+  return database.prepare(`SELECT i.key,i.event_id AS eventId,i.period_key AS periodKey,i.recognition_date AS recognitionDate,
+      i.amount,e.payload,e.journal_entry_id AS journalEntryId
+    FROM recognition_schedule_items i JOIN financial_events e ON e.id=i.event_id
+    WHERE i.status='blocked-closed-period' AND e.status='posted' ORDER BY i.recognition_date,i.key`).all()
+    .map((row) => {
+      const event = JSON.parse(row.payload);
+      const postAt = notBeforeDate(row.recognitionDate, event.occurredAt);
+      return {
+        key: row.key, eventId: row.eventId, periodKey: row.periodKey, recognitionDate: postAt,
+        period: periodForDate(postAt, timeZone), amount: row.amount, journalEntryId: row.journalEntryId,
+        category: event.category || '', counterparty: event.counterparty || '',
+        evidence: String(event.utterance || event.evidence || '').slice(0, 300),
+        reason: blockedRecognitionReason([{ periodKey: row.periodKey, recognitionDate: postAt }], timeZone),
+      };
+    });
+}
+
+/**
+ * ثبت جبرانیِ قلمی که دورهٔ بسته جلویش را گرفته — فقط با تأیید صریح حسابدار.
+ *
+ * تصمیم ۳ فاز صفر جابه‌جایی **بی‌صدا** را رد می‌کند، چون سود دوره را بدون
+ * تأیید جابه‌جا می‌کند. اینجا حسابدار دلیلش را می‌نویسد و سند در نخستین دورهٔ
+ * باز از تاریخ شناسایی به بعد می‌نشیند، با ردپایی که دورهٔ اصلی را نام می‌برد.
+ * اگر خودِ دوره باز شده باشد، همان‌جا ثبت می‌شود. دورهٔ بسته هرگز باز نمی‌شود و
+ * سند در آینده هم نمی‌نشیند.
+ */
+export function postBlockedRecognitionCatchUp(database, key, { reason = '', actor = null, timeZone = 'Asia/Tehran', today = null } = {}) {
+  ensureFinancialEventSchema(database);
+  const explanation = String(reason || '').trim().slice(0, 500);
+  if (explanation.length < 8) throw storeError('دلیل ثبت جبرانی را با حداقل هشت نویسه بنویس.', 'REVIEW_REASON_REQUIRED', 400);
+  const item = database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,recognition_date AS recognitionDate,amount,status
+    FROM recognition_schedule_items WHERE key=?`).get(String(key || ''));
+  if (!item || item.status !== SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD) throw storeError('این قلم منتظر دورهٔ بسته نیست.', 'RECOGNITION_NOT_BLOCKED', 409);
+  const row = database.prepare('SELECT payload,status FROM financial_events WHERE id=?').get(item.eventId);
+  if (!row || row.status !== 'posted') throw storeError('رویداد این قلم ثبت‌شده نیست.', 'EVENT_NOT_POSTED', 409);
+  const event = JSON.parse(row.payload);
+  const decision = decisionForEvent(database, item.eventId);
+  if (!ALLOCATION_PLANS[decision?.treatment]) throw storeError('این رویداد برنامهٔ تخصیص ندارد.', 'RECOGNITION_PLAN_MISSING', 409);
+
+  const original = notBeforeDate(item.recognitionDate, event.occurredAt);
+  const now = today || new Date().toISOString();
+  const lockedPeriods = lockedPeriodSet(database);
+  let postAt = original;
+  // ماه‌به‌ماه جلو، تا نخستین دورهٔ باز؛ سند اول همان ماه می‌نشیند.
+  for (let step = 0; lockedPeriods.has(periodForDate(postAt, timeZone)); step += 1) {
+    const parts = todayPersian(new Date(postAt), timeZone);
+    const index = (parts.year * 12) + parts.month; // ماه بعد
+    postAt = persianToISO(Math.floor(index / 12), (index % 12) + 1, 1, timeZone);
+    if (!postAt || step > 240) break;
+  }
+  if (!postAt || postAt > now) throw storeError('تا امروز هیچ دورهٔ بازی بعد از تاریخ این شناسایی نیست؛ ثبت جبرانی در آینده نمی‌نشیند.', 'RECOGNITION_NO_OPEN_PERIOD', 409);
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const posted = postRecognitionItem(database, item, {
+      event, decision, occurredAt: postAt, actor, timeZone, stage: 'recognition-catch-up',
+      detail: { originalDate: original, originalPeriod: periodForDate(original, timeZone), postedPeriod: periodForDate(postAt, timeZone), reason: explanation },
+    });
+    database.exec('COMMIT');
+    return { key: item.key, eventId: item.eventId, journalEntryId: posted.id, occurredAt: postAt, period: periodForDate(postAt, timeZone) };
+  } catch (error) { database.exec('ROLLBACK'); throw error; }
 }

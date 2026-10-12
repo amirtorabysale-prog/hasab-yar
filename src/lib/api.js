@@ -394,6 +394,11 @@ export const api = {
   approveEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
   reverseEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) }),
   rejectEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  // شناسایی ماهانهٔ پیش‌پرداخت و درآمد انتقالی: اجرای اقلام سررسیدرسیده، اقلامی
+  // که دورهٔ بسته جلویشان را گرفته، و ثبت جبرانیِ تأییدشدهٔ حسابدار.
+  runRecognition: () => request('/api/financial-events/run-recognition', { method: 'POST', body: '{}' }),
+  blockedRecognition: () => request('/api/financial-events/blocked-recognition'),
+  catchUpRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/catch-up`, { method: 'POST', body: JSON.stringify({ reason }) }),
   journalTemplates: () => request('/api/accounting/templates'),
   saveJournalTemplate: (payload) => request(payload.id ? `/api/accounting/templates/${encodeURIComponent(payload.id)}` : '/api/accounting/templates', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   deleteJournalTemplate: (id) => request(`/api/accounting/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),
