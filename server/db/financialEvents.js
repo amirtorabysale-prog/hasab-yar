@@ -10,7 +10,7 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listReviewQueue, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
@@ -61,7 +61,9 @@ export function reviewQueue(options = {}) {
   // اقلام شناسایی رویدادهای ثبت‌شده که دورهٔ بسته جلویشان را گرفته؛ رویداد ثبت‌شده
   // در صف بالا نیست و بدون این، ماندهٔ دارایی یا بدهی‌اش بی‌صدا می‌ماند.
   const blockedRecognition=listBlockedRecognition(database,{timeZone:currentTimeZone()});
-  return {items,blockedRecognition,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
+  // اقلامی که ماندهٔ حساب دوره‌دارشان کمتر از قلم بود (استرداد بیرون از برنامه).
+  const heldRecognition=listHeldRecognition(database);
+  return {items,blockedRecognition,heldRecognition,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
 }
 
 function actorName(id) {return id ? controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id)?.display_name || controlDb.prepare('SELECT username FROM users WHERE id=?').get(id)?.username || id : null;}
@@ -142,7 +144,7 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
 }
 
 /** حسابدار سطرهای قطعی را انتخاب می‌کند؛ AI فقط شاهد پیشنهاد است. */
-export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false } = {}) {
+export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false, contractEventId = null, contractEnded = null } = {}) {
   const database = activeWorkspaceDatabase();
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
   if (!row || row.status !== 'pending') throw Object.assign(new Error('این مورد دیگر در انتظار نیست.'), { code: 'EVENT_NOT_PENDING', status: 409 });
@@ -179,7 +181,10 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   const actor = currentWorkspace()?.userId || null;
   database.exec('BEGIN IMMEDIATE');
   try {
-    const item = postReviewedComposite(database, eventId, { lines, reason, actor, timeZone: currentTimeZone() });
+    // استرداد قرارداد: حسابدار از میان نامزدهای سؤال `contract.reference` یکی را
+    // انتخاب می‌کند و پایان یا ادامهٔ قرارداد را می‌گوید.
+    const item = postReviewedComposite(database, eventId, { lines, reason, actor, timeZone: currentTimeZone(),
+      contractEventId: contractEventId ? String(contractEventId) : null, contractEnded: typeof contractEnded === 'boolean' ? contractEnded : null });
     if (proposal?.state === 'proposed') recordReviewFeedback(database, eventId, proposal.id, {
       state: aiAccepted ? 'accepted' : 'rejected', reason, actor,
     });

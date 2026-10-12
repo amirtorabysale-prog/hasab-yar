@@ -1216,6 +1216,10 @@ app.use((error, _request, response, _next) => {
     ...(error.provider ? { provider: error.provider } : {}),
     ...(error.requiresAction ? { requiresAction: true } : {}),
     ...(error.details ? { details: error.details } : {}),
+    // سؤالی که ثبت را نگه داشته (دورهٔ پوشش، کدام قرارداد، پایان یا ادامه) و
+    // نامزدهایش، تا رابط همان را بپرسد نه پیام خام را.
+    ...(error.question ? { question: error.question } : {}),
+    ...(error.candidates ? { candidates: error.candidates } : {}),
   });
 });
 

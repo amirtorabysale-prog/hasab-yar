@@ -961,8 +961,201 @@ function reconcileReviewedRecognition(database, row, event, timing, { actor, tim
   return scheduled;
 }
 
+// ---------------------------------------------------------------------------
+// استرداد و فسخ: سندی که ماندهٔ یک قرارداد دوره‌دار را کم می‌کند، برنامهٔ همان
+// قرارداد را هم کم می‌کند
+// ---------------------------------------------------------------------------
+
+/** ماندهٔ قطعیِ یک حساب دفتر کل (بدهکار منهای بستانکار، فقط سندهای تأییدشده). */
+function ledgerBalance(database, accountId) {
+  return Number(database.prepare(`SELECT COALESCE(SUM(l.debit)-SUM(l.credit),0) AS n FROM journal_lines l
+    JOIN journal_entries j ON j.id=l.entry_id WHERE l.account_id=? AND j.approval_state='approved'`).get(String(accountId || '')).n);
+}
+
+/**
+ * قراردادهای زنده‌ای که تخصیصشان از این حساب کم می‌کند.
+ *
+ * رویداد ثبت‌شده با قلم برنامه‌ریزی‌شده یا منتظر؛ حسابش یا روی خودِ قلم ذخیره
+ * شده (سند حسابدار، ماندهٔ بی‌سند) یا همان حسابی است که سند پرداخت/دریافتش
+ * بدهکار/بستانکار کرد.
+ */
+function liveContractsOn(database, accountId, excludeEventId = '') {
+  return database.prepare(`SELECT DISTINCT e.id,e.payload,e.journal_entry_id AS journalEntryId FROM financial_events e
+    JOIN recognition_schedule_items i ON i.event_id=e.id
+    WHERE e.status='posted' AND e.id<>? AND i.status IN ('planned','blocked-closed-period')
+      AND (i.account_id=? OR (i.account_id IS NULL AND EXISTS (SELECT 1 FROM journal_lines l WHERE l.entry_id=e.journal_entry_id AND l.account_id=?)))
+    ORDER BY e.occurred_at,e.rowid`).all(String(excludeEventId || ''), accountId, accountId)
+    .map((row) => {
+      const event = JSON.parse(row.payload);
+      const remaining = Number(database.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM recognition_schedule_items
+        WHERE event_id=? AND status IN ('planned','blocked-closed-period')`).get(row.id).n);
+      const entry = row.journalEntryId ? database.prepare('SELECT document_number AS documentNumber FROM journal_entries WHERE id=?').get(row.journalEntryId) : null;
+      return {
+        eventId: row.id, remaining, documentNumber: entry?.documentNumber ?? null, occurredAt: event.occurredAt, amount: event.amount,
+        category: event.category || '', counterparty: event.counterparty || '', evidence: String(event.utterance || event.evidence || '').slice(0, 200),
+      };
+    });
+}
+
+/** «فسخ»، «تخلیه»، «کنسل» — قرارداد تمام شد؛ «ادامه دارد»، «تخفیف» — با مبلغ کمتر ادامه دارد. */
+const CONTRACT_ENDED = /فسخ|تخلیه|کنسل|لغو|ابطال|خاتمه|پایان\s*(?:قرارداد|همکاری)|قرارداد\s*(?:تمام|بسته)\s*شد|قطع\s*(?:کردیم|کرد|شد)|تمدید\s*نکرد/;
+const CONTRACT_CONTINUES = /ادامه\s*(?:دارد|داره|می\s*دهیم|میدیم|می\s*دهد|میده|پیدا)|تخفیف|کاهش\s*(?:پوشش|مبلغ|نرخ|اجاره|حق)|ارزان\s*تر|کمتر\s*شد/;
+
+/** از متن: `true` پایان، `false` ادامه، `null` نامعلوم یا متناقض. */
+function contractEndedFrom(text) {
+  const normalized = normalizePersian(text);
+  const ended = CONTRACT_ENDED.test(normalized);
+  const continues = CONTRACT_CONTINUES.test(normalized);
+  return ended === continues ? null : ended;
+}
+
+/**
+ * جواب‌های حسابدار دربارهٔ قرارداد: کدام قرارداد و تمام شد یا ادامه دارد.
+ *
+ * سؤال «کدام قرارداد؟» با شمارهٔ سند یا نام طرف یا دستهٔ همان قرارداد جواب
+ * داده می‌شود؛ جوابی که دقیقاً به یک نامزد نخورد، دوباره پرسیده می‌شود.
+ */
+function reviewContractAnswers(database, eventId, event = {}) {
+  let answers = event.questionAnswers || null;
+  if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accounting_review_context'").get()) {
+    const row = database.prepare('SELECT facts FROM accounting_review_context WHERE event_id=?').get(eventId);
+    if (row) answers = JSON.parse(row.facts || '{}').questionAnswers || answers;
+  }
+  const result = { reference: [], ended: [] };
+  for (const [id, answer] of Object.entries(answers || {})) {
+    if (!answer || typeof answer.value !== 'string' || answer.field) continue;
+    const question = normalizePersian(answer.question || '');
+    if (/contract[_.-]?(?:ended|end|status|continue)/i.test(id) || /تمام\s*شد|ادامه\s*دارد/.test(question)) result.ended.push(answer.value);
+    else if (/contract|refund[_.-]?(?:source|reference)/i.test(id) || /کدام\s*قرارداد|قرارداد\s*اصلی/.test(question)) result.reference.push(answer.value);
+  }
+  return result;
+}
+
+function pickContract(candidates, references) {
+  for (const text of references) {
+    const normalized = normalizePersian(text);
+    const numbers = new Set((normalized.match(/\d+/g) || []).map(Number));
+    const byNumber = candidates.filter((item) => item.documentNumber != null && numbers.has(Number(item.documentNumber)));
+    if (byNumber.length === 1) return byNumber[0];
+    const byName = candidates.filter((item) => [item.counterparty, item.category].some((name) => name && normalized.includes(normalizePersian(name))));
+    if (byName.length === 1) return byName[0];
+  }
+  return null;
+}
+
+function contractQuestionError(text, id, extra = {}) {
+  return Object.assign(storeError(text, 'REVIEW_DETAILS_REQUIRED', 409), { question: { id, text }, ...extra });
+}
+
+/**
+ * سطرهای سند حسابدار که ماندهٔ یک قرارداد دوره‌دار را کم می‌کنند — پیش از ثبت.
+ *
+ * بستانکارِ پیش‌پرداخت خدمت (بیمه‌گر حق بیمه را برگرداند، اشتراک کنسل شد) یا
+ * بدهکارِ درآمد انتقالی (به مستأجری که زودتر تخلیه کرد پس دادیم). برای هرکدام:
+ *
+ * - قرارداد زنده‌ای روی آن حساب نیست: فقط وقتی ثبت می‌شود که ماندهٔ واقعی حساب
+ *   برای استرداد کافی باشد؛ برنامه‌ای نیست که کم شود.
+ * - یکی هست: همان قرارداد.
+ * - چندتا هست: کدام؟ پرسیده می‌شود (`contract.reference`)، با فهرست نامزدها —
+ *   حدس نمی‌زنیم کدام بیمه یا کدام اجاره.
+ * - استرداد از بخش شناسایی‌نشدهٔ قرارداد بیشتر است: ثبت نمی‌شود.
+ * - کمتر است و از متن یا جواب معلوم نیست قرارداد تمام شد یا ادامه دارد:
+ *   پرسیده می‌شود (`contract.ended`)؛ نتیجهٔ این دو در دفتر فرق دارد.
+ */
+export function reviewedContractReductions(database, eventId, event, lines, { contractEventId = null, contractEnded = null, reason = '' } = {}) {
+  const totals = new Map();
+  for (const line of lines || []) {
+    const kind = timingAccountKind(database, line.accountId, event);
+    if (!kind) continue;
+    const entry = totals.get(line.accountId) || { accountId: line.accountId, kind, amount: 0 };
+    entry.amount += kind === 'prepaid' ? (line.credit || 0) - (line.debit || 0) : (line.debit || 0) - (line.credit || 0);
+    totals.set(line.accountId, entry);
+  }
+  const reductions = [];
+  for (const reduction of [...totals.values()].filter((entry) => entry.amount > 0)) {
+    const candidates = liveContractsOn(database, reduction.accountId, eventId);
+    const label = reduction.kind === 'deferred' ? 'درآمد انتقالی' : 'پیش‌پرداخت';
+    if (!candidates.length) {
+      const available = reduction.kind === 'prepaid' ? ledgerBalance(database, reduction.accountId) : -ledgerBalance(database, reduction.accountId);
+      if (available < reduction.amount) {
+        throw storeError(`ماندهٔ ${label} این حساب (${available.toLocaleString('fa-IR')} تومان) برای این استرداد کافی نیست و قرارداد زنده‌ای هم رویش نیست؛ سند مبنای قرارداد یا مانده را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+      }
+      continue;
+    }
+    const answers = reviewContractAnswers(database, eventId, event);
+    const chosen = contractEventId ? candidates.find((item) => item.eventId === contractEventId) || null
+      : candidates.length === 1 ? candidates[0] : pickContract(candidates, answers.reference);
+    if (contractEventId && !chosen) throw storeError('قرارداد انتخاب‌شده روی این حساب برنامهٔ زنده‌ای ندارد.', 'REVIEW_DETAILS_REQUIRED', 409);
+    if (!chosen) {
+      throw contractQuestionError(`این استرداد کدام قرارداد را کم می‌کند؟ چند قرارداد زنده روی همین حساب ${label} هست؛ شمارهٔ سند یا طرف قرارداد را بگو.`, 'contract.reference', { candidates });
+    }
+    if (reduction.amount > chosen.remaining) {
+      throw storeError(`استرداد (${reduction.amount.toLocaleString('fa-IR')} تومان) از بخش شناسایی‌نشدهٔ قرارداد (${chosen.remaining.toLocaleString('fa-IR')} تومان) بیشتر است؛ مبلغ یا قرارداد را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+    }
+    const said = typeof contractEnded === 'boolean' ? contractEnded
+      : [...answers.ended, `${event.utterance || event.evidence || ''} ${reason}`].map(contractEndedFrom).find((value) => value !== null) ?? null;
+    if (said === null && reduction.amount < chosen.remaining) {
+      throw contractQuestionError('قرارداد با این استرداد تمام شد (فسخ، تخلیه) یا با مبلغ کمتر ادامه دارد؟', 'contract.ended', { candidates: [chosen] });
+    }
+    reductions.push({ ...reduction, contractEventId: chosen.eventId, ended: said !== false, remaining: chosen.remaining });
+  }
+  return reductions;
+}
+
+/** کلید ماه شمسیِ یک تاریخ، مثل «۱۴۰۵-۱۰». */
+function persianPeriodKey(iso, timeZone = 'Asia/Tehran') {
+  const parts = todayPersian(new Date(iso), timeZone);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}`;
+}
+
+/**
+ * برنامهٔ یک قرارداد پس از استرداد — در همان تراکنش سند استرداد.
+ *
+ * - **پایان قرارداد** (فسخ، تخلیه): همهٔ اقلام زنده باطل می‌شوند و یک قلم
+ *   پایانی به تاریخ استرداد، به اندازهٔ «ماندهٔ شناسایی‌نشده منهای استرداد»،
+ *   ساخته می‌شود — بخشی که برنگشت و در لحظهٔ فسخ هزینه (یا درآمد) است. پایان
+ *   کار: حساب پیش‌پرداخت یا درآمد انتقالی دقیقاً صفر.
+ * - **ادامه با مبلغ کمتر**: اقلام آینده بازقیمت‌گذاری می‌شوند تا جمعشان همان
+ *   مانده منهای استرداد شود، با همان گرد کردن برنامهٔ ماهانه (ته‌مانده روی قلم
+ *   آخر).
+ */
+export function reduceContractSchedule(database, contractEventId, { refund, at, ended, refundEventId, accountId = null, actor = null, timeZone = 'Asia/Tehran' } = {}) {
+  const live = database.prepare(`SELECT key,period_key AS periodKey,recognition_date AS recognitionDate,amount,status FROM recognition_schedule_items
+    WHERE event_id=? AND status IN ('planned','blocked-closed-period') ORDER BY period_key,key`).all(contractEventId);
+  const remaining = live.reduce((sum, item) => sum + item.amount, 0);
+  if (!(refund > 0) || refund > remaining) throw storeError('استرداد از بخش شناسایی‌نشدهٔ قرارداد بیشتر است.', 'REVIEW_DETAILS_REQUIRED', 409);
+  const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
+  let closing = null;
+  if (ended) {
+    for (const item of live) supersede.run(item.key);
+    const left = remaining - refund;
+    if (left > 0) {
+      const periodKey = persianPeriodKey(at, timeZone);
+      const locked = lockedPeriodSet(database).has(periodForDate(at, timeZone));
+      closing = { key: `${contractEventId}:${periodKey}:close:${refundEventId}`, periodKey, recognitionDate: at, amount: left };
+      database.prepare(`INSERT INTO recognition_schedule_items (key,event_id,period_key,recognition_date,amount,status,account_id) VALUES (?,?,?,?,?,?,?)`)
+        .run(closing.key, contractEventId, periodKey, at, left, locked ? SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD : SCHEDULE_ITEM_STATUS.PLANNED, accountId);
+      if (locked) writeAudit(database, contractEventId, 'recognition-blocked', blockedDetail(closing, timeZone), actor);
+    }
+  } else {
+    // ماه‌های آینده بار کاهش را می‌برند؛ اگر کافی نیستند، همهٔ اقلام زنده.
+    const future = live.filter((item) => item.recognitionDate > at);
+    const pool = future.reduce((sum, item) => sum + item.amount, 0) >= refund ? future : live;
+    const target = pool.reduce((sum, item) => sum + item.amount, 0) - refund;
+    const share = Math.floor(target / pool.length);
+    const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=? WHERE key=?');
+    pool.forEach((item, index) => {
+      const amount = index === pool.length - 1 ? target - (share * (pool.length - 1)) : share;
+      if (amount > 0) reprice.run(amount, item.key); else supersede.run(item.key);
+    });
+  }
+  const detail = { refundEventId, refund, remainingBefore: remaining, remainingAfter: remaining - refund, ended: Boolean(ended), closingItem: closing };
+  writeAudit(database, contractEventId, 'contract-reduced', detail, actor);
+  return detail;
+}
+
 /** ثبتِ بررسی‌شدهٔ گفتهٔ چندمبلغی؛ حسابدار حساب‌ها و همهٔ مبالغ را صریح انتخاب می‌کند. */
-export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran', accountantProposal = false, eventOverride = null } = {}) {
+export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran', accountantProposal = false, eventOverride = null, contractEventId = null, contractEnded = null } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row || row.status !== 'pending' || row.route !== ROUTES.ACCOUNTANT_REVIEW || (!accountantProposal && (row.kind !== EVENT_KINDS.REVIEW_PLACEHOLDER || row.journal_source))) {
@@ -992,6 +1185,8 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
   const event = eventOverride || JSON.parse(row.payload);
   // دورهٔ پوشش پیش از سند: سطر دوره‌دارِ بی‌دوره ثبت نمی‌شود.
   const timing = reviewedTimingPlan(database, row.id, event, safeLines);
+  // استرداد پیش از سند: قرارداد و سرنوشتش باید معلوم باشد.
+  const reductions = reviewedContractReductions(database, row.id, event, safeLines, { contractEventId, contractEnded, reason: explanation });
   const source = row.journal_source ? JSON.parse(row.journal_source) : null;
   const posted = postJournalEntry(database, {
     sourceType: source?.type || 'financial-event', sourceId: source?.id || row.id, occurredAt: event.occurredAt,
@@ -1001,7 +1196,18 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
     kind: 'accountant-reviewed', lines: safeLines, memoHint: explanation,
   }), row.id);
   if (eventOverride) database.prepare('UPDATE financial_events SET payload=?,occurred_at=?,due_at=? WHERE id=?').run(JSON.stringify(event),event.occurredAt,event.dueAt || null,row.id);
-  reconcileReviewedRecognition(database, row, event, timing, { actor, timeZone, journalEntryId: posted.id });
+  const reconciled = reconcileReviewedRecognition(database, row, event, timing, { actor, timeZone, journalEntryId: posted.id });
+  for (const reduction of reductions) {
+    const detail = reduceContractSchedule(database, reduction.contractEventId, {
+      refund: reduction.amount, at: event.occurredAt, ended: reduction.ended, refundEventId: row.id, accountId: reduction.accountId, actor, timeZone,
+    });
+    writeAudit(database, row.id, 'contract-linked', { contractEventId: reduction.contractEventId, accountId: reduction.accountId, ...detail }, actor);
+  }
+  if (reductions.length) {
+    const current = JSON.parse(database.prepare('SELECT payload FROM financial_events WHERE id=?').get(row.id).payload);
+    database.prepare('UPDATE financial_events SET payload=? WHERE id=?')
+      .run(JSON.stringify({ ...(reconciled || current), contractEventId: reductions[0].contractEventId }), row.id);
+  }
   markEventPosted(database, row.id, posted, safeLines, actor);
   writeAudit(database, row.id, 'accountant-reviewed', { reason: explanation, journalEntryId: posted.id }, actor);
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
@@ -1323,7 +1529,8 @@ function notBeforeDate(date, floor) {
 function postRecognitionItem(database, item, { event, decision, occurredAt, actor, timeZone, stage = 'recognized', detail = {} }) {
   const build = ALLOCATION_PLANS[decision?.treatment];
   if (!build) return null;
-  const lines = build(event, item.amount).map((line) => ({
+  const planned = build(event, item.amount);
+  const lines = planned.map((line) => ({
     // حسابی که برنامه با آن ساخته شد (سند حسابدار)، وگرنه همان نقش و دسته.
     accountId: item.accountId && TIMING_ROLES.has(line.role) ? item.accountId : resolveEventRole(database, line.role, line.key, event),
     analyticId: resolveEventAnalytic(database, line.role, event, line.key),
@@ -1331,6 +1538,20 @@ function postRecognitionItem(database, item, { event, decision, occurredAt, acto
     credit: line.credit,
     description: `شناسایی ${item.periodKey}`,
   }));
+  // تور ایمنی: تخصیص هرگز از ماندهٔ واقعی حساب دوره‌دار بیشتر کم نمی‌کند.
+  //
+  // استردادی که با سند دستی، تعیین تکلیف وجه ناشناس یا هر مسیر دیگری بیرون از
+  // ثبت حسابدار رسیده، برنامهٔ قرارداد را کم نکرده؛ ثبت کورِ قلم پیش‌پرداخت را
+  // منفی و درآمد انتقالی را بدهکار — «مستأجر به ما بدهکار است» — می‌کرد.
+  const timingIndex = planned.findIndex((line) => TIMING_ROLES.has(line.role));
+  if (timingIndex >= 0) {
+    const prepaid = planned[timingIndex].role === ROLES.PREPAID_ASSET;
+    const balance = ledgerBalance(database, lines[timingIndex].accountId);
+    const available = prepaid ? balance : -balance;
+    if (available < item.amount) {
+      throw Object.assign(storeError(`ماندهٔ ${prepaid ? 'پیش‌پرداخت' : 'درآمد انتقالی'} (${available.toLocaleString('fa-IR')} تومان) از قلم ${item.periodKey} (${item.amount.toLocaleString('fa-IR')} تومان) کمتر است؛ احتمالاً استرداد یا اصلاحی بیرون از برنامه ثبت شده. حسابدار برنامهٔ قرارداد را بررسی کند.`, 'RECOGNITION_BALANCE_SHORT', 409), { available, accountId: lines[timingIndex].accountId });
+    }
+  }
   const posted = postJournalEntry(database, {
     sourceType: 'recognition-schedule',
     sourceId: item.key,
@@ -1347,6 +1568,7 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
   ensureFinancialEventSchema(database);
   const at = today || new Date().toISOString();
   const summary = { posted: 0, blocked: 0, skipped: 0 };
+  let held = 0;
   const cap = Math.max(1, Math.min(2000, Number(limit) || 500));
   const select = (status, size) => database.prepare(`SELECT key,event_id AS eventId,period_key AS periodKey,
     recognition_date AS recognitionDate,amount,status,account_id AS accountId
@@ -1399,13 +1621,40 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
       summary.posted += 1;
     } catch (error) {
       database.exec('ROLLBACK');
+      if (error.code === 'RECOGNITION_BALANCE_SHORT') {
+        // قلم برنامه‌ریزی‌شده می‌ماند تا حسابدار تصمیم بگیرد؛ ردپا یک بار برای
+        // هر قلم، نه هر دقیقه.
+        const seen = database.prepare(`SELECT 1 FROM financial_event_audit WHERE event_id=? AND stage='recognition-held-balance'
+          AND json_extract(detail,'$.key')=?`).get(item.eventId, item.key);
+        if (!seen) writeAudit(database, item.eventId, 'recognition-held-balance', { key: item.key, periodKey: item.periodKey, amount: item.amount, available: error.available, accountId: error.accountId, reason: error.message }, actor);
+        held += 1;
+        summary.skipped += 1;
+        continue;
+      }
       // یک قلم خراب نباید بقیهٔ اجرا را متوقف کند؛ ولی بی‌صدا هم رد نمی‌شود.
       writeAudit(database, item.eventId, 'recognition-failed', { periodKey: item.periodKey, reason: String(error.message).slice(0, 300) }, actor);
       summary.skipped += 1;
     }
   }
 
-  return summary;
+  return held ? { ...summary, held } : summary;
+}
+
+/**
+ * اقلامی که تور ایمنیِ مانده نگهشان داشته — صف حسابدار.
+ *
+ * ماندهٔ حساب دوره‌دار از قلم کمتر بود؛ یعنی چیزی بیرون از برنامه آن را کم
+ * کرده. ثبت نمی‌شوند و بی‌صدا هم نمی‌مانند.
+ */
+export function listHeldRecognition(database) {
+  ensureFinancialEventSchema(database);
+  return database.prepare(`SELECT i.key,i.event_id AS eventId,i.period_key AS periodKey,i.recognition_date AS recognitionDate,i.amount,
+      (SELECT detail FROM financial_event_audit a WHERE a.event_id=i.event_id AND a.stage='recognition-held-balance'
+        AND json_extract(a.detail,'$.key')=i.key ORDER BY a.rowid DESC LIMIT 1) AS detail
+    FROM recognition_schedule_items i JOIN financial_events e ON e.id=i.event_id
+    WHERE i.status='planned' AND e.status='posted' ORDER BY i.recognition_date,i.key`).all()
+    .filter((row) => row.detail)
+    .map((row) => ({ key: row.key, eventId: row.eventId, periodKey: row.periodKey, recognitionDate: row.recognitionDate, amount: row.amount, reason: JSON.parse(row.detail).reason }));
 }
 
 /**
