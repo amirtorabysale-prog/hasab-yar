@@ -132,6 +132,98 @@ export function ensureFinancialEventSchema(database) {
   // همچنان بی‌سند می‌بیند، سند دومی می‌سازد.
   try { database.exec('ALTER TABLE financial_events ADD COLUMN journal_source TEXT'); }
   catch (error) { if (!/duplicate column name/i.test(error.message)) throw error; }
+
+  // ترمیم یک‌باره برای هر اتصال: دفترهایی که پیش از بازنشستگی برنامه در لحظهٔ
+  // برگشت ساخته شده‌اند، اقلام زندهٔ رویدادِ پس‌گرفته را هنوز دارند.
+  if (!REPAIRED_DATABASES.has(database)) {
+    REPAIRED_DATABASES.add(database);
+    repairCancelledSchedules(database);
+  }
+}
+
+const REPAIRED_DATABASES = new WeakSet();
+
+/**
+ * برنامهٔ شناسایی یک رویدادِ پس‌گرفته بازنشسته می‌شود.
+ *
+ * برنامه دنبالهٔ همان پرداخت یا دریافت است، نه چیزی مستقل از آن. وقتی پرداخت
+ * برمی‌گردد — حذف تراکنش، «برگرداندن» آخرین ثبت، برگشت رویداد از پرونده، یا رد
+ * در صف — دارایی پیش‌پرداخت (یا بدهی درآمد انتقالی) دیگر وجود ندارد:
+ *
+ * - قلمی که ثبت شده معکوس می‌شود، وگرنه هزینه (یا درآمد) پولی که برگشته در
+ *   دفتر می‌ماند و حساب پیش‌پرداخت با ماندهٔ بستانکار — یا درآمد انتقالی با
+ *   ماندهٔ بدهکار، یعنی «مستأجر به ما بدهکار است» — دیده می‌شود؛
+ * - قلم برنامه‌ریزی‌شده یا منتظرِ دورهٔ بسته باطل می‌شود، وگرنه اجرای ماه بعد
+ *   برای پولی که دیگر وجود ندارد هزینه می‌سازد و ثبت دوبارهٔ درستِ کاربر دو
+ *   برابر شناسایی می‌شود.
+ *
+ * ردیف‌ها حذف نمی‌شوند و شناسهٔ سند قلم ثبت‌شده می‌ماند تا تاریخچه بگوید چه
+ * شد. اگر ماهِ یک قلمِ ثبت‌شده بسته باشد، `reverseJournalEntry` خطا می‌دهد و کل
+ * برگشت در همان تراکنش برمی‌گردد: برگشت نیمه‌کاره بدتر از رد صریح است.
+ */
+export function retireRecognitionSchedule(database, eventId, { actor = null, timeZone = 'Asia/Tehran', memo = 'برگشت شناسایی رویداد پس‌گرفته' } = {}) {
+  const posted = database.prepare("SELECT key FROM recognition_schedule_items WHERE event_id=? AND status='posted' ORDER BY period_key").all(eventId);
+  const reversalEntryIds = [];
+  for (const item of posted) {
+    // سندی که پیش‌تر معکوس شده دوباره معکوس نمی‌شود؛ فقط قلم علامت می‌خورد.
+    const live = database.prepare(`SELECT 1 FROM journal_entries j WHERE source_type='recognition-schedule' AND source_id=?
+      AND entry_kind='normal' AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reverses_entry_id=j.id)`).get(item.key);
+    if (live) {
+      const reversal = reverseJournalEntry(database, { sourceType: 'recognition-schedule', sourceId: item.key, memo, createdBy: actor, timeZone });
+      if (reversal) reversalEntryIds.push(reversal.id);
+    }
+    database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?").run(item.key);
+  }
+  const superseded = database.prepare(`UPDATE recognition_schedule_items SET status='superseded'
+    WHERE event_id=? AND status IN ('planned','blocked-closed-period')`).run(eventId).changes;
+  if (posted.length || superseded) {
+    writeAudit(database, eventId, 'schedule-retired', { reversedItems: posted.length, reversalEntryIds, supersededItems: superseded }, actor);
+  }
+  return { reversed: posted.length, superseded };
+}
+
+/**
+ * ترمیم دفترهای قدیمی، یک بار برای هر اتصال.
+ *
+ * سه حالتی که پیش از بازنشستگی برنامه ساخته می‌شد:
+ * ۱. اقلام زندهٔ رویداد ردشده یا معکوس‌شده — بی‌اثر در دفتر، ولی پنجرهٔ اجرای
+ *    ماهانه را پر می‌کردند؛
+ * ۲. قلمِ ثبت‌شدهٔ رویداد معکوس‌شده — هزینهٔ پولی که برگشته، در دفتر مانده؛
+ * ۳. رویداد «ثبت‌شده»ای که سند تراکنشش با حذف تراکنش معکوس شده — یتیمی که
+ *    برنامه‌اش هر ماه هزینه می‌ساخت و `reverseEvent` هم دیگر نمی‌توانست ببندد.
+ *
+ * هر رویداد در savepoint خودش: دورهٔ بسته‌ای که برگشت را رد کند فقط همان
+ * رویداد را دست‌نخورده می‌گذارد، نه کل ترمیم را.
+ */
+export function repairCancelledSchedules(database) {
+  database.prepare(`UPDATE recognition_schedule_items SET status='superseded'
+    WHERE status IN ('planned','blocked-closed-period')
+      AND event_id IN (SELECT id FROM financial_events WHERE status IN ('rejected','reversed'))`).run();
+  const reversedWithPosted = database.prepare(`SELECT DISTINCT event_id AS id FROM recognition_schedule_items
+    WHERE status='posted' AND event_id IN (SELECT id FROM financial_events WHERE status IN ('rejected','reversed'))`).all();
+  const orphans = database.prepare(`SELECT id,journal_source AS journalSource FROM financial_events e
+    WHERE status='posted' AND json_extract(journal_source,'$.type')='transaction'
+      AND EXISTS (SELECT 1 FROM recognition_schedule_items i WHERE i.event_id=e.id AND i.status IN ('planned','posted','blocked-closed-period'))`).all()
+    .filter((row) => {
+      const anchor = JSON.parse(row.journalSource);
+      const latest = database.prepare(`SELECT id FROM journal_entries WHERE source_type='transaction' AND source_id=?
+        AND entry_kind='normal' ORDER BY revision DESC LIMIT 1`).get(String(anchor.id || ''));
+      return latest && database.prepare('SELECT 1 FROM journal_entries WHERE reverses_entry_id=?').get(latest.id);
+    });
+  for (const { id, orphan } of [...reversedWithPosted, ...orphans.map((row) => ({ id: row.id, orphan: true }))]) {
+    database.exec('SAVEPOINT repair_cancelled_schedule');
+    try {
+      retireRecognitionSchedule(database, id, { memo: 'ترمیم: برگشت شناسایی رویداد پس‌گرفته' });
+      if (orphan) {
+        database.prepare("UPDATE financial_events SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+        writeAudit(database, id, 'reversed', { reason: 'تراکنش پشت این رویداد پیش‌تر حذف شده بود؛ رویداد و برنامهٔ شناسایی‌اش هم بسته شدند.', repair: true }, null);
+      }
+      database.exec('RELEASE repair_cancelled_schedule');
+    } catch {
+      database.exec('ROLLBACK TO repair_cancelled_schedule');
+      database.exec('RELEASE repair_cancelled_schedule');
+    }
+  }
 }
 
 /**
@@ -659,6 +751,10 @@ export function reverseFinancialEvent(database, eventId, { actor = null, reason 
     // رویدادی که «ثبت‌شده» است حتماً سندی دارد. اگر پیدا نشد، یعنی لنگر غلط
     // است؛ علامت‌زدن «معکوس شد» در این حالت فقط ردپا را دروغ می‌کند.
     if (!reversal) throw storeError('سند این رویداد پیدا نشد؛ برگشت انجام نشد.', 'EVENT_JOURNAL_MISSING', 409);
+    // برنامهٔ شناسایی دنبالهٔ همین سند است و با آن برمی‌گردد — پیش‌پرداخت و
+    // درآمد انتقالی هر دو. بدون این، هزینهٔ ماه‌های گذشته برای پولی که برگشته
+    // در دفتر می‌ماند و اجرای بعدی ماه‌های آینده را هم می‌ساخت.
+    retireRecognitionSchedule(database, row.id, { actor, timeZone, memo: reason ? `برگشت شناسایی: ${reason}`.slice(0, 200) : undefined });
     database.prepare("UPDATE financial_events SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
     writeAudit(database, row.id, 'reversed', { reason: String(reason || '').slice(0, 300), reversalEntryId: reversal.id }, actor);
     if (!withinTransaction) database.exec('COMMIT');
@@ -673,6 +769,9 @@ export function rejectFinancialEvent(database, eventId, { actor = null, reason =
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
   if (row.status !== 'pending') throw storeError('فقط رویداد در انتظار قابل رد است.', 'EVENT_NOT_PENDING', 409);
   database.prepare("UPDATE financial_events SET status='rejected',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
+  // برنامه‌ای که در لحظهٔ ضبط ساخته شد، با رد بی‌موضوع است؛ زنده ماندنش پنجرهٔ
+  // اجرای ماهانه را برای رویدادهای واقعی پر می‌کرد.
+  retireRecognitionSchedule(database, row.id, { actor });
   writeAudit(database, row.id, 'rejected', { reason: String(reason || '').slice(0, 300) }, actor);
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
@@ -931,6 +1030,10 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
     recognition_date AS recognitionDate,amount
     FROM recognition_schedule_items
     WHERE status='planned' AND recognition_date IS NOT NULL AND recognition_date <= ?
+      -- فقط رویدادِ ثبت‌شده. قلم رویداد منتظر، ردشده یا معکوس‌شده هیچ‌وقت ثبت
+      -- نمی‌شود؛ اگر اینجا انتخاب شود فقط سقف اجرا را می‌خورد و بیش از پانصد
+      -- قلم کهنه، اقلام واقعیِ بعد از خود را برای همیشه پشت در نگه می‌داشت.
+      AND event_id IN (SELECT id FROM financial_events WHERE status='posted')
     ORDER BY recognition_date LIMIT ?`).all(at, Math.max(1, Math.min(2000, Number(limit) || 500)));
 
   const lockedPeriods = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'")

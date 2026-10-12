@@ -1,0 +1,265 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
+
+/**
+ * موتور ۵، بستهٔ دفتر — برنامهٔ شناسایی پیش‌پرداخت و درآمد انتقالی در تمام عمرش.
+ *
+ * حقیقت حسابداری: پولی که برای پوشش آینده رفته دارایی است و ماه‌به‌ماه هزینه
+ * می‌شود؛ پولی که برای خدمت آینده آمده بدهی است و ماه‌به‌ماه درآمد می‌شود. جمع
+ * اقلام دقیقاً همان مبلغی است که دارایی یا بدهی را ساخت، و هر جا آن پول برگردد،
+ * برنامه هم برمی‌گردد. هر بخش این فایل یک خانواده است: مثبت‌ها و منفی‌ها، با
+ * جملهٔ واقعی کاربر عیناً.
+ */
+
+process.env.DATABASE_PATH = tempDatabase('engine5-p5-ledger');
+process.env.ADMIN_USERNAME = 'p5-ledger-owner';
+process.env.ADMIN_PASSWORD = 'p5-ledger-strong-password-7741';
+const database = await import('../server/db.js');
+const store = await import('../server/financialEventStore.js');
+const accounting = await import('../server/accounting.js');
+const { parseFinancialText } = await import('../shared/parser.js');
+const { normalizeFinancialEvent } = await import('../shared/financialEvent.js');
+const { routeEvent } = await import('../shared/confidenceEngine.js');
+const { decide } = await import('../shared/accountingDecision.js');
+const { factsFromEvent } = await import('../shared/eventFacts.js');
+
+database.ensureAdmin();
+const owner = database.authenticateUser(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD);
+
+const NOW = '2026-10-10T08:00:00.000Z'; // ۱۸ مهر ۱۴۰۵
+const AZAR = '2026-12-01T00:00:00.000Z'; // ۱۰ آذر ۱۴۰۵
+const ESFAND = '2027-03-01T00:00:00.000Z';
+const LONG_AFTER = '2027-12-01T00:00:00.000Z';
+
+/** هر خانواده دفتر خودش را دارد تا مانده‌ها از هم نشت نکنند. */
+async function freshBook(name) {
+  const workspace = database.createWorkspace(owner.id, { name, profileType: 'business' });
+  const inBook = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
+  let bank = null;
+  await inBook(() => {
+    database.installChartTemplate();
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true });
+    bank = database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 500_000_000 });
+  });
+  return { workspace, inBook, bank };
+}
+
+const sql = () => database.activeWorkspaceDatabase();
+/** ماندهٔ خالص (بدهکار منهای بستانکار) همهٔ حساب‌های یک منشأ. */
+const net = (kind) => Number(sql().prepare(`SELECT COALESCE(SUM(l.debit)-SUM(l.credit),0) AS n FROM journal_lines l
+  JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id
+  WHERE a.source_kind=? AND j.approval_state='approved'`).get(kind).n);
+const balances = () => ({
+  prepaid: net('prepaid-asset'), expense: net('expense-category'),
+  deferred: net('deferred-revenue'), income: net('income-category'),
+});
+const items = (eventId) => sql().prepare('SELECT key,period_key AS periodKey,recognition_date AS recognitionDate,amount,status FROM recognition_schedule_items WHERE event_id=? ORDER BY period_key').all(eventId);
+const eventOf = (transactionId) => sql().prepare('SELECT * FROM financial_events WHERE source_event_id=?').get(`transaction:${transactionId}`);
+const run = (today) => store.postDueRecognitionItems(sql(), { today, actor: owner.id });
+
+/** همان راهی که گفتهٔ کاربر می‌رود: پارسر، ردیف تراکنش، رویداد، و تأیید کارت. */
+function capture(text, { now = NOW, clientId = `c-${Math.random()}`, approve = true } = {}) {
+  const rows = parseFinancialText(text, { source: 'voice', now: new Date(now) }).transactions || [];
+  assert.ok(rows.length >= 1, `پارسر چیزی از «${text}» نخواند`);
+  const [transactionId] = database.insertTransactions({ transcript: text, transactions: rows.map((row) => ({ ...row, userConfirmed: true, clientId })) });
+  let event = eventOf(transactionId);
+  if (approve && event.status === 'pending') { database.approveEvent(event.id); event = eventOf(transactionId); }
+  return { transactionId, eventId: event.id, event };
+}
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «لغو»: حذف، برگرداندن، برگرداندن و بازگرداندن، حذفِ ثبتِ AI، برگشت
+// رویداد، رد در صف — همه باید برنامه را با خود ببرند.
+// ---------------------------------------------------------------------------
+
+const INSURANCE_YEAR = 'بیمه یک ساله انبار رو ۱۲ میلیون دادیم، ماهی یک میلیون';
+const INSURANCE_SIX = 'بیمه شش ماهه دفتر رو امروز ۶ میلیون از حساب تجارت دادیم';
+const RENT_RECEIVED = 'اجاره شش ماه آینده انبار رو ۳۰ میلیون از آقای کریمی پیش دریافت کردیم';
+const RENT_AHEAD = 'اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون، ماهی ۵ میلیون';
+
+test('حذف تراکنش پیش‌پرداخت: سند پرداخت، شناسایی‌های ثبت‌شده و اقلام آینده همه برمی‌گردند', async () => {
+  const { inBook } = await freshBook('لغو — حذف');
+  await inBook(() => {
+    const first = capture(INSURANCE_YEAR);
+    assert.equal(first.event.status, 'posted');
+    assert.equal(run(AZAR).posted, 3);
+    assert.deepEqual([balances().prepaid, balances().expense], [9_000_000, 3_000_000]);
+
+    database.deleteTransaction(first.transactionId);
+    assert.equal(eventOf(first.transactionId).status, 'reversed', 'رویداد پشت تراکنشِ حذف‌شده بسته می‌شود');
+    assert.ok(items(first.eventId).every((item) => item.status === 'superseded'), 'هیچ قلم زنده‌ای نمی‌ماند');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0], 'پیش‌پرداخت صفر، هزینه صفر');
+    assert.equal(run(ESFAND).posted, 0, 'اجرای بعدی برای پولی که برگشته هزینه نمی‌سازد');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0]);
+    // پیام قفل ویرایش می‌گوید «حذفش کن و دوباره ثبت کن»: ثبت دوبارهٔ درست فقط
+    // همان شش میلیون را هزینه می‌کند.
+    const second = capture(INSURANCE_SIX);
+    run(LONG_AFTER);
+    assert.equal(second.event.status, 'posted');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 6_000_000]);
+  });
+});
+
+test('برگرداندن آخرین ثبت و بازگرداندنش: فقط یک برنامهٔ زنده می‌ماند', async () => {
+  const { inBook } = await freshBook('لغو — برگرداندن');
+  await inBook(() => {
+    const first = capture(INSURANCE_SIX);
+    // «برگرداندن» در App.jsx همان حذف آخرین ثبت است.
+    database.deleteTransaction(first.transactionId);
+    assert.equal(run(LONG_AFTER).posted, 0, 'پس از برگرداندن، هیچ هزینه‌ای برای پولی که از بانک نرفت');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0]);
+
+    const restored = database.redoTransaction(first.transactionId);
+    // بازگرداندن مثل هر ثبت تازه از کارت تأیید می‌گذرد.
+    if (eventOf(restored.id).status === 'pending') database.approveEvent(eventOf(restored.id).id);
+    assert.equal(eventOf(restored.id).status, 'posted');
+    run(LONG_AFTER);
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 6_000_000], 'یک پرداخت، یک بار هزینه');
+  });
+});
+
+test('برگشت رویداد پیش‌پرداخت از پرونده: شناسایی‌های گذشته معکوس و اقلام آینده باطل می‌شوند', async () => {
+  const { inBook } = await freshBook('لغو — برگشت پیش‌پرداخت');
+  await inBook(() => {
+    const paid = capture(INSURANCE_SIX);
+    assert.equal(run(AZAR).posted, 3);
+    database.reverseEvent(paid.eventId, 'اشتباه ثبت شد');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0]);
+    assert.ok(items(paid.eventId).every((item) => item.status === 'superseded'));
+    assert.deepEqual(run(LONG_AFTER), { posted: 0, blocked: 0, skipped: 0 }, 'اقلام باطل دیگر در هیچ اجرایی دیده نمی‌شوند');
+  });
+});
+
+test('آینه: برگشت درآمد انتقالیِ اجارهٔ پیش‌دریافت، طرف حساب را بدهکار نشان نمی‌دهد', async () => {
+  const { inBook } = await freshBook('لغو — برگشت درآمد انتقالی');
+  await inBook(() => {
+    const received = capture(RENT_RECEIVED);
+    assert.equal(received.event.status, 'posted');
+    assert.equal(items(received.eventId).length, 6);
+    assert.equal(run(AZAR).posted, 3);
+    assert.deepEqual([balances().deferred, balances().income], [-15_000_000, -15_000_000]);
+    database.reverseEvent(received.eventId, 'اشتباه ثبت شد');
+    assert.deepEqual([balances().deferred, balances().income], [0, 0], 'نه بدهکاری مستأجر، نه درآمدِ دریافتِ برگشته');
+  });
+});
+
+test('رد در صف: برنامهٔ ساخته‌شده در لحظهٔ ضبط باطل می‌شود', async () => {
+  const { inBook } = await freshBook('لغو — رد');
+  await inBook(() => {
+    const queued = capture(RENT_AHEAD, { approve: false });
+    if (queued.event.status === 'pending') {
+      database.rejectEvent(queued.eventId, 'این پرداخت انجام نشده بود');
+    } else {
+      database.reverseEvent(queued.eventId, 'این پرداخت انجام نشده بود');
+    }
+    assert.ok(items(queued.eventId).length > 0, 'برنامه در لحظهٔ ضبط ساخته شده بود');
+    assert.ok(items(queued.eventId).every((item) => item.status === 'superseded'));
+  });
+});
+
+test('حذف ثبتِ تأییدشده از فهم AI: برنامهٔ همان پرداخت هم بسته می‌شود', async () => {
+  const { inBook, bank } = await freshBook('لغو — مسیر AI');
+  const SAID = 'پیش پرداخت بیمه اتش سوزی به مبلغ 12 میلیون به بیمه دی بابت بیمه انبار .تایم پوشش 1 ساله ماهیانه 1 میلیون .از حساب تجارت';
+  const none = { op: null, of: [] };
+  const modelSaid = {
+    event: { kind: 'advance-paid', description: 'پیش‌پرداخت بیمه آتش‌سوزی برای بیمه انبار از حساب تجارت', status: 'done' },
+    amounts: [
+      { id: 'a1', value: 12_000_000, currency: null, role: 'deposit', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence: 'به مبلغ 12 میلیون' },
+      { id: 'a2', value: 1_000_000, currency: null, role: 'unit-price', status: 'context', partOf: null, basis: 'explicit', computedFrom: none, evidence: 'ماهیانه 1 میلیون' },
+    ],
+    nonAmountNumbers: [], dates: [],
+    counterparties: [{ id: 'c1', name: 'بیمه دی', role: 'supplier', evidence: 'به بیمه دی' }],
+    movements: [{ id: 'm1', amountRef: 'a1', direction: 'out', from: { kind: 'bank', name: 'تجارت' }, to: { kind: 'counterparty', name: 'بیمه دی' }, evidence: 'از حساب تجارت' }],
+    subject: { what: 'بیمه آتش‌سوزی انبار', kind: 'service', use: 'internal', delivered: 'unknown', usefulLifeMonths: null, evidence: 'بیمه انبار' },
+    conditions: [], ambiguities: [],
+  };
+  const fetcher = async () => ({ ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(modelSaid) }] }], usage: { input_tokens: 1, output_tokens: 1 } }) });
+  await inBook(async () => {
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true, understandingMode: 'active', understandingScope: 'all' });
+    const item = await database.createUnderstandingCase({ text: SAID, clientId: 'ai-cancel-1' }, { fetcher, env: { OPENAI_API_KEY: 'test-key-not-real', OPENAI_UNDERSTANDING_MODEL: 'test-model' }, now: new Date(NOW) });
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions));
+    assert.equal(item.plan.components[0].accountId, bank.id);
+    database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
+    const event = sql().prepare("SELECT * FROM financial_events WHERE status='posted' AND json_extract(journal_source,'$.type')='transaction'").get();
+    assert.ok(event, 'ثبت AI روی یک تراکنش نشسته است');
+    run(AZAR);
+    database.deleteTransaction(JSON.parse(event.journal_source).id);
+    run(LONG_AFTER);
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0]);
+  });
+});
+
+test('پنجرهٔ اجرا با اقلام رویدادهای ردشده یا منتظر پر نمی‌شود', async () => {
+  const { inBook } = await freshBook('لغو — گرسنگی');
+  await inBook(() => {
+    const yearOf = (index, occurredAt) => normalizeFinancialEvent({
+      kind: 'cash-expense', amount: 12_000_000, occurredAt, category: 'بیمه', accountId: 'cash',
+      servicePeriodStart: occurredAt, servicePeriodEnd: new Date(new Date(occurredAt).getTime() + 364 * 86_400_000).toISOString(),
+      evidence: `بیمه یکساله شمارهٔ ${index}`,
+    });
+    const record = (event, source) => store.recordFinancialEvent(sql(), event, {
+      sourceEventId: source, decision: routeEvent({ kind: event.kind }, { blockers: ['تأیید لازم است'] }),
+      actor: owner.id, accountingDecision: decide(factsFromEvent(event), { today: event.occurredAt }),
+    });
+    // ۴۵ پیش‌پرداخت یک‌ساله در فروردین ۱۴۰۴ که در صف رد شدند، و ۴۵ تای دیگر که
+    // هنوز منتظرند: ۱۰۸۰ قلم کهنه پیش از قلم‌های واقعی.
+    for (let index = 0; index < 90; index += 1) {
+      const created = record(yearOf(index, '2025-03-25T08:00:00.000Z'), `stale:${index}`);
+      if (index % 2 === 0) store.rejectFinancialEvent(sql(), created.id, { actor: owner.id, reason: 'تکراری بود' });
+    }
+    const real = capture('بیمه یک ساله دفتر رو امروز ۱۲ میلیون از حساب تجارت دادیم');
+    assert.equal(real.event.status, 'posted');
+    for (let attempt = 0; attempt < 3; attempt += 1) run(AZAR);
+    const posted = items(real.eventId).filter((item) => item.status === 'posted').map((item) => item.periodKey);
+    assert.deepEqual(posted, ['1405-07', '1405-08', '1405-09']);
+    assert.deepEqual([balances().prepaid, balances().expense], [9_000_000, 3_000_000]);
+  });
+});
+
+test('منفی: برگشت رویدادی که ماهِ شناسایی‌شده‌اش بسته شده، رد می‌شود و هیچ چیز را عوض نمی‌کند', async () => {
+  const { inBook } = await freshBook('لغو — دورهٔ بسته');
+  await inBook(() => {
+    const paid = capture(INSURANCE_SIX);
+    run(AZAR);
+    const before = { balances: balances(), schedule: items(paid.eventId), status: eventOf(paid.transactionId).status };
+    sql().prepare("INSERT INTO accounting_periods (period,status) VALUES ('1405-08','locked')").run();
+    assert.throws(() => database.reverseEvent(paid.eventId, 'اشتباه ثبت شد'), { code: 'ACCOUNTING_PERIOD_LOCKED' });
+    assert.deepEqual({ balances: balances(), schedule: items(paid.eventId), status: eventOf(paid.transactionId).status }, before);
+    sql().prepare("UPDATE accounting_periods SET status='open' WHERE period='1405-08'").run();
+  });
+});
+
+test('ترمیم دفتر قدیمی: رویداد یتیمِ تراکنشِ حذف‌شده و اقلام رویداد ردشده بسته می‌شوند', async () => {
+  const { inBook } = await freshBook('لغو — ترمیم');
+  await inBook(() => {
+    const orphan = capture(INSURANCE_YEAR);
+    run(AZAR);
+    // حالتِ پیش از این اصلاح: حذف فقط سند تراکنش را معکوس می‌کرد.
+    accounting.reverseTransactionJournal(sql(), orphan.transactionId, NOW, { memo: 'حذف قدیمی' });
+    sql().prepare("UPDATE transactions SET status='deleted' WHERE id=?").run(orphan.transactionId);
+    const rejected = capture(RENT_AHEAD, { approve: false });
+    sql().prepare("UPDATE financial_events SET status='rejected' WHERE id=?").run(rejected.eventId);
+    sql().prepare("UPDATE recognition_schedule_items SET status='planned' WHERE event_id=?").run(rejected.eventId);
+    assert.deepEqual([balances().prepaid, balances().expense], [-3_000_000, 3_000_000], 'وضعیت خراب پیش از ترمیم');
+
+    store.repairCancelledSchedules(sql());
+    assert.equal(sql().prepare('SELECT status FROM financial_events WHERE id=?').get(orphan.eventId).status, 'reversed');
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0]);
+    assert.ok(items(rejected.eventId).every((item) => item.status === 'superseded'));
+    // ترمیم دوباره چیزی را دوباره معکوس نمی‌کند.
+    store.repairCancelledSchedules(sql());
+    assert.deepEqual([balances().prepaid, balances().expense], [0, 0]);
+  });
+});
+
+test('منفی: حذف یک هزینهٔ سادهٔ بی‌برنامه همان مسیر همیشگی را دارد', async () => {
+  const { inBook } = await freshBook('لغو — هزینهٔ ساده');
+  await inBook(() => {
+    const fuel = capture('بنزین ۵۰۰ هزار تومان از صندوق دادیم');
+    assert.equal(items(fuel.eventId).length, 0);
+    database.deleteTransaction(fuel.transactionId);
+    assert.equal(balances().expense, 0);
+  });
+});
