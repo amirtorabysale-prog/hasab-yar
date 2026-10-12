@@ -632,6 +632,13 @@ export function counterpartyPaidUs(input) {
  * و پیش‌دریافت از مستاجر (پول داخل) دو سند وارونه‌اند؛ هیچ‌کدام را حدس نمی‌زنیم.
  */
 const RENT_TAKEN = /(?<![آ-ی])(?:اجاره|کرایه)(?![آ-ی])(?:\s+\S+){0,8}?\s+گرفت(?:م|یم|ن|ند)?(?![آ-ی])/;
+/**
+ * ودیعه یا رهنی که مستاجر به ما داده درآمد نیست؛ بدهیِ برگشت‌پذیر به اوست.
+ * دفتر برای ودیعهٔ دریافتی قاعدهٔ ثبتی ندارد و پرسش «بابت چه بود؟» هم گزینه‌اش
+ * را ندارد، پس به حسابدار می‌رود — نه «درآمد اجاره» و نه پیش‌دریافتِ مستهلک‌شونده.
+ */
+const DEPOSIT_WORD = /(?<![آ-ی])(?:ودیعه|رهن)/;
+export const DEPOSIT_RECEIVED = 'ودیعه یا رهنِ دریافتی از مستاجر بدهی برگشت‌پذیر به اوست، نه درآمد اجاره؛ حسابدار آن را در حساب ودیعه‌های دریافتی ثبت می‌کند.';
 export const RENT_DIRECTION_UNCLEAR = 'جهت پول روشن نیست: «اجاره … گرفتیم» هم دریافت اجاره از مستاجر است (پیش‌دریافت، پول وارد) و هم اجاره‌کردن ملک (پیش‌پرداخت، پول خارج)؛ حسابدار با قرارداد تعیین می‌کند. اگر مستاجر داده، «از مستاجر» را بگو.';
 
 function sentenceMoneyIn(input) {
@@ -1064,7 +1071,8 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     }
     const refundType = refund === 'in' ? 'income' : refund === 'out' ? 'expense' : null;
     if (refundType) {
-      const refundCategory = classified.type === refundType ? null
+      // پولِ برگشتی به ما درآمد اجاره یا خدمت نیست؛ دوقلوی درآمدی اینجا به کار نمی‌رود.
+      const refundCategory = classified.type === refundType && refundType === 'expense' ? null
         : classifyCategory(normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' '), refundType);
       classified = {
         ...classified, type: refundType,
@@ -1114,7 +1122,9 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       : null;
     if (serviceTie) reviewReasons.push(serviceTie);
     if (refund) reviewReasons.push(CONTRACT_REFUND_REASON);
-    const judgment = refund ? CONTRACT_REFUND_REASON : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie;
+    const depositReceived = !refund && classified.type === 'income' && moneyIn && DEPOSIT_WORD.test(normalizePersian(ownText || input));
+    if (depositReceived) reviewReasons.push(DEPOSIT_RECEIVED);
+    const judgment = refund ? CONTRACT_REFUND_REASON : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie;
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
       amount, type: classified.type, category: classified.category,
