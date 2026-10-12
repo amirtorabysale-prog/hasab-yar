@@ -953,7 +953,13 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   if (mentionedDate?.match) amountSource = amountSource.replace(mentionedDate.match, ' '.repeat(mentionedDate.match.length));
   // نام بانک هم ماسک می‌شود، وگرنه «بانک صادرات» دستهٔ «صادرات» می‌سازد و
   // «بانک مسکن» را هزینهٔ اجاره می‌خواند.
-  if (bank) amountSource = amountSource.replace(bank.matchedText, ' '.repeat(bank.matchedText.length));
+  // همان جایی که بانک تطبیق خورد، نه اولین تکرار نام: در «به بیمه ملت از ملت
+  // دادیم» ملتِ اول نام بیمه‌گر است.
+  if (bank) {
+    amountSource = amountSource.slice(bank.index, bank.index + bank.matchedText.length) === bank.matchedText
+      ? `${amountSource.slice(0, bank.index)}${' '.repeat(bank.matchedText.length)}${amountSource.slice(bank.index + bank.matchedText.length)}`
+      : amountSource.replace(bank.matchedText, ' '.repeat(bank.matchedText.length));
+  }
   const extracted = extractAmounts(amountSource);
   const { text } = extracted;
   // نرخ دوره‌ای، پرداخت جدا نیست: «بیمهٔ یک‌ساله ۱۲ میلیون، ماهیانه ۱ میلیون» یک

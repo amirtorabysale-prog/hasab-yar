@@ -76,6 +76,29 @@ const COMPILED = BANKS.flatMap((bank) => [
   ...bank.weak.map((alias) => ({ bank, alias, pattern: aliasPattern(alias, true), weight: alias.length })),
 ]).sort((left, right) => right.weight - left.weight);
 
+/**
+ * نام بانک درون نام یک شرکت یا شخصِ دیگر، بانکِ ما نیست.
+ *
+ * «بیمه یکساله ۱۲ میلیون به بیمه پاسارگاد دادیم» حق‌بیمه را از «جاری پاسارگاد»
+ * برمی‌داشت، و «از حساب ملت به بیمه پاسارگاد» با دو بانک هیچ‌کدام را نمی‌گرفت و
+ * بانکی که کاربر گفته بود گم می‌شد. «حق بیمه … از ملت به بیمه پاسارگاد منتقل
+ * کردیم» حتی انتقال داخلی میان دو حساب خودمان می‌شد. همین است «بیمه ملت/
+ * کارآفرین/سینا/پارسیان/تجارت نو»، «شرکت (بیمهٔ) …»، «لیزینگ پارسیان»، «آقای
+ * سینا» و «مجتمع تجاری پاسارگاد»: عنوانِ پیش از نام می‌گوید این نام یک طرف حساب
+ * است. بخش منطبق با فاصلهٔ هم‌طول پوشانده می‌شود تا جای تطبیق‌های دیگر جابه‌جا
+ * نشود؛ «بانک ملت»، «از ملت دادیم» و پاسارگادِ دوم در «به بیمه پاسارگاد از
+ * پاسارگاد دادیم» همچنان بانک‌اند.
+ */
+const NON_BANK_TITLE = '(?:بیمه|لیزینگ|کارگزاری|صرافی|شرکت|آقای|اقای|خانم|جناب|دکتر|مهندس|حاج|حاجی|فروشگاه|مجتمع(?:\\s+تجاری)?|پاساژ|بیمارستان|هتل)';
+const STRONG_ALIASES = BANKS.flatMap((bank) => bank.strong).map(normalizePersian)
+  .sort((left, right) => right.length - left.length)
+  .map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
+const NON_BANK_NAME = new RegExp(`${BOUNDARY_BEFORE}${NON_BANK_TITLE}(?:\\s+${NON_BANK_TITLE})*\\s+(?:${STRONG_ALIASES.join('|')})${BOUNDARY_AFTER}`, 'g');
+
+export function maskNonBankNames(normalized) {
+  return String(normalized || '').replace(NON_BANK_NAME, (match) => ' '.repeat(match.length));
+}
+
 export function bankById(id) {
   return BANKS.find((bank) => bank.id === id) || null;
 }
@@ -90,7 +113,7 @@ export function bankById(id) {
  * بین حساب‌هاست، نه هزینه، و حدس زدن یکی از آن دو بدتر از نگفتن است.
  */
 export function detectBank(text) {
-  const normalized = normalizePersian(text);
+  const normalized = maskNonBankNames(normalizePersian(text));
   if (!normalized) return null;
   const hits = [];
   for (const entry of COMPILED) {
@@ -124,7 +147,7 @@ export function pickBankAccount(accounts = [], bankId = '') {
 
 /** آیا جمله بیش از یک بانک نام می‌برد؟ یعنی احتمالاً انتقال بین حساب‌هاست. */
 export function mentionsMultipleBanks(text) {
-  const normalized = normalizePersian(text);
+  const normalized = maskNonBankNames(normalizePersian(text));
   const seen = new Set();
   for (const entry of COMPILED) {
     if (entry.pattern.test(normalized)) seen.add(entry.bank.id);
@@ -155,7 +178,7 @@ export function detectTransferBanks(text) {
   // متن خام اجرا می‌شود تا نرمال‌سازی — که یک پیمایش کامل رشته است — فقط برای
   // جمله‌های واقعاً کاندید انجام شود. تایپ زنده بودجهٔ میلی‌ثانیه‌ای دارد.
   if (!text || !TRANSFER_VERBS.test(text)) return null;
-  const normalized = normalizePersian(text);
+  const normalized = maskNonBankNames(normalizePersian(text));
   if (!normalized || !TRANSFER_VERBS.test(normalized)) return null;
 
   const hits = [];

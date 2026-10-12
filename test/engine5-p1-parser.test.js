@@ -7,6 +7,8 @@ import { detectVoiceIntent } from '../shared/voiceIntent.js';
 import { validateUnderstanding } from '../shared/eventUnderstanding.js';
 import { ROLES } from '../shared/accountingRules.js';
 import { classifyCategory } from '../shared/categoryRules.js';
+import { detectBank, detectTransferBanks, mentionsMultipleBanks } from '../shared/banks.js';
+import { detectCaptureTransfer } from '../shared/bankSpeech.js';
 
 /**
  * موتور ۵ — پارسر قطعی: جهت، مبلغ، نرخ، بند هر ردیف، دسته و نام بانک.
@@ -459,4 +461,70 @@ test('دستهٔ مساوی میان خدمتِ دوره‌دار و دستهٔ 
   const [item] = voice('اجاره و شارژ ۱۰ میلیون دادیم').items;
   assert.equal(item.outcome, 'accountant');
   assert.match(item.reason, /دسته روشن نیست/);
+});
+
+// ---------------------------------------------------------------------------
+// insurer-name-read-as-bank — نام بانک درون نام بیمه‌گر یا شخص، حساب ما نیست
+// ---------------------------------------------------------------------------
+
+test('بیمه‌گر هم‌نام بانک، حساب پرداخت ما نیست؛ بانکی که گفته شده گم نمی‌شود', () => {
+  for (const text of [
+    'بیمه یکساله ۱۲ میلیون به بیمه پاسارگاد دادیم',
+    'بیمه بدنه یکساله ۲۴ میلیون به بیمه ملت پرداخت کردیم',
+    'بیمه یکساله ۱۲ میلیون به بیمه کارآفرین دادیم',
+    'بیمه یکساله ۱۲ میلیون به بیمه سینا دادیم',
+    'بیمه یکساله ۱۲ میلیون به بیمه پارسیان دادیم',
+    'حق بیمه یک ساله انبار ۱۲ میلیون به شرکت بیمه پاسارگاد پرداخت کردیم',
+    'بیمه یکساله ۱۲ میلیون به بيمه پاسارگاد دادیم',
+    'بیمه یکساله ۱۲ میلیون به بیمه‌پاسارگاد دادیم',
+    'بیمه آتش سوزی ۱۲ میلیون به بیمه تجارت نو دادیم',
+    'اقساط ماشین رو ۱۰ میلیون به لیزینگ پارسیان دادیم',
+    'دستمزد طراحی ۵ میلیون به آقای سینا دادیم',
+    'اجاره غرفه ۲۰ میلیون به مجتمع تجاری پاسارگاد دادیم',
+  ]) {
+    const rows = parse(text);
+    assert.equal(rows.length, 1, text);
+    assert.equal(rows[0].bankId, undefined, text);
+    assert.equal(detectBank(text), null, text);
+  }
+  // بیمه‌گر طرف حساب است.
+  assert.equal(parse('بیمه یکساله ۱۲ میلیون به بیمه پاسارگاد دادیم')[0].contactName, 'بیمه پاسارگاد');
+  // بانکِ گفته‌شده، کنار نام بیمه‌گر هم‌نام بانک دیگر، همان بانک است.
+  assert.equal(parse('بیمه یکساله ۱۲ میلیون از حساب ملت به بیمه پاسارگاد دادیم')[0].bankId, 'mellat');
+  assert.equal(parse('بیمه یکساله ۱۲ میلیون به بیمه ملت از ملت دادیم')[0].bankId, 'mellat');
+  // حق‌بیمه به بیمه‌گر انتقال داخلی نیست.
+  const premium = 'حق بیمه ۱۲ میلیون از ملت به بیمه پاسارگاد منتقل کردیم';
+  assert.equal(detectTransferBanks(premium), null);
+  assert.equal(mentionsMultipleBanks(premium), false);
+  assert.equal(detectCaptureTransfer(premium, { now: new Date(NOW) }), null);
+});
+
+test('مسیر AI: بیمه‌گر هم‌نام بانک نقش بانکِ ما نمی‌گیرد', () => {
+  const none = { op: null, of: [] };
+  const text = 'حق بیمه یک ساله انبار ۱۲ میلیون به بیمه پاسارگاد پرداخت کردیم';
+  for (const name of ['بیمه پاسارگاد', 'شرکت بیمه پاسارگاد', 'بیمه ملت']) {
+    const { understanding, violations } = validateUnderstanding({
+      event: { kind: 'advance-paid', description: 'حق بیمه', status: 'done' }, nonAmountNumbers: [], dates: [], movements: [],
+      subject: { what: 'بیمه انبار', kind: 'service', use: 'business', delivered: 'unknown', usefulLifeMonths: null, evidence: 'حق بیمه یک ساله انبار' }, conditions: [], ambiguities: [],
+      amounts: [{ id: 'a1', value: 12_000_000, currency: null, role: 'total', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence: '۱۲ میلیون' }],
+      counterparties: [{ id: 'c1', name, role: 'supplier', evidence: `به ${name}` }],
+    }, { text: text.replace('بیمه پاسارگاد', name), now: new Date(NOW), ledgerBanks: ['pasargad', 'mellat', 'tejarat'] });
+    assert.equal(understanding.counterparties[0].role, 'supplier', name);
+    assert.ok(!violations.some((violation) => violation.endsWith(':our-bank')), name);
+  }
+});
+
+test('منفی: بانک‌های واقعی و انتقال میان دو بانک همان‌اند که بودند', () => {
+  for (const [text, bankId] of [
+    ['از بانک ملت دادیم', 'mellat'],
+    ['از ملت دادیم', 'mellat'],
+    ['به بیمه پاسارگاد از پاسارگاد دادیم', 'pasargad'],
+    ['از کارت ملت دادیم', 'mellat'],
+    ['از حساب جاری ملت دادیم', 'mellat'],
+    ['مؤسسه اعتباری ملل', 'blubank-melal'],
+  ]) {
+    assert.equal(detectBank(text)?.bankId, bankId, text);
+  }
+  const transfer = detectTransferBanks('از ملت به پاسارگاد منتقل کردیم');
+  assert.deepEqual([transfer.from.id, transfer.to.id], ['mellat', 'pasargad']);
 });
