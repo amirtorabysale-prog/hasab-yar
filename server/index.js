@@ -508,6 +508,9 @@ app.delete('/api/accounting/templates/:id', (request, response) => response.stat
 app.get('/api/accounting/periods', (_request, response) => response.json({ items: accountingPeriods(activeWorkspaceDatabase()), currentPeriod: periodForDate(new Date(), getSettings().timezone) }));
 app.post('/api/accounting/periods/:period/lock', (request, response, next) => {
   try {
+    // شناسایی‌های سررسیدرسیده پیش از بستن ثبت می‌شوند؛ وگرنه بستن دوره آن‌ها را
+    // پشت در می‌گذاشت و هزینه یا درآمد همان ماه بی‌صدا از دست می‌رفت.
+    runRecognition();
     const item = lockAccountingPeriod(activeWorkspaceDatabase(), request.params.period, request.user.id);
     recordAudit('lock', 'accounting_period', request.params.period, {});
     return response.json({ item });
@@ -1216,11 +1219,26 @@ app.use((error, _request, response, _next) => {
   });
 });
 
+/**
+ * کار دقیقه‌ای دفتر: قاعده‌های تکرارشونده و شناسایی ماهانهٔ پیش‌پرداخت و درآمد
+ * انتقالی.
+ *
+ * شناسایی تا امروز فقط یک مسیر HTTP داشت که هیچ صفحه‌ای صدایش نمی‌زد؛ یعنی
+ * پیش‌پرداخت تا ابد دارایی و درآمد انتقالی تا ابد بدهی می‌ماند. اجرای خودکار
+ * حدس نیست: هر رویداد وقتی ثبت شده که کاربر یا حسابدار تأییدش کرده، اجرا فقط
+ * قلمِ سررسیدرسیدهٔ رویداد ثبت‌شده را می‌زند، تکرارش سند دوم نمی‌سازد و در دورهٔ
+ * بسته چیزی نمی‌نشاند. هر دفتر جدا: خطای یکی، بقیه را نگه نمی‌دارد.
+ */
 function runRecurringJob() {
-  try {
-    for (const workspace of allWorkspaces()) runInWorkspace(workspace.id, { role: 'owner' }, () => materializeRecurringRules());
+  let workspaces = [];
+  try { workspaces = allWorkspaces(); }
+  catch (error) { console.error('Recurring job could not list workspaces:', error); return; }
+  for (const workspace of workspaces) {
+    try { runInWorkspace(workspace.id, { role: 'owner' }, () => materializeRecurringRules()); }
+    catch (error) { console.error(`Recurring materialization failed for workspace ${workspace.id}:`, error); }
+    try { runInWorkspace(workspace.id, { role: 'owner' }, () => runRecognition()); }
+    catch (error) { console.error(`Recognition run failed for workspace ${workspace.id}:`, error); }
   }
-  catch (error) { console.error('Recurring materialization failed:', error); }
 }
 
 runRecurringJob();

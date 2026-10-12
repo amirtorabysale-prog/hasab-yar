@@ -1303,11 +1303,42 @@ export function accountingPeriods(database) {
     reopened_at AS reopenedAt,reopen_reason AS reopenReason FROM accounting_periods ORDER BY period DESC`).all();
 }
 
+/**
+ * اقلام شناسایی رویدادهای ثبت‌شده که تا پایان این دوره باید سند می‌خوردند و
+ * هنوز نخورده‌اند — در همین دوره یا دوره‌های باز پیش از آن.
+ *
+ * تاریخ سند هر قلم، دیرترِ تاریخ قلم و تاریخ پرداخت است؛ همان قاعدهٔ اجرای
+ * شناسایی. اینجا مستقیم خوانده می‌شود چون لایهٔ رویداد خودش به این فایل وابسته
+ * است.
+ */
+function unpostedRecognitionThrough(database, period, timeZone = 'Asia/Tehran') {
+  const exists = database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recognition_schedule_items'").get();
+  if (!exists) return [];
+  const locked = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'").all().map((row) => row.period));
+  return database.prepare(`SELECT i.key,i.period_key AS periodKey,i.recognition_date AS recognitionDate,
+      json_extract(e.payload,'$.occurredAt') AS occurredAt
+    FROM recognition_schedule_items i JOIN financial_events e ON e.id=i.event_id
+    WHERE i.status='planned' AND e.status='posted' AND i.recognition_date IS NOT NULL`).all()
+    .map((row) => {
+      const floor = row.occurredAt && new Date(row.occurredAt) > new Date(row.recognitionDate) ? row.occurredAt : row.recognitionDate;
+      return { ...row, period: periodForDate(floor, timeZone) };
+    })
+    .filter((row) => row.period <= period && !locked.has(row.period));
+}
+
 export function lockAccountingPeriod(database, period, userId) {
   ensureAccountingSchema(database);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(period))) throw accountingError('دوره باید به شکل YYYY-MM باشد.');
   const balance = trialBalance(database);
   if (!balance.balanced) throw accountingError('دفتر کل نامتوازن است و دوره قابل بستن نیست.', 'TRIAL_BALANCE_UNBALANCED', 409);
+  // دوره‌ای که شناسایی پیش‌پرداخت یا درآمد انتقالی‌اش هنوز سند نخورده، بسته
+  // نمی‌شود: بستنش آن قلم‌ها را پشت دورهٔ بسته می‌گذاشت و هزینه یا درآمد همان
+  // ماه بی‌صدا از سود و زیانش جا می‌ماند.
+  const unposted = unpostedRecognitionThrough(database, String(period));
+  if (unposted.length) {
+    const months = [...new Set(unposted.map((row) => row.periodKey))].slice(0, 6).join('، ');
+    throw Object.assign(accountingError(`${unposted.length} قلم شناسایی پیش‌پرداخت یا درآمد انتقالی (${months}) تا پایان این دوره هنوز سند نخورده؛ پیش از بستن، شناسایی ماهانه را اجرا کن.`, 'RECOGNITION_DUE_BEFORE_LOCK', 409), { details: { items: unposted.length } });
+  }
   database.prepare(`INSERT INTO accounting_periods (period,status,locked_by,locked_at) VALUES (?,'locked',?,CURRENT_TIMESTAMP)
     ON CONFLICT(period) DO UPDATE SET status='locked',locked_by=excluded.locked_by,locked_at=CURRENT_TIMESTAMP`).run(period, userId || null);
   return accountingPeriods(database).find((item) => item.period === period);

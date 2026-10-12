@@ -321,12 +321,13 @@ export function answerEvent(eventId, { fact, value, freeText = '' } = {}) {
   return item;
 }
 
-/** تصمیم و برنامهٔ شناسایی یک رویداد — برای صف بررسی. */
 /**
  * اجرای اقلام شناسایی سررسیدرسیده.
  *
- * دستی صدا زده می‌شود، نه خودکار: تا وقتی کسی ندیده موتور چه می‌سازد، اجرای
- * خودکارش روی دفتر واقعی همان حدسی است که کل طرح برای حذفش نوشته شده.
+ * کار دقیقه‌ای سرور (`runRecurringJob`) هر دفتر را با همین اجرا می‌کند و بستن
+ * دوره هم پیش از قفل صدایش می‌زند؛ مسیر HTTP برای اجرای دستی حسابدار می‌ماند.
+ * حدس نیست: هر رویداد هنگام ثبت یا تأیید دیده شده، فقط قلمِ سررسیدرسیدهٔ رویداد
+ * ثبت‌شده سند می‌خورد، تکرار اجرا سند دوم نمی‌سازد و دورهٔ بسته باز نمی‌شود.
  */
 export function runRecognition() {
   const result = postDueRecognitionItems(activeWorkspaceDatabase(), {
@@ -355,6 +356,7 @@ export function catchUpRecognition(key, reason = '') {
   return { item };
 }
 
+/** تصمیم و برنامهٔ شناسایی یک رویداد — برای صف بررسی. */
 export function eventDecision(eventId) {
   const database = activeWorkspaceDatabase();
   return { decision: decisionForEvent(database, eventId), schedule: scheduleForEvent(database, eventId) };

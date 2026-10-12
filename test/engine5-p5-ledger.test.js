@@ -558,3 +558,59 @@ test('منفی: ماه آینده در دورهٔ باز دست نمی‌خور�
     assert.equal(database.blockedRecognition().items.length, 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «اجرا»: شناسایی ماهانه بدون اینکه کسی دکمه‌ای بزند اجرا می‌شود، و
+// بستن دوره هیچ قلمِ سررسیدرسیده‌ای را پشت در نمی‌گذارد.
+// ---------------------------------------------------------------------------
+
+test('کار دقیقه‌ای سرور هر دفتر را شناسایی می‌کند و بستن دوره پیش از قفل شناسایی را اجرا می‌کند', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  const job = source.slice(source.indexOf('function runRecurringJob'), source.indexOf('runRecurringJob();'));
+  assert.match(job, /for \(const workspace of workspaces\)/);
+  assert.match(job, /runInWorkspace\(workspace\.id, \{ role: 'owner' \}, \(\) => runRecognition\(\)\)/, 'هر دفتر، جدا');
+  assert.match(source, /setInterval\(runRecurringJob/);
+  const lockRoute = source.slice(source.indexOf("app.post('/api/accounting/periods/:period/lock'"), source.indexOf("app.post('/api/accounting/periods/:period/reopen'"));
+  assert.ok(lockRoute.indexOf('runRecognition()') > 0 && lockRoute.indexOf('runRecognition()') < lockRoute.indexOf('lockAccountingPeriod('), 'اول شناسایی، بعد قفل');
+});
+
+test('بدنهٔ کار زمان‌بندی‌شده — بی‌کاربر، با نقش مالک — پیش‌پرداخت و درآمد انتقالی سررسیده را ثبت می‌کند', async () => {
+  const { workspace, inBook } = await freshBook('اجرا — کار زمان‌بندی‌شده');
+  let paid = null;
+  let received = null;
+  await inBook(() => {
+    paid = capture('اشتراک یک ساله نرم افزار رو امروز ۲۴ میلیون از حساب تجارت پرداخت کردیم');
+    received = capture(RENT_RECEIVED);
+  });
+  // همان زمینه‌ای که `runRecurringJob` می‌سازد.
+  const result = database.runInWorkspace(workspace.id, { role: 'owner' }, () => database.runRecognition());
+  await inBook(() => {
+    const now = new Date().toISOString();
+    for (const eventId of [paid.eventId, received.eventId]) {
+      for (const item of items(eventId)) {
+        assert.equal(item.status, item.recognitionDate <= now ? 'posted' : 'planned', `${item.periodKey} ${item.recognitionDate}`);
+      }
+    }
+    assert.ok(result.posted >= 2, JSON.stringify(result));
+    const prepaidSchedule = items(paid.eventId).filter((item) => item.status === 'posted').reduce((sum, item) => sum + item.amount, 0);
+    const deferredSchedule = items(received.eventId).filter((item) => item.status === 'posted').reduce((sum, item) => sum + item.amount, 0);
+    assert.deepEqual([balances().prepaid, balances().expense], [24_000_000 - prepaidSchedule, prepaidSchedule], 'بدهکار هزینه، بستانکار پیش‌پرداخت');
+    assert.deepEqual([balances().deferred, balances().income], [-30_000_000 + deferredSchedule, -deferredSchedule], 'بدهکار درآمد انتقالی، بستانکار درآمد');
+    // اجرای دوباره در دقیقهٔ بعد سند دوم نمی‌سازد.
+    assert.equal(database.runRecognition().posted, 0);
+  });
+});
+
+test('بستن دوره با قلم شناسایی سندنخورده رد می‌شود؛ پس از اجرا بسته می‌شود و چیزی در آن جا نمی‌ماند', async () => {
+  const { inBook } = await freshBook('اجرا — بستن دوره');
+  await inBook(() => {
+    accounting.lockAccountingPeriod(sql(), '1405-06', owner.id);
+    const paid = capture('امروز بیمه یک ساله ماشین رو ۱۲ میلیون از حساب تجارت دادیم');
+    assert.throws(() => accounting.lockAccountingPeriod(sql(), '1405-07', owner.id), { code: 'RECOGNITION_DUE_BEFORE_LOCK' });
+    run(AZAR);
+    accounting.lockAccountingPeriod(sql(), '1405-07', owner.id);
+    const inside = items(paid.eventId).filter((item) => accounting.periodForDate(item.recognitionDate) === '1405-07');
+    assert.ok(inside.length && inside.every((item) => item.status === 'posted'), 'هیچ قلم برنامه‌ریزی‌شده یا منتظری در ماه بسته نمی‌ماند');
+  });
+});
