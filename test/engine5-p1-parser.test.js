@@ -79,6 +79,17 @@ test('غلط تایپی «ملیون» روی کارت چک، جملهٔ نرخ�
   assert.deepEqual(tenant.map((row) => [row.type, row.amount]), [['income', 120_000_000]]);
 });
 
+test('کوتاه‌نوشت مقیاس («۱۲۰ م»، «۵۰۰ت») مبلغ ۱۲۰ یا ۵۰۰ تومانی بی‌صدا ثبت نمی‌کند', () => {
+  for (const text of ['اجاره یکساله ۱۲۰ م دادیم', 'اجاره یکساله ۱۲۰م دادیم', 'بیمه ۱۲ m دادیم']) {
+    const [item] = voice(text).items;
+    assert.equal(item.outcome, 'accountant', text);
+    assert.match(parse(text)[0].needsJudgment, /کوتاه‌نوشت مقیاس/, text);
+  }
+  for (const text of ['بنزین ۵۰۰ت زدیم', 'بنزین ۵۰۰ ت زدیم']) {
+    assert.deepEqual(voice(text).items.map((item) => [item.outcome, item.fact]), [['ask', 'amountScale']], text);
+  }
+});
+
 test('منفی: «میلیون» درست و «ملی» دست نمی‌خورند؛ «۱۲۰ تومن» همچنان مقیاس را می‌پرسد', () => {
   assert.equal(normalizePersian('۱۲۰ میلیون'), '120 میلیون');
   assert.equal(normalizePersian('از بانک ملی دادیم'), 'از بانک ملی دادیم');

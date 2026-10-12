@@ -189,6 +189,9 @@ const TRAILING_VAV_PATTERN = new RegExp(`(?<![آ-ی])(${JOINABLE_VALUES.join('|'
 // هزارشو». بدون جدا کردنش واژهٔ مقیاس شناخته نمی‌شد و «بدهی پنجاه میلیونیش»
 // یک ثبت پنجاه‌تومانی می‌ساخت — در آزمون استرس، به صف حسابدار با مبلغی
 // یک‌میلیون‌بار کوچک‌تر.
+const SCALE_ABBREVIATION = /^\s*(میل|م|ت|m|M|k|K)(?![آ-یa-zA-Z])/;
+const MILLION_ABBREVIATIONS = ['م', 'میل', 'm', 'M'];
+const THOUSAND_ABBREVIATIONS = ['ت', 'k', 'K'];
 const SCALE_SUFFIX_PATTERN = /(?<![آ-ی])(هزار|میلیون|میلیارد)(?:ی(?:ش|شو|شم|شون)|ش|شو|شم|شون)(?![آ-ی])/g;
 // «است»ِ چسبیده به مقیاس، پس از عدد: «قسط اولش ده میلیونه» و «قیمتش دو
 // میلیونه» ده و دو تومان خوانده می‌شدند. فقط پس از عدد، تا «هزاره» مبلغ نشود.
@@ -1092,8 +1095,16 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     // «بنزین ۸۰۰ تومن زدیم»: رقم تایپ‌شده تبدیل نمی‌شود، ولی هشتصد تومان چیزی
     // نمی‌خرد و بی‌صدا ثبت می‌شد. مقیاسش مبهم علامت می‌خورد و موتور می‌پرسد:
     // «۸۰۰ تومان یا ۸۰۰٬۰۰۰ تومان؟».
+    // کوتاه‌نوشتِ مقیاس پس از رقم: «۱۲۰ م»، «۱۲۰م»، «۵۰۰ت»، «12 m». همان خانوادهٔ
+    // «ملیون»: «اجاره یکساله ۱۲۰ م دادیم» پیش‌پرداخت ۱۲۰ تومانی ثبت می‌کرد.
+    const abbreviation = amount > 0 && amount < 1_000 && /\d/.test(span.raw) && !/هزار|میلیون|میلیارد/.test(span.raw)
+      ? SCALE_ABBREVIATION.exec(text.slice(span.end, span.end + 6))?.[1] || null : null;
     const typedSmallToman = !colloquialThousands && amount > 0 && amount < 1_000
-      && /\d/.test(span.raw) && !/هزار|میلیون|میلیارد/.test(span.raw) && /تومان|تومن/.test(context);
+      && /\d/.test(span.raw) && !/هزار|میلیون|میلیارد/.test(span.raw) && (/تومان|تومن/.test(context) || THOUSAND_ABBREVIATIONS.includes(abbreviation));
+    // «م» یعنی میلیون (یا متر)؛ پرسش مقیاس فقط «×۱ یا ×۱۰۰۰» دارد، پس حدس زده نمی‌شود.
+    const millionAbbreviation = MILLION_ABBREVIATIONS.includes(abbreviation)
+      ? `«${span.raw} ${abbreviation}» کوتاه‌نوشت مقیاس است و مبلغ دقیقش روشن نیست؛ مبلغ را با «میلیون» یا «هزار» بگو.`
+      : null;
     if (context.includes('ریال') && !containsAny(context, ['تومان', 'تومن'])) amount = Math.round(amount / 10);
     const average = Number(averages[classified.type] || 0);
     const unusual = average > 0 && amount >= average * 5;
@@ -1122,9 +1133,10 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       : null;
     if (serviceTie) reviewReasons.push(serviceTie);
     if (refund) reviewReasons.push(CONTRACT_REFUND_REASON);
+    if (millionAbbreviation) reviewReasons.push(millionAbbreviation);
     const depositReceived = !refund && classified.type === 'income' && moneyIn && DEPOSIT_WORD.test(normalizePersian(ownText || input));
     if (depositReceived) reviewReasons.push(DEPOSIT_RECEIVED);
-    const judgment = refund ? CONTRACT_REFUND_REASON : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie;
+    const judgment = millionAbbreviation || (refund ? CONTRACT_REFUND_REASON : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie);
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
       amount, type: classified.type, category: classified.category,
