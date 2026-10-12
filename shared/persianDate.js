@@ -43,8 +43,20 @@ const DAY_WORDS = (() => {
   return map;
 })();
 
-const DAY_WORD_PATTERN = [...DAY_WORDS.keys()].sort((left, right) => right.length - left.length).join('|');
+export const DAY_WORD_PATTERN = [...DAY_WORDS.keys()].sort((left, right) => right.length - left.length).join('|');
 const MONTH_PATTERN = PERSIAN_MONTHS.map(([name]) => name).sort((left, right) => right.length - left.length).join('|');
+
+/**
+ * روزِ ماه از یک واژه یا رقم: «اول»، «پانزدهم»، «۱۵». «ابتدای» همان اول ماه است.
+ * چیزی که روز نیست `null` است، نه ۱ — روزِ حدسی همان تاریخ جعلی است.
+ */
+export function dayOfToken(token) {
+  const text = normalizePersian(String(token || '')).trim();
+  const digits = /^(\d{1,2})\s*(?:ام|م)?$/.exec(text);
+  if (digits) return Number(digits[1]) >= 1 && Number(digits[1]) <= 31 ? Number(digits[1]) : null;
+  if (/^ابتدا[یي]?$/.test(text)) return 1;
+  return DAY_WORDS.get(text) || null;
+}
 const MONTH_BY_NAME = new Map(PERSIAN_MONTHS.map(([name, index]) => [normalizePersian(name), index]));
 
 const MONTH_LENGTHS = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29];
@@ -248,6 +260,30 @@ function isoAtPersianMonthOffset(now, offsetMonths, timeZone) {
   return iso;
 }
 
+/**
+ * پایان دوره‌ای که از `startIso` شروع می‌شود و `months` ماه شمسی طول می‌کشد.
+ *
+ * سالگرد روزِ شروع، منهای یک روز: ۲۰ مهر + سه ماه یعنی ۱۹ دی، نه ۳۰ آذر. پیش از
+ * این دو پیاده‌سازی بود: جواب «سه ماه» به سؤال دوره از اول ماهِ شروع حساب می‌شد و
+ * روزِ شروع را دور می‌ریخت (۲۰ مهر + سه ماه = ۳۰ آذر؛ برنامه دو قسط به‌جای سه)،
+ * و دورهٔ گفته‌شده در جمله روز را روی ۲۸ سقف می‌گذاشت. حالا جمله و جواب هر دو از
+ * همین یک قاعده رد می‌شوند.
+ *
+ * روزی که در ماه مقصد نیست (۳۱ شهریور → مهر، ۳۰ اسفندِ سال غیرکبیسه) سالگردش
+ * اول ماهِ بعد است؛ پس دوره روز آخر همان ماه تمام می‌شود.
+ */
+export function persianPeriodEnd(startIso, months, timeZone = 'Asia/Tehran') {
+  const count = Number(months);
+  if (!startIso || !Number.isInteger(count) || count <= 0) return null;
+  const start = new Date(startIso);
+  if (Number.isNaN(start.getTime())) return null;
+  const parts = persianParts(start, timeZone);
+  const total = (parts.year * 12) + (parts.month - 1) + count;
+  let anniversary = persianToISO(Math.floor(total / 12), (total % 12) + 1, parts.day, timeZone);
+  if (!anniversary) anniversary = persianToISO(Math.floor((total + 1) / 12), ((total + 1) % 12) + 1, 1, timeZone);
+  return anniversary ? new Date(new Date(anniversary).getTime() - 86_400_000).toISOString() : null;
+}
+
 function isoAtTehranNoon(now, offsetDays, timeZone) {
   const shifted = new Date(now.getTime() + offsetDays * 86_400_000);
   const { year, month, day } = persianParts(shifted, timeZone);
@@ -445,6 +481,59 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
 }
 
 
+/**
+ * واژه‌هایی که می‌گویند جمله دربارهٔ یک خدمتِ دوره‌دار است. فقط در چنین جمله‌ای
+ * «از اول آبان» شروع پوشش است؛ در «از اول مهر تا حالا ۵۰ میلیون فروختیم» نیست.
+ */
+const COVERAGE_CONTEXT = /بیمه|اجاره|پوشش|شارژ|اشتراک|کرایه|لایسنس|لیسانس|پشتیبانی|قرارداد|آبونمان|حق\s*عضویت/;
+const COVERAGE_NOUN = '(?:اجاره|کرایه|شارژ|اشتراک|بیمه|لایسنس|پشتیبانی|آبونمان|قرارداد)';
+const SPAN_MONTH = `(?:ماه\\s*)?(?:${MONTH_PATTERN})(?![آ-ی])(?:\\s*ماه)?`;
+const SPAN_YEAR = '(?:\\s+(?:سال\\s+)?(?:\\d{4}|\\d{2})(?!\\d)(?!\\s*(?:م[یي]?ل[یي]?ون|م[یي]?ل[یي]ارد|هزار|تومان|تومن|ریال|ماه|روز|سال|درصد|قسط|و\\s*\\d)))?';
+const SPAN_START_DAY = `(?:(?:${DAY_WORD_PATTERN}|ابتدای|ابتدا|\\d{1,2})\\s*(?:ام\\s*)?)?`;
+const SPAN_END_DAY = `(?:(?:آخر|اخر|پایان|انتهای|${DAY_WORD_PATTERN}|\\d{1,2})\\s*(?:ام\\s*)?)?`;
+const SPAN_NUMBER = '(?:\\d{1,3}|یک|یه|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه|ده|یازده|دوازده|هجده|بیست|بیست\\s*و\\s*چهار)';
+const CREDIT_BEFORE = /(?:نسیه|چک|وام|قسط|اقساط|مهلت|سررسید|تسهیلات)\s*(?:\S+\s*){0,2}$/;
+const COVERAGE_MASKS = Object.freeze([
+  // «پوشش بیمه از ...»، «پوشش برای ...»
+  /پوشش\s*(?:بیمه\s*)?(?:از|برای)\s*[^،,؛.]+/g,
+  // بازهٔ ماه‌ها، با «از» یا بی آن، با روز و سالِ اختیاری کنار هر ماه:
+  // «از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶»، «از ۱ آبان تا ۳۰ بهمن»، «مهر تا اسفند».
+  new RegExp(`(?<![آ-ی])(?:از\\s*)?${SPAN_START_DAY}${SPAN_MONTH}${SPAN_YEAR}\\s*(?:تا|الی|لغایت)\\s*${SPAN_END_DAY}${SPAN_MONTH}${SPAN_YEAR}(?:\\s+همین\\s+امسال)?`, 'g'),
+  // شروعِ گفته‌شده: «از اول آذر»، «از ۱۴۰۵/۰۸/۰۱»، «که اول آبان شروع میشه».
+  new RegExp(`(?<![آ-ی])از\\s*${SPAN_START_DAY}${SPAN_MONTH}${SPAN_YEAR}`, 'g'),
+  /(?<![آ-ی])از\s*(?:\d{4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{1,2}|\d{1,2}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{4})(?!\d)/g,
+  new RegExp(`(?<![آ-ی])${SPAN_START_DAY}${SPAN_MONTH}${SPAN_YEAR}\\s*(?:شروع|آغاز)`, 'g'),
+  /(?:شروع|آغاز)\s*(?:پوشش|بیمه|قرارداد)\s*[^،,؛.]+/g,
+  // «اجاره سه ماه گذشته»، «شارژ ماه آینده»، «اجاره این ماه»: ماهِ خدمت، نه روز پرداخت.
+  new RegExp(`(?<![آ-ی])${COVERAGE_NOUN}(?:\\s*ی(?![آ-ی]))?(?:\\s+(?!${SPAN_NUMBER}(?![آ-ی]))[^\\s\\d]+){0,2}?\\s+(?:${SPAN_NUMBER}\\s*ماه\\s*(?:گذشته|اخیر)|(?:همین|این)\\s*ماه|ماه\\s*(?:جاری|قبل|گذشته|پیش|بعدی|بعد|آینده|اینده|دیگه|دیگر))(?![آ-ی])`, 'g'),
+]);
+/** «شش ماه آینده»، «برای سه ماه جلوتر»: طول پوشش، نه تاریخی شش ماه بعد. */
+const COVERAGE_LENGTH = new RegExp(`(?<![آ-ی])(?:(?:برای|برا|واسه|به\\s*مدت|بمدت|ظرف|طی)\\s*)?${SPAN_NUMBER}\\s*(?:ماه|سال)(?:\\s*ه)?\\s*(?:آینده|اینده|جلوتر|بعد|پیش\\s*رو|آتی)(?![آ-ی])`, 'g');
+
+/**
+ * تاریخ‌هایی که مال دورهٔ پوشش‌اند، از متن پاک می‌شوند تا تاریخ دیگری خوانده نشوند.
+ *
+ * «اجاره شش ماهه که از اول آذر شروع میشه ۳۰ میلیون دادیم» پرداخت را ۱ آذرِ
+ * پارسال ثبت می‌کرد: «اول آذر» تاریخ پرداخت خوانده می‌شد و چون آینده بود، یک سال
+ * عقب می‌رفت؛ سند نقدی در سال مالی قبل می‌نشست. همین تاریخ‌ها سررسید چک و طلب
+ * هم خوانده می‌شدند. پاک‌کردن هم‌طول است تا جای بقیهٔ متن عوض نشود؛ فقط در جمله‌ای
+ * که از خدمت دوره‌دار حرف می‌زند، و «چک ... دو ماه بعد» تاریخ خودِ چک می‌ماند.
+ */
+export function maskCoveragePhrases(input) {
+  // فقط یکسان‌سازی‌های هم‌طول (رقم و ی/ک)، تا جای هر واژه در متن اصلی بماند.
+  let text = String(input || '')
+    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/ي/g, 'ی').replace(/ك/g, 'ک');
+  if (!COVERAGE_CONTEXT.test(text)) return text;
+  const blank = (match) => ' '.repeat(match.length);
+  for (const pattern of COVERAGE_MASKS) text = text.replace(pattern, blank);
+  return text.replace(COVERAGE_LENGTH, (match, offset, whole) => (CREDIT_BEFORE.test(whole.slice(Math.max(0, offset - 30), offset)) ? match : blank(match)));
+}
+
+/** «سه ماه بعد تحویل میده»: زمانِ تحویل کالا، نه روز پرداخت. */
+const DELIVERY_LEAD_TIME = new RegExp(`${SPAN_NUMBER}\\s*(?:ماه|هفته|روز)\\s*(?:بعد|آینده|اینده|دیگه|دیگر)(?:\\s+\\S+)?\\s+(?:تحویل|می\\s*رس|برس|می\\s*[آا]ی?د|میاد|بیاد|ارسال|می\\s*فرست|بفرست|حمل|بار\\s*می)`, 'g');
+
 /** Dates belonging to coverage, an old invoice, or future cheque cashing are
  * not occurrence dates. Keep raw text intact for evidence and service parsing. */
 export function extractOccurrenceDate(input, options = {}) {
@@ -452,15 +541,8 @@ export function extractOccurrenceDate(input, options = {}) {
   // A future delivery/start clause must not override an explicit payment today.
   // Remove only that clause, retaining earlier occurrence evidence and amounts.
   text = text.replace(/(?:بهره برداری|شروع خدمت|تحویل گزارش|تحویل کالا|ارائه خدمات|انجام خدمات)[^،,؛.]*ماه\s*(?:آینده|بعد|آتی)[^،,؛.]*/g, ' ');
-  const months = PERSIAN_MONTHS.map(([name]) => name).join('|');
-  if (/بیمه|اجاره|پوشش|شارژ|اشتراک/.test(text)) {
-    text = text.replace(/پوشش\s*(?:بیمه\s*)?(?:از|برای)\s*[^،,؛.]+/g, ' ');
-    // سالِ کنار هر ماه («از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶») هم بخشی از همان
-    // بازهٔ پوشش است؛ بدون آن، «اول آبان» تاریخ پرداخت خوانده می‌شد و «امروز» گم.
-    const year = '(?:\\s+(?:سال\\s+)?\\d{2,4})?';
-    text = text.replace(new RegExp(`از\\s+(?:${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})${year}\\s+تا\\s+(?:آخر|پایان|${DAY_WORD_PATTERN}|\\d{1,2})\\s+(?:${months})${year}(?:\\s+همین\\s+امسال)?`, 'g'), ' ');
-    text = text.replace(/(?:شروع|آغاز)\s*(?:پوشش|بیمه|قرارداد)\s*[^،,؛.]+/g, ' ');
-  }
+  text = text.replace(DELIVERY_LEAD_TIME, ' ');
+  text = maskCoveragePhrases(text);
   text = text.replace(/(?:خرید|فروش|فاکتور|بدهی|اجاره)\s*(?:ماه\s*(?:قبل|پیش|گذشته)|سال\s*(?:قبل|گذشته))/g, ' ');
   text = text.replace(/(?:سفارش\s*)?(?:خدمات|خدمت|پوشش|اشتراک)\s*(?:ماه\s*(?:آینده|بعد|آتی)|سال\s*(?:آینده|بعد))/g, ' ');
   text = text.replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
