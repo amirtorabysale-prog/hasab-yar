@@ -63,7 +63,7 @@ const run = (today) => store.postDueRecognitionItems(sql(), { today, actor: owne
 function capture(text, { now = NOW, clientId = `c-${Math.random()}`, approve = true } = {}) {
   const rows = parseFinancialText(text, { source: 'voice', now: new Date(now) }).transactions || [];
   assert.ok(rows.length >= 1, `پارسر چیزی از «${text}» نخواند`);
-  const [transactionId] = database.insertTransactions({ transcript: text, transactions: rows.map((row) => ({ ...row, userConfirmed: true, clientId })) });
+  const [transactionId] = database.insertTransactions({ transcript: text, transactions: rows.map((row) => ({ ...row, occurredAt: row.occurredAt || now, userConfirmed: true, clientId })) });
   let event = eventOf(transactionId);
   if (approve && event.status === 'pending') { database.approveEvent(event.id); event = eventOf(transactionId); }
   return { transactionId, eventId: event.id, event };
@@ -332,4 +332,127 @@ test('منفی: دفتر نامشمول و جملهٔ بی‌واژهٔ ارزش
     const paid = capture('اشتراک یک ساله نرم افزار رو امروز ۱۲۰ میلیون از حساب تجارت پرداخت کردیم');
     assert.equal(plannedTotal(paid.eventId), 120_000_000);
   });
+});
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «تاریخ شناسایی»: هیچ سند شناسایی‌ای پیش از سند نقدیِ خودش نمی‌نشیند؛
+// سهم ماه‌های گذشتهٔ پوشش همان روز پرداخت یا دریافت شناسایی می‌شود.
+// ---------------------------------------------------------------------------
+
+/** تاریخ سند نقدی رویداد و تاریخ همهٔ سندهای شناسایی‌اش. */
+function recognitionDates(eventId) {
+  const event = sql().prepare('SELECT journal_entry_id AS entryId FROM financial_events WHERE id=?').get(eventId);
+  const paidAt = sql().prepare('SELECT occurred_at AS at FROM journal_entries WHERE id=?').get(event.entryId).at;
+  const recognized = sql().prepare(`SELECT j.occurred_at AS at FROM recognition_schedule_items i
+    JOIN journal_entries j ON j.id=i.journal_entry_id WHERE i.event_id=? ORDER BY j.occurred_at`).all(eventId).map((row) => row.at);
+  return { paidAt, recognized };
+}
+/** ماندهٔ یک منشأ تا یک لحظه — همان چیزی که ترازِ تاریخ‌دار نشان می‌دهد. */
+const netThrough = (kind, through) => Number(sql().prepare(`SELECT COALESCE(SUM(l.debit)-SUM(l.credit),0) AS n FROM journal_lines l
+  JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id
+  WHERE a.source_kind=? AND j.approval_state='approved' AND j.occurred_at<=?`).get(kind, through).n);
+const hourBefore = (iso) => new Date(new Date(iso).getTime() - 3_600_000).toISOString();
+
+test('پوشش از وسط ماه: شناسایی ماه اول روز پرداخت است، نه اول ماه', async () => {
+  const { inBook } = await freshBook('تاریخ — وسط ماه');
+  await inBook(() => {
+    const paid = capture('امروز بیمه یک ساله ماشین رو ۱۲ میلیون از حساب تجارت دادیم');
+    run(AZAR);
+    const { paidAt, recognized } = recognitionDates(paid.eventId);
+    assert.equal(recognized.length, 3);
+    assert.ok(recognized.every((at) => at >= paidAt), JSON.stringify({ paidAt, recognized }));
+    assert.equal(netThrough('prepaid-asset', hourBefore(paidAt)), 0, 'پیش از پرداخت، پیش‌پرداخت بستانکار نیست');
+    assert.equal(netThrough('expense-category', hourBefore(paidAt)), 0);
+  });
+});
+
+test('پوشش از فروردین، پرداخت در مهر: سهم ماه‌های گذشته همان روز پرداخت هزینه می‌شود', async () => {
+  const { inBook } = await freshBook('تاریخ — فروردین');
+  await inBook(() => {
+    const paid = capture('امروز بیمه یک ساله انبار از اول فروردین تا آخر اسفند رو ۱۲ میلیون دادیم');
+    assert.equal(items(paid.eventId).length, 12);
+    run('2026-10-11T00:00:00.000Z');
+    const { paidAt, recognized } = recognitionDates(paid.eventId);
+    assert.equal(recognized.length, 7, 'فروردین تا مهر');
+    assert.ok(recognized.every((at) => at === paidAt), 'همه روز پرداخت');
+    assert.equal(netThrough('prepaid-asset', '2026-10-05T00:00:00.000Z'), 0, 'تراز ۱۳ مهر هیچ پیش‌پرداخت منفی‌ای ندارد');
+    assert.equal(netThrough('expense-category', '2026-09-22T00:00:00.000Z'), 0, 'فروردین تا شهریور بی‌صدا بازنویسی نمی‌شوند');
+    assert.deepEqual([balances().prepaid, balances().expense], [5_000_000, 7_000_000]);
+  });
+});
+
+test('پوشش از شهریور، پرداخت در مهر: شهریور و مهر روز پرداخت، باقی اول ماه خودشان', async () => {
+  const { inBook } = await freshBook('تاریخ — شهریور');
+  await inBook(() => {
+    const paid = capture('اجاره دفتر از اول شهریور تا آخر بهمن رو امروز ۳۰ میلیون از حساب تجارت دادیم');
+    const schedule = items(paid.eventId);
+    assert.equal(schedule.length, 6);
+    const paidAt = paid.event.occurred_at;
+    assert.ok(schedule.every((item) => item.recognitionDate >= paidAt));
+    assert.equal(schedule[0].periodKey, '1405-06', 'قلم همچنان مال ماه پوشش خودش است');
+    assert.equal(schedule[2].recognitionDate.slice(0, 10), '2026-10-23', 'آبان از اول آبان');
+  });
+});
+
+test('آینه: درآمد انتقالی هم پیش از دریافت شناسایی نمی‌شود — وسط ماه و پوشش گذشته', async () => {
+  const { inBook } = await freshBook('تاریخ — درآمد انتقالی');
+  await inBook(() => {
+    const received = capture('اجاره شش ماه آینده انبار رو ۳۰ میلیون از آقای کریمی پیش دریافت کردیم');
+    run(AZAR);
+    const mid = recognitionDates(received.eventId);
+    assert.ok(mid.recognized.length >= 2 && mid.recognized.every((at) => at >= mid.paidAt), JSON.stringify(mid));
+    assert.equal(netThrough('deferred-revenue', hourBefore(mid.paidAt)), 0, 'درآمد انتقالی پیش از دریافت بدهکار نیست');
+
+    // اجارهٔ یک‌سالهٔ از فروردین که مهر دریافت شده — از مسیر رویداد.
+    const event = normalizeFinancialEvent({
+      kind: 'cash-income', amount: 120_000_000, occurredAt: NOW, category: 'اجاره', accountId: 'cash',
+      counterparty: 'مستأجر انبار', servicePeriodStart: '2026-03-21T08:30:00.000Z', servicePeriodEnd: '2027-03-20T08:30:00.000Z',
+      evidence: 'اجاره یک‌سالهٔ انبار از فروردین را مهر پیش گرفتیم',
+    });
+    const created = store.recordFinancialEvent(sql(), event, {
+      sourceEventId: 'deferred-farvardin', decision: routeEvent({ kind: event.kind }, { blockers: ['تأیید لازم است'] }),
+      actor: owner.id, accountingDecision: decide(factsFromEvent(event), { today: NOW }),
+    });
+    store.approveFinancialEvent(sql(), created.id, { actor: owner.id });
+    run('2026-10-11T00:00:00.000Z');
+    const farvardin = recognitionDates(created.id);
+    assert.equal(farvardin.recognized.length, 7);
+    assert.ok(farvardin.recognized.every((at) => at >= farvardin.paidAt));
+    assert.equal(netThrough('income-category', '2026-09-22T00:00:00.000Z'), 0, 'درآمد فروردین تا شهریور پیش از دریافت نیست');
+  });
+});
+
+test('منفی: پوششی که بعد از پرداخت شروع می‌شود، اقلامش اول ماه خودشان می‌مانند', async () => {
+  const { inBook } = await freshBook('تاریخ — پوشش آینده');
+  await inBook(() => {
+    const said = capture('بیمه انبار ۱۲ میلیون از حساب تجارت دادیم', { approve: false });
+    assert.equal(said.event.status, 'pending');
+    database.answerEvent(said.eventId, { fact: 'servicePeriodStart', value: 'next-month' });
+    database.answerEvent(said.eventId, { fact: 'servicePeriodEnd', value: 'one-year' });
+    const schedule = items(said.eventId);
+    assert.equal(schedule.length, 12);
+    assert.equal(schedule[0].periodKey, '1405-08');
+    assert.equal(schedule[0].recognitionDate.slice(0, 10), '2026-10-23', 'اول آبان، نه روز پرداخت');
+  });
+});
+
+test('منفی: پوششی که کاملاً گذشته، هزینهٔ همان روز است و برنامه‌ای ندارد', async () => {
+  const { inBook } = await freshBook('تاریخ — پوشش گذشته');
+  await inBook(() => {
+    const paid = capture('اجاره دفتر از اول فروردین تا آخر شهریور رو ۶ میلیون دادیم');
+    assert.equal(store.decisionForEvent(sql(), paid.eventId).treatment, 'period-expense');
+    assert.equal(items(paid.eventId).length, 0);
+  });
+});
+
+test('برنامهٔ خالص: کف تاریخ، کلید و ماهِ قلم را عوض نمی‌کند', async () => {
+  const { buildMonthlySchedule } = await import('../shared/recognitionSchedule.js');
+  const base = { amount: 12_000_000, periodStart: '2026-03-21T08:30:00.000Z', periodEnd: '2027-03-20T08:30:00.000Z', sourceId: 'evt-floor' };
+  const plain = buildMonthlySchedule(base);
+  const floored = buildMonthlySchedule({ ...base, notBefore: NOW });
+  assert.deepEqual(floored.map((item) => [item.key, item.periodKey, item.amount]), plain.map((item) => [item.key, item.periodKey, item.amount]));
+  assert.ok(floored.slice(0, 7).every((item) => item.recognitionDate === new Date(NOW).toISOString()));
+  assert.deepEqual(floored.slice(7).map((item) => item.recognitionDate), plain.slice(7).map((item) => item.recognitionDate));
+  // تاریخِ نامعتبر کف را حذف می‌کند، نه برنامه را.
+  assert.deepEqual(buildMonthlySchedule({ ...base, notBefore: 'نامعتبر' }), plain);
 });

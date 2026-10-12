@@ -283,6 +283,9 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
     periodStart: event.servicePeriodStart,
     periodEnd: event.servicePeriodEnd,
     sourceId: eventId,
+    // هیچ قلمی پیش از خودِ پرداخت یا دریافت سند نمی‌خورد؛ بررسی دورهٔ بسته هم
+    // همان دوره‌ای را می‌سنجد که سند واقعاً در آن می‌نشیند.
+    notBefore: event.occurredAt,
   });
 
   // برنامه که عوض شود، اقلام قدیمی **باطل** می‌شوند نه حذف.
@@ -294,9 +297,9 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
   // قلمی که ثبت شده دست نمی‌خورد؛ آن سند در دفتر است و باطل‌کردن یک ردیف
   // برنامه، سند را برنمی‌گرداند.
   const keeping = new Set(items.map((item) => item.key));
-  const existing = database.prepare("SELECT key,amount,status FROM recognition_schedule_items WHERE event_id=? AND status='planned'").all(eventId);
+  const existing = database.prepare("SELECT key,amount,status,recognition_date AS recognitionDate FROM recognition_schedule_items WHERE event_id=? AND status='planned'").all(eventId);
   const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
-  const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=? WHERE key=?');
+  const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=?,recognition_date=? WHERE key=?');
   for (const row of existing) {
     if (!keeping.has(row.key)) supersede.run(row.key);
   }
@@ -304,7 +307,9 @@ function storeSchedule(database, eventId, decision, event, { timeZone = 'Asia/Te
   // کوتاه‌تر پخش می‌شود.
   for (const item of items) {
     const row = existing.find((entry) => entry.key === item.key);
-    if (row && row.amount !== item.amount) reprice.run(item.amount, item.key);
+    // تاریخ هم: جوابی که تاریخ پرداخت را جابه‌جا کند، کف تاریخ اقلام را هم
+    // جابه‌جا می‌کند.
+    if (row && (row.amount !== item.amount || row.recognitionDate !== item.recognitionDate)) reprice.run(item.amount, item.recognitionDate, item.key);
   }
   const insert = database.prepare(`INSERT OR IGNORE INTO recognition_schedule_items
     (key,event_id,period_key,recognition_date,amount,status) VALUES (?,?,?,?,?,?)`);
@@ -1042,6 +1047,14 @@ const ALLOCATION_PLANS = Object.freeze({
  *    تصمیم بگیرد.
  * ۴. **قلم باطل‌شده هیچ‌وقت ثبت نمی‌شود.**
  */
+/** دیرترِ دو تاریخ، به همان قالب ISO که در جدول ذخیره می‌شود. */
+function notBeforeDate(date, floor) {
+  const value = new Date(date);
+  const minimum = new Date(floor);
+  if (Number.isNaN(minimum.getTime())) return date;
+  return minimum.getTime() > value.getTime() ? minimum.toISOString() : date;
+}
+
 export function postDueRecognitionItems(database, { today = null, actor = null, timeZone = 'Asia/Tehran', limit = 500 } = {}) {
   ensureFinancialEventSchema(database);
   const at = today || new Date().toISOString();
@@ -1064,8 +1077,14 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
     const row = database.prepare('SELECT payload,status FROM financial_events WHERE id=?').get(item.eventId);
     // رویدادی که سند نخورده، دارایی‌ای هم نساخته.
     if (!row || row.status !== 'posted') { summary.skipped += 1; continue; }
+    const event = JSON.parse(row.payload);
+    // اقلامی که پیش از این اصلاح ذخیره شده‌اند اول ماهِ پوشش را دارند، حتی اگر
+    // پرداخت بعد از آن بوده؛ همان کف اینجا هم اعمال می‌شود تا هیچ سند شناسایی‌ای
+    // پیش از سند نقدیِ خودش ننشیند.
+    const postAt = notBeforeDate(item.recognitionDate, event.occurredAt);
+    if (postAt > at) continue;
 
-    if (lockedPeriods.has(periodForDate(item.recognitionDate, timeZone))) {
+    if (lockedPeriods.has(periodForDate(postAt, timeZone))) {
       database.prepare("UPDATE recognition_schedule_items SET status='blocked-closed-period' WHERE key=?").run(item.key);
       summary.blocked += 1;
       continue;
@@ -1075,7 +1094,6 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
     const build = ALLOCATION_PLANS[decision?.treatment];
     if (!build) { summary.skipped += 1; continue; }
 
-    const event = JSON.parse(row.payload);
     database.exec('BEGIN IMMEDIATE');
     try {
       const lines = build(event, item.amount).map((line) => ({
@@ -1090,7 +1108,7 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
       const posted = postJournalEntry(database, {
         sourceType: 'recognition-schedule',
         sourceId: item.key,
-        occurredAt: item.recognitionDate,
+        occurredAt: postAt,
         memo: `تخصیص ${event.category || ''} — ${item.periodKey}`.trim(),
         lines,
       }, { createdBy: actor, timeZone });

@@ -84,14 +84,35 @@ export function scheduleItemKey(sourceId, periodKey) {
 /**
  * برنامهٔ ماهانه را می‌سازد.
  *
- * ورودی: مبلغ کل، شروع و پایان دوره، و شناسهٔ منبع.
+ * ورودی: مبلغ کل، شروع و پایان دوره، شناسهٔ منبع، و تاریخ پرداخت یا دریافت
+ * (`notBefore`) که هیچ قلمی پیش از آن تاریخ نمی‌خورد.
  * خروجی: آرایه‌ای از اقلام، هرکدام با `periodKey` یکتا، مبلغ، و وضعیت اولیه.
  *
  * تعداد اقساط، طول دوره به ماه است و اقساط مساوی از ماهِ شروع پشت سر هم
  * می‌آیند؛ خرده‌ریز روزانه محاسبه نمی‌شود (تصمیم ۲، `docs/wp0-open-decisions.md`؛
  * دورهٔ وسط ماه: تصمیم مهر ۱۴۰۵).
  */
-export function buildMonthlySchedule({ amount, periodStart, periodEnd, sourceId } = {}) {
+/**
+ * تاریخ سند یک قلم: اول ماهِ همان قلم، ولی هرگز پیش از پرداخت یا دریافتی که
+ * دارایی یا بدهی را ساخت.
+ *
+ * پوششی که پیش از پرداخت شروع شده — وسط ماه، یا ماه‌ها قبل — اقلامی دارد که
+ * اول ماهشان پیش از سند نقدی است. سند با آن تاریخ یعنی حساب پیش‌پرداخت پیش از
+ * پرداخت ماندهٔ بستانکار دارد (و درآمد انتقالی ماندهٔ بدهکار)، و ماه‌های گذشتهٔ
+ * دفتر بی‌صدا بازنویسی می‌شوند. سهم ماه‌های گذشته همان روز پرداخت شناسایی
+ * می‌شود — همان قاعده‌ای که پوششِ کاملاً گذشته را همان روز هزینه می‌کند.
+ *
+ * `periodKey` و کلید قلم دست نمی‌خورند: قلم همچنان مال ماه پوشش خودش است و
+ * یکتایی و بازسازی برنامه به آن تکیه دارند.
+ */
+function recognitionDateFor(monthStart, notBefore) {
+  if (!notBefore || !monthStart) return monthStart;
+  const floor = new Date(notBefore);
+  if (Number.isNaN(floor.getTime())) return monthStart;
+  return floor.getTime() > new Date(monthStart).getTime() ? floor.toISOString() : monthStart;
+}
+
+export function buildMonthlySchedule({ amount, periodStart, periodEnd, sourceId, notBefore = null } = {}) {
   const total = Math.round(Number(amount) || 0);
   if (!(total > 0) || !periodStart || !periodEnd) return [];
 
@@ -111,7 +132,7 @@ export function buildMonthlySchedule({ amount, periodStart, periodEnd, sourceId 
     items.push(Object.freeze({
       key: scheduleItemKey(sourceId, periodKey),
       periodKey,
-      recognitionDate: persianToISO(Math.floor(index / 12), (index % 12) + 1, 1),
+      recognitionDate: recognitionDateFor(persianToISO(Math.floor(index / 12), (index % 12) + 1, 1), notBefore),
       amount: last ? total - (share * (count - 1)) : share,
       status: SCHEDULE_ITEM_STATUS.PLANNED,
     }));
