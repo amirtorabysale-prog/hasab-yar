@@ -11,6 +11,7 @@ import { EVENT_NATURES, natureNeedsAccountant, readEventNature } from './eventNa
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
+import { CONTRACT_REFUND_REASON, contractRefundDirection } from './refundSpeech.js';
 import { readPettyCash } from './pettyCashSpeech.js';
 
 const DIGITS = {
@@ -988,6 +989,9 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   // اصلاً این نشانه را نمی‌گیرد.
   const moneyIn = counterpartyPaidUs(input);
   const rentTaken = !moneyIn && RENT_TAKEN.test(normalizePersian(input));
+  // برگشت وجه یا فسخ قرارداد: جهتش همان جابه‌جایی پول است (بیمه‌گر پس داد =
+  // ورود، به مشتری برگشت زدیم = خروج) و ثبتش با حسابدار (shared/refundSpeech.js).
+  const refund = contractRefundDirection(input);
   const categoryWords = CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word));
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...categoryWords];
   // جملهٔ چندپرداختی: هر مبلغ بندِ خودش را دارد — موضوع، دوره، نشانهٔ پیش‌پرداخت،
@@ -1026,7 +1030,8 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const categoryContext = containsAny(ownAfter, categoryWords)
       ? ownAfter
       : `${ownBefore} ${ownAfter}`.trim();
-    const rowPeriod = segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
+    // «اشتراک یک‌ساله رو کنسل کرد» دورهٔ قرارداد قبلی است، نه پوششی که حالا خریده‌ایم.
+    const rowPeriod = refund ? null : segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
     const rowPrepayment = segment ? readPrepaymentMention(ownText) : prepayment;
     // نامی که خودِ بند گفته؛ وگرنه نام جمله، مثل همیشه.
     const ownContact = segment && !petty?.holder ? extractContactCandidate(ownText) : null;
@@ -1050,6 +1055,18 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
         typeReason: explicitMoneyIn(input)
           ? 'جمله صریح می‌گوید طرف مقابل به حساب ما ریخته یا باید بدهد؛ جهت از کل جمله برداشت شد.'
           : 'جمله صریح می‌گوید پول به حساب آمده؛ جهت از کل جمله برداشت شد و باید کنترل شود.',
+      };
+    }
+    const refundType = refund === 'in' ? 'income' : refund === 'out' ? 'expense' : null;
+    if (refundType) {
+      const refundCategory = classified.type === refundType ? null
+        : classifyCategory(normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' '), refundType);
+      classified = {
+        ...classified, type: refundType,
+        ...(refundCategory ? { category: refundCategory.category, chartCode: chartCodeForCategory(refundCategory.category) } : {}),
+        categoryAmbiguous: false, categoryRunnerUp: null, directionUnclear: false,
+        confidence: Math.max(classified.confidence, 0.86), typeConfidence: Math.max(classified.confidence, 0.86),
+        typeReason: refundType === 'income' ? 'برگشت وجه قرارداد به ما؛ پول وارد شده است.' : 'برگشت وجه به مشتری یا مستاجر؛ پول خارج شده است.',
       };
     }
     let amount = span.amount;
@@ -1091,6 +1108,8 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ? `دسته روشن نیست: «${classified.category}» یا «${classified.categoryRunnerUp}»؛ حساب پیش‌پرداخت و هزینهٔ ماهانه به همین دسته بسته است و حدس زده نمی‌شود.`
       : null;
     if (serviceTie) reviewReasons.push(serviceTie);
+    if (refund) reviewReasons.push(CONTRACT_REFUND_REASON);
+    const judgment = refund ? CONTRACT_REFUND_REASON : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie;
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
       amount, type: classified.type, category: classified.category,
@@ -1114,8 +1133,8 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       confidence: classified.confidence,
       // جهتِ نامعلوم سؤال گزینه‌ای ندارد؛ قضاوتش با حسابدار است و موتور تصمیم
       // پیش از هر قاعده‌ای همین را می‌خواند.
-      ...(classified.directionUnclear || serviceTie ? { needsJudgment: classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie } : {}),
-      needsReview: classified.directionUnclear || unusual || ambiguous || colloquialThousands || typedSmallToman || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording) || natureNeedsAccountant(eventNature),
+      ...(judgment ? { needsJudgment: judgment } : {}),
+      needsReview: Boolean(judgment) || unusual || ambiguous || colloquialThousands || typedSmallToman || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording) || natureNeedsAccountant(eventNature),
       source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),
       // شناسهٔ بانک می‌رود، نه شناسهٔ حساب: پارسر دفتر را نمی‌شناسد و نمی‌داند

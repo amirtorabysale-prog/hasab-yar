@@ -10,6 +10,7 @@ import { classifyCategory } from '../shared/categoryRules.js';
 import { detectBank, detectTransferBanks, mentionsMultipleBanks } from '../shared/banks.js';
 import { detectCaptureTransfer } from '../shared/bankSpeech.js';
 import { extractContactCandidate, extractContactName } from '../shared/counterpartySpeech.js';
+import { readContractRefund } from '../shared/refundSpeech.js';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
@@ -580,6 +581,73 @@ test('منفی: نام‌های چندبخشی و شرکت‌هایی که با 
 });
 
 // ---------------------------------------------------------------------------
+// refund-cancel-not-recognised — برگشت وجه یا فسخ، پرداخت یا دریافت تازه نیست
+// ---------------------------------------------------------------------------
+
+const REFUND_TO_US = [
+  'بیمه آتش سوزی رو فسخ کردیم بیمه دی ۶ میلیون حق بیمه برگشت داد به حساب تجارت',
+  'شرکت بیمه بابت فسخ ۶ میلیون واریز کرد به حساب تجارت',
+  'حق بیمه برگشتی ۶ میلیون دریافت کردیم',
+  'بابت فسخ بیمه ۶ میلیون برگشت خورد به حساب',
+  'اشتراک نرم افزار رو کنسل کردیم ۸ میلیون برگشت زدن به کارت',
+  'بابت کنسلی اشتراک ۸ میلیون به حسابمون واریز کردن',
+  'لایسنس نرم افزار رو کنسل کردیم ۸ میلیون پس گرفتیم',
+  'اشتراک ادوبی کنسل شد و ۸ میلیون ریفاند شد',
+  'لایسنس رو کنسل کردیم پولش ۸ میلیون برگشت',
+  'دفتر رو تخلیه کردیم و ودیعه ۵۰ میلیون رو پس گرفتیم',
+  // شکل‌های نوشتاری.
+  'حق بيمه برگشتي ۶ ميليون دريافت كرديم',
+  'اشتراک کنسل شد 8 میلیون refund شد',
+];
+const REFUND_BY_US = [
+  'مشتری اشتراک یکساله رو کنسل کرد ۶ میلیون بهش برگشت زدیم',
+  'اشتراک یکساله مشتری رو کنسل کردیم و ۶ میلیون بهش برگشت زدیم',
+  'وجه اشتراک یکساله مشتری ۶ میلیون عودت شد',
+  'آقای رضایی اشتراک سالانه اش رو لغو کرد ۶ میلیون براش برگشت زدیم',
+  'مشتری قرارداد پشتیبانی یکساله رو فسخ کرد ۶ میلیون بهش برگشت زدیم',
+];
+
+test('برگشت وجه از بیمه‌گر، فروشنده یا موجر: ورود پول و صف حسابدار، نه پیش‌پرداخت تازه', () => {
+  for (const text of REFUND_TO_US) {
+    const [row] = parse(text);
+    assert.equal(row.type, 'income', text);
+    assert.equal(row.servicePeriodStart, undefined, text);
+    const [item] = voice(text).items;
+    assert.equal(item.outcome, 'accountant', text);
+    assert.match(item.reason, /برگشت وجه یا فسخ قرارداد/, text);
+  }
+});
+
+test('برگشت وجه به مشتری یا مستاجر: خروج پول و صف حسابدار، نه اشتراکِ خودمان', () => {
+  for (const text of REFUND_BY_US) {
+    const [row] = parse(text);
+    assert.equal(row.type, 'expense', text);
+    assert.equal(row.servicePeriodStart, undefined, text);
+    const [item] = voice(text).items;
+    assert.equal(item.outcome, 'accountant', text);
+    assert.notEqual(item.decision?.treatment, 'prepaid-expense', text);
+  }
+});
+
+test('منفی: ودیعهٔ قابل استرداد، شرط آیندهٔ «پس می‌گیریم»، برگشت چک و برگشت کالا برگشت قرارداد نیستند', () => {
+  for (const text of [
+    'ودیعه ۵۰ میلیون دادیم که آخر قرارداد پس می‌گیریم',
+    'ودیعه قابل استرداد ۵۰ میلیون دادیم',
+    'اجاره گرفتم شش ماهه ۳۰ میلیون از آقای احمدی',
+    'لیست بیمه ۱۰ میلیون دادیم',
+    'بیمه یکساله ۱۲ میلیون دادیم',
+    'چک ۱۰ میلیونی آقای رضایی برگشت خورد',
+    'جنس برگشتی فروشنده رو ۵ میلیون پس دادیم',
+    'تخلیه بار ۲ میلیون دادیم',
+    'مستاجر اجاره شش ماه آینده رو ۶۰ میلیون واریز کرد',
+  ]) {
+    assert.equal(readContractRefund(text), false, text);
+  }
+  // پیش‌پرداخت عادی همان سند پیش‌پرداخت است.
+  assert.deepEqual(lines(voice('بیمه یکساله ۱۲ میلیون دادیم').items[0]), [[ROLES.PREPAID_ASSET, 12_000_000], [ROLES.CASH, 12_000_000]]);
+});
+
+// ---------------------------------------------------------------------------
 // دفتر: سه گفته از یک مستاجر، یک طرف حساب و یک حساب تفصیلی.
 // ---------------------------------------------------------------------------
 
@@ -612,6 +680,19 @@ test('دفتر: دو چک و یک دریافت نقدی از «آقای احمد
     assert.deepEqual(names.filter((name) => name.includes('احمدی')), ['احمدی']);
     const split = database.activeWorkspaceDatabase().prepare("SELECT COUNT(*) AS count FROM ledger_accounts WHERE name LIKE '%احمدی مستاجر%'").get().count;
     assert.equal(split, 0);
+  });
+});
+
+test('دفتر: برگشت حق‌بیمه به صف حسابدار می‌رود و هیچ سندی بانک را جابه‌جا نمی‌کند', () => {
+  inWorkspace(() => {
+    const sentence = 'بیمه آتش سوزی رو فسخ کردیم بیمه دی ۶ میلیون حق بیمه برگشت داد به حساب تجارت';
+    const rows = parseFinancialText(sentence, { source: 'voice', now: new Date(NOW) }).transactions;
+    const [id] = database.insertTransactions({ transcript: sentence, transactions: rows.map((row) => ({ ...row, userConfirmed: true })) });
+    const db = database.activeWorkspaceDatabase();
+    const event = db.prepare('SELECT status FROM financial_events WHERE source_event_id=?').get(`transaction:${id}`);
+    assert.notEqual(event.status, 'posted');
+    const posted = db.prepare("SELECT COUNT(*) AS count FROM journal_entries WHERE source_type='transaction' AND source_id=?").get(id).count;
+    assert.equal(posted, 0);
   });
 });
 
