@@ -1654,6 +1654,24 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
 }
 
 /**
+ * تکلیف قلم نگه‌داشته، با دلیل حسابدار: «ماندهٔ این قرارداد پیش‌تر بیرون از
+ * برنامه برگشته؛ این قلم دیگر لازم نیست».
+ *
+ * قلم باطل می‌شود، نه ثبت؛ سندی نمی‌خورد. فقط قلمی که تور ایمنی واقعاً نگهش
+ * داشته و هنوز برنامه‌ریزی‌شده است.
+ */
+export function releaseHeldRecognition(database, key, { reason = '', actor = null } = {}) {
+  ensureFinancialEventSchema(database);
+  const explanation = String(reason || '').trim().slice(0, 500);
+  if (explanation.length < 8) throw storeError('دلیل کنار گذاشتن قلم را با حداقل هشت نویسه بنویس.', 'REVIEW_REASON_REQUIRED', 400);
+  const held = listHeldRecognition(database).find((item) => item.key === String(key || ''));
+  if (!held) throw storeError('این قلم نگه‌داشته نیست.', 'RECOGNITION_NOT_HELD', 409);
+  database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=? AND status='planned'").run(held.key);
+  writeAudit(database, held.eventId, 'recognition-released', { key: held.key, periodKey: held.periodKey, amount: held.amount, reason: explanation }, actor);
+  return held;
+}
+
+/**
  * اقلامی که تور ایمنیِ مانده نگهشان داشته — صف حسابدار.
  *
  * ماندهٔ حساب دوره‌دار از قلم کمتر بود؛ یعنی چیزی بیرون از برنامه آن را کم

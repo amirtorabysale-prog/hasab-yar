@@ -10,7 +10,7 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, releaseHeldRecognition, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
@@ -371,6 +371,13 @@ export function runRecognition() {
   // بداند چیزی بیرون از برنامه مانده است.
   const unscheduled = unscheduledTimingBalances(database).length;
   return unscheduled ? { ...result, unscheduled } : result;
+}
+
+/** قلم نگه‌داشته‌ای که ماندهٔ قراردادش بیرون از برنامه برگشته، با دلیل کنار می‌رود. */
+export function releaseHeldItem(key, reason = '') {
+  const item = releaseHeldRecognition(activeWorkspaceDatabase(), key, { reason, actor: currentWorkspace()?.userId || null });
+  audit('recognition-release', 'recognition-schedule', item.key, { eventId: item.eventId, reason: String(reason).slice(0, 200) });
+  return { item };
 }
 
 /** ماندهٔ پیش‌پرداخت و درآمد انتقالی که برنامهٔ شناسایی ندارد. */

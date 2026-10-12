@@ -12,7 +12,7 @@ import {
   correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry, releaseHeldItem,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -742,6 +742,10 @@ app.get('/api/financial-events/blocked-recognition', (_request, response, next) 
 });
 app.post('/api/financial-events/recognition-items/:key/catch-up', (request, response, next) => {
   try { return response.status(201).json(catchUpRecognition(request.params.key, String(request.body?.reason || '').slice(0, 500))); } catch (error) { return next(error); }
+});
+// قلمی که تور ایمنیِ مانده نگه داشته، با دلیل حسابدار کنار می‌رود.
+app.post('/api/financial-events/recognition-items/:key/release', (request, response, next) => {
+  try { return response.json(releaseHeldItem(request.params.key, String(request.body?.reason || '').slice(0, 500))); } catch (error) { return next(error); }
 });
 // ماندهٔ پیش‌پرداخت و درآمد انتقالیِ بی‌برنامه، و جواب حسابدار به سؤال دوره‌اش.
 app.get('/api/financial-events/unscheduled-balances', (_request, response, next) => {

@@ -1109,6 +1109,15 @@ test('تور ایمنی: استرداد با سند دستیِ بیرون از �
     assert.equal(held.length, 6);
     assert.ok(held.every((item) => item.eventId === book.insurance));
     assert.match(held[0].reason, /ماندهٔ پیش‌پرداخت/);
+    // بستن دوره قلم نگه‌داشته را بی‌صدا پشت در نمی‌گذارد؛ حسابدار با دلیل کنارش می‌گذارد.
+    const lastPeriod = accounting.periodForDate(held.at(-1).recognitionDate);
+    assert.throws(() => accounting.lockAccountingPeriod(sql(), lastPeriod, owner.id), { code: 'RECOGNITION_HELD_BEFORE_LOCK' });
+    assert.throws(() => database.releaseHeldItem(held[0].key, 'کوتاه'), { code: 'REVIEW_REASON_REQUIRED' });
+    for (const item of held) database.releaseHeldItem(item.key, 'بیمه فسخ شد و حق بیمه با سند دستی برگشت');
+    assert.deepEqual(database.reviewQueue().heldRecognition, []);
+    accounting.lockAccountingPeriod(sql(), lastPeriod, owner.id);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 6_000_000, 'سه ماه مصرف + سه ماهی که مانده داشت');
   });
 });
 

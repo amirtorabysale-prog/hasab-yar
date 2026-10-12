@@ -399,6 +399,7 @@ export const api = {
   runRecognition: () => request('/api/financial-events/run-recognition', { method: 'POST', body: '{}' }),
   blockedRecognition: () => request('/api/financial-events/blocked-recognition'),
   catchUpRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/catch-up`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  releaseHeldRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/release`, { method: 'POST', body: JSON.stringify({ reason }) }),
   unscheduledBalances: () => request('/api/financial-events/unscheduled-balances'),
   scheduleBalance: (accountId, input) => request(`/api/financial-events/unscheduled-balances/${encodeURIComponent(accountId)}/schedule`, { method: 'POST', body: JSON.stringify(input || {}) }),
   journalTemplates: () => request('/api/accounting/templates'),
