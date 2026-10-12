@@ -858,6 +858,52 @@ export function describesUnperformedCondition(input) {
   return CONDITION_MARKER.test(text) && FUTURE_MONEY_VERB.test(text) && !PAST_MONEY_VERB.test(text);
 }
 
+/**
+ * بندِ خودِ هر مبلغ در جملهٔ چندپرداختی.
+ *
+ * «اجاره شش ماهه ۳۰ میلیون دادیم، ودیعه هم ۵۰ میلیون دادیم» ودیعه را شش‌ماهه
+ * مستهلک می‌کرد و از اجاره «قابل استرداد است؟» می‌پرسید؛ «بیمه یکساله ۱۲ میلیون
+ * دادیم و ناهار پرسنل ۲ میلیون» بیمه را «خوراک» و ناهار را پیش‌پرداخت دوازده‌ماهه
+ * می‌کرد. دوره یک بار برای کل جمله خوانده می‌شد، دسته از متنِ بعد از مبلغ — که در
+ * گفتار چندپرداختی موضوعِ پرداختِ بعدی است — و شاهد ردیف همان متن بعدی بود.
+ *
+ * مرزِ دو بند، به ترتیب: نشانهٔ جداکننده (، . ؛)، «و»ِ بلافاصله بعد از مبلغ یا
+ * فعل، فعلِ پرداختی که چیزی جز «بابت/به/از …»ِ خودش دنبالش نیامده، و آخرین «و».
+ * فاصلهٔ بی‌مرز («اجاره ۵ میلیون شارژ ۱ میلیون دادیم») به ترتیب جمله سپرده
+ * می‌شود: اگر جمله با موضوع شروع شده، موضوعِ مبلغ بعدی است؛ وگرنه مال قبلی.
+ */
+const GAP_VERB = /(?<![آ-ی])(?:دادیم|دادم|دادن|داد|پرداخت\s*(?:کردیم|کردم|کردن|کرد|شد)|واریز\s*(?:کردیم|کردم|کردن|کرد|شد)|ریختیم|ریختم|ریختن|ریخت|زدیم|زدم|گرفتیم|گرفتم|خریدیم|خریدم|کارت\s*به\s*کارت\s*(?:کردیم|کردم|کرد|شد)|دریافت\s*(?:کردیم|کردم|کرد|شد)|وصول\s*شد)(?![آ-ی])/;
+const LEADING_AND = new RegExp(`^((?:\\s*(?:هم|رو|را|تومان|تومن|ریال)(?![آ-ی]))*\\s*(?:${GAP_VERB.source}\\s*(?:هم(?![آ-ی])\\s*)?)?)و(?![آ-ی])`);
+const PURPOSE_AFTER_VERB = /^\s*(?:بابت|برای|واسه|جهت|به|از|تو|توی)(?![آ-ی])/;
+function splitGap(gap) {
+  const punctuation = gap.search(/[،,.؛;\n]/);
+  if (punctuation >= 0) return [punctuation, punctuation + 1];
+  const leading = LEADING_AND.exec(gap);
+  if (leading) return [leading[1].length, leading[0].length];
+  const verb = GAP_VERB.exec(gap);
+  if (verb) {
+    const end = verb.index + verb[0].length;
+    const rest = gap.slice(end);
+    if (rest.trim() && !PURPOSE_AFTER_VERB.test(rest)) {
+      const and = /^\s*و(?![آ-ی])/.exec(rest);
+      return [end, end + (and ? and[0].length : 0)];
+    }
+  }
+  const ands = [...gap.matchAll(/(?<![آ-ی])و(?![آ-ی])/g)];
+  return ands.length ? [ands.at(-1).index, ands.at(-1).index + 1] : null;
+}
+function rowSegments(text, spans, subjectFirst) {
+  const cuts = spans.slice(0, -1).map((span, index) => {
+    const gap = text.slice(span.end, spans[index + 1].start);
+    const [endOfPrevious, startOfNext] = splitGap(gap) || (subjectFirst ? [0, 0] : [gap.length, gap.length]);
+    return { end: span.end + endOfPrevious, start: span.end + startOfNext };
+  });
+  return spans.map((span, index) => ({
+    start: index ? cuts[index - 1].start : 0,
+    end: index < spans.length - 1 ? cuts[index].end : text.length,
+  }));
+}
+
 export function parseFinancialText(rawInput, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
   const input = applySpokenCorrection(rawInput);
   if (hasCompositeAmounts(input)) return { transcript: normalizePersian(input), transactions: [], clarification: COMPOSITE_AMOUNT_MESSAGE };
@@ -938,7 +984,16 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   const rentTaken = !moneyIn && RENT_TAKEN.test(normalizePersian(input));
   const categoryWords = CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word));
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...categoryWords];
+  // جملهٔ چندپرداختی: هر مبلغ بندِ خودش را دارد — موضوع، دوره، نشانهٔ پیش‌پرداخت،
+  // طرف حساب و شاهد. پنجرهٔ جهت عمداً پهن می‌ماند، چون فعلِ آخر جمله («اجاره
+  // ماهانه ۵ میلیون و ودیعه ۵۰ میلیون دادیم») فعل مشترک همهٔ ردیف‌هاست.
+  const segments = spans.length > 1 ? rowSegments(text, spans, containsAny(text.slice(0, spans[0].start), categoryWords)) : [];
+  // متنِ نرمال‌شدهٔ بی‌ماسک، وقتی هم‌طول است، تا شاهد نام بانک و تاریخ را گم نکند.
+  const unmaskedText = normalizePersian(input);
+  const segmentSource = unmaskedText.length === text.length ? unmaskedText : text;
   const transactions = spans.map((span, index) => {
+    const segment = segments[index];
+    const ownText = segment ? segmentSource.slice(segment.start, segment.end) : null;
     const previousEnd = spans[index - 1]?.end ?? 0;
     const nextStart = spans[index + 1]?.start ?? text.length;
     const afterRaw = text.slice(span.end, nextStart).trim();
@@ -960,9 +1015,17 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     // سه میلیون پرداخت کردم». پنجرهٔ بالا به‌محض دیدن یک فعل بعد از مبلغ، هرچه
     // قبلش بوده دور می‌ریزد — و دسته همان‌جا بود. پس فقط وقتی به متنِ بعد از
     // مبلغ بسنده می‌کنیم که خودش واژهٔ دسته داشته باشد.
-    const categoryContext = containsAny(afterAmount, categoryWords)
-      ? afterAmount
-      : `${beforeAmount} ${afterAmount}`.trim();
+    const ownBefore = segment ? withoutVatQualifiers(text.slice(segment.start, span.start).trim()) : beforeAmount;
+    const ownAfter = segment ? withoutVatQualifiers(text.slice(span.end, segment.end).trim()) : afterAmount;
+    const categoryContext = containsAny(ownAfter, categoryWords)
+      ? ownAfter
+      : `${ownBefore} ${ownAfter}`.trim();
+    const rowPeriod = segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
+    const rowPrepayment = segment ? readPrepaymentMention(ownText) : prepayment;
+    // نامی که خودِ بند گفته؛ وگرنه نام جمله، مثل همیشه.
+    const ownContact = segment && !petty?.holder ? extractContactCandidate(ownText) : null;
+    const rowCounterparty = ownContact?.name ? ownContact : counterparty;
+    const rowMoneyDirection = ownContact?.name ? counterpartyMoneyDirection(ownText) : moneyDirection;
     let classified = classify(context, learnings, categoryContext, { moneyIn, rentTaken });
     // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
     //
@@ -1000,7 +1063,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
     const reviewReasons = [];
-    if (servicePeriod && !occurredAt) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
+    if (rowPeriod && !occurredAt) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
     // آوردهٔ مالک درآمد نیست و دارایی ثابت هزینه نیست.
     //
     // برای این جمله‌ها برگهٔ مخصوص باز می‌شود، ولی اگر کاربر آن را ببندد و
@@ -1015,6 +1078,13 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (colloquialThousands || typedSmallToman) reviewReasons.push('مقیاس مبلغ مبهم است؛ مبلغ دقیق را با هزار، میلیون یا میلیارد مشخص کن.');
     if (ambiguous) reviewReasons.push('نوع تراکنش از متن با اطمینان کافی مشخص نیست.');
     if (classified.directionUnclear) reviewReasons.push(RENT_DIRECTION_UNCLEAR);
+    // دستهٔ مساوی میان خدمتِ دوره‌دار و دستهٔ دیگر: کلید پیش‌پرداخت و هزینهٔ هر
+    // ماهِ برنامه همین دسته است، پس انتخابِ ترتیبیِ برنده دوازده سند غلط می‌سازد.
+    const serviceTie = classified.categoryAmbiguous
+      && [classified.category, classified.categoryRunnerUp].some((name) => TIME_BOUND_SERVICE_CATEGORIES.includes(name))
+      ? `دسته روشن نیست: «${classified.category}» یا «${classified.categoryRunnerUp}»؛ حساب پیش‌پرداخت و هزینهٔ ماهانه به همین دسته بسته است و حدس زده نمی‌شود.`
+      : null;
+    if (serviceTie) reviewReasons.push(serviceTie);
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     const transaction = {
       amount, type: classified.type, category: classified.category,
@@ -1023,22 +1093,22 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       // تصمیم باید بپرسد.
       ...(colloquialThousands || typedSmallToman ? { amountScaleAmbiguous: true } : {}),
       // نشانهٔ ماهیت، نه دسته: پول رفته ولی هنوز هیچ چیزی بابتش نگرفته‌ایم.
-      ...(prepayment ? { prepaymentSignal: true } : {}),
+      ...(rowPrepayment ? { prepaymentSignal: true } : {}),
       ...(unpaid ? { unpaidSignal: true } : {}),
       ...(eventNature !== EVENT_NATURES.NEW ? { eventNature } : {}),
-      ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), chartCode: classified.chartCode,
+      ...(rowPeriod ? { servicePeriodStart: rowPeriod.start, servicePeriodEnd: rowPeriod.end } : {}), chartCode: classified.chartCode,
       // Amount extraction masks banks and dates. Those masks must never become
       // the user's evidence. Keep scoped context for genuinely separate amounts.
-      rawText: spans.length === 1 ? String(input) : rawContext || text,
-      ...(counterpartyName ? {
-        contactName: counterpartyName, moneyDirection, contactNameConfident: counterparty.confident,
+      rawText: spans.length === 1 ? String(input) : ownText.trim() || rawContext || text,
+      ...(rowCounterparty.name ? {
+        contactName: rowCounterparty.name, moneyDirection: rowMoneyDirection, contactNameConfident: rowCounterparty.confident,
       } : {}),
       // دستهٔ مبهم یعنی دو دسته به یک اندازه موجه بودند؛ ثبت چنین چیزی بدون
       // نگاه کاربر همان خطای بی‌صداست که در بخش مبلغ بستیم.
       confidence: classified.confidence,
       // جهتِ نامعلوم سؤال گزینه‌ای ندارد؛ قضاوتش با حسابدار است و موتور تصمیم
       // پیش از هر قاعده‌ای همین را می‌خواند.
-      ...(classified.directionUnclear ? { needsJudgment: RENT_DIRECTION_UNCLEAR } : {}),
+      ...(classified.directionUnclear || serviceTie ? { needsJudgment: classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie } : {}),
       needsReview: classified.directionUnclear || unusual || ambiguous || colloquialThousands || typedSmallToman || span.bareScale || classified.categoryAmbiguous || Boolean(capitalWording) || natureNeedsAccountant(eventNature),
       source,
       ...(occurredAt ? { occurredAt, occurredAtLabel: mentionedDate.label, occurredAtSource: mentionedDate.kind } : {}),

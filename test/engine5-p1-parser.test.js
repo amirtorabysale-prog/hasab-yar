@@ -6,6 +6,7 @@ import { normalizePersian } from '../shared/normalize.js';
 import { detectVoiceIntent } from '../shared/voiceIntent.js';
 import { validateUnderstanding } from '../shared/eventUnderstanding.js';
 import { ROLES } from '../shared/accountingRules.js';
+import { classifyCategory } from '../shared/categoryRules.js';
 
 /**
  * موتور ۵ — پارسر قطعی: جهت، مبلغ، نرخ، بند هر ردیف، دسته و نام بانک.
@@ -325,4 +326,137 @@ test('«اجاره … گرفتم» بی پرداخت‌کننده: جهت حد�
     assert.equal(item.outcome, 'accountant', text);
     assert.match(parse(text)[0].reviewReasons.join(' '), /جهت پول روشن نیست/, text);
   }
+});
+
+// ---------------------------------------------------------------------------
+// det-multi-payment-period-category-leak — هر ردیف بند خودش را دارد
+// ---------------------------------------------------------------------------
+
+const rowsOf = (text) => voice(text).items.map((item) => ({
+  amount: item.amount, category: item.category, months: monthsOf(item), fact: item.outcome === 'ask' ? item.fact : null,
+  treatment: item.decision?.treatment || null, outcome: item.outcome,
+}));
+function monthsOf(item) {
+  const facts = item.decision?.facts || {};
+  const start = facts.servicePeriodStart || item.decision?.servicePeriodStart;
+  const end = facts.servicePeriodEnd || item.decision?.servicePeriodEnd;
+  return start && end ? Math.round((Date.parse(end) - Date.parse(start)) / (30.4 * 86_400_000)) : null;
+}
+const parsedRows = (text) => parse(text).map((row) => ({
+  amount: row.amount, category: row.category,
+  period: row.servicePeriodStart ? Math.round((Date.parse(row.servicePeriodEnd) - Date.parse(row.servicePeriodStart)) / (30.4 * 86_400_000)) : null,
+  rawText: row.rawText, prepayment: row.prepaymentSignal === true, contact: row.contactName || null,
+}));
+
+test('دو پرداخت در یک جمله: دوره، دسته و شاهدِ ودیعه به ردیف دیگر نشت نمی‌کند', () => {
+  // ۱. اجارهٔ شش‌ماهه پیش‌پرداخت؛ ودیعه استرداد را می‌پرسد، نه شروع دوره.
+  let rows = parsedRows('اجاره شش ماهه ۳۰ میلیون دادیم، ودیعه هم ۵۰ میلیون دادیم');
+  assert.deepEqual(rows.map((row) => [row.amount, row.period]), [[30_000_000, 6], [50_000_000, null]]);
+  assert.doesNotMatch(rows[0].rawText, /ودیعه/);
+  assert.match(rows[1].rawText, /ودیعه/);
+  let items = voice('اجاره شش ماهه ۳۰ میلیون دادیم، ودیعه هم ۵۰ میلیون دادیم').items;
+  assert.deepEqual(lines(items[0]), [[ROLES.PREPAID_ASSET, 30_000_000], [ROLES.CASH, 30_000_000]]);
+  assert.deepEqual([items[1].outcome, items[1].fact], ['ask', 'refundable']);
+
+  // ۲. ودیعه اول، اجارهٔ ماهانه دوم.
+  items = voice('ودیعه ۵۰ میلیون دادیم و اجاره ماهانه ۵ میلیون هم دادیم').items;
+  assert.deepEqual(items.map((item) => [item.amount, item.outcome === 'ask' ? item.fact : item.outcome]), [[50_000_000, 'refundable'], [5_000_000, 'servicePeriodStart']]);
+  items = voice('اجاره ماهانه ۵ میلیون و ودیعه ۵۰ میلیون دادیم').items;
+  assert.deepEqual(items.map((item) => [item.amount, item.outcome === 'ask' ? item.fact : item.outcome]), [[5_000_000, 'servicePeriodStart'], [50_000_000, 'refundable']]);
+
+  // ۳. اجارهٔ مهر و بیمهٔ یک‌ساله: بیمه هزینهٔ یک‌جا نمی‌شود و اجاره «بیمه» نمی‌شود.
+  rows = parsedRows('اجاره مهر ۱۰ میلیون دادیم و بیمه یکساله ۱۲ میلیون هم پرداخت کردیم');
+  assert.deepEqual(rows.map((row) => [row.category, row.period]), [['اجاره', 1], ['بیمه', 12]]);
+  items = voice('اجاره مهر ۱۰ میلیون دادیم و بیمه یکساله ۱۲ میلیون هم پرداخت کردیم').items;
+  assert.deepEqual(lines(items[1]), [[ROLES.PREPAID_ASSET, 12_000_000], [ROLES.CASH, 12_000_000]]);
+
+  // ۴ و ۵. ناهار پرسنل هزینهٔ همین دوره است؛ بیمه و اشتراک پیش‌پرداخت دوازده‌ماهه.
+  for (const [text, expected] of [
+    ['بیمه یکساله ۱۲ میلیون دادیم و ناهار پرسنل ۲ میلیون', [['بیمه', 12, 'prepaid-expense'], ['خوراک', null, 'period-expense']]],
+    ['ناهار پرسنل ۲ میلیون دادیم و اشتراک یکساله نرم افزار ۲۴ میلیون', [['خوراک', null, 'period-expense'], ['نرم‌افزار و اشتراک', 12, 'prepaid-expense']]],
+    ['۱۲ میلیون دادیم بابت بیمه یکساله و ۲ میلیون ناهار', [['بیمه', 12, 'prepaid-expense'], ['خوراک', null, 'period-expense']]],
+  ]) {
+    rows = parsedRows(text);
+    items = voice(text).items;
+    assert.deepEqual(rows.map((row, index) => [row.category, row.period, items[index].decision?.treatment]), expected, text);
+  }
+
+  // ۶. دو خدمت دوره‌دار، هر کدام دورهٔ خودش.
+  rows = parsedRows('اجاره ۶ ماهه دفتر ۳۰ میلیون دادیم و بیمه یکساله انبار ۱۲ میلیون هم دادیم');
+  assert.deepEqual(rows.map((row) => [row.category, row.period]), [['اجاره', 6], ['بیمه', 12]]);
+});
+
+test('ردیف‌های یک جمله: دستهٔ هر نرخ، نشانهٔ پیش‌پرداخت و طرف حسابِ هر بند', () => {
+  assert.deepEqual(parsedRows('حقوق ماهیانه ۱۰ میلیون و اجاره ماهیانه ۵ میلیون دادیم').map((row) => row.category), ['حقوق و دستمزد', 'اجاره']);
+  assert.deepEqual(parsedRows('اجاره ۲ میلیون و شارژ ۱ میلیون دادیم').map((row) => row.category), ['اجاره', 'قبوض']);
+  assert.deepEqual(parsedRows('اجاره ۵ میلیون شارژ ۱ میلیون دادیم').map((row) => row.category), ['اجاره', 'قبوض']);
+  assert.deepEqual(parsedRows('پیش پرداخت بیمه یکساله ۱۲ میلیون دادیم و ناهار پرسنل ۲ میلیون').map((row) => row.prepayment), [true, false]);
+  assert.deepEqual(parsedRows('۵۰ میلیون از آقای رضایی گرفتیم و ۳۰ میلیون به آقای کریمی دادیم').map((row) => row.contact), ['رضایی', 'کریمی']);
+  // تاریخ و نام بانک در جملهٔ چندپرداختی دوره را از بین نمی‌برند.
+  assert.deepEqual(parsedRows('بیمه از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶ ۲۴ میلیون دادیم و ناهار پرسنل ۲ میلیون').map((row) => [row.amount, row.period]), [[24_000_000, 12], [2_000_000, null]]);
+});
+
+test('منفی: جملهٔ یک‌پرداختی دوره و شاهدِ کل جمله را نگه می‌دارد', () => {
+  const [row] = parsedRows('اجاره شش ماهه دفتر ۳۰ میلیون دادیم');
+  assert.equal(row.period, 6);
+  assert.equal(row.rawText, 'اجاره شش ماهه دفتر ۳۰ میلیون دادیم');
+  assert.deepEqual(parsedRows('برای شش ماه آینده اجاره دفتر ۳۰ میلیون دادیم').map((row) => row.period), [6]);
+});
+
+// ---------------------------------------------------------------------------
+// category-rules-prepaid-account — کلید پیش‌پرداخت و هزینهٔ ماهانه همان دسته است
+// ---------------------------------------------------------------------------
+
+test('کلید پیش‌پرداخت: کرایهٔ ملک اجاره است، بیمهٔ انبار بیمه، آنتی‌ویروس اشتراک', () => {
+  for (const [text, category] of [
+    ['کرایه مغازه شش ماه جلوتر ۶۰ میلیون دادیم', 'اجاره'],
+    ['کرایه دفتر یک ساله ۱۲۰ میلیون پرداخت کردیم', 'اجاره'],
+    ['کرایه سوله ۶ ماهه ۹۰ میلیون واریز کردیم', 'اجاره'],
+    ['کرایه انبار سه ماه آینده رو ۳۰ میلیون دادیم', 'اجاره'],
+    ['بیمه یک ساله انبار رو ۱۲ میلیون دادیم، ماهی یک میلیون', 'بیمه'],
+    ['بیمه یکساله انبار رو دوازده میلیون دادیم', 'بیمه'],
+    ['بیمع انبار یک ساله دوازده میلیون دادیم', 'بیمه'],
+    ['آنتی ویروس دو ساله ۸ میلیون خریدیم', 'نرم‌افزار و اشتراک'],
+    ['انتی ویروس یکساله ۴ میلیون دادیم', 'نرم‌افزار و اشتراک'],
+    ['اجاره شش ماهه انبار رو ۳۰ میلیون دادیم', 'اجاره'],
+    ['بیمه یک ساله کالاهای انبار رو ۱۲ میلیون دادیم', 'بیمه'],
+    ['بیمه یک ساله انبار ۱۲ میلیون دادیم', 'بیمه'],
+    ['اجاره شش ماه انبار رو جلوتر دادیم ۳۰ میلیون', 'اجاره'],
+    ['بیمه‌ی انبار یک ساله ۱۲ میلیون دادیم', 'بیمه'],
+    ['بیمه موجودی انبار یک ساله ۱۲ میلیون دادیم', 'بیمه'],
+    ['بيمه يكساله انبار ۱۲ ميليون دادیم', 'بیمه'],
+  ]) {
+    const items = voice(text).items;
+    assert.equal(items.length, 1, text);
+    assert.equal(items[0].category, category, text);
+    assert.equal(items[0].decision.treatment, 'prepaid-expense', text);
+    if (items[0].outcome === 'post') {
+      const prepaid = items[0].plan.lines.find((line) => line.role === ROLES.PREPAID_ASSET);
+      assert.equal(prepaid.key, category, text);
+    }
+  }
+  // دورهٔ داخل همان ماه: هزینهٔ اجاره، نه حمل‌ونقل.
+  const [month] = voice('کرایه دفتر مهر ۱۰ میلیون دادیم').items;
+  assert.equal(month.category, 'اجاره');
+  assert.equal(month.plan.lines.find((line) => line.role === ROLES.EXPENSE_CATEGORY).key, 'اجاره');
+});
+
+test('منفی: کرایهٔ تاکسی و حمل و خرید کالا برای انبار دستهٔ خودشان را نگه می‌دارند', () => {
+  for (const [text, category] of [
+    ['کرایه تاکسی ۲۰۰ هزار دادیم', 'حمل‌ونقل'],
+    ['کرایه حمل بار ۵ میلیون دادیم', 'حمل‌ونقل'],
+    ['کرایه تاکسی تا دفتر ۲۰۰ هزار دادیم', 'حمل‌ونقل'],
+    ['خرید کالا برای انبار ۵۰ میلیون', 'مواد و کالا'],
+    ['کالا رو به انبار بردیم ۵ میلیون دادیم', 'مواد و کالا'],
+  ]) {
+    assert.equal(parse(text)[0].category, category, text);
+  }
+  // «و» زنجیرهٔ اضافه را می‌شکند: کالای بعد از «و» مفعول بیمه نیست.
+  assert.equal(classifyCategory('بیمه رو دادیم و خرید کالا', 'expense').category, 'مواد و کالا');
+});
+
+test('دستهٔ مساوی میان خدمتِ دوره‌دار و دستهٔ دیگر حدس زده نمی‌شود', () => {
+  const [item] = voice('اجاره و شارژ ۱۰ میلیون دادیم').items;
+  assert.equal(item.outcome, 'accountant');
+  assert.match(item.reason, /دسته روشن نیست/);
 });
