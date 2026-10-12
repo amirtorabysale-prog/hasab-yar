@@ -347,6 +347,21 @@ function relativeSpan(text, reference) {
 }
 
 /**
+ * دوره‌ای که از ماهِ پرداخت جلوتر می‌رود — یعنی دست‌کم بخشی از پول پیش‌پرداخت
+ * است. شروعِ تنها (پایان هنوز پرسیده نشده) هم همین است.
+ *
+ * «اجارهٔ همین ماه» یا «بدهی اجاره شهریور» دوره دارند ولی چیزی را جلو نمی‌برند:
+ * «تسویه»ی آن‌ها بستن همان بدهی یا هزینهٔ همین ماه است، نه پیش‌پرداخت.
+ */
+export function runsPastMonth(period, occurredAt) {
+  if (!period) return false;
+  if (!period.end) return true;
+  const end = todayPersian(new Date(period.end));
+  const paid = todayPersian(new Date(occurredAt));
+  return (end.year * 12) + end.month > (paid.year * 12) + paid.month;
+}
+
+/**
  * `answer: true` یعنی متن جواب سؤال دوره است، نه یک جملهٔ مالی: خودِ سؤال
  * زمینهٔ پوشش است، پس «از اول مهر» و «شش ماه» بی‌نام خدمت هم دوره‌اند.
  *

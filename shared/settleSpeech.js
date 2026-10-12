@@ -1,5 +1,5 @@
 import { normalizePersian } from './normalize.js';
-import { readServicePeriod } from './periodSpeech.js';
+import { readServicePeriod, runsPastMonth } from './periodSpeech.js';
 import { isChequeEndorsement } from './voiceIntent.js';
 import { extractOccurrenceDate } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
@@ -124,7 +124,9 @@ export function detectSettleIntent(input, { now = new Date() } = {}) {
   // «پونزده میلیون شارژ ساختمان رو برای شش ماه جلوتر تسویه کردم» یعنی پرداخت
   // کردم — پیش‌پرداخت شش‌ماهه، نه بستن بدهی. کارت تسویه اینجا سندی برای انتخاب
   // ندارد و رویداد درست هیچ‌وقت ساخته نمی‌شد.
-  if (readServicePeriod(input, { occurredAt: now.toISOString() })) return null;
+  // فقط پوششی که از ماه پرداخت جلوتر می‌رود؛ «بدهی اجاره ماه قبل رو تسویه کردیم»
+  // بستن همان بدهی است و کارت تسویه سندش را می‌پرسد.
+  if (runsPastMonth(readServicePeriod(input, { occurredAt: now.toISOString() }), now.toISOString())) return null;
   // چک ابزار تسویه است، نه نقد. «برای تسویهٔ طلب ما چک شخص ثالث واگذار کرد»
   // با کارت تسویه به‌صورت وصول نقدی بسته می‌شد؛ کارت چک همان را با پرسش
   // «بابت طلب قبلی؟» درست ثبت می‌کند. پشت‌نویسی چک مشتری هم هیچ‌کدام نیست.
