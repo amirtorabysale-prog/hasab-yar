@@ -5,6 +5,7 @@ import { buildWorkbook } from '../spreadsheet.js';
 import { importAnalyticRows, ledgerAccountForChart, prepareOpeningBalanceRows } from '../ledgerImport.js';
 import { attachMissingCounterpartyAnalytics, nextLedgerCode, postImportedOpeningBalances } from '../accounting.js';
 import { normalizeAmountUnit } from '../transferTemplates.js';
+import { unscheduledTimingBalances } from '../financialEventStore.js';
 
 // ---------------------------------------------------------------------------
 // فاز ۲ — کدینگ دفتر، تفصیلی شناور و مرکز هزینه (روی دیتابیس دفتر فعال)
@@ -146,10 +147,14 @@ export function importOpeningBalanceFile(buffer, fileName = '', { amountUnit = '
       fileName, amountUnit: prepared.amountUnit, lineCount: posted.lineCount,
       debitTotal: prepared.debitTotal, replacedEntryId: posted.replacedEntryId,
     });
+    // ماندهٔ افتتاحیهٔ پیش‌پرداخت یا درآمد انتقالی برنامه ندارد؛ سؤال دوره‌اش همین‌جا
+    // برمی‌گردد و در صف حسابدار می‌ماند تا جواب بگیرد.
+    const unscheduled = unscheduledTimingBalances(database);
     return {
       entryId: posted.id, lineCount: posted.lineCount, replacedEntryId: posted.replacedEntryId,
       debitTotal: prepared.debitTotal, creditTotal: prepared.creditTotal, amountUnit: prepared.amountUnit,
       mapping: chartMappingOverview(database),
+      ...(unscheduled.length ? { unscheduledTimingBalances: unscheduled } : {}),
     };
   } catch (error) { database.exec('ROLLBACK'); throw error; }
 }

@@ -205,7 +205,8 @@ export function readCoverageAnswers(answers = [], { occurredAt = null, start = n
   let to = null;
   let months = null;
   for (const answer of answers) {
-    const text = normalizePersian(String(answer?.text || '')).trim();
+    // پرانتز و گیومهٔ شرح سند («(مهر تا اسفند ۱۴۰۵)») مرز واژه را نمی‌شکند.
+    const text = normalizePersian(String(answer?.text || '')).replace(/[()«»"\[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text) continue;
     const side = answer.side || 'any';
     const duration = DURATION.exec(text);

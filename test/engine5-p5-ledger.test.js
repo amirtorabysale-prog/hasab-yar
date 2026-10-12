@@ -1140,3 +1140,159 @@ test('منفی: استرداد روی حساب پیش‌پرداختی که قر
       { code: 'REVIEW_DETAILS_REQUIRED', message: /کافی نیست/ });
   });
 });
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «ماندهٔ دفتر کل بی‌سند»: پیش‌پرداخت یا درآمد انتقالی‌ای که از
+// افتتاحیه، سند دستی دسته‌ای یا سند اصلاحی آمده و رویدادی پشتش نیست. دفتر کل
+// باید آن را ببیند و دوره‌اش را بپرسد؛ با جواب حسابدار برنامه می‌گیرد و هیچ
+// سند نقدی تازه‌ای نمی‌خورد. دوره حدس زده نمی‌شود.
+// ---------------------------------------------------------------------------
+
+const OPENING_AT = '2026-09-22T20:30:00.000Z'; // ۱ مهر ۱۴۰۵
+const OPENING_CSV = [
+  'کد حساب,نام حساب,بدهکار,بستانکار,کد تفصیلی',
+  '1101,صندوق,۲۰۰۰۰۰۰۰,,',
+  '1401,پيش‌پرداخت بيمه يكساله (مهر ۱۴۰۵ تا شهريور ۱۴۰۶),۱۲۰۰۰۰۰۰,,',
+  '3105,درآمد انتقالی اجاره ۶ ماهه,,۶۰۰۰۰۰۰,',
+  '5101,سرمایه,,۲۶۰۰۰۰۰۰,',
+].join('\n');
+const chartLedger = (code) => sql().prepare('SELECT la.id FROM ledger_accounts la JOIN chart_accounts ca ON ca.id=la.chart_account_id WHERE ca.code=? LIMIT 1').get(code)?.id;
+const approveJournal = (id) => { database.submitJournalApproval(id, 'submitted'); database.submitJournalApproval(id, 'approved'); };
+
+test('ماندهٔ افتتاحیهٔ پیش‌پرداخت و درآمد انتقالی (ارقام فارسی، ي و ك): پرسیده می‌شود، چیزی ثبت نمی‌شود', async () => {
+  const { inBook } = await freshBook('مانده — افتتاحیه');
+  await inBook(() => {
+    const opening = database.importOpeningBalanceFile(Buffer.from(OPENING_CSV, 'utf8'), 'opening.csv', { amountUnit: 'toman', occurredAt: OPENING_AT });
+    const flagged = opening.unscheduledTimingBalances;
+    assert.deepEqual(flagged.map((item) => [item.chartCode, item.kind, item.residual]), [['1401', 'prepaid', 12_000_000], ['3105', 'deferred', 6_000_000]]);
+    const [insurance] = flagged[0].entries;
+    assert.deepEqual(insurance.suggestedCoverage, { start: '2026-09-23T08:30:00.000Z', end: '2027-09-22T08:30:00.000Z' }, 'مهر ۱۴۰۵ تا شهریور ۱۴۰۶، از شرح خودِ ردیف');
+    assert.equal(insurance.suggestedCategory, 'بیمه');
+    assert.match(flagged[0].question, /دورهٔ پوشش/);
+    assert.deepEqual(database.reviewQueue().unscheduledBalances.map((item) => item.chartCode), ['1401', '3105']);
+    const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+    assert.deepEqual(database.runRecognition(), { posted: 0, blocked: 0, skipped: 0, unscheduled: 2 });
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals, 'پرسیدن سند نمی‌زند');
+  });
+});
+
+test('جواب حسابدار به ماندهٔ افتتاحیه: برنامه بی سند نقدی تازه، و پیش‌پرداخت و درآمد انتقالی در پایان دوره صفر', async () => {
+  const { inBook } = await freshBook('مانده — جواب افتتاحیه');
+  await inBook(() => {
+    database.importOpeningBalanceFile(Buffer.from(OPENING_CSV, 'utf8'), 'opening.csv', { amountUnit: 'toman', occurredAt: OPENING_AT });
+    const [prepaid, deferred] = database.unscheduledBalances().items;
+    const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+    const insurance = database.scheduleBalance(prepaid.accountId, { coverageText: prepaid.entries[0].description, category: 'بیمه', reason: 'بیمهٔ یک‌سالهٔ انبار طبق بیمه‌نامه' });
+    assert.equal(insurance.items.length, 12);
+    const rent = database.scheduleBalance(deferred.accountId, { coverageText: 'از اول مهر ۱۴۰۵ به مدت ۶ ماه', category: 'درآمد اجاره' });
+    assert.equal(rent.items.length, 6);
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals, 'هیچ سند نقدی یا دارایی تازه‌ای');
+    assert.deepEqual(database.unscheduledBalances().items, []);
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(chartLedger('1401')), 0);
+    assert.equal(ledgerOf(chartLedger('3105')), 0);
+    assert.equal(byType('expense'), 12_000_000);
+    assert.equal(byType('income'), -6_000_000);
+  });
+});
+
+test('سند دستی دسته‌ای و سند اصلاحی روی پیش‌پرداخت‌ها: هر سند جدا دوره می‌گیرد و حساب کلی صفر می‌شود', async () => {
+  const { inBook } = await freshBook('مانده — سند دستی');
+  await inBook(() => {
+    database.importOpeningBalanceFile(Buffer.from(OPENING_CSV, 'utf8'), 'opening.csv', { amountUnit: 'toman', occurredAt: OPENING_AT });
+    const prepaidId = chartLedger('1401');
+    const cashId = chartLedger('1101');
+    const batch = database.createJournalDocuments([{ occurredAt: NOW, memo: 'پیش‌پرداخت اجاره ۶ ماهه دفتر (مهر تا اسفند ۱۴۰۵)',
+      lines: [{ accountId: prepaidId, debit: 30_000_000 }, { accountId: cashId, credit: 30_000_000 }] }]);
+    approveJournal(batch.entryIds[0]);
+    assert.deepEqual(database.unscheduledBalancesForEntry(batch.entryIds[0]).map((item) => item.residual), [42_000_000], 'پاسخ تأیید سند همان سؤال را دارد');
+    const adjustment = accounting.createAdjustingJournal(sql(), { occurredAt: '2026-10-10T09:00:00.000Z', memo: 'اشتراک یک ساله نرم افزار از 1405/07/18',
+      lines: [{ accountId: prepaidId, debit: 24_000_000 }, { accountId: cashId, credit: 24_000_000 }] }, { createdBy: owner.id });
+    approveJournal(adjustment.id);
+    const [open] = database.unscheduledBalances().items.filter((item) => item.accountId === prepaidId);
+    assert.equal(open.residual, 66_000_000);
+    assert.deepEqual(open.entries.map((entry) => entry.amount), [12_000_000, 30_000_000, 24_000_000]);
+    assert.deepEqual(open.entries[1].suggestedCoverage, { start: '2026-09-23T08:30:00.000Z', end: '2027-03-20T08:30:00.000Z' }, 'مهر تا اسفند ۱۴۰۵');
+    for (const [entry, category] of open.entries.map((entry, index) => [entry, ['بیمه', 'اجاره', 'نرم‌افزار و اشتراک'][index]])) {
+      const coverage = entry.suggestedCoverage;
+      assert.ok(coverage, entry.memo);
+      database.scheduleBalance(prepaidId, { entryId: entry.entryId, amount: entry.amount, start: coverage.start, end: coverage.end, category });
+    }
+    assert.deepEqual(database.unscheduledBalances().items.filter((item) => item.accountId === prepaidId), []);
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(prepaidId), 0);
+    assert.equal(byType('expense'), 66_000_000);
+  });
+});
+
+test('ماندهٔ بی‌دوره: بی‌جواب برنامه ساخته نمی‌شود — دوره و برای حساب کلی دسته پرسیده می‌شود', async () => {
+  const { inBook } = await freshBook('مانده — بی‌دوره');
+  await inBook(() => {
+    const prepaidId = chartLedger('1401');
+    const batch = database.createJournalDocuments([{ occurredAt: NOW, memo: 'پیش‌پرداخت',
+      lines: [{ accountId: prepaidId, debit: 9_000_000 }, { accountId: chartLedger('1101'), credit: 9_000_000 }] }]);
+    approveJournal(batch.entryIds[0]);
+    const [open] = database.unscheduledBalances().items;
+    assert.equal(open.entries[0].suggestedCoverage, null, 'شرح دوره ندارد؛ پیشنهادی ساخته نمی‌شود');
+    assert.throws(() => database.scheduleBalance(prepaidId, { category: 'بیمه' }), (error) => error.code === 'REVIEW_DETAILS_REQUIRED' && error.question.id === 'coverage.start');
+    assert.throws(() => database.scheduleBalance(prepaidId, { coverageText: '۱۲ ماه', category: 'بیمه' }), { code: 'REVIEW_DETAILS_REQUIRED' });
+    assert.throws(() => database.scheduleBalance(prepaidId, { coverageText: 'از اول آبان ۱۴۰۵ به مدت ۳ ماه' }), (error) => error.question?.id === 'balance.category');
+    assert.throws(() => database.scheduleBalance(prepaidId, { coverageText: 'از اول آبان ۱۴۰۵ به مدت ۳ ماه', category: 'بیمه', amount: 10_000_000 }), { code: 'TIMING_BALANCE_INVALID' });
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM recognition_schedule_items').get().n, 0);
+  });
+});
+
+test('پوششِ مانده که پیش از تاریخ مانده شروع شده: ماه‌های گذشته همان تاریخ مانده جبران می‌شوند، نه پیش از آن', async () => {
+  const { inBook } = await freshBook('مانده — پوشش گذشته');
+  await inBook(() => {
+    const csv = ['کد حساب,نام حساب,بدهکار,بستانکار,کد تفصیلی', '1101,صندوق,10000000,,', '1401,بیمه انبار (فروردین 1405 تا اسفند 1405),12000000,,', '5101,سرمایه,,22000000,'].join('\n');
+    database.importOpeningBalanceFile(Buffer.from(csv, 'utf8'), 'opening.csv', { amountUnit: 'toman', occurredAt: OPENING_AT });
+    const [open] = database.unscheduledBalances().items;
+    const { items: schedule } = database.scheduleBalance(open.accountId, { coverageText: open.entries[0].description, category: 'بیمه' });
+    assert.equal(schedule.length, 12);
+    assert.ok(schedule.every((item) => item.recognitionDate >= OPENING_AT), 'هیچ قلمی پیش از تاریخ مانده');
+    assert.equal(schedule.filter((item) => item.recognitionDate === OPENING_AT).length, 6, 'فروردین تا شهریور همان روز؛ مهر اول خودش');
+    assert.equal(run(NOW).posted, 7);
+    assert.equal(ledgerOf(open.accountId), 5_000_000);
+  });
+});
+
+test('برگشت برنامهٔ مانده: فقط برنامه برمی‌گردد، سند افتتاحیه دست نمی‌خورد و سؤال دوباره باز می‌شود', async () => {
+  const { inBook } = await freshBook('مانده — برگشت');
+  await inBook(() => {
+    database.importOpeningBalanceFile(Buffer.from(OPENING_CSV, 'utf8'), 'opening.csv', { amountUnit: 'toman', occurredAt: OPENING_AT });
+    const [prepaid] = database.unscheduledBalances().items;
+    const { eventId } = database.scheduleBalance(prepaid.accountId, { coverageText: prepaid.entries[0].description, category: 'بیمه' });
+    run(AZAR);
+    const opening = sql().prepare("SELECT COUNT(*) n FROM journal_entries WHERE source_type<>'recognition-schedule'").get().n;
+    database.reverseEvent(eventId, 'دورهٔ بیمه اشتباه وارد شده بود');
+    assert.equal(sql().prepare("SELECT COUNT(*) n FROM journal_entries WHERE source_type<>'recognition-schedule' AND reverses_entry_id IS NULL").get().n, opening, 'سند مبنا معکوس نشد');
+    assert.equal(ledgerOf(prepaid.accountId), 12_000_000, 'هزینهٔ شناسایی‌شده برگشت');
+    assert.deepEqual(database.unscheduledBalances().items.find((item) => item.accountId === prepaid.accountId)?.residual, 12_000_000);
+  });
+});
+
+test('منفی: ماندهٔ رویدادِ برنامه‌دار، و پیش‌پرداخت خرید کالا، ماندهٔ بی‌برنامه شمرده نمی‌شوند', async () => {
+  const { inBook } = await freshBook('مانده — منفی');
+  await inBook(async () => {
+    capture('بیمه یک ساله انبار ۱۲ میلیون از حساب تجارت دادیم');
+    run(AZAR);
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    const supplier = database.saveContact({ name: 'کارخانه فولاد مبارکه' });
+    const advance = resolveEventRole(sql(), 'supplier-advance', 'کارخانه فولاد مبارکه', { counterpartyId: supplier.id });
+    const batch = database.createJournalDocuments([{ occurredAt: NOW, memo: 'پیش پرداخت خرید ورق، بار نرسیده',
+      lines: [{ accountId: advance, debit: 50_000_000 }, { accountId: chartLedger('1101'), credit: 50_000_000 }] }]);
+    approveJournal(batch.entryIds[0]);
+    assert.deepEqual(database.unscheduledBalances().items, []);
+    assert.equal(database.runRecognition().unscheduled, undefined);
+  });
+});
+
+test('بستن دوره و تأیید سند دستی، ماندهٔ بی‌برنامه را برمی‌گردانند', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  const lockRoute = source.slice(source.indexOf("app.post('/api/accounting/periods/:period/lock'"), source.indexOf("app.post('/api/accounting/periods/:period/reopen'"));
+  assert.match(lockRoute, /unscheduledTimingBalances: unscheduled/);
+  const approval = source.slice(source.indexOf("app.post('/api/accounting/journal/:id/approval'"), source.indexOf("app.get('/api/accounting/templates'"));
+  assert.match(approval, /unscheduledBalancesForEntry\(request\.params\.id\)/);
+});

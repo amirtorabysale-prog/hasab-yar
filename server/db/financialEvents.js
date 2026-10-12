@@ -10,7 +10,7 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
@@ -63,7 +63,10 @@ export function reviewQueue(options = {}) {
   const blockedRecognition=listBlockedRecognition(database,{timeZone:currentTimeZone()});
   // اقلامی که ماندهٔ حساب دوره‌دارشان کمتر از قلم بود (استرداد بیرون از برنامه).
   const heldRecognition=listHeldRecognition(database);
-  return {items,blockedRecognition,heldRecognition,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
+  // ماندهٔ پیش‌پرداخت یا درآمد انتقالی بی‌برنامه (افتتاحیه، سند دستی، سند اصلاحی):
+  // سؤال دوره برای حسابدار، نه دارایی یا بدهی ابدی.
+  const unscheduledBalances=unscheduledTimingBalances(database);
+  return {items,blockedRecognition,heldRecognition,unscheduledBalances,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
 }
 
 function actorName(id) {return id ? controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id)?.display_name || controlDb.prepare('SELECT username FROM users WHERE id=?').get(id)?.username || id : null;}
@@ -359,11 +362,42 @@ export function answerEvent(eventId, { fact, value, freeText = '' } = {}) {
  * ثبت‌شده سند می‌خورد، تکرار اجرا سند دوم نمی‌سازد و دورهٔ بسته باز نمی‌شود.
  */
 export function runRecognition() {
-  const result = postDueRecognitionItems(activeWorkspaceDatabase(), {
+  const database = activeWorkspaceDatabase();
+  const result = postDueRecognitionItems(database, {
     actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
   });
   if (result.posted) audit('recognize', 'recognition-schedule', 'due', result);
+  // هر اجرا ماندهٔ دوره‌دارِ بی‌برنامه را هم می‌شمارد تا کسی که دکمه را زده
+  // بداند چیزی بیرون از برنامه مانده است.
+  const unscheduled = unscheduledTimingBalances(database).length;
+  return unscheduled ? { ...result, unscheduled } : result;
+}
+
+/** ماندهٔ پیش‌پرداخت و درآمد انتقالی که برنامهٔ شناسایی ندارد. */
+export function unscheduledBalances() {
+  return { items: unscheduledTimingBalances(activeWorkspaceDatabase()) };
+}
+
+/**
+ * جواب حسابدار به ماندهٔ بی‌برنامه: دورهٔ پوشش، دسته و (برای حساب کلی) مبلغ.
+ * سندی نمی‌زند؛ فقط برنامهٔ همان مانده را می‌سازد.
+ */
+export function scheduleBalance(accountId, input = {}) {
+  const result = scheduleTimingBalance(activeWorkspaceDatabase(), accountId, {
+    amount: input.amount ?? null, start: input.start || null, end: input.end || null, coverageText: String(input.coverageText || '').slice(0, 300),
+    category: String(input.category || '').slice(0, 120), counterparty: String(input.counterparty || '').slice(0, 120), counterpartyId: input.counterpartyId || null,
+    entryId: input.entryId || null, reason: String(input.reason || '').slice(0, 500),
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  });
+  audit('schedule-balance', 'ledger-account', String(accountId), { eventId: result.eventId, amount: result.amount, coverage: result.coverage });
   return result;
+}
+
+/** همان فهرست، فقط برای حساب‌هایی که یک سند لمس کرده — پاسخ تأیید سند دستی. */
+export function unscheduledBalancesForEntry(entryId) {
+  const database = activeWorkspaceDatabase();
+  const touched = new Set(database.prepare('SELECT account_id AS id FROM journal_lines WHERE entry_id=?').all(String(entryId || '')).map((row) => row.id));
+  return unscheduledTimingBalances(database).filter((item) => touched.has(item.accountId));
 }
 
 /** اقلام شناسایی‌ای که دورهٔ بسته جلویشان را گرفته (تصمیم ۳ فاز صفر). */

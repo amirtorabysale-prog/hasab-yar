@@ -12,7 +12,7 @@ import {
   correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry,
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -492,7 +492,14 @@ app.get('/api/accounting/journal/worklist', (request, response, next) => {
   try { return response.json(journalWorklistOverview(request.query)); } catch (error) { return next(error); }
 });
 app.post('/api/accounting/journal/:id/approval', (request, response, next) => {
-  try { return response.json(submitJournalApproval(request.params.id, request.body?.state, request.body?.reason || '')); }
+  try {
+    const result = submitJournalApproval(request.params.id, request.body?.state, request.body?.reason || '');
+    // سند دستیِ تأییدشده‌ای که پیش‌پرداخت یا درآمد انتقالی ساخت و برنامه ندارد،
+    // همین‌جا سؤال دوره را برمی‌گرداند — نه یک سال بعد در تراز.
+    if (result?.to !== 'approved') return response.json(result);
+    const unscheduled = unscheduledBalancesForEntry(request.params.id);
+    return response.json(unscheduled.length ? { ...result, unscheduledTimingBalances: unscheduled } : result);
+  }
   catch (error) { return next(error); }
 });
 app.get('/api/accounting/templates', (_request, response, next) => {
@@ -513,7 +520,10 @@ app.post('/api/accounting/periods/:period/lock', (request, response, next) => {
     runRecognition();
     const item = lockAccountingPeriod(activeWorkspaceDatabase(), request.params.period, request.user.id);
     recordAudit('lock', 'accounting_period', request.params.period, {});
-    return response.json({ item });
+    // ماندهٔ دوره‌دارِ بی‌برنامه بستن را رد نمی‌کند — دوره‌اش معلوم نیست که بگوییم
+    // در این ماه سهمی داشت — ولی بی‌صدا هم نمی‌ماند.
+    const unscheduled = unscheduledBalances().items;
+    return response.json(unscheduled.length ? { item, unscheduledTimingBalances: unscheduled } : { item });
   } catch (error) { return next(error); }
 });
 app.post('/api/accounting/periods/:period/reopen', (request, response, next) => {
@@ -732,6 +742,13 @@ app.get('/api/financial-events/blocked-recognition', (_request, response, next) 
 });
 app.post('/api/financial-events/recognition-items/:key/catch-up', (request, response, next) => {
   try { return response.status(201).json(catchUpRecognition(request.params.key, String(request.body?.reason || '').slice(0, 500))); } catch (error) { return next(error); }
+});
+// ماندهٔ پیش‌پرداخت و درآمد انتقالیِ بی‌برنامه، و جواب حسابدار به سؤال دوره‌اش.
+app.get('/api/financial-events/unscheduled-balances', (_request, response, next) => {
+  try { return response.json(unscheduledBalances()); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/unscheduled-balances/:accountId/schedule', (request, response, next) => {
+  try { return response.status(201).json(scheduleBalance(request.params.accountId, request.body || {})); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/:id/decision', (request, response, next) => {
   try { return response.json(eventDecision(request.params.id)); } catch (error) { return next(error); }
