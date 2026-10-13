@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runVoice } from './helpers/voicePipeline.js';
-import { extractAmounts, parseFinancialText } from '../shared/parser.js';
+import { PAYER_PROMISE_MESSAGE, extractAmounts, parseFinancialText } from '../shared/parser.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { detectVoiceIntent } from '../shared/voiceIntent.js';
 import { validateUnderstanding } from '../shared/eventUnderstanding.js';
@@ -10,7 +10,8 @@ import { classifyCategory } from '../shared/categoryRules.js';
 import { detectBank, detectTransferBanks, mentionsMultipleBanks } from '../shared/banks.js';
 import { detectCaptureTransfer } from '../shared/bankSpeech.js';
 import { extractContactCandidate, extractContactName } from '../shared/counterpartySpeech.js';
-import { readContractRefund } from '../shared/refundSpeech.js';
+import { contractRefundDirection, readContractRefund } from '../shared/refundSpeech.js';
+import { transactionEventDecision } from '../shared/transactionEvent.js';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
@@ -686,6 +687,83 @@ test('منفی: ودیعهٔ قابل استرداد، شرط آیندهٔ «پ�
 });
 
 // ---------------------------------------------------------------------------
+// بازبینی: «گرفتیم»ِ تنها خرید است، نه دریافت
+// ---------------------------------------------------------------------------
+
+const PAID_CASH = (item) => (item.plan?.lines || []).some((line) => line.role === ROLES.CASH && line.debit);
+
+test('منفی: «… گرفتیم»ِ بی پرداخت‌کننده خرید است؛ پشتیبانی یکسالهٔ خریده پیش‌دریافت نمی‌شود', () => {
+  for (const text of [
+    'مشاوره گرفتیم ۳ میلیون',
+    'پشتیبانی یکساله سرور گرفتیم ۱۲ میلیون',
+    'قرارداد پشتیبانی یکساله گرفتیم ۲۴ میلیون',
+    'دو تا صندلی گرفتیم ۵ میلیون',
+    'پیتزا گرفتیم ۸۰۰ هزار',
+    'بلیط هواپیما گرفتیم ۶ میلیون',
+    'یه اتاق هتل گرفتیم ۳ میلیون',
+    'تخفیف گرفتیم ۲ میلیون',
+    'گواهی امضا گرفتیم ۲ میلیون',
+    'بنزین گرفتیم ۵۰۰ هزار',
+    'ناهار گرفتیم 2 میلیون',
+  ]) {
+    const [row] = parse(text);
+    assert.equal(row.type, 'expense', text);
+    for (const item of voice(text).items) {
+      assert.notEqual(item.kind, 'cash-income', text);
+      assert.equal(PAID_CASH(item), false, text);
+      assert.notEqual(item.decision?.treatment, 'deferred-revenue', text);
+    }
+  }
+  // «پشتیبانی/سرویس گرفتیم» بی‌قرینه: هیچ‌کدام بی‌پرسش دریافت نقدی ثبت نمی‌شود.
+  for (const text of ['پشتیبانی گرفتیم ۵ میلیون', 'سرویس کولر گرفتیم ۲ میلیون']) {
+    const [item] = voice(text).items;
+    assert.notEqual(item.outcome, 'post', text);
+  }
+  // «گرفتیم»ِ کنار پرداختِ ما سند پیش‌پرداخت را عوض نمی‌کند.
+  for (const [text, amount] of [
+    ['بیمه یکساله ۱۲ میلیون دادیم و بیمه نامه رو گرفتیم', 12_000_000],
+    ['اجاره یکساله ۱۲۰ میلیون رو دادیم و کلید رو گرفتیم', 120_000_000],
+  ]) {
+    const [item] = voice(text).items;
+    assert.equal(item.outcome, 'post', text);
+    assert.deepEqual(lines(item), [[ROLES.PREPAID_ASSET, amount], [ROLES.CASH, amount]], text);
+  }
+  // دریافت با پرداخت‌کننده یا قرض همچنان ورود است.
+  assert.equal(parse('اجاره مهر رو از مستاجر ۱۰ میلیون گرفتیم')[0].type, 'income');
+  assert.equal(parse('از نوری قرض گرفتیم ۱۰ میلیون')[0].type, 'income');
+});
+
+// ---------------------------------------------------------------------------
+// بازبینی: جهت هر ردیف از بند خودش، نه یک بار برای کل جمله
+// ---------------------------------------------------------------------------
+
+test('جملهٔ چندپرداختی: کارمزد، قبض و هزینهٔ حمل کنار دریافت از مشتری یا مستاجر خروج پول می‌مانند', () => {
+  for (const [text, expected] of [
+    ['مشتری ۱۰ میلیون واریز کرد و ۲ میلیون کارمزد کسر شد', [['income', 10_000_000], ['expense', 2_000_000]]],
+    ['مشتری ۲۰ میلیون واریز کرد، ۱ میلیون هم کارمزد بانک کم شد', [['income', 20_000_000], ['expense', 1_000_000]]],
+    ['از مستاجر ۱۰ میلیون اجاره گرفتیم و ۳ میلیون قبض آب و برق پرداخت شد', [['income', 10_000_000], ['expense', 3_000_000]]],
+    ['مستاجر ۱۰ میلیون اجاره واریز کرد و ۵۰۰ هزار کارمزد کسر شد', [['income', 10_000_000], ['expense', 500_000]]],
+    ['مشتری ۱۰ میلیون داد، ۲ میلیون خرج حمل شد', [['income', 10_000_000], ['expense', 2_000_000]]],
+    ['از مشتری ۵ میلیون گرفتیم، ۱ میلیون هزینه پیک شد', [['income', 5_000_000], ['expense', 1_000_000]]],
+    ['مستاجر ۱۰ میلیون اجاره داد و ۲ میلیون بابت تعمیر به لوله کش دادیم', [['income', 10_000_000], ['expense', 2_000_000]]],
+    ['مستأجر 10 میلیون اجاره واریز کرد و 500 هزار کارمزد کسر شد', [['income', 10_000_000], ['expense', 500_000]]],
+    ['آقای رضایی ۱۰ میلیون داد و ۲ میلیون به پیک دادیم', [['income', 10_000_000], ['expense', 2_000_000]]],
+    // فعلِ دریافتِ مشترک در آخر جمله همهٔ بندهای بی‌فعل را می‌گیرد.
+    ['مستاجر اجاره ۱۰ میلیون و شارژ ۲ میلیون واریز کرد', [['income', 10_000_000], ['income', 2_000_000]]],
+    ['مستاجر ۱۰ میلیون اجاره، ۲ میلیون شارژ و ۵۰۰ هزار قبض آب داد', [['income', 10_000_000], ['income', 2_000_000], ['income', 500_000]]],
+    ['از مستاجر ۱۰ میلیون اجاره و ۲ میلیون شارژ گرفتیم', [['income', 10_000_000], ['income', 2_000_000]]],
+  ]) {
+    assert.deepEqual(parse(text).map((row) => [row.type, row.amount]), expected, text);
+    const items = voice(text).items;
+    items.forEach((item, index) => {
+      // ردیف هزینه هرگز پول ورودی نمی‌سازد و ردیف دریافت هرگز Cr صندوق.
+      if (expected[index][0] === 'expense') assert.notEqual(item.kind, 'cash-income', text);
+      else assert.ok(!(item.plan?.lines || []).some((line) => line.role === ROLES.CASH && line.credit), text);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // بازبینی: «حساب/کارت شرکت <بانک>» حساب خودِ ماست
 // ---------------------------------------------------------------------------
 
@@ -715,6 +793,146 @@ test('«حساب/کارت شرکت ملت» بانکِ ماست؛ انتقال �
   for (const text of ['به بیمه پاسارگاد ۱۲ میلیون دادیم', 'به شرکت ملت ۵ میلیون دادیم', 'به حساب شرکت بیمه ملت ۵ میلیون دادیم']) {
     assert.equal(parse(text)[0].bankId, undefined, text);
   }
+});
+
+// ---------------------------------------------------------------------------
+// بازبینی: فسخ تنها جهت نمی‌سازد؛ فعل پرداختِ جمله برنده است
+// ---------------------------------------------------------------------------
+
+test('فسخ یا کنسلی کنار فعل پرداخت ما خروج پول می‌ماند و خسارتِ مستاجر ورود', () => {
+  for (const text of [
+    'جریمه فسخ قرارداد اجاره ۵ میلیون دادیم',
+    'هزینه کنسلی اشتراک ۵۰۰ هزار دادیم',
+    'بابت فسخ زودتر قرارداد اجاره ۱۰ میلیون خسارت به صاحبخونه دادیم',
+    'اجاره رو قبل از فسخ ۱۰ میلیون دادیم',
+  ]) {
+    assert.equal(contractRefundDirection(text), null, text);
+    const [row] = parse(text);
+    assert.equal(row.type, 'expense', text);
+    assert.notEqual(row.contactName, 'فسخ', text);
+    const [item] = voice(text).items;
+    assert.notEqual(item.kind, 'cash-income', text);
+  }
+  const damages = 'مستاجر قرارداد رو فسخ کرد و ۱۰ میلیون خسارت داد';
+  assert.equal(parse(damages)[0].type, 'income');
+  assert.notEqual(voice(damages).items[0].outcome, 'post');
+  // منفی: «لغو نکردیم» فسخ نیست و «رفت و برگشت» برگشت پول نیست.
+  for (const [text, kind] of [
+    ['بیمه رو لغو نکردیم و ۱۲ میلیون تمدیدش رو دادیم', 'cash-expense'],
+    ['کرایه ماشین رفت و برگشت شد ۲ میلیون', 'cash-expense'],
+    ['کرایه رفت‌وبرگشت تاکسی ۵۰۰ هزار دادیم', 'cash-expense'],
+  ]) {
+    assert.equal(readContractRefund(text), false, text);
+    assert.equal(voice(text).items[0].kind, kind, text);
+  }
+  assert.deepEqual(lines(voice('کرایه ماشین رفت و برگشت شد ۲ میلیون').items[0]), [[ROLES.EXPENSE_CATEGORY, 2_000_000], [ROLES.CASH, 2_000_000]]);
+});
+
+// ---------------------------------------------------------------------------
+// بازبینی: قضاوتِ حسابدار با موتور تصمیم خاموش هم به صف حسابدار می‌رود
+// ---------------------------------------------------------------------------
+
+const JUDGMENT_SENTENCES = [
+  'اشتراک ادوبی کنسل شد و ۸ میلیون ریفاند شد',
+  'مشتری اشتراک یکساله رو کنسل کرد ۶ میلیون بهش برگشت زدیم',
+  'بیمه فسخ شد ۶ میلیون برگشت داده شد',
+  'بیمه رو فسخ کردیم ۶ میلیون پول برگشت',
+  'بیمه آتش سوزی رو فسخ کردیم بیمه دی ۶ میلیون حق بیمه برگشت داد به حساب تجارت',
+  'رهن مغازه رو ۱۰۰ میلیون از مستاجر گرفتیم',
+  'اجاره یک ساله مغازه رو گرفتم ۶۰ میلیون',
+  'اجاره یکساله ۱۲۰ م دادیم',
+  'اجاره مهر مستاجر ۱۰ میلیون هنوز نداده',
+];
+
+test('ردیفِ نیازمند قضاوت، با موتور خاموش یا روشن، روی برگهٔ «امروز» نمی‌نشیند', () => {
+  for (const text of JUDGMENT_SENTENCES) {
+    const rows = parse(text);
+    assert.equal(rows.length, 1, text);
+    assert.ok(rows[0].needsJudgment, text);
+    for (const policy of [{}, { engineV2: false }, { engineV2: true }]) {
+      const { decision } = transactionEventDecision({ ...rows[0], accountId: 'cash', occurredAt: NOW, source: 'voice' }, { transcript: text, sentence: text, policy });
+      assert.equal(decision.route, 'accountant-review', `${text} ${JSON.stringify(policy)}`);
+      assert.equal(decision.reasons[0], rows[0].needsJudgment, text);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// بازبینی: پرداخت‌کننده‌ای که هنوز نداده یا فقط قول داده — هیچ ردیف نقدی
+// ---------------------------------------------------------------------------
+
+/** پولی جابه‌جا نشده: ردیفِ طلبِ پرداخت‌نشده با صف حسابدار، یا هیچ ردیفی. */
+function assertNoCashMoved(text) {
+  const result = parseFinancialText(text, { source: 'voice', now: new Date(NOW) });
+  for (const row of result.transactions) {
+    assert.equal(row.type, 'income', text);
+    assert.equal(row.unpaidSignal, true, text);
+  }
+  for (const item of voice(text).items) {
+    assert.equal(item.kind, 'receivable-opened', text);
+    assert.equal(item.outcome, 'accountant', text);
+  }
+  return result;
+}
+
+test('مستاجر یا مشتری هنوز نداده: طلبِ بی‌پول به حسابدار، نه هزینه یا پیش‌پرداخت با Cr صندوق', () => {
+  for (const text of [
+    'اجاره مهر مستاجر ۱۰ میلیون هنوز نداده',
+    'مستاجر هنوز اجاره مهر رو نداده ۱۰ میلیون',
+    'اجاره مهر رو از مستاجر هنوز نگرفتیم ۱۰ میلیون',
+    'مستاجرمون اجاره مهر ۱۰ میلیون رو هنوز واریز نکرده',
+    'مستأجر هنوز اجاره مهر رو نداده 10 میلیون',
+    'کارفرما ۵۰ میلیون پیش پرداخت قرارداد رو هنوز نداده',
+    'مشتری ۲۰ میلیون رو هنوز واریز نکرده',
+    'آقای رضایی هنوز ۵ میلیون رو نداده',
+    'اقای رضایی هنوز ۵ میلیون رو نداده',
+    'شرکت آریا هنوز ۲۰ میلیون رو واریز نکرده',
+    // کارِ تحویل‌شده با وعدهٔ پرداخت طلب است، نه نقد.
+    'پروژه رو تحویل دادیم کارفرما قراره ۲۰ میلیون واریز کنه',
+    'کار رو تموم کردیم، مشتری قراره ۱۵ میلیون بده',
+    'جنس رو به مشتری فروختیم ۱۰ میلیون قراره هفته بعد بده',
+  ]) {
+    assert.equal(assertNoCashMoved(text).transactions.length, 1, text);
+  }
+});
+
+test('وعدهٔ پرداختِ آینده هیچ ردیفی نمی‌سازد', () => {
+  for (const text of [
+    'مستاجر قراره ۶۰ میلیون اجاره شش ماه آینده رو واریز کنه',
+    'مشتری قراره ۲۴ میلیون اشتراک یکساله رو واریز کنه',
+    'مشتری هفته بعد ۱۰ میلیون میریزه',
+    'مستاجر گفت هفته بعد ۱۰ میلیون اجاره رو میده',
+    'آقای رضایی فردا ۵ میلیون میده',
+    'مشتری قراره فردا ۱۰ میلیون بریزه',
+  ]) {
+    const result = parseFinancialText(text, { source: 'voice', now: new Date(NOW) });
+    assert.equal(result.transactions.length, 0, text);
+    assert.ok(result.clarification, text);
+    assert.equal(voice(text).items.length, 0, text);
+  }
+});
+
+test('بند به بند: پول داده‌شده ورود، باقیِ نداده طلب؛ پرداخت ما و نداده‌های غیرپولی دست نمی‌خورند', () => {
+  for (const text of ['مستاجر ۱۰ میلیون داد ولی ۵ میلیون هنوز نداده', 'آقای رضایی ۱۰ میلیون داد ولی ۵ میلیون هنوز نداده']) {
+    const rows = parse(text);
+    assert.deepEqual(rows.map((row) => [row.type, row.amount, Boolean(row.unpaidSignal)]), [['income', 10_000_000, false], ['income', 5_000_000, true]], text);
+  }
+  const rest = parse('مستاجر ۱۰ میلیون داد، بقیه رو ماه بعد میده');
+  assert.deepEqual(rest.map((row) => [row.type, row.amount, Boolean(row.unpaidSignal)]), [['income', 10_000_000, false]]);
+  for (const [text, type] of [
+    ['به آقای رضایی ۵ میلیون دادیم ولی هنوز فاکتور نداده', 'expense'],
+    ['بیمه ۱۲ میلیون پرداخت شد ولی بیمه نامه رو هنوز نداده', 'expense'],
+    ['مستاجر ۱۰ میلیون اجاره رو داد ولی رسید رو تحویل نداده', 'income'],
+    ['اجاره مهر ۱۰ میلیون رو هنوز ندادیم', 'expense'],
+    ['قبض برق ۲ میلیون هنوز پرداخت نشده', 'expense'],
+  ]) {
+    const [row] = parse(text);
+    assert.equal(row.type, type, text);
+    assert.notEqual(row.needsJudgment, 'پرداخت‌کننده هنوز این پول را نداده است؛ ردیف نقدی ساخته نمی‌شود. اینکه طلب یا درآمد تعهدی شناسایی شود، با حسابدار است.', text);
+  }
+  // پولِ رسیده کنار وعدهٔ بقیه، وعده نیست.
+  assert.deepEqual(parse('مشتری ۱۰ میلیون واریز کرد، قراره هفته بعد هم بده').map((row) => [row.type, row.amount, Boolean(row.unpaidSignal)]), [['income', 10_000_000, false]]);
+  assert.notEqual(parseFinancialText('شصت میلیون فروش داشتیم، بیست نقد گرفتیم بقیه رو قراره هفته بعد بدن', { now: new Date(NOW) }).clarification, PAYER_PROMISE_MESSAGE);
 });
 
 // ---------------------------------------------------------------------------
@@ -759,11 +977,34 @@ test('دفتر: برگشت حق‌بیمه به صف حسابدار می‌رو�
     const rows = parseFinancialText(sentence, { source: 'voice', now: new Date(NOW) }).transactions;
     const [id] = database.insertTransactions({ transcript: sentence, transactions: rows.map((row) => ({ ...row, userConfirmed: true })) });
     const db = database.activeWorkspaceDatabase();
-    const event = db.prepare('SELECT status FROM financial_events WHERE source_event_id=?').get(`transaction:${id}`);
+    const event = db.prepare('SELECT status, route FROM financial_events WHERE source_event_id=?').get(`transaction:${id}`);
     assert.notEqual(event.status, 'posted');
+    assert.equal(event.route, 'accountant-review');
     const posted = db.prepare("SELECT COUNT(*) AS count FROM journal_entries WHERE source_type='transaction' AND source_id=?").get(id).count;
     assert.equal(posted, 0);
   });
+});
+
+test('دفتر: قضاوتِ حسابدار و طلبِ پرداخت‌نشده، با موتور خاموش و روشن، روی برگهٔ «امروز» نیستند', () => {
+  for (const engineV2 of [false, true]) {
+    const ledger = database.createWorkspace(owner.id, { name: `قضاوت ${engineV2 ? 'روشن' : 'خاموش'}`, profileType: 'business' });
+    database.runInWorkspace(ledger.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, () => {
+      database.installChartTemplate();
+      database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2 });
+      const db = database.activeWorkspaceDatabase();
+      for (const sentence of JUDGMENT_SENTENCES) {
+        const rows = parseFinancialText(sentence, { source: 'voice', now: new Date(NOW) }).transactions;
+        const [id] = database.insertTransactions({ transcript: sentence, transactions: rows });
+        const event = db.prepare('SELECT id, route, status, kind FROM financial_events WHERE source_event_id=?').get(`transaction:${id}`);
+        assert.equal(event.route, 'accountant-review', `${sentence} engineV2=${engineV2}`);
+        assert.notEqual(event.status, 'posted', sentence);
+        assert.ok(!database.pendingConfirmations(50).items.some((item) => item.id === event.id), sentence);
+        if (rows[0].unpaidSignal) assert.equal(event.kind, 'receivable-opened', sentence);
+      }
+      // هیچ‌کدام سندی نزده‌اند؛ صندوق دست‌نخورده است.
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM journal_entries WHERE source_type='transaction'").get().count, 0);
+    });
+  }
 });
 
 test.after(() => removeTempDatabase(process.env.DATABASE_PATH));

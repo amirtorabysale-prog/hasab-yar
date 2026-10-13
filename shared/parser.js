@@ -11,7 +11,7 @@ import { EVENT_NATURES, natureNeedsAccountant, readEventNature } from './eventNa
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
 import { withoutVatQualifiers } from './vatSpeech.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
-import { CONTRACT_REFUND_REASON, contractRefundDirection } from './refundSpeech.js';
+import { CONTRACT_REFUND_REASON, contractRefundDirection, readContractRefund } from './refundSpeech.js';
 import { readPettyCash } from './pettyCashSpeech.js';
 
 const DIGITS = {
@@ -43,17 +43,17 @@ const NUMBER_WORDS = new Set([...Object.keys(VALUES), ...Object.keys(FRACTIONS),
 // پول آمده به حساب خودِ واحد. آزمون استرس نشان داد این شکل‌های رایج جهت نداشتند
 // و «یه پولی اومده تو حساب ملی» یا «اداره دارایی… عودت داد» خروج پول ثبت
 // می‌شد — ردیف تراکنش هم با همان جهت غلط ماندهٔ بانک را جابه‌جا می‌کرد.
-const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'گرفتیم', 'فروختم', 'فروختیم', 'دخل', 'وصول', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد',
+const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', 'واریزی', 'گرفتم', 'فروختم', 'فروختیم', 'دخل', 'وصول', 'دستمزد گرفتم', 'به حسابم آمد', 'به حسابم اومد', 'مشتری کارت به کارت کرد',
   'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد',
   // «از نوری قرض گرفتیم» پول آمده است، نه رفته؛ «گرفتیم» در «گرفتم» نمی‌گنجد.
-  // «گرفتیم» خودش هم: «اجاره رو از مستاجر گرفتیم» با «اجاره»ِ هزینه‌ای تنها
-  // می‌ماند و پرداخت ثبت می‌شد. «بنزین گرفتیم» را برگرداندن نوع با دسته می‌گیرد.
+  // «گرفتیم»ِ تنها عمداً نیست: «مشاوره/پشتیبانی یکساله/پیتزا گرفتیم» خرید است.
+  // «اجاره رو از مستاجر گرفتیم» را نقش پرداخت‌کننده («از مستاجر») وارد می‌کند.
   'قرض گرفت', 'وام گرفت'];
 const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'خریدیم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'دادیم', 'برداشت', 'قبض', 'کرایه', 'مواد', 'واریز کردیم', 'واریز کردم'];
 // فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
 // هم «گرفتم» دارد و هم «پرداخت»؛ با شمارش ساده مساوی می‌شدند و نوع بی‌دلیل
 // هزینه می‌افتاد. آنچه جهت پول را تعیین می‌کند فعل است، نه اسمِ کنارش.
-const INCOME_VERBS = new Set(['گرفتم', 'گرفتیم', 'فروختم', 'فروختیم', 'واریز', 'واریزی', 'دریافت',
+const INCOME_VERBS = new Set(['گرفتم', 'فروختم', 'فروختیم', 'واریز', 'واریزی', 'دریافت',
   'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد',
   'قرض گرفت', 'وام گرفت']);
 // «حقوق رو از ملت واریز کردیم»: «واریز» درآمدی شمرده می‌شد و نوع مبهم می‌ماند؛
@@ -626,7 +626,100 @@ const PAID_BACK = /(?<![آ-ی])(?:پس|عودت)\s*داد(?:یم|م)|برگرد�
 export function counterpartyPaidUs(input) {
   const text = normalizePersian(input).replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
   if (MONEY_OUT_VERB.test(text) || PAID_BACK.test(text) || OTHER_RECIPIENT.test(text)) return false;
+  if (payerHasNotPaid(text)) return false;
   return FROM_PAYER.test(text) || PAYER_GAVE.test(text.replace(NOT_MONEY_GAVE, ' ')) || RECEIVED_AS_INCOME.test(text);
+}
+
+/**
+ * پرداخت‌کننده‌ای که هنوز نداده یا فقط قرار است بدهد — پولی جابه‌جا نشده.
+ *
+ * «اجاره مهر مستاجر ۱۰ میلیون هنوز نداده» هزینهٔ اجاره با خروج ده میلیون از
+ * صندوق ثبت می‌شد، و «مستاجر قراره ۶۰ میلیون اجاره شش ماه آینده رو واریز کنه»
+ * پیش‌پرداخت شصت‌میلیونی خودمان. هیچ پولی نیامده و نرفته است (قاعدهٔ ۴):
+ * - نداده/واریز نکرده/هنوز نگرفتیم — طلبی که شاید باید شناسایی شود؛ ردیفش
+ *   پرداخت‌نشده است و قضاوتش با حسابدار (`PAYER_UNPAID`)؛
+ * - قراره بده/میده/واریز می‌کنه — هنوز هیچ رویدادی نیست (`PAYER_PROMISE`).
+ */
+const PAYER_ROLE_RE = new RegExp(PAYER_ROLE);
+const NOT_PAID_VERB = /(?<![آ-ی])ن(?:داده|داد|دادن|دادند|ریخته|ریخت|ریختن|پرداخته)(?![آ-ی])(?!\s*(?:ایم|ام|ای)(?![آ-ی]))|(?<![آ-ی])(?:پرداخت|واریز|تسویه|کارت\s*به\s*کارت)\s*ن(?:کرده|کرد|کردن|کردند|شده)(?![آ-ی])(?!\s*(?:ایم|ام)(?![آ-ی]))/;
+const NOT_RECEIVED_VERB = /(?<![آ-ی])ن(?:گرفتیم|گرفتم|گرفته)(?![آ-ی])|(?<![آ-ی])(?:دریافت|وصول)\s*ن(?:کردیم|کردم|شده|شد)(?![آ-ی])/;
+const PROMISED_VERB = /قرار(?:ه|\s*است)?(?:\s+\S+){0,8}?\s+(?:بده|بدن|بدهد|بدهند|بریزه|بریزن|بریزد|بپردازه|بپردازن|بپردازد)(?![آ-ی])|قرار(?:ه|\s*است)?(?:\s+\S+){0,8}?\s+(?:واریز|پرداخت|تسویه|کارت\s*به\s*کارت)\s*(?:کنه|کند|کنن|کنند)(?![آ-ی])|(?<![آ-ی])می\s*(?:ده|دن|دهد|دهند|ریزه|ریزن|ریزد|پردازه|پردازد)(?![آ-ی])|(?<![آ-ی])(?:واریز|پرداخت|تسویه)\s*(?:می\s*کنه|می\s*کنن|می\s*کند|خواهد\s*کرد|خواهند\s*کرد)(?![آ-ی])|(?<![آ-ی])(?:می\s*خواد|می\s*خواهد)(?:\s+\S+){0,6}?\s+(?:بده|بریزه|بپردازه|(?:واریز|پرداخت)\s*کنه)(?![آ-ی])/;
+// فعلِ انجام‌شدهٔ جابه‌جایی پول، با مرزِ واژه: «نداده» و «بده» این نیستند.
+const DONE_MONEY_VERB = /(?<![آ-ی])(?:داد(?:یم|م|ن|ند)?|گرفت(?:یم|م|ن|ند)?|خرید(?:یم|م)|ریخت(?:یم|م|ن|ند)?|زد(?:یم|م)|(?:واریز|پرداخت|کارت\s*به\s*کارت|دریافت|وصول)\s*(?:شد|کرد(?:یم|م|ن|ند)?))(?![آ-ی])/;
+// کاری که تحویل یا تمام شده: پول نیست، ولی طلبِ وعده‌داده را واقعی می‌کند.
+const DELIVERY_DONE = /(?:تحویل|انجام)\s*(?:دادیم|دادم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|(?<![آ-ی])فروخت(?:یم|م)(?![آ-ی])/;
+const DELIVERY_DONE_ALL = new RegExp(DELIVERY_DONE.source, 'g');
+// «تحویل/جواب/اجازه نداده» پول نیست.
+const NOT_MONEY_NOT_GIVEN = /(?:تحویل|انجام|جواب|اجازه|قول|خبر|سفارش)\s*ن(?:داده|داد|دادن|دادند)(?![آ-ی])/g;
+// پرداخت‌کنندهٔ نام‌دار با عنوان: «آقای رضایی هنوز ۵ میلیون رو نداده».
+const TITLED_PARTY = /(?<![آ-ی])(?:آقای|اقای|خانم|جناب|شرکت|مهندس|دکتر|حاج|حاجی)(?![آ-ی])/;
+// فقط صیغهٔ فعال سوم‌شخص؛ «پرداخت نشده» مجهول است و قبضِ پرداخت‌نشدهٔ خودمان هم هست.
+const THEY_HAVE_NOT_PAID = /(?<![آ-ی])ن(?:داده|داد|دادن|دادند|ریخته|ریخت|ریختن|پرداخته)(?![آ-ی])(?!\s*(?:ایم|ام|ای)(?![آ-ی]))|(?<![آ-ی])(?:پرداخت|واریز|تسویه|کارت\s*به\s*کارت)\s*ن(?:کرده|کرد|کردن|کردند)(?![آ-ی])(?!\s*(?:ایم|ام)(?![آ-ی]))/;
+function payerHasNotPaid(input) {
+  const text = String(input).replace(NOT_MONEY_NOT_GIVEN, ' ');
+  if (PAYER_ROLE_RE.test(text)) return NOT_PAID_VERB.test(text) || NOT_RECEIVED_VERB.test(text);
+  // طرفِ نام‌دار: فقط وقتی هیچ پولِ انجام‌شده‌ای («دادیم»، «پرداخت شد») در بند نیست.
+  return TITLED_PARTY.test(text) && THEY_HAVE_NOT_PAID.test(text) && !OTHER_RECIPIENT.test(text)
+    && !MONEY_OUT_VERB.test(text) && !DONE_MONEY_VERB.test(text.replace(DELIVERY_DONE_ALL, ' '));
+}
+/** بندِ یک ردیف از جملهٔ چندپرداختی؛ پرداخت‌کننده ممکن است در بند دیگری نام برده شده باشد. */
+function clauseNotYet(clause, sentencePayer) {
+  const text = String(clause).replace(NOT_MONEY_NOT_GIVEN, ' ');
+  if (sentencePayer === 'role' && (NOT_PAID_VERB.test(text) || NOT_RECEIVED_VERB.test(text))) return 'unpaid';
+  if (sentencePayer === 'titled' && THEY_HAVE_NOT_PAID.test(text) && !MONEY_OUT_VERB.test(text)) return 'unpaid';
+  return payerNotYet(clause);
+}
+/** 'unpaid' | 'promised' | null برای یک بند یا جمله. */
+function payerNotYet(input) {
+  const text = normalizePersian(input);
+  if (payerHasNotPaid(text)) return 'unpaid';
+  // وعدهٔ سوم‌شخص: «قراره بده»، «هفته بعد میریزه». جمله‌ای که پولِ انجام‌شده هم
+  // دارد («۱۰ میلیون داد، بقیه رو ماه بعد میده») وعده نیست؛ مبلغِ آن بند مال وعده است.
+  // «تحویل دادیم» پول نیست: «پروژه رو تحویل دادیم کارفرما قراره ۲۰ میلیون واریز
+  // کنه» نقد بیست‌میلیونی ثبت می‌کرد. کارِ تحویل‌شده با وعدهٔ پرداخت طلب است، نه
+  // «هیچ»: ردیفِ بی‌پول به حسابدار می‌رود.
+  if (PROMISED_VERB.test(text) && !DONE_MONEY_VERB.test(text.replace(DELIVERY_DONE_ALL, ' ')) && !NOT_RECEIVED_VERB.test(text)) {
+    return DELIVERY_DONE.test(text) ? 'unpaid' : 'promised';
+  }
+  return null;
+}
+export const PAYER_PROMISE_MESSAGE = 'این پول هنوز جابه‌جا نشده و فقط قرار است پرداخت شود؛ چیزی ثبت نشد. وقتی پول واقعاً رسید همان را بگو.';
+export const PAYER_UNPAID = 'پرداخت‌کننده هنوز این پول را نداده است؛ ردیف نقدی ساخته نمی‌شود. اینکه طلب یا درآمد تعهدی شناسایی شود، با حسابدار است.';
+
+/**
+ * پرداخت‌کنندهٔ جمله برای هر ردیفِ جملهٔ چندپرداختی.
+ *
+ * «مشتری ۱۰ میلیون واریز کرد و ۲ میلیون کارمزد کسر شد» کارمزد را هم ورودی
+ * می‌کرد، و «مستاجر ۱۰ میلیون اجاره داد و ۲ میلیون به لوله‌کش دادیم» اجارهٔ
+ * مستاجر را پرداخت ما: جهت یک بار برای کل جمله خوانده می‌شد. هر ردیف فقط وقتی
+ * پولِ آمده است که بندِ خودش پرداخت‌کننده یا فعل دریافت را داشته باشد، یا اصلاً
+ * فعلی نداشته باشد و فعلِ مشترک بعدی‌اش فعل دریافت باشد («مستاجر ۱۰ میلیون
+ * اجاره، ۲ میلیون شارژ و ۵۰۰ هزار قبض داد»). بندی که فعل دیگری دارد («کسر شد»،
+ * «خرج حمل شد»، «دادیم») جهت خودش را دارد.
+ */
+const RECEIPT_VERB = new RegExp(`${THIRD_PERSON_GAVE.source}|(?<![آ-ی])(?:گرفت(?:یم|م)|(?:دریافت|وصول)\\s*(?:کرد(?:یم|م)|شد))(?![آ-ی])`);
+const CLAUSE_VERB = /(?<![آ-ی])(?:شد|شده|میشه|کرد(?:یم|م|ن|ند)?|کرده|داد(?:یم|م|ن|ند)?|داده|گرفت(?:یم|م|ن|ند)?|زد(?:یم|م|ن|ند)?|ریخت(?:یم|م|ن|ند)?|خرید(?:یم|م|ن|ند)?|رفت|اومد|آمد|خورد)(?![آ-ی])/;
+function clauseOwnDirection(clause) {
+  const text = normalizePersian(clause).replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
+  if (MONEY_OUT_VERB.test(text) || PAID_BACK.test(text) || OTHER_RECIPIENT.test(text)) return 'out';
+  if (counterpartyPaidUs(text)) return 'in';
+  const verbs = text.replace(NOT_MONEY_GAVE, ' ');
+  if (RECEIPT_VERB.test(verbs)) return 'receipt';
+  if (CLAUSE_VERB.test(verbs)) return 'other';
+  return PAYER_ROLE_RE.test(text) ? 'payer' : null;
+}
+function rowsPaidUs(clauses, sentencePaid) {
+  const own = clauses.map(clauseOwnDirection);
+  // پرداخت‌کننده‌ای در جمله هست: کل جمله، یک بند، یا نقشی در یک بند و فعل دریافت در بندی دیگر.
+  const payer = sentencePaid || own.includes('in') || (own.includes('payer') && own.includes('receipt'));
+  if (!payer) return clauses.map(() => false);
+  return own.map((direction, index) => {
+    if (direction === 'in' || direction === 'receipt' || direction === 'payer') return true;
+    if (direction) return false;
+    // بی‌فعل: فعلِ مشترکِ بعدی حکم می‌کند.
+    const governing = own.slice(index + 1).find((next) => next && next !== 'payer');
+    return governing === 'in' || governing === 'receipt';
+  });
 }
 
 /**
@@ -742,9 +835,6 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
       const oppositeType = type === 'income' ? 'expense' : 'income';
       const opposite = classifyCategory(normalizedCategoryContext, oppositeType);
       if (opposite.matched && opposite.confidence >= 0.86) {
-        // «اجاره … گرفتیم» بی پرداخت‌کننده: برگرداندن به هزینه همان‌قدر حدس است
-        // که نگه‌داشتنش؛ ردیف علامت می‌خورد تا حسابدار جهت را تعیین کند.
-        if (type === 'income' && rentTaken && opposite.category === 'اجاره') directionUnclear = true;
         type = oppositeType;
         typeReason = `نوع با واژهٔ دستهٔ «${opposite.category}» هماهنگ شد؛ فعل جمله جهت دیگری را نشان می‌داد.`;
         // زیر آستانهٔ بازبینی عمداً: فعل و اسمِ جمله با هم نخواندند و کاربر
@@ -776,6 +866,9 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
     typeReason = `نوع با دستهٔ «${category}» هماهنگ شد.`;
     confidence = Math.max(confidence, categoryConfidence);
   }
+  // «اجاره … گرفتیم/گرفتم» بی پرداخت‌کننده و بی فعل پرداختِ ما: هزینه‌خواندنش
+  // همان‌قدر حدس است که درآمدخواندنش؛ ردیف علامت می‌خورد تا حسابدار جهت را تعیین کند.
+  if (rentTaken && !learned && category === 'اجاره') directionUnclear = true;
   return {
     type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason,
     chartCode: chartCodeForCategory(category), categoryAmbiguous, categoryRunnerUp, directionUnclear,
@@ -919,10 +1012,15 @@ function rowSegments(text, spans, subjectFirst) {
   }));
 }
 
+/** سقف نمرهٔ جهت و دستهٔ ردیفی که قضاوت حسابدار می‌خواهد؛ زیر آستانهٔ تأیید. */
+const JUDGMENT_SCORE = 0.4;
+
 export function parseFinancialText(rawInput, { learnings = [], averages = {}, source = 'text', now = new Date() } = {}) {
   const input = applySpokenCorrection(rawInput);
   if (hasCompositeAmounts(input)) return { transcript: normalizePersian(input), transactions: [], clarification: COMPOSITE_AMOUNT_MESSAGE };
   if (describesUnperformedCondition(input)) return { transcript: normalizePersian(input), transactions: [], clarification: UNPERFORMED_CONDITION_MESSAGE };
+  // «مستاجر قراره ۶۰ میلیون واریز کنه»: هنوز هیچ پولی جابه‌جا نشده.
+  if (payerNotYet(input) === 'promised') return { transcript: normalizePersian(input), transactions: [], clarification: PAYER_PROMISE_MESSAGE };
   // تاریخ پیش از مبلغ خوانده می‌شود، چون رقم‌های تاریخ نباید مبلغ شمرده شوند.
   //
   // «در تاریخ 15 5 1405 13 میلیون تومان» مبلغ را ۱٬۴۳۸٬۰۰۰٬۰۰۰ می‌خواند:
@@ -998,14 +1096,15 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   const counterparty = extractContactCandidate(contactSource);
   const counterpartyName = counterparty.name;
   const moneyDirection = counterpartyName ? counterpartyMoneyDirection(contactSource) : '';
-  // جهتِ پول از نقش پرداخت‌کننده، یک بار برای کل جمله: «مستاجر … واریز کرد»
-  // همهٔ پول‌های جمله را وارد می‌کند، چون جمله‌ای که فعل پرداختِ خودِ ما را دارد
-  // اصلاً این نشانه را نمی‌گیرد.
+  // جهتِ پول از نقش پرداخت‌کننده: «مستاجر … واریز کرد». در جملهٔ چندپرداختی هر
+  // ردیف از بند خودش (rowsPaidUs پایین‌تر).
   const moneyIn = counterpartyPaidUs(input);
-  const rentTaken = !moneyIn && RENT_TAKEN.test(normalizePersian(input));
-  // برگشت وجه یا فسخ قرارداد: جهتش همان جابه‌جایی پول است (بیمه‌گر پس داد =
-  // ورود، به مشتری برگشت زدیم = خروج) و ثبتش با حسابدار (shared/refundSpeech.js).
-  const refund = contractRefundDirection(input);
+  // برگشت وجه یا فسخ قرارداد: قضاوتش با حسابدار است (shared/refundSpeech.js)؛
+  // جهتش فقط از فعل صریحِ برگشت، برای هر ردیف جدا.
+  const refundJudgment = readContractRefund(input);
+  // پرداخت‌کنندهٔ جمله، برای بندی که فقط «۵ میلیون هنوز نداده» را دارد.
+  const sentencePayer = PAYER_ROLE_RE.test(normalizePersian(input)) ? 'role'
+    : TITLED_PARTY.test(normalizePersian(input)) && !OTHER_RECIPIENT.test(normalizePersian(input)) ? 'titled' : null;
   const categoryWords = CATEGORY_DEFINITIONS.flatMap((item) => item.keywords.map((keyword) => keyword.word));
   const signalWords = [...INCOME_WORDS, ...EXPENSE_WORDS, ...categoryWords];
   // جملهٔ چندپرداختی: هر مبلغ بندِ خودش را دارد — موضوع، دوره، نشانهٔ پیش‌پرداخت،
@@ -1015,9 +1114,18 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   // متنِ نرمال‌شدهٔ بی‌ماسک، وقتی هم‌طول است، تا شاهد نام بانک و تاریخ را گم نکند.
   const unmaskedText = normalizePersian(input);
   const segmentSource = unmaskedText.length === text.length ? unmaskedText : text;
+  const clauses = segments.map((segment) => segmentSource.slice(segment.start, segment.end));
+  const paidUs = segments.length ? rowsPaidUs(clauses, moneyIn) : [moneyIn];
   const transactions = spans.map((span, index) => {
     const segment = segments[index];
-    const ownText = segment ? segmentSource.slice(segment.start, segment.end) : null;
+    const ownText = segment ? clauses[index] : null;
+    const clause = normalizePersian(ownText ?? input);
+    // پرداخت‌کننده‌ای که این مبلغ را هنوز نداده یا فقط قولش را داده: ردیفِ بی‌پول.
+    const notYet = segment ? clauseNotYet(clause, sentencePayer) : payerNotYet(input);
+    const rowMoneyIn = paidUs[index] || Boolean(notYet);
+    // «اجاره … گرفتیم» بی پرداخت‌کننده و بی فعل پرداختِ ما: جهت روشن نیست.
+    const rentTaken = !rowMoneyIn && RENT_TAKEN.test(clause) && !MONEY_OUT_VERB.test(clause);
+    const refund = contractRefundDirection(ownText ?? input, { subject: input });
     const previousEnd = spans[index - 1]?.end ?? 0;
     const nextStart = spans[index + 1]?.start ?? text.length;
     const afterRaw = text.slice(span.end, nextStart).trim();
@@ -1045,22 +1153,25 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ? ownAfter
       : `${ownBefore} ${ownAfter}`.trim();
     // «اشتراک یک‌ساله رو کنسل کرد» دورهٔ قرارداد قبلی است، نه پوششی که حالا خریده‌ایم.
-    const rowPeriod = refund ? null : segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
+    const rowPeriod = refundJudgment ? null : segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
     const rowPrepayment = segment ? readPrepaymentMention(ownText) : prepayment;
     // نامی که خودِ بند گفته؛ وگرنه نام جمله، مثل همیشه. نام حدسیِ بند («به
     // تاریخ ۳۰ آبان»، «به سامان واریز کردند») جای نام مطمئنِ جمله را نمی‌گیرد.
     const ownContact = segment && !petty?.holder ? extractContactCandidate(ownText) : null;
     const rowCounterparty = ownContact?.name && (ownContact.confident || !counterparty.name) ? ownContact : counterparty;
     const rowMoneyDirection = rowCounterparty === ownContact ? counterpartyMoneyDirection(ownText) : moneyDirection;
-    let classified = classify(context, learnings, categoryContext, { moneyIn, rentTaken });
+    let classified = classify(context, learnings, categoryContext, { moneyIn: rowMoneyIn, rentTaken });
     // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
     //
     // پنجرهٔ جهت فقط متنِ کنار مبلغ را می‌بیند و «یه پولی اومده تو حساب ملی
     // بیست و دو میلیون، معلوم نیس کی ریخته» را خروج پول می‌خواند چون نشانهٔ
     // ورود پیش از مبلغ آمده. ردیف تراکنش با جهت غلط، ماندهٔ بانک را غلط
     // می‌گذارد — حتی وقتی سندش به صف حسابدار رفته.
-    if (spans.length === 1 && classified.type === 'expense'
-      && (sentenceMoneyIn(input) || (classified.category === 'سایر هزینه‌ها' && thirdPersonGave(input)))) {
+    // در جملهٔ چندپرداختی همان فعلِ سوم‌شخص از بندِ خودِ ردیف: «آقای رضایی ۱۰
+    // میلیون داد ولی ۵ میلیون هنوز نداده».
+    if (classified.type === 'expense' && !refundJudgment && (spans.length === 1
+      ? (sentenceMoneyIn(input) || (classified.category === 'سایر هزینه‌ها' && thirdPersonGave(input)))
+      : (classified.category === 'سایر هزینه‌ها' && Boolean(ownText) && thirdPersonGave(ownText)))) {
       const incomeContext = normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' ');
       const matchedIncome = classifyCategory(incomeContext, 'income');
       const incomeCategory = matchedIncome.matched ? matchedIncome : incomeTwin(incomeContext) || matchedIncome;
@@ -1081,7 +1192,6 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
         ...classified, type: refundType,
         ...(refundCategory ? { category: refundCategory.category, chartCode: chartCodeForCategory(refundCategory.category) } : {}),
         categoryAmbiguous: false, categoryRunnerUp: null, directionUnclear: false,
-        confidence: Math.max(classified.confidence, 0.86), typeConfidence: Math.max(classified.confidence, 0.86),
         typeReason: refundType === 'income' ? 'برگشت وجه قرارداد به ما؛ پول وارد شده است.' : 'برگشت وجه به مشتری یا مستاجر؛ پول خارج شده است.',
       };
     }
@@ -1132,12 +1242,17 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ? `دسته روشن نیست: «${classified.category}» یا «${classified.categoryRunnerUp}»؛ حساب پیش‌پرداخت و هزینهٔ ماهانه به همین دسته بسته است و حدس زده نمی‌شود.`
       : null;
     if (serviceTie) reviewReasons.push(serviceTie);
-    if (refund) reviewReasons.push(CONTRACT_REFUND_REASON);
+    if (refundJudgment) reviewReasons.push(CONTRACT_REFUND_REASON);
     if (millionAbbreviation) reviewReasons.push(millionAbbreviation);
-    const depositReceived = !refund && classified.type === 'income' && moneyIn && DEPOSIT_WORD.test(normalizePersian(ownText || input));
+    if (notYet) reviewReasons.push(PAYER_UNPAID);
+    const depositReceived = !refundJudgment && !notYet && classified.type === 'income' && rowMoneyIn && DEPOSIT_WORD.test(clause);
     if (depositReceived) reviewReasons.push(DEPOSIT_RECEIVED);
-    const judgment = millionAbbreviation || (refund ? CONTRACT_REFUND_REASON : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie);
+    const judgment = millionAbbreviation || (refundJudgment ? CONTRACT_REFUND_REASON : notYet ? PAYER_UNPAID
+      : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie);
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
+    // دلیلِ قضاوت اول می‌آید: صف حسابدار همان را نشان می‌دهد، نه «نوع با اطمینان
+    // کم» که فقط پیامدِ همان قضاوت است.
+    if (judgment) reviewReasons.sort((left, right) => Number(right === judgment) - Number(left === judgment));
     const transaction = {
       amount, type: classified.type, category: classified.category,
       // مقیاس محاوره‌ای ابهام دارد و حدس‌زدنش خطای هزاربرابری می‌سازد.
@@ -1146,7 +1261,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ...(colloquialThousands || typedSmallToman ? { amountScaleAmbiguous: true } : {}),
       // نشانهٔ ماهیت، نه دسته: پول رفته ولی هنوز هیچ چیزی بابتش نگرفته‌ایم.
       ...(rowPrepayment ? { prepaymentSignal: true } : {}),
-      ...(unpaid ? { unpaidSignal: true } : {}),
+      ...(unpaid || notYet ? { unpaidSignal: true } : {}),
       ...(eventNature !== EVENT_NATURES.NEW ? { eventNature } : {}),
       ...(rowPeriod ? { servicePeriodStart: rowPeriod.start, servicePeriodEnd: rowPeriod.end } : {}), chartCode: classified.chartCode,
       // Amount extraction masks banks and dates. Those masks must never become
@@ -1180,8 +1295,15 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
               ? 'مبلغ با قاعدهٔ گفتار محاوره‌ای به هزار تومان تبدیل شد.'
               : source === 'voice' ? 'مبلغ از نتیجهٔ تشخیص گفتار استخراج شد.' : 'مبلغ مستقیم از متن استخراج شد.',
         },
-        type: { score: classified.typeConfidence, reason: classified.typeReason },
-        category: { score: classified.categoryConfidence, reason: classified.categoryReason },
+        // قضاوتِ حسابدار یعنی ماهیت و جهت هنوز قطعی نیست. نمرهٔ پایین همین را
+        // به مسیر می‌گوید تا حتی با موتور تصمیمِ خاموش، ردیف به صف حسابدار برود و
+        // روی برگهٔ «امروز» صاحب کسب‌وکار ننشیند (confirmThreshold).
+        type: judgment
+          ? { score: Math.min(classified.typeConfidence, JUDGMENT_SCORE), reason: 'ماهیت و جهت این پول را حسابدار تعیین می‌کند.' }
+          : { score: classified.typeConfidence, reason: classified.typeReason },
+        category: judgment
+          ? { score: Math.min(classified.categoryConfidence, JUDGMENT_SCORE), reason: 'دسته پس از قضاوت حسابدار قطعی می‌شود.' }
+          : { score: classified.categoryConfidence, reason: classified.categoryReason },
         account: bank
           ? { score: 0.97, reason: `حساب از نام «${bank.bankName}» در گفتار مشخص شد.` }
           : { score: 0.82, reason: 'حساب پیش‌فرض دفتر انتخاب می‌شود؛ قبل از ثبت قابل تغییر است.' },

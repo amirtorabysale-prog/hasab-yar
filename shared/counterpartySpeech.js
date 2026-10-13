@@ -119,6 +119,8 @@ function bareContactName(text) {
   // «از رضا دو میلیون طلب دارم»: نام به حرف اضافه چسبیده، نه به فعل جهت.
   for (let index = 0; index < words.length - 1; index += 1) {
     if (!['از', 'به'].includes(words[index])) continue;
+    // «قبل از فسخ»، «بعد از تمدید»: «از» زمانی است، نه مبدأ پول.
+    if (words[index] === 'از' && ['قبل', 'بعد', 'پیش', 'پس', 'غیر', 'بیش', 'بیشتر', 'کمتر'].includes(words[index - 1])) continue;
     const picked = [];
     for (let ahead = index + 1; ahead < words.length && picked.length < 2; ahead += 1) {
       if (!usable(words[ahead])) break;
