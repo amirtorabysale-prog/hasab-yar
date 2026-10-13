@@ -17,9 +17,12 @@ backups/
 *.key
 *.p12
 .DS_Store
-graphify-out/
+# گراف graphify در مخزن می‌ماند تا Claude Code روی سایت هم آن را ببیند؛
+# فقط کش محلی و نمای تصویری حجیم بیرون است.
+graphify-out/cache/
+graphify-out/graph.html
+graphify-out/.graphify_analysis.json
 parsian/
 
 # فایل‌های کار موقت، بیرون از تحویل
 .tmpwork/
-graphify-out/
