@@ -219,6 +219,17 @@ const outgoingCashRoles=['payable','expense-category','fixed-asset','prepaid-ass
 // هم با برداشت مالک پایین می‌آید. کنترل یک‌جهتهٔ قدیمی برداشت را هرگز
 // قابل ثبت نمی‌گذاشت، حتی وقتی پیشنهاد AI درست بود.
 const twoWayCashRoles=['partner-payable','partner-receivable','owner-capital'];
+/**
+ * مانده‌هایی که پول برمی‌گرداند — با سمت عادی‌شان.
+ *
+ * پیش‌پرداخت بیمه یا اجاره، ودیعه، پیش‌پرداخت خرید و مساعده با خروج وجه ساخته
+ * می‌شوند و با ورود وجه (بیمه‌گر فسخ کرد و پس داد، صاحبخانه ودیعه را پس داد)
+ * کم می‌شوند؛ پیش‌دریافت و درآمد انتقالی برعکس. کنترل یک‌جهتهٔ قدیمی فقط جهت
+ * ساختن را می‌شناخت و هیچ عودتی جز «پیش دریافت» با همین واژه قابل ثبت نبود.
+ * جهت برگشت فقط با گفتهٔ صریح عودت و فقط تا ماندهٔ واقعی سند اولیه پذیرفته
+ * می‌شود؛ عودت بی‌سند مبنا، بدهی یا طلب فرضی نمی‌سازد.
+ */
+const settleBackRoles={'prepaid-asset':'debit','refundable-deposit':'debit','supplier-advance':'debit','employee-advance':'debit','customer-advance':'credit','deferred-revenue':'credit'};
 const systemKeys = { 'owner-capital':'owner-capital', 'depreciation-expense':'depreciation-expense', 'vat-input':'input-tax', 'vat-output':'output-tax' };
 /** بدون ساخت حساب در پیش‌نمایش؛ حساب تازه فقط داخل تراکنش تأیید ایجاد می‌شود. */
 export function prepareReviewProposal(database, row, proposal, { resolve = false, eventOverride = null } = {}) {
@@ -311,14 +322,31 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   if (event.eventNature && event.eventNature!=='new') blockers.push('برای سند اصلاحی، سند قبلی و مسیر اصلاح باید مشخص شود.');
   if ((proposal.contextRevision || 0) !== reviewContext(database,row.id).revision || proposal.sourceFingerprint !== createHash('sha256').update(`${row.payload}|${row.posting_plan}|${row.decision_id}`).digest('hex')) blockers.push('اطلاعات یا گفت‌وگو تغییر کرده؛ پیشنهاد را دوباره بررسی کن.');
   if (cash.length===1 && other.length===1 && cashCounterparts.includes(other[0].role)) {
-    const creditCash=cash[0].credit>0;
-    const advanceRefund=reviewNature(reviewEvidence(database,row)).advanceRefund && ['customer-advance','deferred-revenue'].includes(other[0].role);
-    if (advanceRefund) {
-      if(!creditCash || other[0].debit<=0) blockers.push('عودت پیش‌دریافت باید بدهی مشتری را کم کند و خروج وجه باشد.');
-      const prior=event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(other[0].role,event.counterpartyId) : null;
-      const balance=availableReviewedBalance(database,prior?.id,event.occurredAt,'credit');
-      if(balance<row.amount) blockers.push('مانده واقعی پیش‌دریافت این مشتری برای عودت کافی نیست؛ سند دریافت اولیه یا مانده مستند لازم است.');
-    } else if (!twoWayCashRoles.includes(other[0].role) && (outgoingCashRoles.includes(other[0].role) ? !creditCash || other[0].debit<=0 : creditCash || other[0].credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+    const creditCash=cash[0].credit>0, role=other[0].role, counter=other[0];
+    const nature=reviewNature(reviewEvidence(database,row));
+    const refundSaid=nature.refund || nature.advanceRefund;
+    const openingOut=outgoingCashRoles.includes(role);
+    const side=settleBackRoles[role];
+    const liability=side==='credit';
+    // جهت نقد مخالف جهتی که این مانده را ساخت: برگشت همان پول.
+    const reverse=Boolean(side) && (openingOut ? !creditCash : creditCash);
+    if (reverse) {
+      if(!refundSaid) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+      else {
+        if(liability ? counter.debit<=0 : counter.credit<=0) blockers.push(liability ? 'عودت پیش‌دریافت باید بدهی مشتری را کم کند و خروج وجه باشد.' : 'برگشت وجه باید همان پیش‌پرداخت یا ودیعه را کم کند و ورود وجه باشد.');
+        // پیش‌پرداخت خرید در دفتر همان حساب «پیش‌پرداخت خرید — شخص» است (roleResolver).
+        const ledgerKind=role==='supplier-advance' ? 'prepaid-asset' : role;
+        const prior=partyRoles.has(role) && event.counterpartyId ? database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1').get(ledgerKind,event.counterpartyId)?.id : counter.accountId;
+        const balance=availableReviewedBalance(database,prior,event.occurredAt,side);
+        if(balance<row.amount) blockers.push(liability
+          ? 'مانده واقعی پیش‌دریافت این مشتری برای عودت کافی نیست؛ سند دریافت اولیه یا مانده مستند لازم است.'
+          : 'ماندهٔ واقعی این پیش‌پرداخت یا ودیعه برای برگشت وجه کافی نیست؛ سند پرداخت اولیه یا ماندهٔ مستند لازم است.');
+      }
+    } else if (!twoWayCashRoles.includes(role) && (openingOut ? !creditCash || counter.debit<=0 : creditCash || counter.credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+    // متن از برگشت پول می‌گوید ولی سند همان پرداخت یا دریافت اولیه را تکرار
+    // می‌کند: «بیمه رو فسخ کردیم ۶ میلیون پس دادن» با بدهکار پیش‌پرداخت /
+    // بستانکار بانک، صندوق را منفی می‌کرد.
+    else if (side && refundSaid) blockers.push(liability ? 'عودت پیش‌دریافت باید بدهی مشتری را کم کند و خروج وجه باشد.' : 'متن از برگشت وجه می‌گوید؛ این سند پرداخت تازه‌ای در همان جهت پرداخت اولیه است.');
   }
   const partnerMode=partnerTreatment(reviewEvidence(database,row),initial);
   const settlementRole=partnerMode===PARTNER_TREATMENTS.repayCompany?'partner-payable':partnerMode===PARTNER_TREATMENTS.repayPartner?'partner-receivable':null;

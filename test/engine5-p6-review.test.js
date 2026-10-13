@@ -519,3 +519,126 @@ test('دستیار حسابدار: حق بیمهٔ حوادث کارگران ک�
   const salary = await reviewOf('حقوق مهر کارکنان ۴۰ میلیون پرداخت شد');
   assert.ok(salary.proposal.questions.some((question) => question.id === 'payroll.gross-or-net'), JSON.stringify(salary.proposal));
 });
+
+// ---------------------------------------------------------------------------
+// review-blocks-refund-cash-direction — برگشت وجه پیش‌پرداخت، ودیعه و درآمد انتقالی
+// ---------------------------------------------------------------------------
+
+const T0 = '2026-10-10T08:00:00.000Z';
+const T1 = '2026-12-27T08:00:00.000Z';
+const fixedModel = (lines) => async () => ({ ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({ questions: [], summary: 'بازبینی', explanation: 'سند طبق شواهد متن.', missingFacts: [], counterpartyName: null, inventoryItems: [], lines: lines.map((line) => ({ key: null, accountId: null, chartAccountId: null, ...line })) }) }] }], usage: {} }) });
+
+/** دفتر تازه با یک ثبت پایه (اختیاری) و یک گفتهٔ عودت در صف حسابدار؛ پیشنهاد مدل با سطرهای داده‌شده. */
+async function refundReview({ base = null, text, party = null, lines, message = '' }) {
+  const run = freshWorkspace();
+  return withModelKey(() => run(async () => {
+    const sql = database.activeWorkspaceDatabase();
+    database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 300_000_000 });
+    const cashBox = database.listAccounts().find((account) => account.name === 'صندوق نقدی');
+    const capture = (said, at, tag) => {
+      const rows = parseFinancialText(said, { source: 'voice', now: new Date(at) }).transactions;
+      const ids = database.insertTransactions({ transcript: said, transactions: rows.map((row, index) => ({ ...row, occurredAt: row.occurredAt || at, userConfirmed: true, clientId: `${tag}-${index}` })) });
+      return ids.map((id) => sql.prepare('SELECT * FROM financial_events WHERE source_event_id=?').get(`transaction:${id}`));
+    };
+    if (base) {
+      const [event] = capture(base, T0, 'base');
+      // ثبت پایه یا خودکار سند خورده یا با تأیید.
+      if (sql.prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status === 'pending') database.approveEvent(event.id);
+      assert.equal(sql.prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status, 'posted', base);
+    }
+    const [event] = capture(text, T1, 'refund');
+    if (event.route !== 'accountant-review') database.handOverPending(event.id);
+    const contact = party ? sql.prepare('SELECT id FROM contacts WHERE name=?').get(party) || sql.prepare('SELECT id FROM contacts WHERE name LIKE ? ORDER BY rowid').get(`%${party}%`) || database.saveContact({ name: party }) : null;
+    const ledger = (kind, like = '') => sql.prepare('SELECT id FROM ledger_accounts WHERE source_kind=? AND name LIKE ?').get(kind, `%${like}%`)?.id || null;
+    const said = lines({ ledger });
+    const proposal = await proposeReview(sql, event.id, { fetcher: fixedModel(said), facts: { accountId: cashBox.id, ...(contact ? { counterpartyId: contact.id } : {}) }, message });
+    const prepared = database.reviewAssistantHistory(event.id).proposal;
+    const balance = (kind, like = '') => sql.prepare('SELECT COALESCE(SUM(l.debit-l.credit),0) n FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE a.source_kind=? AND a.name LIKE ?').get(kind, `%${like}%`).n;
+    const cash = () => database.listAccounts().find((account) => account.id === cashBox.id).balance;
+    let accepted = null;
+    const cashBefore = cash();
+    if (prepared.canPost) accepted = database.reviewAiFeedback(event.id, proposal.id, { accepted: true }).item;
+    return { proposal, prepared, accepted, cashMoved: cash() - cashBefore, balance };
+  }));
+}
+
+test('صف حسابدار: برگشت حق بیمه، ودیعه و پیش‌پرداخت خرید ورود وجه و کاهش همان دارایی است؛ عودت اجارهٔ جلو گرفته خروج وجه و کاهش درآمد انتقالی', async () => {
+  const insurer = await refundReview({
+    base: 'بیمه آتش سوزی یک ساله ۱۲ میلیون از حساب تجارت دادیم',
+    text: 'بیمه رو فسخ کردیم ۶ میلیون پس دادن',
+    lines: ({ ledger }) => [{ role: 'cash', debit: 6e6, credit: 0 }, { role: 'prepaid-asset', key: 'بیمه', accountId: ledger('prepaid-asset', 'بیمه'), debit: 0, credit: 6e6 }],
+  });
+  assert.equal(insurer.prepared.canPost, true, insurer.prepared.postingBlockers?.join('|'));
+  assert.equal(insurer.accepted.status, 'posted');
+  assert.equal(insurer.cashMoved, 6_000_000);
+  assert.equal(insurer.balance('prepaid-asset', 'بیمه'), 6_000_000, 'نیمی از پیش‌پرداخت می‌ماند');
+
+  const deposit = await refundReview({
+    base: 'ودیعه دفتر ۵۰ میلیون به آقای کریمی صاحبخونه دادیم که برمیگرده',
+    text: 'دفتر رو تخلیه کردیم آقای کریمی ودیعه ۵۰ میلیون رو پس داد', party: 'کریمی',
+    lines: ({ ledger }) => [{ role: 'cash', debit: 50e6, credit: 0 }, { role: 'refundable-deposit', accountId: ledger('refundable-deposit'), debit: 0, credit: 50e6 }],
+  });
+  assert.equal(deposit.prepared.canPost, true, deposit.prepared.postingBlockers?.join('|'));
+  assert.equal(deposit.cashMoved, 50_000_000);
+  assert.equal(deposit.balance('refundable-deposit'), 0);
+
+  const tenant = await refundReview({
+    base: 'اجاره گرفتم شش ماهه ۶۰ میلیون از آقای احمدی',
+    text: 'مستاجر زودتر تخلیه کرد ۱۰ میلیون از اجاره جلو گرفته رو بهش پس دادیم', party: 'احمدی',
+    lines: ({ ledger }) => [{ role: 'deferred-revenue', key: 'احمدی', accountId: ledger('deferred-revenue', 'احمدی'), debit: 10e6, credit: 0 }, { role: 'cash', debit: 0, credit: 10e6 }],
+  });
+  assert.equal(tenant.prepared.canPost, true, tenant.prepared.postingBlockers?.join('|'));
+  assert.equal(tenant.cashMoved, -10_000_000);
+  assert.equal(tenant.balance('deferred-revenue', 'احمدی'), -50_000_000);
+
+  const supplier = await refundReview({
+    base: 'پیش پرداخت خرید کالا ۵ میلیون به شرکت پارس کالا دادیم',
+    text: 'شرکت پارس کالا پیش پرداخت ۵ میلیون رو پس داد', party: 'شرکت پارس کالا',
+    lines: () => [{ role: 'cash', debit: 5e6, credit: 0 }, { role: 'supplier-advance', debit: 0, credit: 5e6 }],
+  });
+  assert.equal(supplier.prepared.canPost, true, supplier.prepared.postingBlockers?.join('|'));
+  assert.equal(supplier.cashMoved, 5_000_000);
+  assert.equal(supplier.balance('prepaid-asset', 'پارس کالا'), 0, 'همان پیش‌پرداخت خرید بسته شد');
+});
+
+test('صف حسابدار: «پیش دریافت» مستأجری که موتور درآمد انتقالی ثبت کرده، پیشنهاد قاعده‌ای را از همان حساب کم می‌کند', async () => {
+  const review = await refundReview({
+    base: 'اجاره گرفتم شش ماهه ۶۰ میلیون از آقای احمدی',
+    text: 'آقای احمدی مستاجر تخلیه کرد ۱۰ میلیون از پیش دریافت اجاره رو بهش پس دادیم', party: 'احمدی',
+    lines: () => [],
+  });
+  assert.equal(review.proposal.model, 'nature-rules-v1');
+  assert.deepEqual(roleShape(review.proposal), [['deferred-revenue', 10_000_000, 0], ['cash', 0, 10_000_000]]);
+  assert.equal(review.prepared.canPost, true, review.prepared.postingBlockers?.join('|'));
+  assert.equal(review.cashMoved, -10_000_000);
+});
+
+test('صف حسابدار: برگشت وجه بی‌سند مبنا، بیش از مانده، بی‌گفتهٔ عودت، یا در جهت پرداخت اولیه ثبت نمی‌شود', async () => {
+  const insuranceBase = 'بیمه آتش سوزی یک ساله ۱۲ میلیون از حساب تجارت دادیم';
+  const back = (amount) => ({ ledger }) => [{ role: 'cash', debit: amount, credit: 0 }, { role: 'prepaid-asset', key: 'بیمه', accountId: ledger('prepaid-asset', 'بیمه'), debit: 0, credit: amount }];
+  const noBase = await refundReview({ text: 'بیمه رو فسخ کردیم ۶ میلیون پس دادن', lines: back(6e6) });
+  assert.equal(noBase.prepared.canPost, false);
+  assert.ok(noBase.prepared.postingBlockers.some((blocker) => /ماندهٔ واقعی این پیش‌پرداخت/.test(blocker)));
+  const over = await refundReview({ base: insuranceBase, text: 'بیمه رو فسخ کردیم ۲۰ میلیون پس دادن', lines: back(20e6) });
+  assert.equal(over.prepared.canPost, false);
+  assert.equal(over.cashMoved, 0);
+  // پول به صندوق آمد ولی متن از برگشت نمی‌گوید: جهت همان قاعدهٔ یک‌طرفه.
+  const silent = await refundReview({ base: insuranceBase, text: 'بابت بیمه ۶ میلیون به صندوق اومد', lines: back(6e6) });
+  assert.equal(silent.prepared.canPost, false);
+  assert.ok(silent.prepared.postingBlockers.includes('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.'));
+  // سند وارونه روی جملهٔ عودت: صندوق را منفی می‌کرد.
+  const wrongWay = await refundReview({ base: insuranceBase, text: 'بیمه رو فسخ کردیم ۶ میلیون پس دادن',
+    lines: ({ ledger }) => [{ role: 'prepaid-asset', key: 'بیمه', accountId: ledger('prepaid-asset', 'بیمه'), debit: 6e6, credit: 0 }, { role: 'cash', debit: 0, credit: 6e6 }] });
+  assert.equal(wrongWay.prepared.canPost, false);
+  assert.equal(wrongWay.cashMoved, 0);
+});
+
+test('ماهیت عودت: فقط پولی که برگشت، نه وعدهٔ برگشت یا «قابل استرداد»', () => {
+  for (const text of [
+    'بیمه رو فسخ کردیم ۶ میلیون پس دادن', 'آقای کریمی ودیعه ۵۰ میلیون رو پس داد', 'ده میلیون به مستاجر پس دادیم',
+    'ودیعه رو از صاحبخونه پس گرفتیم', 'پیش دریافت مشتری عودت داده شد', 'سپرده مزایده مسترد شد', 'شرکت بیمه پول رو برگردوند', 'پیش پرداخت رو برگشت دادن',
+  ]) assert.equal(reviewNature(text).refund, true, text);
+  for (const text of [
+    'ودیعه ۵۰ میلیون به آقای کریمی دادیم که پس میده', 'ودیعه قابل استرداد ۵۰ میلیون پرداخت شد', 'پول ودیعه برمیگرده', 'چک مشتری برگشت خورد', 'بیمه یک ساله ۱۲ میلیون پرداخت شد',
+  ]) assert.equal(reviewNature(text).refund, false, text);
+});

@@ -24,10 +24,13 @@ export function reviewNature(text) {
   const intangible=/حق استفاده|حق امتیاز|علامت تجاری/.test(t) && /خرید|پرداخت/.test(t);
   const leasehold=/استیجاری|اجاره ای/.test(t) && /نصب|بهسازی|احداث/.test(t) && /عمر|چند سال|چهار سال/.test(t);
   const advanceRefund=advance && /پس داد|بازپرداخت|عودت/.test(t);
+  // برگشت پولی که واقعاً جابه‌جا شد — فقط فعل گذشته. «پس میده»، «برمی‌گرده» و
+  // «قابل استرداد» هنوز پولی جابه‌جا نکرده‌اند؛ «چک برگشت خورد» عودت نیست.
+  const refund=/پس (?:داد|دادن|دادند|دادیم|دادم|داده|گرفت|گرفتن|گرفتند|گرفتیم|گرفتم|گرفته)(?![آ-ی])|عودت (?:داد|دادن|دادند|دادیم|دادم|داده|شد|کرد|کردن|کردند|کردیم|کردم)(?![آ-ی])|(?<!قابل )(?:مسترد|استرداد) (?:شد|کرد|کردن|کردند|کردیم|گردید)(?![آ-ی])|برگردوند|برگرداند|برگشت (?:داد|دادن|دادند|دادیم|زد|زدن|زدند)(?![آ-ی])|بازپرداخت (?:شد|کرد|کردن|کردند|کردیم)(?![آ-ی])/.test(t);
   const writtenOffRecovery=/طلب|مطالبات/.test(t) && /سوخت شده|حذف شده|حذف.*دفاتر|از دفاتر حذف/.test(t) && /دریافت|وصول|برگشت/.test(t);
   const principal=/اصل وام/.test(t);
   const settlement=/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
-  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,writtenOffRecovery,principal,settlement};
+  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,refund,writtenOffRecovery,principal,settlement};
 }
 
 export function reviewNatureViolations(text, lines=[], facts={}) {
