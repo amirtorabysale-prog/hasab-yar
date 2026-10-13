@@ -68,6 +68,8 @@ const DEPOSIT_AND_SERVICE = /(?:ودیعه|رهن|سپرده)\s*و\s*(?:اجار
  * «سود سپرده» درآمد است و این‌جا نمی‌آید.
  */
 const DEPOSIT_IN_WORDS = /(?<![آ-ی])(?:ودیعه|رهن)|حسن\s*انجام|(?<!سود\s*)(?<![آ-ی])سپرده(?!\s*گذاری)/;
+/** درآمدِ دوره‌دار: اجاره، اشتراک، پشتیبانی — نه «کرایهٔ حمل» که خدمتِ یک‌باره است. */
+const TIME_BOUND_INCOME = /اجاره|کرایه(?!\s*(?:حمل|بار|ماشین\s*بار))|اشتراک|لایسنس|پشتیبانی|نگهداری|شارژ|حق\s*عضویت|آبونمان/;
 const THIS_MONTH_WORDS = /(?:این|همین)\s*ماه|ماه\s*جاری/;
 const PARTY_TITLE = /آقای|خانم|شرکت|دکتر|مهندس|حاج|فروشگاه|موسسه|مؤسسه|کارخانه/;
 
@@ -566,7 +568,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // کارمزد خودش هزینهٔ جاری است، هر رویدادی که کنارش آمده باشد.
     // «قرارداد پشتیبانی سه‌ماهه بستیم و کل مبلغش را از اول واریز کرد»: پولِ خدمتی که
     // هنوز انجام نشده پیش‌دریافت است، نه درآمد. آزمون زنده (V13): ۹ میلیون یک‌جا
-    // درآمد شد. آغاز دوره حدس زده نمی‌شود؛ پخشش با حسابدار است.
+    // درآمد شد. دوره همان قاعدهٔ هزینه را دارد: «یک‌ساله» از روز دریافت؛ وقتی گفته
+    // نشده، آغاز و پایانش پرسیده می‌شود (`timeBound`) — نه پیش‌دریافتی که هرگز درآمد نشود.
     const serviceUpfront = type === 'income' && facts.subject.kind === 'service' && !coverageStart
       && (facts.nonAmountNumbers || []).some((item) => item.role === 'duration') && UPFRONT.test(said) && !SERVICE_DONE.test(said);
     // «۳۰ میلیون ودیعه … ۶ میلیون اجارهٔ همین ماه»: ماهیتِ هر مبلغ از شاهدِ خودش.
@@ -647,7 +650,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «پوشش یک‌ساله»، «شش ماه جلوتر»: همان قاعدهٔ مسیر قطعی (`readServicePeriod`)،
     // شروع از روز پرداخت. مدل این را عدد «مدت» می‌نوشت و دوره هرگز به سند نمی‌رسید.
     // فقط از بخشِ خودِ همین مبلغ؛ دوره‌ای در متنِ مشترک صاحب ندارد.
-    if (!periodStart && !periodEnd && type === 'expense' && movement.direction !== 'none' && paymentDate) {
+    //
+    // آینه‌اش: «مستاجر اجارهٔ ۶ ماه آینده را واریز کرد»، «پشتیبانی یک‌ساله … از اول
+    // واریز کرد». فقط برای خدمت یا اجاره و اشتراک — «گارانتی یک ساله»ی کالای فروخته‌شده
+    // دورهٔ درآمد نیست.
+    const timeBoundIncome = type === 'income' && (facts.subject.kind === 'service' || TIME_BOUND_INCOME.test(`${facts.subject.what || ''} ${scope.own}`));
+    if (!periodStart && !periodEnd && (type === 'expense' || timeBoundIncome) && movement.direction !== 'none' && paymentDate) {
       const spokenPeriod = readServicePeriod(scope.own, { occurredAt: paymentDate });
       if (spokenPeriod) { periodStart = spokenPeriod.start; periodEnd = spokenPeriod.end; }
       else if (!scope.alone && readServicePeriod(scope.shared, { occurredAt: paymentDate })) periodUnowned = true;
@@ -669,7 +677,21 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       periodStart = paidMonth.from;
       periodEnd = paidMonth.to;
     }
-    if (type === 'income' && inPaidMonth(periodStart) && (!periodEnd || inPaidMonth(periodEnd))) { periodStart = null; periodEnd = null; }
+    // درآمدِ دوره‌ای که تا پایانِ ماهِ دریافت تمام می‌شود («اجارهٔ مهر» که در مهر رسید،
+    // یا اجارهٔ عقب‌افتادهٔ مرداد) همین امروز درآمد است، هر برچسبی که مدل زده باشد؛
+    // «پیش پیش» دربارهٔ زمانِ پول است، نه تعهدی که مانده. دوره‌ای که از ماهِ دریافت
+    // جلوتر می‌رود پیش‌دریافت است و ماه‌به‌ماه درآمد می‌شود — نه درآمدِ یک‌جای امروز.
+    // آزمون موتور ۵: اجارهٔ ۶ ماه آینده ۶۰ میلیون یک‌جا درآمد شد و اجارهٔ مهرِ «پیش پیش»
+    // برای همیشه پیش‌دریافت ماند.
+    let receiptPurpose = null;
+    if (type === 'income' && (periodStart || periodEnd)) {
+      const earned = periodEnd ? Boolean(paidMonth) && Date.parse(periodEnd) <= Date.parse(paidMonth.to) : inPaidMonth(periodStart);
+      if (earned) {
+        periodStart = null;
+        periodEnd = null;
+        if (purposes.receiptPurpose === 'advance') receiptPurpose = 'other-income';
+      } else if (movement.direction !== 'none' && periodStart && periodEnd && !purposes.receiptPurpose?.match(/^(?:loan|owner)$/)) receiptPurpose = 'advance';
+    }
     const item = {
       // در جملهٔ چندمبلغی، متنِ ردیف بخشِ خودِ همان مبلغ است — همان قرارداد ردیف‌های
       // مسیر قطعی. نگهبان‌هایی که متن را می‌خوانند («بیمهٔ یک‌ساله» یعنی پیش‌پرداخت)
@@ -681,7 +703,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       settlement: 'none',
       unpaidSignal: movement.direction === 'none',
       dueAt: movement.direction === 'none' ? dueAt : null,
-      intendedUse, ...purposes,
+      intendedUse, ...purposes, ...(receiptPurpose ? { receiptPurpose } : {}),
       servicePeriodStart: periodStart, servicePeriodEnd: periodEnd,
       deliveryDate: deliveryDate || (facts.subject.delivered === 'yes' ? paymentDate : null),
       amountScaleAmbiguous: Boolean(amount.scaleAmbiguous),
@@ -696,6 +718,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       amount: amount.value, item, text: scope.alone ? null : scope.own,
       // طولِ گفته‌شده بی‌آغاز: آغاز پرسیده می‌شود و پایان از همین طول ساخته می‌شود.
       durationMonths: durationMonths || null,
+      // پیش‌دریافتِ اجاره یا خدمتِ دوره‌دار بی‌دوره هرگز درآمد نمی‌شود؛ دوره پرسیده می‌شود.
+      timeBound: timeBoundIncome && movement.direction !== 'none',
       label: `${verb} ${money(amount.value)} تومان${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}`,
     });
   }

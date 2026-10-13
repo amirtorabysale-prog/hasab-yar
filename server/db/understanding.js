@@ -182,9 +182,15 @@ function planCase(understanding, answers, row, now = new Date()) {
     // قرارداد» یا «تضمین» شروع دورهٔ پوشش می‌خواست — سؤال غلط از رویداد درست.
     const refundUnsaid = component.item.paymentPurpose === 'deposit' && typeof component.item.refundable !== 'boolean'
       && !answers[`engine.${component.id}.refundable`];
+    // پیش‌دریافتِ اجاره یا خدمتِ دوره‌دار بی‌دوره: موتور آن را «پیش‌دریافت از مشتری»
+    // بی‌جدول می‌بندد و هرگز درآمد نمی‌شود. آینهٔ پیش‌پرداخت — دوره پرسیده می‌شود.
+    const periodFact = !component.item.servicePeriodStart ? 'servicePeriodStart' : 'servicePeriodEnd';
+    const periodUnsaid = component.timeBound && component.item.receiptPurpose === 'advance'
+      && !(component.item.servicePeriodStart && component.item.servicePeriodEnd);
     const engineQuestion = refundUnsaid
       ? { fact: 'refundable', text: FACT_QUESTIONS.refundable.text, options: FACT_QUESTIONS.refundable.options }
-      : preview.question;
+      : periodUnsaid ? { fact: periodFact, text: FACT_QUESTIONS[periodFact].text, options: FACT_QUESTIONS[periodFact].options }
+        : preview.question;
     if (engineQuestion && !answers[`engine.${component.id}.${engineQuestion.fact}`]) {
       const definition = FACT_QUESTIONS[engineQuestion.fact];
       plan.questions.push({

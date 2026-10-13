@@ -495,3 +495,81 @@ test('طولِ تنها («به مدت یک سال»، «برای شش ماه»)
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// ۷. آینه: اجاره و خدمتی که پیشاپیش به ما رسیده پیش‌دریافت است و ماه‌به‌ماه درآمد می‌شود.
+// ---------------------------------------------------------------------------
+
+const KARIMI = { kind: 'counterparty', name: 'آقای کریمی' };
+const received = (kind, evidence, extra = {}) => model({
+  event: { kind, description: '', status: 'done' },
+  amounts: [amt('a1', 'received-now', evidence)],
+  movements: [mv('m1', 'a1', 'in', KARIMI, BANK, 'به حساب تجارت واریز کرد')],
+  counterparties: party('آقای کریمی', 'customer'), subject: service('اجاره مغازه'),
+  ...extra,
+});
+
+test('اجاره یا پشتیبانیِ دورهٔ آینده که پیشاپیش دریافت شد: پیش‌دریافت با جدول ماهانه', async () => {
+  for (const [text, said, months, amount] of [
+    ['آقای کریمی مستاجر مغازه اجاره ۶ ماه آینده رو ۶۰ میلیون به حساب تجارت واریز کرد', received('income', '۶۰ میلیون', { nonAmountNumbers: duration('۶ ماه') }), 6, 60_000_000],
+    ['آقای کریمی مستاجر مغازه اجاره ۶ ماه آینده رو یکجا ۶۰ میلیون به حساب تجارت واریز کرد', received('advance-received', '۶۰ میلیون', { nonAmountNumbers: duration('۶ ماه') }), 6, 60_000_000],
+    ['قرارداد پشتیبانی یک ساله با شرکت آلفا بستیم و کل مبلغ ۲۴ میلیون رو از اول به حساب تجارت واریز کرد', received('income', '۲۴ میلیون', {
+      movements: [mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'شرکت آلفا' }, BANK, 'به حساب تجارت واریز کرد')],
+      counterparties: party('شرکت آلفا', 'customer'), subject: service('قرارداد پشتیبانی'), nonAmountNumbers: duration('یک ساله'),
+    }), 12, 24_000_000],
+    ['مستاجر اجاره ۶ ماه مغازه رو جلو جلو داد ۳۰ میلیون', received('advance-received', '۳۰ میلیون', {
+      movements: [mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'مستاجر' }, BANK, 'داد')], counterparties: party('مستاجر', 'customer'), nonAmountNumbers: duration('۶ ماه'),
+    }), 6, 30_000_000],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, said);
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify([item.plan?.questions, item.plan?.reasons])}`);
+      assert.equal(components(item)[0].treatment, 'deferred-revenue', text);
+      assert.equal(posted.schedule.length, months, text);
+      assert.equal(posted.scheduled, amount, text);
+      assert.equal(creditOf(posted, /درآمد(?!.*انتقالی)/) || 0, 0, `${text}: درآمدِ امروز ساخته نشد ${JSON.stringify(posted.lines)}`);
+      assert.equal(creditOf(posted, /درآمد انتقالی|پیش‌دریافت/), amount, text);
+    });
+  }
+});
+
+test('اجارهٔ همین ماه که «پیش پیش» رسید درآمدِ همین ماه است؛ بی‌طول، دوره پرسیده می‌شود', async () => {
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('آقای کریمی اجاره مهر مغازه رو ۱۰ میلیون پیش پیش به حساب تجارت واریز کرد',
+      received('advance-received', '۱۰ میلیون', { dates: coverage('مهر', 'مهر', { month: 7 }, { month: 7 }) }));
+    assert.equal(item.status, 'ready', JSON.stringify([item.plan?.questions, item.plan?.reasons]));
+    assert.equal(components(item)[0].treatment, 'recognized-revenue');
+    assert.equal(creditOf(posted, /درآمد/), 10_000_000, JSON.stringify(posted.lines));
+    assert.equal(posted.schedule.length, 0);
+  });
+  // بی‌طول و بی‌آغاز: پیش‌دریافتِ اجاره بی‌دوره هرگز درآمد نمی‌شد؛ حالا آغاز و پایان پرسیده می‌شوند.
+  const text = 'مستاجر اجاره مغازه رو پیش پیش داد ۳۰ میلیون به حساب تجارت';
+  const said = received('advance-received', '۳۰ میلیون', { movements: [mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'مستاجر' }, BANK, 'داد')], counterparties: party('مستاجر', 'customer') });
+  await inFreshWorkspace(async () => {
+    const { item } = await understandCase(text, said, { commit: false });
+    assert.deepEqual(questionIds(item), ['engine.a1.servicePeriodStart'], JSON.stringify(item.plan?.reasons));
+  });
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase(text, said, { answers: [{ 'engine.a1.servicePeriodStart': { value: 'next-month' } }, { 'engine.a1.servicePeriodEnd': { value: 'three-months' } }] });
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions));
+    assert.equal(posted.schedule.length, 3);
+    assert.equal(posted.schedule[0].period_key, '1405-08');
+  });
+});
+
+test('منفی: بیعانهٔ کالا پیش‌دریافت از مشتری می‌ماند، فروشِ کالا با گارانتی درآمد است', async () => {
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('آقای کریمی ۱۰ میلیون بیعانه خرید مبل به حساب تجارت واریز کرد',
+      received('advance-received', '۱۰ میلیون بیعانه', { subject: { what: 'مبل', kind: 'goods', use: 'resale', delivered: 'no', usefulLifeMonths: null, evidence: null } }));
+    assert.equal(item.status, 'ready', JSON.stringify([item.plan?.questions, item.plan?.reasons]));
+    assert.equal(components(item)[0].treatment, 'customer-advance');
+    assert.equal(posted.schedule.length, 0);
+  });
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('دستگاه کپی با گارانتی یک ساله به آقای کریمی ۵۰ میلیون فروختیم و به حساب تجارت واریز کرد',
+      received('sale', '۵۰ میلیون', { subject: { what: 'دستگاه کپی', kind: 'goods', use: 'resale', delivered: 'yes', usefulLifeMonths: null, evidence: null } }));
+    assert.equal(item.status, 'ready', JSON.stringify([item.plan?.questions, item.plan?.reasons]));
+    assert.equal(posted.schedule.length, 0);
+    assert.equal(creditOf(posted, /فروش|درآمد/), 50_000_000, JSON.stringify(posted.lines));
+  });
+});
