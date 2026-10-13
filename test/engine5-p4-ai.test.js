@@ -789,3 +789,53 @@ test('منفی: قسط وام بانک وام می‌ماند؛ بیمهٔ یک�
     assert.ok(!(item.plan?.reasons || []).some((reason) => /قرارداد موجود/.test(reason)), JSON.stringify(item.plan?.reasons));
   });
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی ۲: قاعدهٔ نرخ پرداختِ واقعی را دور نمی‌ریزد.
+// ---------------------------------------------------------------------------
+
+test('نرخِ فهرست‌شده با «و» زیر فعلِ مشترک قلمِ پرداخت است؛ واژهٔ کل نرخش می‌کند؛ مضربِ بی‌واژه با حسابدار', async () => {
+  const twoOut = (e1, e2) => [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت'), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت')];
+  const listed = [
+    ['اجاره ماهانه ۱۰ میلیون و قبض برق ۲ میلیون رو از تجارت دادیم', 'اجاره ماهانه ۱۰ میلیون', 'قبض برق ۲ میلیون', [10_000_000, 2_000_000]],
+    ['حقوق ماهانه ۲۰ میلیون و اضافه کار ۵ میلیون به آقای رضایی از تجارت دادیم', 'حقوق ماهانه ۲۰ میلیون', 'اضافه کار ۵ میلیون', [20_000_000, 5_000_000]],
+    ['شارژ ماهیانه ۳ میلیون و قبض گاز ۱ میلیون از تجارت پرداخت کردیم', 'شارژ ماهیانه ۳ میلیون', 'قبض گاز ۱ میلیون', [3_000_000, 1_000_000]],
+  ];
+  for (const [text, e1, e2, values] of listed) {
+    const { understanding, violations } = validateUnderstanding(model({ amounts: [amt('a1', 'paid-now', e1), amt('a2', 'paid-now', e2)], movements: twoOut() }), { text, now: new Date(NOW) });
+    assert.deepEqual(understanding.amounts.filter((a) => a.status === 'done').map((a) => a.value), values, text);
+    assert.ok(!violations.some((v) => /rate-not-payment/.test(v)), text);
+  }
+  // جملهٔ حقوق تا دفتر: ۲۵ میلیون از بانک رفت، نه ۵ میلیون.
+  await inFreshWorkspace(async () => {
+    const [text, e1, e2] = listed[1];
+    const { item, posted } = await understandCase(text, model({ amounts: [amt('a1', 'paid-now', e1), amt('a2', 'paid-now', e2)], movements: twoOut(),
+      counterparties: [{ id: 'c1', name: 'آقای رضایی', role: 'employee', evidence: 'آقای رضایی' }] }));
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions || item.plan?.reasons));
+    assert.equal(creditOf(posted, /تجارت/), 25_000_000);
+  });
+  // منفی: واژهٔ کل در قلمِ بعدی، نرخ را زمینه می‌کند.
+  const whole = validateUnderstanding(model({ amounts: [amt('a1', 'paid-now', 'اجاره ماهانه ۵ میلیون'), amt('a2', 'paid-now', 'کل شش ماه ۳۰ میلیون')], movements: twoOut() }),
+    { text: 'اجاره ماهانه ۵ میلیون و کل شش ماه ۳۰ میلیون رو یکجا از تجارت دادیم', now: new Date(NOW) });
+  assert.equal(whole.understanding.amounts.find((a) => a.id === 'a1').status, 'context');
+  // مضربِ درست بی‌واژهٔ کل: نرخ یا قلم؟ حدس نه — حسابدار.
+  await inFreshWorkspace(async () => {
+    const { item } = await understandCase('اجاره ماهانه ۵ میلیون و اجاره شش ماهش ۳۰ میلیون رو از تجارت دادیم', model({
+      amounts: [amt('a1', 'paid-now', 'اجاره ماهانه ۵ میلیون'), amt('a2', 'paid-now', 'اجاره شش ماهش ۳۰ میلیون')], movements: twoOut(), subject: service('اجاره دفتر') }), { commit: false });
+    assert.equal(item.status, 'needs-accountant', JSON.stringify(item.plan?.questions));
+  });
+});
+
+test('کلِ پرداخت‌نشده جای پرداختِ واقعی را نمی‌گیرد: قرارداد ۱۲۰ میلیون، این ماه ۱۰ میلیون دادیم', async () => {
+  const SAID = 'قرارداد اجاره دفتر یک ساله ۱۲۰ میلیون بستیم، ماهی ۱۰ میلیون، اجاره این ماه رو از تجارت دادیم';
+  for (const [name, a1] of [['کل انجام‌شده', amt('a1', 'total', '۱۲۰ میلیون')], ['کل زمینه', amt('a1', 'total', '۱۲۰ میلیون', { status: 'context' })]]) {
+    const { understanding } = validateUnderstanding(model({ amounts: [a1, amt('a2', 'paid-now', 'ماهی ۱۰ میلیون')], movements: [mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }), { text: SAID, now: new Date(NOW) });
+    assert.equal(understanding.amounts.find((a) => a.id === 'a2').status, 'done', name);
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(SAID, model({ amounts: [a1, amt('a2', 'paid-now', 'ماهی ۱۰ میلیون')], movements: [mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], subject: service('اجاره دفتر') }),
+        { answers: [] });
+      assert.ok(!(item.plan?.questions || []).some((q) => /a1/.test(q.id)), `${name}: برای کلِ قرارداد حساب پرسیده نمی‌شود`);
+      if (posted) assert.equal(creditOf(posted, /تجارت/), 10_000_000, `${name}: فقط ۱۰ میلیون از بانک رفت`);
+    });
+  }
+});

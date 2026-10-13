@@ -376,7 +376,10 @@ const LOAN_WORD = /وام|تسهیلات|قرض/;
  *   در بند خودش (فعلِ آخرِ جمله فقط با «هم» یا وقتی مبلغ قبلی فعل خودش را دارد)،
  *   پرداخت است. قسطِ وام بیرون از این قاعده است؛ اصل و سودش با حسابدار است.
  */
-function guardPeriodRates(amounts, movements, text, violations) {
+const RATE_TOTAL_CUE = /(?<![آ-ی])(?:کل|کلش|کلشو|جمع|جمعا|جمعاً|مجموع|مجموعا|مجموعاً|یکجا|یک\s*جا|روی\s*هم|همه|همش|همه\s*اش)(?![آ-ی])/;
+const LIST_JOIN = /^\s*(?:تومان|تومن|ریال)?\s*(?:رو|را)?\s*و\s/;
+
+function guardPeriodRates(amounts, movements, text, violations, ask = () => {}) {
   const read = extractAmounts(text);
   if (read.spans.length < 2) return;
   const keptStarts = new Set(withoutRateAmounts(read.text, read.spans).map((span) => span.start));
@@ -389,14 +392,34 @@ function guardPeriodRates(amounts, movements, text, violations) {
   };
   const placed = amounts.filter((amount) => amount.accepted).map((amount) => ({ amount, span: spanOf(amount) })).filter((item) => item.span);
   const isRate = (span) => !keptStarts.has(span.start);
+  const index = (span) => read.spans.findIndex((item) => item.start === span.start);
+  const ownClause = (span) => read.text.slice(span.end, read.spans[index(span) + 1]?.start ?? read.text.length).split(/[.،,؛;\n]/)[0];
+  // کلی که پرداخت را می‌برد: جابه‌جایی یا فعل پرداختِ خودش را دارد. «قرارداد
+  // یک ساله ۱۲۰ میلیون بستیم، ماهی ۱۰ میلیون، اجارهٔ این ماه رو دادیم»: ۱۲۰
+  // میلیون ارزش قرارداد است و پولی با آن جابه‌جا نشده؛ پرداختِ واقعی همان ۱۰
+  // میلیون است و نباید به نفع کلِ پرداخت‌نشده کنار برود.
+  const carries = (other) => movements.some((item) => item?.amountRef === other.amount.id) || OWN_PAYMENT_VERB.test(ownClause(other.span));
   for (const { amount, span } of placed) {
     if (!isRate(span) || amount.status !== 'done') continue;
-    const total = placed.some((other) => other.amount !== amount && other.amount.status === 'done' && !isRate(other.span));
-    if (!total) continue;
+    const totals = placed.filter((other) => other.amount !== amount && other.amount.status === 'done' && !isRate(other.span) && carries(other));
+    if (!totals.length) continue;
+    // «اجاره ماهانه ۱۰ میلیون و قبض برق ۲ میلیون رو دادیم»: مبلغی که با «و»
+    // به قلم بعدی وصل است و فعلِ آخر را با آن شریک است، قلمِ فهرست است، نه نرخِ
+    // کل — مگر واژهٔ کل («کل شش ماه ۳۰ میلیون») یا مضربِ درستِ نرخ بودنِ کل آن
+    // را نرخ کند. مضرب بی‌واژهٔ کل حدس است؛ داوری با حسابدار.
+    const next = read.spans[index(span) + 1];
+    const gap = next ? read.text.slice(span.end, next.start) : '';
+    if (next && LIST_JOIN.test(gap) && !RATE_TOTAL_CUE.test(gap)) {
+      const multiple = totals.some((other) => other.amount.value > amount.value && other.amount.value % amount.value === 0);
+      if (multiple) {
+        ask(`amounts.${amount.id}.rate`, 'judgment', `«${amount.evidence}» نرخِ دوره‌ایِ مبلغ دیگر است یا پرداختی جدا؟ با حسابدار.`);
+        violations.push(`amounts.${amount.id}:rate-or-item`);
+      }
+      continue;
+    }
     Object.assign(amount, { role: 'unit-price', status: 'context', partOf: null });
     violations.push(`amounts.${amount.id}:rate-not-payment`);
   }
-  const index = (span) => read.spans.findIndex((item) => item.start === span.start);
   for (const { amount, span } of placed) {
     if (!['unit-price', 'installment'].includes(amount.role) || isRate(span)) continue;
     const at = index(span);
@@ -656,7 +679,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       }
     }
   }
-  guardPeriodRates(amounts, raw.movements, text, violations);
+  guardPeriodRates(amounts, raw.movements, text, violations, ask);
   // یک عددِ گفته‌شده، حداکثر یک مبلغ قابل ثبت.
   //
   // مدل واقعی «هشتاد میلیون … نسیه خریدیم» را دو مبلغ کرد: کل ۸۰ و بخش نسیهٔ ۸۰،
