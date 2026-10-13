@@ -1150,12 +1150,26 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // کردیم» در دنبالهٔ بندِ خودِ مبلغ ماند؛ پرداخت ۳۰ میلیونی گم می‌شد (موتور ۵).
   // دنبالهٔ بند، از پایان شاهدِ مبلغ تا مرز بعدی است؛ «بقیه رو ماه بعد میدیم» فعل
   // انجام‌شده‌ای ندارد و «۴ میلیون دادیم»ِ پیش از آن به آن نمی‌رسد.
+  //
+  // دنباله به مبلغِ پولیِ بعدی هم ختم می‌شود: «اجاره آبان ۱۰ میلیون سررسیدش ماه
+  // بعده و قبض برق ۲ میلیون رو دادیم» — «دادیم» فعلِ قبض است، نه اجاره؛ وگرنه
+  // برای اجارهٔ پرداخت‌نشده سطر نقدی ساخته می‌شد (بازبین موتور ۵).
+  //
+  // فعلی که فقط بعد از مبلغِ بعدی آمده، فعلِ مشترکِ فهرست است و به این مبلغ هم
+  // می‌رسد — مگر بندِ خودِ مبلغ بگوید هنوز پرداخت نشده («سررسیدش»، «مونده»،
+  // «قرار است») که برچسب «آینده» می‌ماند؛ یا نشانهٔ آینده‌ای دارد که ممکن است
+  // دربارهٔ دورهٔ خدمت باشد نه پول («برای ماه بعد») که پرسیده می‌شود.
   const tailOf = (evidence) => {
     const key = normalizePersian(evidence || '').trim();
     const clause = clauseOf(evidence);
     const at = key ? clause.indexOf(key) : -1;
-    return at < 0 ? '' : clause.slice(at + key.length);
+    if (at < 0) return { own: '', shared: '' };
+    const read = extractAmounts(clause.slice(at + key.length));
+    const next = readEvidenceAmounts(read.text).findIndex((item) => item.cue);
+    const money = read.spans.filter((span) => !span.bareScale)[next];
+    return { own: next < 0 || !money ? read.text : read.text.slice(0, money.start), shared: read.text };
   };
+  const STILL_OWED = /سررسید|(?<![آ-ی])(?:مونده|مانده|بدهکاریم|بدهکاره|نداد|ندادیم|نپرداخت|نریختیم)/;
   const hedged = new Set(conditions.filter((item) => ['negation', 'condition', 'promise'].includes(item.kind)).flatMap((item) => item.affects));
   for (const movement of movements.filter((item) => ['in', 'out', 'transfer'].includes(item.direction))) {
     const amount = byId.get(movement.amountRef);
@@ -1163,7 +1177,16 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const said = normalizePersian(movement.evidence || '');
     const tail = tailOf(amount.evidence);
     const doneHere = said && foundLoosely(movement.evidence, textKey) && DONE_MONEY_VERB.test(said) && !NOT_YET.test(said);
-    if (!doneHere && !(DONE_MONEY_VERB.test(tail) && !NOT_YET.test(tail))) continue;
+    const doneOwn = DONE_MONEY_VERB.test(tail.own) && !NOT_YET.test(tail.own);
+    const doneShared = DONE_MONEY_VERB.test(tail.shared) && !NOT_YET.test(tail.shared);
+    if (!doneHere && !doneOwn && !doneShared) continue;
+    if (!doneHere && !doneOwn) {
+      if (STILL_OWED.test(tail.own) || NOT_YET.test(tail.own)) continue;
+      if (FUTURE_CLAUSE.test(tail.own)) {
+        ask(`movements.${movement.id}.done`, 'information', `«${amount.evidence}» واقعاً پرداخت یا دریافت شده یا هنوز نه؟`, ['انجام شده', 'هنوز انجام نشده']);
+        violations.push(`amounts.${amount.id}:done-or-future`);
+      }
+    }
     amount.status = 'done';
     violations.push(`amounts.${amount.id}:done-in-speech`);
   }

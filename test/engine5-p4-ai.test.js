@@ -864,3 +864,36 @@ test('قسطی که از بانک رفته هیچ‌وقت «بی‌سند» ی�
     assert.ok(!violations.some((v) => /is-instalment/.test(v)), text);
   }
 });
+
+test('فعلِ مبلغِ بعدی برچسب «آینده» را برنمی‌گرداند وقتی بند خودش می‌گوید پرداخت نشده؛ فعلِ مشترکِ فهرست می‌رسد؛ آیندهٔ مبهم پرسیده می‌شود', async () => {
+  const run = async (text, e1, e2, ev1, extra = {}) => {
+    const said = model({ amounts: [amt('a1', 'paid-now', e1, { status: 'future' }), amt('a2', 'paid-now', e2)],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, ev1), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], ...extra });
+    return understandCase(text, said, { commit: true });
+  };
+  // بند خودش «سررسید/مونده/قراره» دارد: اجاره و بیمه هنوز پرداخت نشده‌اند.
+  for (const [text, e1, ev1] of [
+    ['اجاره آبان دفتر ۱۰ میلیون سررسیدش ماه بعده و قبض برق ۲ میلیون رو از تجارت دادیم', 'اجاره آبان دفتر ۱۰ میلیون', 'ماه بعده'],
+    ['بیمه سال بعد ۱۲ میلیون مونده برای آبان و قبض برق ۲ میلیون رو از تجارت دادیم', 'بیمه سال بعد ۱۲ میلیون', 'برای آبان'],
+    ['اجاره دفتر ۱۰ میلیون قراره ماه بعد بدیم و قبض برق ۲ میلیون رو از تجارت دادیم', 'اجاره دفتر ۱۰ میلیون', 'قراره ماه بعد بدیم'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await run(text, e1, 'قبض برق ۲ میلیون', ev1);
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(creditOf(posted, /تجارت/), 2_000_000, `${text}: فقط قبض از بانک رفت`);
+      assert.equal(debitOf(posted, /پیش‌پرداخت/), 0, text);
+    });
+  }
+  // فهرست با «و» و فعل مشترک: اجارهٔ آبان هم پرداخت شده (پیش‌پرداخت).
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await run('اجاره آبان دفتر ۱۰ میلیون و قبض برق ۲ میلیون رو از تجارت دادیم', 'اجاره آبان دفتر ۱۰ میلیون', 'قبض برق ۲ میلیون', 'از تجارت', { subject: service('اجاره دفتر') });
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions));
+    assert.equal(creditOf(posted, /تجارت/), 12_000_000);
+  });
+  // «برای ماه بعد» ممکن است دورهٔ اجاره باشد نه پول: پرسیده می‌شود، سطر نقدی تا جواب نه.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await run('اجاره دفتر ۱۰ میلیون برای ماه بعد و قبض برق ۲ میلیون رو از تجارت دادیم', 'اجاره دفتر ۱۰ میلیون', 'قبض برق ۲ میلیون', 'از تجارت');
+    assert.equal(posted, null);
+    assert.ok(questionIds(item).includes('movements.m1.done'), JSON.stringify(questionIds(item)));
+  });
+});
