@@ -418,6 +418,9 @@ function yearEndsBefore(text, firstToken, collected, next) {
  * مقیاسش را گرفته («۳۰ میلیون») و دنبالهٔ عددی بعدی به واحد شمارش یا زمان
  * می‌رسد، جمع‌کردن می‌ایستد.
  */
+// صفتِ نرخ («ماهانه»، «سالانه») شمارِ واحد نیست: «یک میلیون و دویست ماهانه»
+// همان ۱٬۲۰۰٬۰۰۰ است، نه یک میلیون و «دویست ماه».
+const RATE_ADJECTIVES = new Set(['ماهانه', 'ماهیانه', 'سالانه', 'سالیانه', 'هفتگی', 'روزانه']);
 function countOfUnitFollows(tokens, from, collected) {
   if (!collected.some((value) => SCALES[value])) return false;
   let cursor = from;
@@ -427,7 +430,7 @@ function countOfUnitFollows(tokens, from, collected) {
   }
   const unit = tokens[cursor]?.value || '';
   // «تا» اینجا بیشتر حرف اضافه است («هزار و چهارصد و پنج تا آخر شهریور»).
-  return unit !== 'تا' && (NON_AMOUNT_UNITS.includes(unit) || SUFFIXED_TIME_UNIT.test(unit));
+  return unit !== 'تا' && !RATE_ADJECTIVES.has(unit) && (NON_AMOUNT_UNITS.includes(unit) || SUFFIXED_TIME_UNIT.test(unit));
 }
 
 export function extractAmounts(input) {
