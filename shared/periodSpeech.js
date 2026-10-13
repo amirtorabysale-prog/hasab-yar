@@ -173,7 +173,9 @@ function lengthOf(text, { bare = false, consumed = [] } = {}) {
   if (!service && LENDING.test(text)) return null;
   // «برای دو ماه» بی‌نام خدمت هر چیزی می‌تواند باشد — «حقوق کارمندا برای دو ماه»،
   // «به مدت دو ماه قرض دادیم» — پس فقط کنار خدمت دوره‌دار یا در جواب سؤال دوره.
-  const patterns = [ADJECTIVE, FORWARD, ...(bare || service ? [DURATION] : []), ...(bare ? [BARE] : [])];
+  // «سه ماه آینده» هم همین‌طور: «۳۰ میلیون دادیم برای پارچه سه ماه آینده» زمانِ
+  // کالاست و سه ماه هزینهٔ پارچه می‌ساخت.
+  const patterns = [ADJECTIVE, ...(bare || service ? [FORWARD, DURATION] : []), ...(bare ? [BARE] : [])];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
       // صفت طول در جملهٔ خدمت دوره‌دار («اجاره کامیون حمل بار یکساله»، «لایسنس

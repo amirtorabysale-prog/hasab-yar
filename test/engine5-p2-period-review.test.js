@@ -382,6 +382,43 @@ test('زمان تحویل: شکل‌های هم‌ارز و نمونه‌های 
   ]) assert.equal(period(text), null, text);
 });
 
+// ---------------------------------------------------------------------------
+// «سه ماه آینده» بی‌نام خدمت دورهٔ پوشش نیست
+// ---------------------------------------------------------------------------
+
+test('پیش‌پرداخت کالا بی‌فعل تحویل: دورهٔ پوشش نیست (جمله‌های بازبین)', () => {
+  for (const text of [
+    '۳۰ میلیون به آقای رضایی دادیم برای پارچه سه ماه آینده',
+    '۳۰ میلیون به آقای رضایی دادیم برای سفارش پارچه سه ماه بعد',
+  ]) {
+    assert.equal(period(text), null, text);
+    const [row] = parsed(text);
+    assert.equal(row.servicePeriodStart, undefined, text);
+    assert.equal(row.occurredAt, undefined, `${text} — پول امروز رفته`);
+    for (const item of voice(text).items) {
+      assert.notEqual(item.decision?.treatment, 'prepaid-expense', text);
+      assert.equal((item.plan?.lines || []).some((line) => line.role === 'prepaid-asset'), false, text);
+    }
+  }
+});
+
+test('«N ماه آینده»: فقط کنار خدمت دوره‌دار، پوشش یا حق عضویت', () => {
+  for (const [text, expected] of [
+    ['پونزده میلیون شارژ ساختمان رو برای شش ماه جلوتر تسویه کردم', [TODAY, '1406/1/17']],
+    ['حق عضویت سه ماه آینده ۳ میلیون دادیم', [TODAY, '1405/10/17']],
+    ['اشتراک سه ماه بعد نرم افزار ۶ میلیون دادیم', [TODAY, '1405/10/17']],
+    ['کرایه انبار برای 3 ماه آینده 9 میلیون دادیم', [TODAY, '1405/10/17']],
+  ]) assert.deepEqual(period(text), expected, text);
+  for (const text of [
+    '۲۰ میلیون به آقای کریمی دادیم برای ورق دو ماه آینده',
+    'برای دستگاه شش ماه جلوتر ۵۰ میلیون دادیم',
+    'حقوق کارمندا برای دو ماه آینده ۵۰ میلیون دادیم',
+    '۱۰ میلیون به تامین کننده برای جنس سه ماه بعد ریختیم',
+  ]) assert.equal(period(text), null, text);
+  // در جواب سؤال دوره، خودِ سؤال زمینهٔ پوشش است.
+  assert.deepEqual(period('سه ماه آینده', { answer: true }), [TODAY, '1405/10/17']);
+});
+
 // ===== دفتر =====
 
 process.env.DATABASE_PATH = tempDatabase('engine5-p2-period-review');
@@ -475,3 +512,12 @@ test('دفتر، مسیر فهم: فهرست ماه‌ها و طول مرکب ه
     }
   });
 });
+
+test('دفتر: پیش‌پرداخت کالا برنامهٔ ماهانه نمی‌سازد', () => inWorkspace(() => {
+  for (const text of ['۳۰ میلیون به آقای رضایی دادیم برای پارچه سه ماه آینده', '۳۰ میلیون به آقای رضایی دادیم برای سفارش پارچه سه ماه بعد']) {
+    const event = captured(text);
+    assert.equal(event.servicePeriodStart ?? null, null, text);
+    assert.notEqual(store.decisionForEvent(db(), event.id)?.treatment, 'prepaid-expense', text);
+    assert.deepEqual(periodKeys(event.id), [], text);
+  }
+}));
