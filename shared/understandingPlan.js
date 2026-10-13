@@ -27,6 +27,7 @@ import { persianMonthRange, persianToISO, todayPersian } from './persianDate.js'
 import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { saysRefundable } from './moneyPurpose.js';
+import { evidenceKey } from './eventUnderstanding.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -160,36 +161,130 @@ function dateFor(understanding, roles) {
  * آورده حسابِ خودِ ماست و کارت شخص برایش ساخته نمی‌شود. نامِ سمتِ دیگرِ
  * جابه‌جایی — هر نوعی که مدل گفته باشد — اولین نشانه است.
  */
+/**
+ * کلیدِ تطبیقِ شاهد، با نقشهٔ برگشت به متن.
+ *
+ * اعتبارسنج شاهد را با `evidenceKey` پذیرفته است: بی‌نشانه‌گذاری، «آ» مثل «ا»،
+ * تکه‌تکه برای «...». جای شاهد در متن هم باید همان‌طور پیدا شود؛ وگرنه شاهدِ
+ * پذیرفته‌شده‌ای مثل «اجاره ۶ ماه جلوتر ... ۳۰ میلیون» یا «به آقای رضایی» (متن:
+ * «اقای») پیدا نمی‌شد و بخشِ آن مبلغ به مبلغِ دیگر می‌رسید (بازبین موتور ۵).
+ */
+const KEY_PUNCTUATION = /[«»"'“”()[\]{}،,؛;:!؟?.\-–—]/;
+function keyedText(said) {
+  let key = '';
+  const map = [];
+  for (let at = 0; at < said.length; at += 1) {
+    let char = said[at] === 'آ' ? 'ا' : KEY_PUNCTUATION.test(said[at]) ? ' ' : said[at];
+    if (/\s/.test(char)) {
+      if (!key.length || key.endsWith(' ')) continue;
+      char = ' ';
+    }
+    key += char;
+    map.push(at);
+  }
+  return { key, map };
+}
+const evidenceParts = (evidence) => String(evidence || '').split(/\.{2,}|…/).map((part) => evidenceKey(part)).filter(Boolean);
+const DIGIT = /[0-9۰-۹٠-٩]/;
+
+/** همهٔ جاهای یک شاهد در متن؛ «۲ میلیون» درونِ «۱۲ میلیون» نیست. */
+function occurrences(keyed, evidence) {
+  const parts = evidenceParts(evidence);
+  if (!parts.length) return [];
+  const { key, map } = keyed;
+  const found = [];
+  for (let at = key.indexOf(parts[0]); at >= 0; at = key.indexOf(parts[0], at + 1)) {
+    if (DIGIT.test(key[at - 1] || '') && DIGIT.test(parts[0][0])) continue;
+    let end = at + parts[0].length;
+    let whole = true;
+    for (const part of parts.slice(1)) {
+      const next = key.indexOf(part, end);
+      if (next < 0) { whole = false; break; }
+      end = next + part.length;
+    }
+    if (!whole) continue;
+    if (DIGIT.test(key[end] || '') && DIGIT.test(parts.at(-1).at(-1))) continue;
+    found.push({ start: map[at], end: map[end - 1] + 1 });
+  }
+  return found;
+}
+
 /** بندِ یک شاهد در متنِ کامل: تکه‌ای میان دو نشانهٔ جداکننده. */
 function clauseOf(said, evidence) {
-  const key = normalizePersian(evidence || '').trim();
-  const at = key ? said.indexOf(key) : -1;
-  if (at < 0) return '';
+  const span = occurrences(keyedText(said), evidence)[0];
+  if (!span) return '';
   const separator = /[.،,؛;!؟?\n:]/;
-  let start = at;
+  let start = span.start;
   while (start > 0 && !separator.test(said[start - 1])) start -= 1;
-  let end = at + key.length;
+  let end = span.end;
   while (end < said.length && !separator.test(said[end])) end += 1;
   return said.slice(start, end);
 }
 
-/** جای شاهد در متن؛ «۲ میلیون» درونِ «۱۲ میلیون» پیدا نمی‌شود. */
-function locate(said, evidence, taken) {
-  const key = normalizePersian(evidence || '').trim();
-  if (!key) return null;
-  for (let at = said.indexOf(key); at >= 0; at = said.indexOf(key, at + 1)) {
-    const end = at + key.length;
-    if (/[0-9۰-۹٠-٩]/.test(said[at - 1] || '') && /^[0-9۰-۹٠-٩]/.test(key)) continue;
-    if (taken.some((span) => at < span.end && end > span.start)) continue;
-    return { start: at, end };
+/**
+ * جای همهٔ مبالغ در متن، یک بار و برای همه یکسان.
+ *
+ * هر مبلغ فقط یک جا دارد. مبلغی که تنها یک جای آزاد دارد اول می‌نشیند و جایش را
+ * از بقیه می‌گیرد («۱۰ میلیون» بعد از «اجاره شش ماه آینده دفتر ۱۰ میلیون»). اگر
+ * دو مبلغ همچنان چند جای ممکن دارند («۱۰ میلیون» و «۱۰ میلیون»)، کدام کجاست حدس
+ * است: `null`، و دوره و تاریخِ جمله صاحب ندارد. ترتیبِ مبلغی که بخشش را حساب
+ * می‌کنیم در این جاگذاری اثری ندارد.
+ */
+function placeAmounts(said, items) {
+  const keyed = keyedText(said);
+  let pending = items.map((entry) => ({ ...entry, options: occurrences(keyed, entry.item.evidence) }));
+  const placed = new Map();
+  const taken = [];
+  const free = (entry) => entry.options.filter((span) => !taken.some((other) => span.start < other.end && span.end > other.start));
+  for (;;) {
+    let progress = false;
+    for (const entry of pending) {
+      const open = free(entry);
+      if (!open.length) {
+        if (entry.required) return null;
+        entry.dropped = true;
+        continue;
+      }
+      if (open.length === 1) { placed.set(entry.item.id, open[0]); taken.push(open[0]); progress = true; }
+    }
+    pending = pending.filter((entry) => !entry.dropped && !placed.has(entry.item.id));
+    if (!pending.length) return placed;
+    if (!progress) return pending.some((entry) => entry.required) ? null : placed;
   }
-  return null;
 }
 
 /** «آبان و آذر»، «۶ و نیم»: «و» میان دو ماه یا دو عدد مرزِ دو مبلغ نیست. */
 const MONTH_NAMES = 'فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند';
 const AND_NOT_BOUNDARY = new RegExp(`^\\s+و\\s+(?:${MONTH_NAMES}|نیم|[0-9۰-۹٠-٩]|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده)(?![آ-ی])`);
 const PUNCTUATION = /[.،,؛;!؟?\n:]/;
+
+/**
+ * برش‌های جمله میان مبالغِ جاگذاری‌شده. `owner` صاحبِ هر شاهد است؛ شاهدِ بی‌صاحب
+ * (کلی که اجزایش ماهیت‌های جدا دارند) مرز می‌سازد ولی بخشش مشترک می‌ماند.
+ */
+function sliceByOwner(said, spans) {
+  const owned = spans.map(() => ({ from: 0, to: said.length }));
+  let lead = spans[0].start;
+  while (lead > 0 && !PUNCTUATION.test(said[lead - 1])) lead -= 1;
+  owned[0].from = lead;
+  let tail = spans[spans.length - 1].end;
+  while (tail < said.length && !PUNCTUATION.test(said[tail])) tail += 1;
+  owned[spans.length - 1].to = tail;
+  for (let index = 1; index < spans.length; index += 1) {
+    const left = spans[index - 1];
+    const right = spans[index];
+    if (left.owner && left.owner === right.owner) { owned[index - 1].to = right.start; owned[index].from = left.end; continue; }
+    const gap = said.slice(left.end, right.start);
+    let cut = -1;
+    for (let at = 0; at < gap.length; at += 1) {
+      if (PUNCTUATION.test(gap[at])) { cut = at; break; }
+      if (/^\s+و\s/.test(gap.slice(at)) && (at === 0 || !/\s/.test(gap[at - 1])) && !AND_NOT_BOUNDARY.test(gap.slice(at))) { cut = at; break; }
+    }
+    owned[index - 1].to = cut < 0 ? left.end : left.end + cut;
+    owned[index].from = cut < 0 ? right.start : left.end + cut;
+  }
+  return owned;
+}
 
 /**
  * بخشی از جمله که فقط مالِ یک مبلغ است.
@@ -203,53 +298,54 @@ const PUNCTUATION = /[.،,؛;!؟?\n:]/;
  * مبلغِ آخر تا نشانهٔ جداکننده مالِ همان مبلغ است؛ آن‌سوی نشانه، و فاصلهٔ بی‌مرزِ
  * میان دو مبلغ، مشترک است: دوره‌ای که آن‌جا گفته شده صاحبِ روشنی ندارد.
  *
- * اجزای یک کل («۳۰ میلیون اجاره، ۱۰ نقد و ۲۰ از تجارت») یک صاحب‌اند و دوره را با هم
- * می‌برند. وقتی مبلغِ دیگری برای ثبت نیست، کل جمله مالِ همین مبلغ است.
+ * اجزای یک کل وقتی یک صاحب‌اند که با هم همان کل‌اند و ماهیتِ جدایی نمی‌گویند
+ * («۳۰ میلیون اجاره ۶ ماه، ۱۰ نقد و ۲۰ از تجارت»): دورهٔ کل به هر دو می‌رسد. وقتی
+ * ماهیت‌شان جداست («قبض برق ۲ میلیون و اجاره ۶ ماه … ۳۰ میلیون، جمعاً ۳۲») یا جمعشان
+ * کل نیست («قرارداد یک ساله ۱۲۰ میلیون … اجاره این ماه ۱۰ میلیون دادیم»)، هر جزء
+ * فقط بخشِ خودش را دارد و بخشِ کل مشترک است. وقتی جای مبلغی در متن پیدا نشد یا
+ * دو مبلغ جایشان معلوم نیست، هیچ بخشی به کسی داده نمی‌شود.
  */
-function amountScope(said, amount, amounts, retracted) {
-  const group = (item) => item.partOf || item.id;
+function amountScope(said, amount, amounts, retracted, natureOf = () => null) {
   // مبلغِ آینده یا شرطی هم بخشِ خودش را دارد: «اجارهٔ شش ماه آینده رو ماه بعد میدیم
   // و قبض ۲ میلیون دادیم» دورهٔ اجاره را به قبض نمی‌دهد. نرخ و قسط و ماندهٔ قبلی
   // زمینهٔ مبلغ دیگرند و بخشی از جمله را از آن جدا نمی‌کنند.
   const claims = (item) => item.accepted && item.status !== 'context' && !retracted.has(item.id)
     && !['unit-price', 'installment', 'prior-balance'].includes(item.role);
-  const mine = group(amount);
-  const isMine = (item) => group(item) === mine || item.id === mine;
-  const others = amounts.filter((item) => claims(item) && !isMine(item));
-  if (!others.length) return { alone: true, own: said, shared: '' };
-  const members = [...amounts.filter(isMine), ...others]
-    .sort((a, b) => normalizePersian(b.evidence || '').length - normalizePersian(a.evidence || '').length);
-  const spans = [];
-  for (const item of members) {
-    const span = locate(said, item.evidence, spans);
-    if (span) spans.push({ ...span, mine: isMine(item) });
+  const claimants = amounts.filter(claims);
+  // کلی که خودش ثبت نمی‌شود هم مرز است: «قرارداد اجاره یک ساله ۱۲۰ میلیون بستیم
+  // (زمینه)، … اجاره این ماه ۱۰ میلیون رو دادیم» — «یک ساله» مالِ قرارداد است، نه ۱۰ میلیون.
+  const totals = amounts.filter((item) => item.accepted && !retracted.has(item.id)
+    && (claimants.some((part) => part.partOf === item.id) || (item.role === 'total' && !claims(item))));
+  const unknown = { alone: false, own: normalizePersian(amount.evidence || ''), shared: said, spans: [], owned: [] };
+  if (claimants.length <= 1 && !totals.length) return { alone: true, own: said, shared: '' };
+  const entries = [...new Set([...claimants, ...totals])].map((item) => ({ item, required: true }));
+  const placed = placeAmounts(said, entries);
+  if (!placed || !placed.has(amount.id)) return unknown;
+  const located = entries.filter((entry) => placed.has(entry.item.id)).map((entry) => ({ item: entry.item, ...placed.get(entry.item.id) }))
+    .sort((left, right) => left.start - right.start);
+  // دور اول: هر جزء صاحبِ خودش، کلِ دارای جزء بی‌صاحب.
+  const ownerOf = new Map(located.map(({ item }) => [item.id, totals.includes(item) ? null : item.id]));
+  const textOf = (owners, id) => {
+    const spans = located.map((span) => ({ ...span, owner: owners.get(span.item.id) }));
+    const owned = sliceByOwner(said, spans);
+    return spans.map((span, index) => (span.owner === id ? said.slice(owned[index].from, owned[index].to) : '')).filter(Boolean).join(' ');
+  };
+  for (const total of totals) {
+    const parts = claimants.filter((part) => part.partOf === total.id && placed.has(part.id));
+    const natures = new Set(parts.map((part) => natureOf(textOf(ownerOf, part.id))).filter(Boolean));
+    const whole = parts.reduce((sum, part) => sum + (Number(part.value) || 0), 0) === Number(total.value);
+    if (!whole || natures.size > 1) continue;
+    for (const item of [total, ...parts]) ownerOf.set(item.id, total.id);
   }
-  spans.sort((a, b) => a.start - b.start);
-  if (!spans.some((span) => span.mine)) return { alone: false, own: normalizePersian(amount.evidence || ''), shared: said, spans: [], owned: [] };
-  // برش‌ها: میان دو شاهدِ دو صاحبِ متفاوت، اولین مرز؛ بی‌مرز، فاصله مشترک می‌ماند.
-  const owned = spans.map(() => ({ from: 0, to: said.length }));
-  let lead = spans[0].start;
-  while (lead > 0 && !PUNCTUATION.test(said[lead - 1])) lead -= 1;
-  owned[0].from = lead;
-  let tail = spans[spans.length - 1].end;
-  while (tail < said.length && !PUNCTUATION.test(said[tail])) tail += 1;
-  owned[spans.length - 1].to = tail;
-  for (let index = 1; index < spans.length; index += 1) {
-    const left = spans[index - 1];
-    const right = spans[index];
-    if (left.mine === right.mine) { owned[index - 1].to = right.start; owned[index].from = left.end; continue; }
-    const gap = said.slice(left.end, right.start);
-    let cut = -1;
-    for (let at = 0; at < gap.length; at += 1) {
-      if (PUNCTUATION.test(gap[at])) { cut = at; break; }
-      if (/^\s+و\s/.test(gap.slice(at)) && (at === 0 || !/\s/.test(gap[at - 1])) && !AND_NOT_BOUNDARY.test(gap.slice(at))) { cut = at; break; }
-    }
-    owned[index - 1].to = cut < 0 ? left.end : left.end + cut;
-    owned[index].from = cut < 0 ? right.start : left.end + cut;
-  }
+  const mine = ownerOf.get(amount.id);
+  if (!mine) return unknown;
+  const spans = located.map((span) => ({ start: span.start, end: span.end, owner: ownerOf.get(span.item.id), mine: ownerOf.get(span.item.id) === mine }));
+  if (spans.every((span) => span.mine)) return { alone: true, own: said, shared: '' };
+  const owned = sliceByOwner(said, spans);
   const own = [];
   const claimed = new Array(said.length).fill(false);
   spans.forEach((span, index) => {
+    if (!span.owner) return;
     for (let at = owned[index].from; at < owned[index].to; at += 1) claimed[at] = true;
     if (span.mine) own.push(said.slice(owned[index].from, owned[index].to));
   });
@@ -586,7 +682,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // دیگری ودیعه اجاره می‌شد (آزمون بازبین و گزارش مالک محصول، مهر ۱۴۰۵).
     const own = normalizePersian(amount.evidence || '');
     const clause = clauseOf(said, amount.evidence);
-    const scope = amountScope(said, amount, amounts, retracted);
+    const scope = amountScope(said, amount, amounts, retracted, (part) => (part ? (classifyCategory(part, type).matched ? classifyCategory(part, type).category : null) : null));
     // برچسب «ودیعه»ی مدل به‌تنهایی کافی نیست: «پیش‌پرداخت بیمه … ۱۲ میلیون» را مدل
     // «ودیعه» نامید و ۱۲ میلیون ودیعهٔ قابل استرداد شد (۱۸ مهر ۱۴۰۵). ودیعه یعنی
     // پولی که برمی‌گردد و جمله باید خودش این را بگوید؛ «پیش‌پرداخت» بر برچسب مقدم است.

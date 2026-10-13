@@ -897,3 +897,88 @@ test('فعلِ مبلغِ بعدی برچسب «آینده» را برنمی‌�
     assert.ok(questionIds(item).includes('movements.m1.done'), JSON.stringify(questionIds(item)));
   });
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی ۲: دورهٔ یک مبلغ به مبلغ دیگر نمی‌رسد — شاهدِ «...»، بی‌ویرگول، «اقای»،
+// مبلغ‌های هم‌اندازه، اجزای یک کل.
+// ---------------------------------------------------------------------------
+
+const twoPaid = (e1, e2, extra = {}) => model({ amounts: [amt('a1', 'paid-now', e1), amt('a2', 'paid-now', e2)],
+  movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت'), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت')], ...extra });
+const treatments = (item) => Object.fromEntries((item.plan?.components || []).map((c) => [c.amount, c.preview?.treatment || null]));
+
+test('شاهدی که اعتبارسنج پذیرفته همان‌جا پیدا می‌شود: «...»، ویرگولِ جاافتاده و «اقای» دوره را به قلم دیگر نمی‌دهند', async () => {
+  for (const [name, text, said, prepaid, months, other] of [
+    ['«...» در شاهد', 'قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون از تجارت دادیم', twoPaid('قبض برق ۲ میلیون', 'اجاره ۶ ماه جلوتر ... ۳۰ میلیون'), 30_000_000, 6, 2_000_000],
+    ['ویرگولِ جاافتاده', 'قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر، ۳۰ میلیون از تجارت دادیم', twoPaid('قبض برق ۲ میلیون', 'اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون'), 30_000_000, 6, 2_000_000],
+    ['«اقای» در متن، «آقای» در شاهد', 'کرایه حمل ۳ میلیون و بیمه یک ساله ماشین ۱۲ میلیون به اقای رضایی از تجارت دادیم', twoPaid('کرایه حمل ۳ میلیون', 'بیمه یک ساله ماشین ۱۲ میلیون به آقای رضایی'), 12_000_000, 12, 3_000_000],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, said);
+      assert.equal(item.status, 'ready', `${name}: ${JSON.stringify(item.plan?.questions || item.plan?.reasons)}`);
+      assert.equal(treatments(item)[other], 'period-expense', name);
+      assert.ok(!(item.plan.components.find((c) => c.amount === other).text || '').includes('ماه'), `${name}: متنِ ردیفِ ${other} کل جمله نیست`);
+      assert.equal(debitOf(posted, /پیش‌پرداخت/), prepaid, name);
+      assert.equal(posted.schedule.length, months, name);
+      assert.equal(posted.scheduled, prepaid, name);
+    });
+  }
+});
+
+test('مبلغ‌های هم‌اندازه: جای هر کدام معلوم باشد دوره به صاحبش می‌رسد؛ شاهدِ یکسان یعنی دوره صاحب ندارد', async () => {
+  for (const text of ['قبض برق ۱۰ میلیون و اجاره شش ماه آینده دفتر ۱۰ میلیون از تجارت دادیم', 'اجاره شش ماه آینده دفتر ۱۰ میلیون و قبض برق ۱۰ میلیون از تجارت دادیم']) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, twoPaid('۱۰ میلیون', '۱۰ میلیون'));
+      assert.equal(item.status, 'needs-accountant', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(posted, null);
+    });
+    await inFreshWorkspace(async () => {
+      const [bill, rent] = text.startsWith('قبض') ? ['قبض برق ۱۰ میلیون', '۱۰ میلیون'] : ['۱۰ میلیون', 'اجاره شش ماه آینده دفتر ۱۰ میلیون'];
+      const said = text.startsWith('قبض') ? twoPaid(bill, 'اجاره شش ماه آینده دفتر ۱۰ میلیون') : twoPaid(rent, 'قبض برق ۱۰ میلیون');
+      const { item, posted } = await understandCase(text, said);
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions || item.plan?.reasons)}`);
+      assert.equal(debitOf(posted, /پیش‌پرداخت/), 10_000_000, text);
+      assert.equal(posted.schedule.length, 6, text);
+      assert.equal(debitOf(posted, /قبوض/), 10_000_000, `${text}: قبض هزینهٔ همین ماه`);
+    });
+  }
+});
+
+test('اجزای یک کل: ماهیت جدا یعنی بخش جدا؛ اجزای همان کل دوره را با هم می‌برند؛ کلِ قرارداد دوره‌اش را به پرداختِ این ماه نمی‌دهد', async () => {
+  // جملهٔ بازبین با «جمعا»: قبض هزینه، اجاره ۶ ماهه.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون، جمعا ۳۲ میلیون از تجارت دادیم', model({
+      amounts: [amt('a1', 'total', 'جمعا ۳۲ میلیون'), amt('a2', 'part', 'قبض برق ۲ میلیون', { partOf: 'a1' }), amt('a3', 'part', 'اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون', { partOf: 'a1' })],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }), { answers: [{ 'movements.a2-implied.account': '$tejarat', 'movements.a3-implied.account': '$tejarat' }] });
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions || item.plan?.reasons));
+    assert.equal(treatments(item)[2_000_000], 'period-expense');
+    assert.equal(debitOf(posted, /پیش‌پرداخت/), 30_000_000);
+    assert.equal(posted.schedule.length, 6);
+  });
+  // دوره در بخشِ کل و اجزا با ماهیت جدا: صاحبِ دوره روشن نیست — حسابدار، نه قبضِ پیش‌پرداخت.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('بابت قبض برق و اجاره شش ماه جلوتر دفتر ۳۲ میلیون از تجارت دادیم، ۲ میلیون قبض و ۳۰ میلیون اجاره', model({
+      amounts: [amt('a1', 'total', '۳۲ میلیون'), amt('a2', 'part', '۲ میلیون قبض', { partOf: 'a1' }), amt('a3', 'part', '۳۰ میلیون اجاره', { partOf: 'a1' })],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }), { answers: [{ 'movements.a2-implied.account': '$tejarat', 'movements.a3-implied.account': '$tejarat' }] });
+    assert.equal(item.status, 'needs-accountant', JSON.stringify(item.plan?.questions));
+    assert.equal(posted, null);
+  });
+  // منفی: اجزای همان اجاره (نقد و بانک) دورهٔ کل را با هم می‌برند.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون، ۱۰ میلیون نقد و ۲۰ میلیون از تجارت دادیم', model({
+      amounts: [amt('a1', 'total', 'اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون'), amt('a2', 'part', '۱۰ میلیون نقد', { partOf: 'a1' }), amt('a3', 'part', '۲۰ میلیون از تجارت', { partOf: 'a1' })],
+      movements: [mv('m2', 'a2', 'out', { kind: 'cash', name: null }, UNKNOWN, 'نقد'), mv('m3', 'a3', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], subject: service('اجاره دفتر') }),
+    );
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions || item.plan?.reasons));
+    assert.equal(debitOf(posted, /پیش‌پرداخت/), 30_000_000);
+    assert.equal(posted.scheduled, 30_000_000);
+  });
+  // قرارداد یک‌ساله ۱۲۰ میلیون (کل یا زمینه)، اجارهٔ این ماه ۱۰ میلیون: ۱۰ میلیون جدول ۱۲ ماهه نمی‌گیرد.
+  const SAID = 'قرارداد اجاره دفتر یک ساله ۱۲۰ میلیون بستیم، ماهی ۱۰ میلیون، اجاره این ماه رو از تجارت دادیم';
+  for (const a1 of [amt('a1', 'total', '۱۲۰ میلیون'), amt('a1', 'total', '۱۲۰ میلیون', { status: 'context' })]) {
+    await inFreshWorkspace(async () => {
+      const { posted } = await understandCase(SAID, model({ amounts: [a1, amt('a2', 'paid-now', 'ماهی ۱۰ میلیون')], movements: [mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], subject: service('اجاره دفتر') }));
+      assert.ok(!posted || posted.schedule.length !== 12, JSON.stringify(posted?.schedule));
+    });
+  }
+});
