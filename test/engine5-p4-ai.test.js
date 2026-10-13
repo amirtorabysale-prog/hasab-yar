@@ -723,3 +723,69 @@ test('چکِ پیش‌پرداخت یا پیش‌دریافت که به حساب
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// ۱۱. دستور مدل خانوادهٔ پیش‌پرداخت را راهنمایی می‌کند؛ قسطِ قرارداد قسطِ وام نیست.
+// ---------------------------------------------------------------------------
+
+test('دستور مدل: پیش‌پرداخت، ودیعهٔ برگشت‌پذیر، نرخ کنار کل، طول پوشش، آغاز + طول، پیش‌دریافت', async () => {
+  const { UNDERSTANDING_INSTRUCTIONS: said } = await import('../server/eventUnderstandingAi.js');
+  for (const [pattern, what] of [
+    [/advance-paid/, 'پیش‌پرداخت خدمت دوره‌دار'],
+    [/ودیعه[^\n]*برمی‌گردد/, 'ودیعه یعنی برگشت‌پذیر'],
+    [/advance-received/, 'پیش‌دریافت از مستاجر یا مشتری'],
+    [/نرخِ دوره[^\n]*unit-price[^\n]*context/, 'نرخ کنار کل پرداخت نیست'],
+    [/شش ماه آینده[^\n]*زمانِ پول نیست/, 'آیندهٔ پوشش زمان پول نیست'],
+    [/role=duration[^\n]*coverage-start/, 'آغاز + طول'],
+    [/چند مبلغ[^\n]*دوره/, 'دورهٔ یک مبلغ مال همان مبلغ'],
+    [/ماهِ گذشته/, 'ماه گذشته به سال بعد نمی‌رود'],
+    [/قسط دوم بیمه[^\n]*loan-repayment/, 'قسط قرارداد قسط وام نیست'],
+  ]) assert.match(said, pattern, what);
+});
+
+test('قسط یا باقیِ بیمه و اجاره: نه پیش‌پرداخت تازه، نه قسط وام — حسابدار با دلیلِ درست', async () => {
+  for (const [text, kind, evidence] of [
+    ['باقی حق بیمه انبار ۹ میلیون رو هم از حساب تجارت دادیم', 'expense', '۹ میلیون'],
+    ['قسط دوم بیمه آتش سوزی ۳ میلیون از حساب تجارت دادیم', 'loan-repayment', '۳ میلیون'],
+    ['دومین قسط بیمه نامه آتش سوزی رو ۳ میلیون از تجارت دادیم', 'loan-repayment', '۳ میلیون'],
+    ['مابقی حق اشتراک یک ساله نرم افزار ۶ میلیون رو از تجارت دادیم', 'advance-paid', '۶ میلیون'],
+    ['باقیمانده اجاره دفتر 9 ميليون رو از تجارت پرداخت كرديم', 'expense', '9 ميليون'],
+    ['بقیه اجاره مغازه ۲۰ میلیون رو مستاجر به حساب تجارت واریز کرد', 'income', '۲۰ میلیون'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const incoming = kind === 'income';
+      const { item, posted } = await understandCase(text, model({
+        event: { kind, description: '', status: 'done' }, amounts: [amt('a1', incoming ? 'received-now' : 'paid-now', evidence)],
+        movements: [incoming ? mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'مستاجر' }, BANK, 'واریز کرد') : mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')],
+      }));
+      assert.equal(item.status, 'needs-accountant', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.ok(item.plan.reasons.some((reason) => /قرارداد موجود/.test(reason)), `${text}: ${item.plan.reasons}`);
+      assert.ok(!item.plan.reasons.some((reason) => /وام/.test(reason) && !/نه قسط وام/.test(reason)), `${text}: ${item.plan.reasons}`);
+      assert.equal(posted, null, text);
+    });
+  }
+});
+
+test('منفی: قسط وام بانک وام می‌ماند؛ بیمهٔ یک‌سالهٔ تازه پیش‌پرداخت است؛ «بقیه‌اش رو قسطی میدیم» قرارداد موجود نیست', async () => {
+  const loan = validateUnderstanding(model({ event: { kind: 'loan-repayment', description: '', status: 'done' }, amounts: [amt('a1', 'installment', '۳ میلیون')] }),
+    { text: 'قسط وام بانک ملت ۳ میلیون دادیم', now: new Date(NOW) }).understanding;
+  assert.equal(loan.event.kind, 'loan-repayment');
+  const instalment = validateUnderstanding(model({ event: { kind: 'loan-repayment', description: '', status: 'done' }, amounts: [amt('a1', 'paid-now', '۳ میلیون')] }),
+    { text: 'قسط دوم بیمه آتش سوزی ۳ میلیون از حساب تجارت دادیم', now: new Date(NOW) });
+  assert.notEqual(instalment.understanding.event.kind, 'loan-repayment');
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('بیمه یک ساله انبار ۱۲ میلیون از تجارت دادیم', model({
+      amounts: [amt('a1', 'paid-now', '۱۲ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('بیمه انبار'),
+    }));
+    assert.equal(item.status, 'ready');
+    assert.equal(posted.schedule.length, 12);
+  });
+  await inFreshWorkspace(async () => {
+    const { item } = await understandCase('مبل خریدیم ۳۰ میلیون، ۱۰ میلیون از تجارت دادیم بقیه‌اش رو قسطی میدیم', model({
+      event: { kind: 'purchase', description: '', status: 'done' },
+      amounts: [amt('a1', 'total', '۳۰ میلیون'), amt('a2', 'paid-now', '۱۰ میلیون', { partOf: 'a1' })],
+      movements: [mv('m1', 'a2', 'out', BANK, UNKNOWN, 'از تجارت')],
+    }), { commit: false });
+    assert.ok(!(item.plan?.reasons || []).some((reason) => /قرارداد موجود/.test(reason)), JSON.stringify(item.plan?.reasons));
+  });
+});
