@@ -294,3 +294,147 @@ test('سری چک تک‌چک ثبت نمی‌شود؛ با جمع کامل به
   assert.equal(database.listCheques().length, 0);
   assert.equal(kindBalance('cheque-payable') + kindBalance('cheque-receivable'), 0);
 }));
+
+// ---------------------------------------------------------------------------
+// خوشه‌های obligation-* — طلب و بدهی از موتور تصمیم، ویرایش و حذف با سندش،
+// و طرف حساب کارت صوتی.
+// ---------------------------------------------------------------------------
+
+/** همان payload کارت طلب/بدهی در App.jsx، با طرف حسابِ گفته‌شده. */
+const voiceObligation = (text) => {
+  const found = intent(text);
+  assert.equal(found?.intent, 'obligation', text);
+  return database.saveObligation({
+    title: found.title, amount: found.amount, direction: found.direction,
+    dueAt: found.dueAt || null, occurredAt: found.occurredAt || null,
+    note: found.transcript.slice(0, 300), contactName: found.contactName || '',
+  });
+};
+const openingOf = (obligation) => {
+  const row = activeWorkspaceDatabase().prepare(`SELECT id,status,journal_entry_id AS journalEntryId FROM financial_events
+    WHERE (source_event_id=? OR source_event_id LIKE ?) AND status NOT IN ('reversed','rejected') ORDER BY rowid DESC LIMIT 1`)
+    .get(`obligation:${obligation.id}`, `obligation:${obligation.id}#r%`);
+  return row ? { ...row } : null;
+};
+const decisionOf = (eventId) => ({ ...activeWorkspaceDatabase().prepare('SELECT treatment,decision_status AS status FROM accounting_decisions WHERE event_id=? ORDER BY rowid DESC LIMIT 1').get(eventId) });
+
+for (const mode of ['engine-on', 'engine-off']) {
+  test(`طلب و بدهی برای پوشش آینده پیش‌پرداخت یا پیش‌دریافت است، نه سایر هزینه/درآمد (${mode})`, () => inWorkspace(freshWorkspace(`تعهد دوره‌دار ${mode}`), () => {
+    if (mode === 'engine-on') engineOn();
+    for (const [text, amount, debitKind, creditKind, months] of [
+      ['مستاجر اجاره شش ماه بعد رو ۶۰ میلیون بدهکاره', 60_000_000, 'customer-receivable', 'deferred-revenue', 6],
+      ['آقای رضایی اجاره ۶ ماه آینده مغازه رو ۳۰ میلیون به ما بدهکاره', 30_000_000, 'customer-receivable', 'deferred-revenue', 6],
+      ['اقای رضایی اجاره ي شش ماه آينده مغازه رو 30 ميليون بهمون بدهکاره', 30_000_000, 'customer-receivable', 'deferred-revenue', 6],
+      ['اشتراک یک ساله نرم افزار رو ۲۴ میلیون به شرکت پارس بدهکاریم', 24_000_000, 'prepaid-asset', 'vendor-payable', 12],
+      ['بیمه یک ساله انبار رو ۱۲ میلیون به بیمه ایران بدهکاریم', 12_000_000, 'prepaid-asset', 'vendor-payable', 12],
+      ['لایسنس دو ساله آنتی ویروس ۸ میلیون به شرکت امن بدهکاریم', 8_000_000, 'prepaid-asset', 'vendor-payable', 24],
+    ]) {
+      const obligation = voiceObligation(text);
+      const opened = openingOf(obligation);
+      assert.equal(opened.status, 'posted', text);
+      assert.deepEqual(lines(opened.journalEntryId), [[debitKind, amount], [creditKind, amount]], text);
+      assert.deepEqual(schedule(opened.id), { count: months, total: amount }, text);
+      assert.equal(obligation.dueAt, null, `دورهٔ پوشش سررسید نیست: ${text}`);
+    }
+    // فرم با یادداشت دوره: عنوان هم شاهد است.
+    const form = database.saveObligation({ title: 'حق بیمه یکساله آتش سوزی انبار', contactName: 'بیمه ایران', amount: 12_000_000,
+      direction: 'payable', note: 'پوشش ۱۸ مهر ۱۴۰۵ تا ۱۷ مهر ۱۴۰۶' });
+    assert.deepEqual(lines(openingOf(form).journalEntryId), [['prepaid-asset', 12_000_000], ['vendor-payable', 12_000_000]]);
+    assert.equal(kindBalance('expense-category'), 0);
+    assert.equal(kindBalance('income-category'), 0);
+  }));
+}
+
+test('طلب و بدهی: دورهٔ نامعلوم پرسیده می‌شود؛ منفی‌ها همان سند قبلی‌اند', () => inWorkspace(freshWorkspace('تعهد منفی'), () => {
+  engineOn();
+  const asked = database.saveObligation({ title: 'اجاره دفتر', contactName: 'آقای رضایی', amount: 5_000_000, direction: 'payable' });
+  assert.equal(asked.journalStatus, 'pending');
+  assert.equal(decisionOf(openingOf(asked).id).status, 'needs-user-input');
+  // اجارهٔ ماهِ گذشته که هنوز نداده‌ایم: هزینهٔ همان دوره و بدهی.
+  const past = voiceObligation('اجاره شهریور دفتر رو ۵ میلیون به آقای رضایی بدهکاریم');
+  assert.deepEqual(lines(openingOf(past).journalEntryId), [['expense-category', 5_000_000], ['vendor-payable', 5_000_000]]);
+  // فروش نسیهٔ کالا: درآمد همین حالا.
+  const sale = database.saveObligation({ title: 'فروش گرانول', contactName: 'صنایع آریا', amount: 20_000_000, direction: 'receivable' });
+  assert.deepEqual(lines(openingOf(sale).journalEntryId), [['customer-receivable', 20_000_000], ['income-category', 20_000_000]]);
+  // قبض مصرف‌شده: هزینهٔ تعهدی.
+  const bill = database.saveObligation({ title: 'قبض برق شهریور', contactName: 'اداره برق', amount: 9_000_000, direction: 'payable' });
+  assert.deepEqual(lines(openingOf(bill).journalEntryId), [['expense-category', 9_000_000], ['vendor-payable', 9_000_000]]);
+}));
+
+test('کارت صوتی طلب و بدهی طرف حساب را وصل می‌کند؛ بی‌نام، حساب جعلی «طلب/بدهی» نمی‌سازد', () => inWorkspace(freshWorkspace('تعهد طرف حساب'), () => {
+  engineOn();
+  for (const text of [
+    'اشتراک یک ساله نرم افزار رو ۲۴ میلیون به شرکت پارس بدهکاریم',
+    'آقای رضایی ۵ میلیون به ما بدهکاره',
+    'به شرکت البرز ۱۰ ميليون بدهكاريم',
+    'اقای کریمی ۳ میلیون بهمون بدهکاره',
+  ]) {
+    const obligation = voiceObligation(text);
+    assert.ok(obligation.contactId, text);
+    const balances = database.ledgerSideBalances(obligation.contactId);
+    assert.equal(balances.uncoveredPayable, 0, text);
+    assert.equal(balances.uncoveredReceivable, 0, text);
+    assert.ok(database.openDocumentsFor(obligation.contactId).some((doc) => doc.id === obligation.id), text);
+  }
+  const unnamed = voiceObligation('مستاجر اجاره شش ماه بعد رو ۶۰ میلیون بدهکاره');
+  assert.equal(unnamed.contactId, null);
+  const names = activeWorkspaceDatabase().prepare("SELECT name FROM ledger_accounts WHERE name LIKE '%طلب/بدهی%'").all();
+  assert.deepEqual(names, [], 'هیچ زیرحسابی به نام عنوان پیش‌فرض ساخته نشد');
+}));
+
+test('ویرایش و حذف طلب/بدهی سند را هم عوض می‌کند؛ فهرست، کارت و دفتر یک عدد می‌گویند', () => inWorkspace(freshWorkspace('ویرایش تعهد'), () => {
+  engineOn();
+  const agree = (obligation, contactId, side) => {
+    const balances = database.ledgerSideBalances(contactId);
+    assert.equal(balances[side] + 0, obligation ? obligation.remaining : 0, `${side} دفتر`);
+    assert.equal(balances[side === 'payable' ? 'uncoveredPayable' : 'uncoveredReceivable'] + 0, 0, 'بی‌پوشش');
+  };
+  // ۱۲ → ۶ (بیمهٔ نیم‌ساله) و بعد حذف.
+  const insurer = database.saveContact({ name: 'بیمه ایران' });
+  const policy = database.saveObligation({ title: 'حق بیمه یکساله آتش سوزی انبار', contactId: insurer.id, amount: 12_000_000, direction: 'payable' });
+  agree(policy, insurer.id, 'payable');
+  const halved = database.saveObligation({ id: policy.id, title: 'حق بیمه یکساله آتش سوزی انبار', contactId: insurer.id, amount: 6_000_000, direction: 'payable' });
+  assert.equal(halved.remaining, 6_000_000);
+  agree(halved, insurer.id, 'payable');
+  assert.equal(kindBalance('prepaid-asset'), 6_000_000, 'پیش‌پرداخت هم با مبلغ تازه');
+  assert.equal(database.deleteObligation(policy.id), true);
+  agree(null, insurer.id, 'payable');
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  assert.equal(database.listObligations({ status: 'all' }).find((item) => item.id === policy.id).status, 'cancelled');
+  assert.throws(() => database.settleLedgerBalance(insurer.id, { direction: 'payable' }));
+  // بالا بردن مبلغ و تسویه: بدهکارِ معکوس نمی‌ماند.
+  const vendor = database.saveContact({ name: 'شرکت پخش البرز' });
+  const debt = database.saveObligation({ title: 'بدهی خرید', contactId: vendor.id, amount: 2_000_000, direction: 'payable' });
+  const raised = database.saveObligation({ id: debt.id, title: 'بدهی خرید', contactId: vendor.id, amount: 9_000_000, direction: 'payable' });
+  database.settleObligation(raised.id, { account: 'cash' });
+  agree(null, vendor.id, 'payable');
+  // وارونه کردن جهت.
+  const customer = database.saveContact({ name: 'آقای احمدی' });
+  const flip = database.saveObligation({ title: 'حساب احمدی', contactId: customer.id, amount: 5_000_000, direction: 'receivable' });
+  const flipped = database.saveObligation({ id: flip.id, title: 'حساب احمدی', contactId: customer.id, amount: 5_000_000, direction: 'payable' });
+  assert.equal(database.ledgerSideBalances(customer.id).receivable + 0, 0);
+  agree(flipped, customer.id, 'payable');
+  // عوض کردن طرف حساب.
+  const other = database.saveContact({ name: 'آقای کریمی' });
+  const moved = database.saveObligation({ id: flip.id, title: 'حساب احمدی', contactId: other.id, amount: 5_000_000, direction: 'payable' });
+  assert.equal(database.ledgerSideBalances(customer.id).payable + 0, 0);
+  agree(moved, other.id, 'payable');
+  // حذفِ تعهدِ بخشی‌تسویه‌شده رد می‌شود.
+  const partial = database.saveObligation({ title: 'بدهی بخشی', contactId: vendor.id, amount: 10_000_000, direction: 'payable' });
+  database.settleObligation(partial.id, { account: 'cash', amount: 4_000_000 });
+  assert.throws(() => database.deleteObligation(partial.id), /تسویه/);
+  assert.throws(() => database.saveObligation({ id: partial.id, title: 'بدهی بخشی', contactId: vendor.id, amount: 3_000_000, direction: 'payable' }), /تسویه/);
+  // حذف تعهدی که سندش منتظر سؤال است: رویداد رد می‌شود و در صف نمی‌ماند.
+  const pending = database.saveObligation({ title: 'اجاره دفتر', contactId: other.id, amount: 7_000_000, direction: 'payable' });
+  const pendingEvent = openingOf(pending).id;
+  database.deleteObligation(pending.id);
+  assert.equal(activeWorkspaceDatabase().prepare('SELECT status FROM financial_events WHERE id=?').get(pendingEvent).status, 'rejected');
+  // شناسهٔ ناشناخته ردیف بی‌سند نمی‌سازد.
+  assert.throws(() => database.saveObligation({ id: 'no-such-obligation', title: 'x', amount: 1_000_000, direction: 'payable' }), /پیدا نشد/);
+  // ویرایش عنوانِ تعهدِ پرداخت‌شده وضعیتش را «باز» نمی‌کند؛ وضعیت از بدنه خوانده نمی‌شود.
+  const paid = database.saveObligation({ title: 'بدهی کوچک', contactId: vendor.id, amount: 1_000_000, direction: 'payable' });
+  database.settleObligation(paid.id, { account: 'cash' });
+  assert.equal(database.saveObligation({ id: paid.id, title: 'بدهی کوچک (فاکتور ۱۲)', contactId: vendor.id, amount: 1_000_000, direction: 'payable', status: 'open' }).status, 'paid');
+  const open = database.saveObligation({ title: 'بدهی باز', contactId: vendor.id, amount: 2_000_000, direction: 'payable' });
+  assert.equal(database.saveObligation({ id: open.id, title: 'بدهی باز', contactId: vendor.id, amount: 2_000_000, direction: 'payable', status: 'cancelled' }).status, 'open');
+}));

@@ -931,14 +931,19 @@ export default function App() {
             : draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
         return;
       }
-      await api.saveObligation({
+      // طرف حسابِ گفته‌شده همان مسیر فرم و کارت چک را می‌رود: مخاطب ساخته یا
+      // پیدا می‌شود و تعهد به او وصل است. بی‌آن، بدهی «شرکت پارس» بی‌مخاطب
+      // می‌ماند و کارت طرف حساب بعداً همان مبلغ را «بی‌پوشش» دوباره تسویه می‌کرد.
+      const { item } = await withCounterpartyConfirmation((counterpartyResolution) => api.saveObligation({
         title: draft.title, amount: draft.amount, direction: draft.direction,
         dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
-        note: draft.transcript.slice(0, 300),
-      });
+        note: draft.transcript.slice(0, 300), contactName: draft.contactName || '', counterpartyResolution,
+      }));
       setIntentDraft(null);
       await load();
-      notify(draft.direction === 'receivable' ? 'طلب ثبت شد.' : 'بدهی ثبت شد.');
+      notify(item?.journalStatus === 'pending'
+        ? `${draft.direction === 'receivable' ? 'طلب' : 'بدهی'} ثبت شد؛ سندش منتظر یک جواب یا بررسی حسابدار است.`
+        : draft.direction === 'receivable' ? 'طلب ثبت شد.' : 'بدهی ثبت شد.');
     } catch (error) { notify(error.message); }
   };
 
