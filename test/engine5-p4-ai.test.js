@@ -839,3 +839,28 @@ test('کلِ پرداخت‌نشده جای پرداختِ واقعی را نم�
     });
   }
 });
+
+test('قسطی که از بانک رفته هیچ‌وقت «بی‌سند» یا هزینهٔ حدسی نیست: با هر برچسب مدل، حسابدار', async () => {
+  const family = [
+    ['قسط ماشین ۵ میلیون رو از تجارت دادیم', 'قسط ماشین ۵ میلیون'],
+    ['قسط این ماه ۸ میلیون رو از حساب تجارت پرداخت کردیم', 'قسط این ماه ۸ میلیون'],
+    ['قسط ملت ۱۰ میلیون از حساب تجارت کسر شد', 'قسط ملت ۱۰ میلیون'],
+    ['قسطشو ۴ میلیون از تجارت دادیم', 'قسطشو ۴ میلیون'],
+  ];
+  for (const [text, evidence] of family) {
+    for (const kind of ['loan-repayment', 'expense', 'other']) {
+      for (const role of ['installment', 'paid-now']) {
+        await inFreshWorkspace(async () => {
+          const { item, posted } = await understandCase(text, model({ event: { kind, description: 'قسط', status: 'done' }, amounts: [amt('a1', role, evidence)], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')] }));
+          assert.equal(item.status, 'needs-accountant', `${text} / ${kind} / ${role}: ${item.status} ${JSON.stringify(item.plan?.reasons)}`);
+          assert.equal(posted, null);
+        });
+      }
+    }
+  }
+  // منفی: خرید اقساطی و پیش‌قسط قسطِ وام نیستند؛ قسطِ قرارداد هم دلیلِ «وام» نمی‌گیرد.
+  for (const text of ['یخچال قسطی خریدیم ۱۰ میلیون از تجارت دادیم', 'پیش قسط ماشین ۲۰ میلیون از تجارت دادیم', 'قسط دوم بیمه آتش سوزی ۳ میلیون از تجارت دادیم', 'قسط اجاره دفتر ۱۰ میلیون از تجارت دادیم']) {
+    const { violations } = validateUnderstanding(model({ event: { kind: 'purchase', description: '', status: 'done' }, amounts: [amt('a1', 'paid-now', text.match(/[۰-۹]+ میلیون/)[0])], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')] }), { text, now: new Date(NOW) });
+    assert.ok(!violations.some((v) => /is-instalment/.test(v)), text);
+  }
+});

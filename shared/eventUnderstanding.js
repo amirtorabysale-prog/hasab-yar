@@ -100,11 +100,20 @@ const PAST_DATE_ROLES = new Set(['payment', 'occurrence', 'invoice']);
  * حسابدار رفت. نوع رویداد حدس مدل است؛ وقتی حدسش مسیر را عوض می‌کند، باید
  * دست‌کم یک نشانهٔ صریح در خود جمله داشته باشد.
  */
+/**
+ * «قسط» به‌عنوان اسم، بی‌نامِ قراردادی کنارش: «قسط ماشین»، «قسط این ماه»، «قسط
+ * ملت». «قسط دوم بیمه»، «قسط اجاره» قسطِ قرارداد است (CONTRACT_REMAINDER در
+ * طرح)؛ «قسطی خریدیم» و «پیش‌قسط» خریدِ اقساطی است، نه بازپرداخت.
+ */
+const LOAN_INSTALMENT = /(?<![آ-ی])(?<!پیش\s?)(?:قسط|اقساط)(?:ش|شو|شون|ها|های|هاش|هاشو|و)?(?![آ-ی])(?!\s*(?:\S+\s+)?(?:حق\s*)?(?:بیمه|اجاره|کرایه|اشتراک|لایسنس|قرارداد|پشتیبانی))/;
+
 const KIND_CUES = Object.freeze({
   'loan-received': /وام|تسهیلات|قرض/,
-  // «قسط دوم بیمه»، «قسط اجاره» قسطِ یک قرارداد است، نه وام؛ «قسط» فقط کنار بانک
-  // یا لیزینگ نشانهٔ وام است.
-  'loan-repayment': /وام|تسهیلات|لیزینگ|قسط(?:\s+\S+){0,2}?\s+(?:بانک|لیزینگ)/,
+  // «قسط ماشین ۵ میلیون رو دادیم»: قسط بی‌نام بانک هم نشانهٔ بازپرداخت است؛ اگر
+  // نشانه تنگ شود، پولی که از بانک رفته «بی‌سند» یا هزینهٔ حدسی می‌شود. قسطِ
+  // قرارداد («قسط دوم بیمه/اجاره») بیرون است و طرح با CONTRACT_REMAINDER آن را به
+  // حسابدار می‌دهد، بی‌آنکه دلیلش «وام» گفته شود.
+  'loan-repayment': new RegExp(`وام|تسهیلات|لیزینگ|${LOAN_INSTALMENT.source}`),
   payroll: /حقوق|دستمزد|لیست\s*بیمه|کارکنان|پرسنل/,
   correction: /اشتباه|اصلاح|تصحیح|غلط/,
   refund: /برگشت|مرجوع|استرداد|عودت|پس\s*(?:دادیم|گرفتیم|دادن|داد)/,
@@ -928,6 +937,14 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   if (KIND_CUES[eventKind] && !KIND_CUES[eventKind].test(spoken)) {
     violations.push(`event:${eventKind}-without-cue`);
     eventKind = amounts.some((item) => item.role === 'prior-balance') ? 'settlement' : 'other';
+  }
+  // «قسط ماشین ۵ میلیون رو دادیم» با برچسب «هزینه» یا «سایر»: قسط اصل و سود دارد
+  // و ممکن است بدهیِ خرید اقساطی را ببندد. هزینهٔ حدسی نه، «بی‌سند» هم نه — پول
+  // از بانک رفته؛ تفکیکش با حسابدار. قسطِ قرارداد («قسط اجاره/بیمه») بیرون است.
+  if (['expense', 'other', 'purchase'].includes(eventKind) && LOAN_INSTALMENT.test(spoken)
+    && amounts.some((item) => item.accepted && ['done', 'context'].includes(item.status) && !['prior-balance', 'unit-price'].includes(item.role))) {
+    ask('event.kind', 'judgment', 'قسط اصل و سود دارد یا بدهیِ خرید اقساطی را می‌بندد؛ تفکیکش با حسابدار است.');
+    violations.push(`event:${eventKind}-is-instalment`);
   }
   if (eventKind !== 'correction' && BOOK_CORRECTION.test(spoken)) {
     violations.push(`event:${eventKind}-is-correction`);
