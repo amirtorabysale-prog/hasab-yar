@@ -165,7 +165,8 @@ function planCase(understanding, answers, row, now = new Date()) {
     let preview;
     try { [preview] = previewTransactions({ transcript: row.transcript, transactions: [component.item] }); }
     catch (error) { preview = { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [error.message] }; }
-    component.preview = { route: preview.route, lines: preview.lines || [], treatment: preview.treatment || null, eventKind: preview.eventKind || null, decisionStatus: preview.decisionStatus || null };
+    component.preview = { route: preview.route, lines: preview.lines || [], treatment: preview.treatment || null, eventKind: preview.eventKind || null, decisionStatus: preview.decisionStatus || null,
+      recognition: preview.recognition || null, servicePeriod: preview.servicePeriod || null };
     // پول از جیب شریک یا کارمند: پیش‌نمایش همان سندی را نشان می‌دهد که ثبت می‌شود.
     if (component.item.fundedBy) {
       const role = component.item.fundedBy.kind === 'employee' ? 'payable' : 'partner-payable';
