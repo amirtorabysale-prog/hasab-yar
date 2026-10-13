@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runVoice } from './helpers/voicePipeline.js';
-import { PAYER_PROMISE_MESSAGE, extractAmounts, parseFinancialText } from '../shared/parser.js';
+import { PAYER_PROMISE_MESSAGE, RATE_CHANGE_REASON, extractAmounts, parseFinancialText } from '../shared/parser.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { detectVoiceIntent } from '../shared/voiceIntent.js';
 import { validateUnderstanding } from '../shared/eventUnderstanding.js';
@@ -854,6 +854,44 @@ test('ردیفِ نیازمند قضاوت، با موتور خاموش یا ر�
       assert.equal(decision.route, 'accountant-review', `${text} ${JSON.stringify(policy)}`);
       assert.equal(decision.reasons[0], rows[0].needsJudgment, text);
     }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// بازبینی: افزایش یا سطح تازهٔ نرخ پرداخت واقعیِ کنارش را نمی‌بلعد
+// ---------------------------------------------------------------------------
+
+test('منفی: «شد/کم شد/اضافه شد» کنار مبلغ دیگر پرداخت یا جابه‌جایی حساب است، نه تغییر نرخ', () => {
+  for (const [text, amounts] of [
+    ['اجاره ۱۰ میلیون شد، ۲ میلیون هم شارژ دادیم', [10_000_000, 2_000_000]],
+    ['اجاره این ماه ۱۰ میلیون شد و ۲ میلیون شارژ رو هم دادیم', [10_000_000, 2_000_000]],
+    ['سود سپرده ۵ میلیون اضافه شد به حساب و ۲۰۰ هزار کارمزد کم شد', [5_000_000, 200_000]],
+    ['از حساب ملت ۱۰ میلیون کم شد بابت اجاره و ۳۰۰ هزار کارمزد', [10_000_000, 300_000]],
+    ['قسط وام ۵ میلیون کم شد از حساب و ۲۰۰ هزار هم کارمزد', [5_000_000, 200_000]],
+    ['اجاره ۲ میلیون اضافه شد و ۴ میلیون شارژ دادیم', [2_000_000, 4_000_000]],
+  ]) {
+    assert.deepEqual(parse(text).map((row) => row.amount), amounts, text);
+  }
+  assert.equal(parse('سود سپرده ۵ میلیون اضافه شد به حساب و ۲۰۰ هزار کارمزد کم شد')[0].type, 'income');
+  // برداشت بانک («کارمزد … کم شد») تغییر نرخ نیست، حتی اگر مبلغ دیگر مضربش باشد.
+  assert.deepEqual(parse('کارمزد ۲۰۰ هزار کم شد و ۵ میلیون واریز شد').map((row) => row.amount), [200_000, 5_000_000]);
+  // تغییرِ نرخی که نه حذف‌شدنی است و نه با «هم» پرداخت، بی‌صدا پرداخت ثبت نمی‌شود.
+  for (const text of ['اجاره ۱۰ میلیون شد، ۲ میلیون شارژ دادیم', 'اجاره ۳ میلیون کم شد و ۱۰ میلیون دادیم', 'اجاره ۲ میلیون اضافه شد', 'بیمه ۵۰۰ هزار گرون شد']) {
+    const [row] = parse(text);
+    assert.equal(row.needsJudgment, RATE_CHANGE_REASON, text);
+    assert.equal(voice(text).items[0].outcome, 'accountant', text);
+  }
+  for (const text of ['اجاره ۱۰ میلیون شد، ۲ میلیون هم شارژ دادیم', 'سود سپرده ۵ میلیون اضافه شد', 'اجاره ۵ میلیون شد', 'کارمزد ۲۰۰ هزار کم شد']) {
+    assert.ok(!parse(text).some((row) => row.needsJudgment === RATE_CHANGE_REASON), text);
+  }
+  // مثبت: مابه‌التفاوت، کلِ دوره یا مضربِ همان نرخ پرداختِ همان تغییر است.
+  for (const [text, amount] of [
+    ['اجاره ۵ میلیون شد، ۳۰ میلیون برای شش ماه دادیم', 30_000_000],
+    ['از ماه بعد اجاره ۲ میلیون اضافه شد، مابه‌التفاوت شش ماه ۱۲ میلیون رو دادیم', 12_000_000],
+    ['اجاره ۲ میلیون رفت بالا، ۱۲ میلیون مابه التفاوت شش ماه رو دادیم', 12_000_000],
+    ['اجاره ۲ میلیون اضافه شد و ۱۲ میلیون دادیم', 12_000_000],
+  ]) {
+    assert.deepEqual(parse(text).map((row) => row.amount), [amount], text);
   }
 });
 

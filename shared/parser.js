@@ -89,6 +89,13 @@ const RATE_INCREASE_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:(?:(?:ا
 // «N شد / N میشه» فقط برای قیمتِ دوره‌ای سطح تازهٔ نرخ است. «خرید ۵ میلیون شد
 // و حمل ۱ میلیون دادیم» جمع یک خرید است و حذفش حدس می‌شد.
 const RATE_LEVEL_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:شد|شده|میشه|می\s*شود)(?![آ-ی])/;
+// در گفتار بانکی «کم شد/اضافه شد» یعنی برداشت یا واریز: «سود سپرده ۵ میلیون
+// اضافه شد به حساب»، «از حساب ملت ۱۰ میلیون کم شد». این تغییر نرخ نیست.
+const ACCOUNT_MOVEMENT_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*\S+(?:\s*\S+)?\s*(?:شد|شده|کرد|کردن|کردند)?\s*(?:از|به|تو|توی)\s*(?:حساب|کارت|بانک)(?![آ-ی])/;
+const ACCOUNT_MOVEMENT_BEFORE = /(?:از|به|تو|توی)\s*(?:حساب|کارت|بانک)(?![آ-ی])[^،,.؛]*$/;
+// مبلغِ دیگری که پرداختِ همان تغییر است: مابه‌التفاوت، یا کلِ یک دوره.
+const DIFFERENCE_WORD = /مابه\s*التفاوت|ما\s*به\s*التفاوت|(?<![آ-ی])(?:تفاوت|اختلاف)(?![آ-ی])/;
+const PERIOD_WORD = /(?<![آ-ی])(?:\d+|یک|یه|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه|ده|یازده|دوازده)\s*(?:ماه|ماهه|سال|ساله)(?![آ-ی])|(?<![آ-ی])(?:یکساله|یکسال|دوساله)(?![آ-ی])|برای\s*(?:یک|یه)?\s*سال(?![آ-ی])/;
 const PAYMENT_VERB = /(?<![آ-ی])(?:دادیم|دادم|داد|دادن|پرداخت|واریز|ریختیم|ریختم|ریخت|زدیم|زدم|گرفتیم|گرفتم|خریدیم|خریدم|کارت\s*به\s*کارت)/;
 // ودیعه و رهن کلِ اقساط یک نرخ نیستند؛ پول جدایی‌اند که برمی‌گردد.
 const DEPOSIT_HEAD = /(?<![آ-ی])(?:ودیعه|رهن|سپرده|تضمین)/;
@@ -113,8 +120,27 @@ const CURRENCY_ONLY = /^[\s،,]*(?:(?:تومان|تومن|ریال)[\s،,]*)?$/;
  *    ماهانه ۵ میلیون و ودیعه ۵۰ میلیون دادیم») همهٔ مبلغ‌ها می‌مانند — حذف
  *    بی‌صدای یک پرداخت واقعی، حدس است.
  */
+// موضوعِ تغییرِ نرخ: قیمت دوره‌ای (اجاره، بیمه، اشتراک) یا حقوق. «کارمزد ۲۰۰ هزار
+// کم شد» برداشت بانک است، نه تغییر نرخ.
+const RATE_CHANGE_SUBJECTS = [...TIME_BOUND_SERVICE_CATEGORIES, 'حقوق و دستمزد'];
+// افزایش بی‌ابهام؛ «کم شد» تنها در گفتار بانکی کسرِ پول هم هست.
+const RATE_RAISE_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:(?:اضافه|افزایش|گرون|گران|زیاد|بیشتر)\s*(?:تر\s*)?(?:شد|شده|شده\s*است|میشه|می\s*شود|کرد|کردن|کردند|یافت|یافته|پیدا\s*کرد|داشت)|(?:رفت|میره|می\s*رود)\s*بالا|بالا\s*رفت)(?![آ-ی])/;
+export const RATE_CHANGE_REASON = 'این مبلغ تغییر نرخ را می‌گوید («اضافه شد»، «… شد»)، نه لزوماً پرداخت؛ اینکه پولی جابه‌جا شده یا نه با حسابدار است.';
+
 export function withoutRateAmounts(text, spans) {
-  if (spans.length < 2) return spans;
+  if (!spans.length) return spans;
+  const leadingOf = (index) => text.slice(spans[index - 1]?.end ?? 0, spans[index].start);
+  const changeSubject = (index) => {
+    const found = classifyCategory(leadingOf(index));
+    return found.matched && RATE_CHANGE_SUBJECTS.includes(found.category);
+  };
+  const accountMovement = (span, index) => ACCOUNT_MOVEMENT_AFTER.test(text.slice(span.end, span.end + 30)) || ACCOUNT_MOVEMENT_BEFORE.test(leadingOf(index));
+  if (spans.length < 2) {
+    // «اجاره ۲ میلیون اضافه شد» تنها: افزایش نرخ است، نه پرداخت؛ ردیفش با حسابدار.
+    const [span] = spans;
+    const raise = RATE_RAISE_AFTER.test(text.slice(span.end, span.end + 30)) && changeSubject(0) && !accountMovement(span, 0);
+    return raise ? [{ ...span, rateChange: true }] : spans;
+  }
   const ownVerb = (span, index) => {
     const next = spans[index + 1]?.start ?? text.length;
     const clause = text.slice(span.end, next).split(/[.،,؛;\n]/)[0];
@@ -132,27 +158,66 @@ export function withoutRateAmounts(text, spans) {
     return Boolean(match) && CURRENCY_ONLY.test(between.slice(0, match.index));
   };
   const leading = (index) => text.slice(spans[index - 1]?.end ?? 0, spans[index].start);
-  // موضوعِ بندِ پیش از مبلغ؛ «تومان ماهیانه» موضوعی ندارد و مال کلِ کنارش است.
-  const subject = (index) => {
-    const found = classifyCategory(leading(index));
+  // دنبالهٔ بندِ خودِ مبلغ تا اولین مرز («و»، ویرگول): «۲ میلیون هم شارژ دادیم».
+  const trailing = (index) => text.slice(spans[index].end, spans[index + 1]?.start ?? text.length)
+    .split(/[.،,؛;\n]|(?<![آ-ی])و(?![آ-ی])/)[0];
+  const category = (fragment) => {
+    const found = classifyCategory(fragment);
     return found.matched ? found.category : null;
   };
+  // موضوعِ بندِ پیش از مبلغ؛ «تومان ماهیانه» موضوعی ندارد و مال کلِ کنارش است.
+  const subject = (index) => category(leading(index));
+  // موضوعِ بندِ خودِ مبلغ، پیش یا پس از آن: «اجاره ۱۰ میلیون شد، ۲ میلیون هم
+  // شارژ دادیم» — موضوعِ ۲ میلیون «شارژ» است که پس از مبلغ آمده.
+  const ownSubject = (index) => subject(index) || category(trailing(index));
+  // تغییر یا سطحِ تازهٔ نرخ: «۲ میلیون اضافه شد»، «۵ میلیون شد». جابه‌جاییِ حساب
+  // («۵ میلیون اضافه شد به حساب»، «از حساب ملت ۱۰ میلیون کم شد») نیست.
+  const changeOf = (span, index) => {
+    const after = text.slice(span.end, span.end + 30);
+    if (accountMovement(span, index) || !changeSubject(index)) return false;
+    return RATE_INCREASE_AFTER.test(after) || (RATE_LEVEL_AFTER.test(after) && TIME_BOUND_SERVICE_CATEGORIES.includes(subject(index)));
+  };
+  const changes = spans.map((span, index) => changeOf(span, index) && !ownVerb(span, index));
   const isRate = (span, index) => {
     const before = RATE_BEFORE.test(text.slice(Math.max(0, span.start - 24), span.start));
     const after = text.slice(span.end, span.end + 30);
-    const rateAfter = (RATE_AFTER.test(after) && !rateWordBelongsToNext(span, index)) || RATE_INCREASE_AFTER.test(after)
-      || (RATE_LEVEL_AFTER.test(after) && TIME_BOUND_SERVICE_CATEGORIES.includes(subject(index)));
-    return (before || rateAfter) && !ownVerb(span, index);
+    const rateAfter = RATE_AFTER.test(after) && !rateWordBelongsToNext(span, index);
+    return changes[index] || ((before || rateAfter) && !ownVerb(span, index));
   };
   const rates = spans.map(isRate);
   const totals = spans.map((_, index) => index).filter((index) => !rates[index] && !DEPOSIT_HEAD.test(leading(index)));
+  const sameSubject = (index, total) => {
+    const own = subject(index);
+    const theirs = ownSubject(total);
+    return !own || !theirs || theirs === own;
+  };
   // نرخِ یک موضوع، کلِ موضوع دیگر را ندارد: «حقوق ۱۰ میلیون ماهیانه و اجاره ۳۰
   // میلیون شش ماهه دادیم» دو پرداخت است، نه یک اجاره با نرخ حقوق.
-  const droppable = (index) => {
-    const own = subject(index);
-    return totals.some((total) => !own || !subject(total) || subject(total) === own);
+  //
+  // تغییرِ نرخ سخت‌گیرتر است، چون «شد» و «کم شد» در گفتار شکل پرداخت هم هست:
+  // فقط وقتی کنار می‌رود که مبلغ دیگر پرداختِ همان تغییر باشد — مابه‌التفاوت، کلِ
+  // یک دوره، یا مضربی از همان نرخ. «اجاره ۱۰ میلیون شد، ۲ میلیون هم شارژ دادیم»
+  // دو پرداخت است و حذف بی‌صدای اجاره حدس بود.
+  const paysForChange = (index, total) => {
+    const own = `${leading(total)} ${trailing(total)}`;
+    const ratio = spans[total].amount / spans[index].amount;
+    return DIFFERENCE_WORD.test(own) || PERIOD_WORD.test(own) || (Number.isInteger(ratio) && ratio >= 2 && ratio <= 36);
   };
-  return spans.filter((_, index) => !rates[index] || !droppable(index));
+  const droppable = (index) => totals.some((total) => sameSubject(index, total)
+    && (!changes[index] || paysForChange(index, total)));
+  // تغییرِ نرخی که پرداختِ همان تغییر کنارش نیست، بی‌صدا حذف نمی‌شود و بی‌صدا هم
+  // پرداخت ثبت نمی‌شود: ردیفش با حسابدار است. «… ۲ میلیون هم شارژ دادیم» با «هم»
+  // می‌گوید مبلغ قبلی هم پرداخت شده است.
+  const alsoPaidNext = (index) => {
+    const next = spans[index + 1];
+    if (!next) return false;
+    const clause = text.slice(next.start, spans[index + 2]?.start ?? text.length);
+    return /(?<![آ-ی])هم(?![آ-ی])/.test(clause) && PAYMENT_VERB.test(clause);
+  };
+  return spans.flatMap((span, index) => {
+    if (rates[index] && droppable(index)) return [];
+    return changes[index] && !alsoPaidNext(index) ? [{ ...span, rateChange: true }] : [span];
+  });
 }
 
 export function hasCompositeAmounts(input) {
@@ -1253,7 +1318,9 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (notYet) reviewReasons.push(PAYER_UNPAID);
     const depositReceived = !refundJudgment && !notYet && classified.type === 'income' && rowMoneyIn && DEPOSIT_WORD.test(clause);
     if (depositReceived) reviewReasons.push(DEPOSIT_RECEIVED);
-    const judgment = millionAbbreviation || (refundJudgment ? CONTRACT_REFUND_REASON : notYet ? PAYER_UNPAID
+    const rateChange = span.rateChange ? RATE_CHANGE_REASON : null;
+    if (rateChange) reviewReasons.push(rateChange);
+    const judgment = millionAbbreviation || rateChange || (refundJudgment ? CONTRACT_REFUND_REASON : notYet ? PAYER_UNPAID
       : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie);
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     // دلیلِ قضاوت اول می‌آید: صف حسابدار همان را نشان می‌دهد، نه «نوع با اطمینان
