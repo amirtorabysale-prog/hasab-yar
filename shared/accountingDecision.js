@@ -15,7 +15,7 @@
 
 import {
   ECONOMIC_FAMILIES, FAMILY_DEFAULT_RISK, FAMILY_UNKNOWN, RISK_LEVELS, TIME_BOUND_SERVICE_CATEGORIES,
-  classifyFamily, isEconomicFamily, isPrepaidServiceCandidate, isTimeBoundService, signalsGoodsDeliveryLater,
+  awaitsSupplierGoods, classifyFamily, isEconomicFamily, isPrepaidServiceCandidate, isTimeBoundService, signalsGoodsDeliveryLater,
 } from './economicFamily.js';
 import {
   FACT_KEYS, FACT_LABELS, TREATMENTS, isFactPresent, missingFactsFor, nextQuestionFor, requiredFactsFor,
@@ -391,7 +391,7 @@ export const DEFAULT_POLICIES = Object.freeze([
       if (facts?.prepaymentSignal === true || facts?.paymentPurpose === 'advance') return true;
       // پول کالایی که «سه ماه بعد تحویل میده»: کالا هنوز نرسیده، پس طلب از
       // تأمین‌کننده است — با هر واژه‌ای که گفته شده باشد.
-      return signalsGoodsDeliveryLater(facts) && ['', 'goods'].includes(String(facts?.paymentPurpose || ''));
+      return awaitsSupplierGoods(facts) && ['', 'goods'].includes(String(facts?.paymentPurpose || ''));
     },
     resolve() { return { treatment: TREATMENTS.SUPPLIER_ADVANCE }; },
   }),
@@ -542,7 +542,7 @@ export const DEFAULT_POLICIES = Object.freeze([
     appliesTo(facts) {
       // کالایی که هنوز نرسیده، موجودی یا دارایی نیست؛ پیش‌پرداخت خرید است.
       return ['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)
-        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts) && !signalsGoodsDeliveryLater(facts)
+        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts) && !awaitsSupplierGoods(facts)
         && !isFactPresent(facts?.servicePeriodStart) && !isFactPresent(facts?.servicePeriodEnd);
     },
     resolve(facts) {

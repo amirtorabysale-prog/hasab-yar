@@ -6,7 +6,7 @@ import { runVoice } from './helpers/voicePipeline.js';
 import { parseFinancialText } from '../shared/parser.js';
 import { buildMonthlySchedule } from '../shared/recognitionSchedule.js';
 import { decide } from '../shared/accountingDecision.js';
-import { isPrepaidServiceCandidate, signalsGoodsDeliveryLater } from '../shared/economicFamily.js';
+import { awaitsSupplierGoods, goodsDeliveryLater, isPrepaidServiceCandidate, signalsGoodsDeliveryLater } from '../shared/economicFamily.js';
 
 /**
  * موتور ۵ — بستهٔ تصمیم حسابداری (p3).
@@ -75,6 +75,15 @@ test('تحویل کالا دورهٔ خدمت را از دستهٔ دوره‌د
   assert.equal(signalsGoodsDeliveryLater({ evidence: '۳۰ میلیون دادیم سه ماه بعد پولش میاد' }), false);
   assert.equal(signalsGoodsDeliveryLater({ evidence: 'کالا رو دیروز تحویل دادن' }), false);
   assert.equal(signalsGoodsDeliveryLater({ evidence: 'پارچه رو سه ماه بعد تحويل ميده' }), true, 'ي و ك عربی');
+  // صیغه می‌گوید کالا را چه کسی می‌دهد؛ تحویلِ ما پیش‌پرداخت به تأمین‌کننده نیست.
+  assert.equal(goodsDeliveryLater({ evidence: 'برای کالایی که هنوز تحویل نداده ایم' }), 'us');
+  assert.equal(goodsDeliveryLater({ evidence: 'سه ماه بعد تحویلش میدیم' }), 'us');
+  assert.equal(goodsDeliveryLater({ evidence: 'ورق رو ماه بعد تحویل می‌گیریم' }), 'supplier');
+  assert.equal(goodsDeliveryLater({ evidence: 'پارچه رو هنوز تحویل نداده' }), 'supplier');
+  assert.equal(awaitsSupplierGoods({ evidence: 'سفارش کالا دادیم سه ماه بعد میاد' }), true);
+  const [wrongWay] = voice('امروز 25 میلیون تومان پیش دریافت از مشتری برای کالایی که هنوز تحویل نداده ایم گرفتم').items;
+  assert.notEqual(wrongWay.outcome, 'post');
+  assert.notEqual(wrongWay.decision?.treatment, 'supplier-advance');
 });
 
 test('مسیر AI با «advance-paid» همان تصمیم مسیر قطعی را می‌گیرد', () => {
@@ -89,6 +98,47 @@ test('مسیر AI با «advance-paid» همان تصمیم مسیر قطعی ر
   // دوره‌ای که در واقع زمان تحویل کالاست، پیش‌پرداخت خدمت نمی‌سازد.
   const leadTime = decide(facts({ category: 'سایر هزینه‌ها', servicePeriodStart: NOW, servicePeriodEnd: '2027-01-08T00:00:00.000Z', evidence: '۳۰ میلیون به تولیدی نوری دادیم برای پارچه که سه ماه بعد تحویل میده' }), { today: NOW });
   assert.equal(leadTime.policyKey, 'supplier-advance');
+});
+
+// ---------------------------------------------------------------------------
+// «افزایش سرمایه» در حق بیمهٔ اضافه و هزینهٔ ثبت: پول رفته، آوردهٔ مالک نیست
+// ---------------------------------------------------------------------------
+
+test('سرمایهٔ بیمه و هزینهٔ افزایش سرمایه برگهٔ آورده را باز نمی‌کنند و هیچ ورود وجهی نمی‌سازند', () => {
+  for (const text of [
+    'اضافه حق بیمه آتش سوزی بابت افزایش سرمایه ۲ میلیون دادیم',
+    'الحاقیه افزایش سرمایه بیمه انبار ۲ میلیون از حساب تجارت دادیم',
+    'بابت افزایش سرمایه بیمه ۲ میلیون به بیمه دی دادیم',
+    'حق بیمه افزایش سرمایه بیمه آتش سوزی ۲ میلیون از حساب ملت',
+    'برای افزایش سرمایه بیمه انبار ۲ میلیون واریز کردیم به بیمه ایران',
+    'بیمه نامه آتش سوزی رو افزایش سرمایه دادیم ۲ میلیون حق بیمه اضافه پرداخت کردیم',
+    'هزینه ثبت افزایش سرمایه شرکت ۳ میلیون دادیم',
+    'حق الزحمه وکیل بابت افزایش سرمایه ۵ میلیون پرداخت کردیم',
+    'حق‌الزحمه وکیل بابت افزایش سرمایه 5 میلیون پرداخت کردیم',
+    'هزینه آگهی روزنامه رسمی افزایش سرمایه ۸۰۰ هزار تومن دادیم',
+    'مالیات و حق تمبر افزایش سرمایه ۱ میلیون پرداخت کردیم',
+    'حق بیمه اضافی بابت افزایش سرمایهٔ بیمه انبار ۲ میلیون پرداخت شد',
+    'حق‌بیمهٔ الحاقیهٔ افزایش سرمایه ۲ میلیون پرداخت شد',
+  ]) {
+    const result = voice(text);
+    assert.notEqual(result.path, 'capital', text);
+    for (const item of result.items) {
+      assert.ok(!(item.plan?.lines || []).some((line) => line.role === 'owner-capital'), text);
+      assert.ok(!(item.plan?.lines || []).some((line) => line.role === 'cash' && line.debit > 0), text);
+      assert.ok(['ask', 'accountant'].includes(item.outcome), text);
+    }
+    const [row] = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+    assert.ok(!(row.reviewReasons || []).some((reason) => /آورده/.test(reason)), text);
+  }
+});
+
+test('منفی: افزایش سرمایهٔ واقعی همچنان برگهٔ آورده است', () => {
+  for (const text of [
+    'افزایش سرمایه صد میلیون',
+    'شریک بابت افزایش سرمایه ۱۰۰ میلیون واریز کرد',
+    'افزایش سرمایه برای هزینه های جاری ۱۰۰ میلیون واریز کردم',
+    'آقای محمدی ۲۰۰ میلیون به عنوان افزایش سرمایه به حساب بانک ملت واریز کرد.',
+  ]) assert.equal(voice(text).path, 'capital', text);
 });
 
 // ---------------------------------------------------------------------------
