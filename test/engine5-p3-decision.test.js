@@ -220,3 +220,64 @@ test('دفتر: پیش‌پرداخت از جیب شریک تأیید می‌ش�
     assert.match(credit.name, /آقای رضایی$/);
   }, {});
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی حسابدار: اشتراک و بیمهٔ «خریدیم … پیش پرداخت» پیش‌پرداخت خرید نیست
+// ---------------------------------------------------------------------------
+
+const { isReviewSupplierAdvance } = await import('../shared/reviewSupplierAdvance.js');
+const { proposeReview } = await import('../server/accountingReviewAi.js');
+const prepaidLines = (amount, key) => [
+  { role: 'prepaid-asset', key, accountId: null, chartAccountId: null, debit: amount, credit: 0 },
+  { role: 'cash', key: null, accountId: null, chartAccountId: null, debit: 0, credit: amount },
+];
+
+test('isReviewSupplierAdvance خدمت دوره‌دار را با همان قاعدهٔ موتور کنار می‌گذارد', () => {
+  const eventOf = (text) => {
+    const [row] = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+    return { category: row.category, servicePeriodStart: row.servicePeriodStart, servicePeriodEnd: row.servicePeriodEnd };
+  };
+  for (const text of [
+    'اشتراک یک ساله نرم افزار رو خریدیم پیش پرداخت ۲۴ میلیون',
+    'لایسنس یک ساله آنتی ویروس خریدیم پیش‌پرداخت ۱۲ میلیون',
+    'سرور مجازی شش ماهه خریدیم پیش پرداخت ۶ میلیون',
+    'پیش‌پرداخت بیمه بدنه خودرو یک ساله خریداری شد ۳۰ میلیون',
+  ]) assert.equal(isReviewSupplierAdvance(text, prepaidLines(1, null), eventOf(text)), false, text);
+  // کلید پیشنهادی حسابدار هم کافی است، حتی وقتی دستهٔ رویداد عمومی است.
+  assert.equal(isReviewSupplierAdvance('بیمه انبار رو خریدیم پیش پرداخت ۱۲ میلیون', prepaidLines(1, 'بیمه'), { category: 'مواد و کالا' }), false);
+  for (const text of [
+    'صد و بیست میلیون پیش‌پیش ریختیم واسه خرید ورق',
+    'پیش پرداخت خرید کالا ۴۰ میلیون به شرکت آلفا دادیم',
+  ]) assert.equal(isReviewSupplierAdvance(text, prepaidLines(1, null), eventOf(text)), true, text);
+});
+
+test('دفتر: اشتراکِ «خریدیم پیش پرداخت» در بازبینی نام تأمین‌کننده نمی‌خواهد و پیش‌پرداخت خرید نمی‌شود', async () => {
+  for (const [text, amount, key, supplierAdvance] of [
+    ['اشتراک یک ساله نرم افزار رو خریدیم پیش پرداخت ۲۴ میلیون', 24_000_000, 'اشتراک', false],
+    ['پیش‌پرداخت بیمه بدنه خودرو یک ساله خریداری شد ۳۰ میلیون', 30_000_000, 'بیمه', false],
+    ['پیش پرداخت خرید کالا ۴۰ میلیون به شرکت آلفا دادیم', 40_000_000, 'کالا', true],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const cash = database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 100_000_000 });
+      const parsed = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+      database.insertTransactions({ transcript: text, transactions: parsed.map((row) => ({ ...row, accountId: cash.id, occurredAt: row.occurredAt || NOW })) });
+      const db = database.activeWorkspaceDatabase();
+      const event = db.prepare('SELECT id, route FROM financial_events').get();
+      if (event.route !== 'accountant-review') database.handOverPending(event.id);
+      const proposal = { summary: 'پیش‌پرداخت', explanation: 'پیشنهاد', counterpartyName: null, missingFacts: [], questions: [], inventoryItems: [], lines: prepaidLines(amount, key) };
+      const fetcher = async () => ({ ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(proposal) }] }], usage: {} }) });
+      process.env.OPENAI_API_KEY = 'test-key-not-real';
+      await proposeReview(db, event.id, { fetcher, facts: { accountId: cash.id } });
+      const queued = database.reviewQueue().items.find((item) => item.id === event.id);
+      const nameBlocker = (queued.aiProposal?.postingBlockers || []).some((reason) => /طرف[‌\s]*حساب/.test(reason));
+      if (supplierAdvance) {
+        // پیش‌پرداخت خرید واقعی همچنان به نام تأمین‌کننده بسته است.
+        assert.ok(queued.aiProposal.lines.some((line) => /شرکت آلفا/.test(line.accountName || '')), text);
+      } else {
+        assert.equal(nameBlocker, false, text);
+        assert.equal(queued.aiProposal.canPost, true, text);
+        assert.ok(!queued.aiProposal.lines.some((line) => /پیش‌پرداخت خرید/.test(line.accountName || '')), text);
+      }
+    }, {});
+  }
+});
