@@ -24,7 +24,7 @@
  *
  * این ماژول وابستگی شبکه یا دیتابیس ندارد و در مرورگر هم اجرا می‌شود.
  */
-import { extractAmounts } from './parser.js';
+import { extractAmounts, withoutRateAmounts } from './parser.js';
 import { normalizePersian } from './normalize.js';
 import { extractDateMention, persianToISO, readJalaliExpression, todayPersian } from './persianDate.js';
 import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
@@ -346,6 +346,68 @@ function readEvidenceAmounts(evidence) {
  * ساخته نمی‌شود.
  */
 const MODEL_UNITS = [1, 1_000, 1_000_000, 1_000_000_000];
+
+/** واژهٔ نرخِ دوره کنار یک مبلغ: «ماهی ۱ میلیون»، «۵ میلیون در ماه». */
+const PERIOD_RATE_BEFORE = /(?:ماهیانه|ماهانه|(?<![آ-ی])ماهی(?:\s*ای)?|هر\s*ماهه?|در\s*ماه|سالانه|سالیانه|(?<![آ-ی])سالی(?:\s*ای)?|هر\s*ساله?|در\s*سال|روزانه|(?<![آ-ی])روزی|هر\s*روز|هفتگی|هر\s*هفته)\s*(?:مبلغ\s*)?$/;
+const PERIOD_RATE_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:(?:در|هر|برای\s*هر|به\s*ازای\s*هر)\s*(?:ماه|سال|روز|هفته)ه?(?![آ-ی])|(?:ماهیانه|ماهانه|سالانه|سالیانه|روزانه|هفتگی)(?![آ-ی]))/;
+const OWN_PAYMENT_VERB = /(?<![آ-ی])(?:دادیم|دادم|داد|دادن|پرداخت|واریز|ریختیم|ریختم|ریخت|زدیم|زدم|گرفتیم|گرفتم|کارت\s*به\s*کارت)/;
+const LOAN_WORD = /وام|تسهیلات|قرض/;
+
+/**
+ * نرخِ دوره کنار کل، پرداخت نیست؛ نرخی که فعل پرداختِ خودش را دارد، هست.
+ *
+ * گزارش کاربر (۱۸ مهر ۱۴۰۵): «بیمهٔ یک‌ساله ۱۲ میلیون … ماهیانه ۱ میلیون». مسیر
+ * قطعی «ماهیانه ۱ میلیون» را با `withoutRateAmounts` کنار می‌گذارد، ولی مسیر AI
+ * برچسب مدل را می‌پذیرفت: نرخِ «سایر/پرداخت‌شده» پرداخت دوم می‌شد (۱۳ میلیون
+ * پیش‌پرداخت با ۲۴ قسط)، و نرخِ «پرداخت‌شده» کنار کل به کل وصل می‌شد و خودِ ۱۲
+ * میلیون از ثبت می‌افتاد. وارونه‌اش هم بود: «ودیعه ۵۰ میلیون دادیم و اجارهٔ
+ * ماهانه ۵ میلیون هم دادیم» با برچسب «نرخ» یا «قسط» پرداخت ۵ میلیونی را بی‌صدا
+ * دور می‌ریخت و بانک ۵ میلیون کم می‌آمد.
+ *
+ * قاعده همان قاعدهٔ مسیر قطعی است، روی خودِ جمله، نه برچسب مدل:
+ * - مبلغی که `withoutRateAmounts` نرخ می‌داند و مبلغ انجام‌شدهٔ دیگری کنارش هست،
+ *   نرخِ زمینه است — هر جابه‌جایی که مدل رویش گذاشته باشد.
+ * - مبلغی که مدل «نرخ» یا «قسط» خوانده ولی واژهٔ نرخ دارد و فعل پرداختِ خودش را
+ *   در بند خودش (فعلِ آخرِ جمله فقط با «هم» یا وقتی مبلغ قبلی فعل خودش را دارد)،
+ *   پرداخت است. قسطِ وام بیرون از این قاعده است؛ اصل و سودش با حسابدار است.
+ */
+function guardPeriodRates(amounts, movements, text, violations) {
+  const read = extractAmounts(text);
+  if (read.spans.length < 2) return;
+  const keptStarts = new Set(withoutRateAmounts(read.text, read.spans).map((span) => span.start));
+  const spanOf = (amount) => {
+    const same = read.spans.filter((span) => span.amount === amount.value || span.amount === amount.value * 10);
+    if (same.length <= 1) return same[0] || null;
+    const key = normalizePersian(amount.evidence || '').trim();
+    const at = key ? read.text.indexOf(key) : -1;
+    return at < 0 ? null : same.find((span) => span.start >= at && span.end <= at + key.length) || null;
+  };
+  const placed = amounts.filter((amount) => amount.accepted).map((amount) => ({ amount, span: spanOf(amount) })).filter((item) => item.span);
+  const isRate = (span) => !keptStarts.has(span.start);
+  for (const { amount, span } of placed) {
+    if (!isRate(span) || amount.status !== 'done') continue;
+    const total = placed.some((other) => other.amount !== amount && other.amount.status === 'done' && !isRate(other.span));
+    if (!total) continue;
+    Object.assign(amount, { role: 'unit-price', status: 'context', partOf: null });
+    violations.push(`amounts.${amount.id}:rate-not-payment`);
+  }
+  const index = (span) => read.spans.findIndex((item) => item.start === span.start);
+  for (const { amount, span } of placed) {
+    if (!['unit-price', 'installment'].includes(amount.role) || isRate(span)) continue;
+    const at = index(span);
+    const previous = read.spans[at - 1];
+    const next = read.spans[at + 1];
+    const cue = PERIOD_RATE_BEFORE.test(read.text.slice(Math.max(0, span.start - 24), span.start)) || PERIOD_RATE_AFTER.test(read.text.slice(span.end, span.end + 30));
+    const clause = read.text.slice(span.end, next?.start ?? read.text.length).split(/[.،,؛;\n]/)[0];
+    const leading = read.text.slice(previous?.end ?? 0, span.start);
+    const ownVerb = OWN_PAYMENT_VERB.test(clause)
+      && (!previous || OWN_PAYMENT_VERB.test(leading) || /(?<![آ-ی])هم(?![آ-ی])/.test(clause));
+    if (!cue || !ownVerb || LOAN_WORD.test(`${leading} ${clause}`)) continue;
+    const movement = movements.find((item) => item?.amountRef === amount.id);
+    Object.assign(amount, { role: movement?.direction === 'in' ? 'received-now' : 'paid-now', status: 'done' });
+    violations.push(`amounts.${amount.id}:rate-with-own-verb`);
+  }
+}
 function verifyExplicitAmount(amount, evidence, unitHint = null) {
   const claimed = Number(amount.value);
   const reads = readEvidenceAmounts(evidence);
@@ -583,6 +645,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       }
     }
   }
+  guardPeriodRates(amounts, raw.movements, text, violations);
   // یک عددِ گفته‌شده، حداکثر یک مبلغ قابل ثبت.
   //
   // مدل واقعی «هشتاد میلیون … نسیه خریدیم» را دو مبلغ کرد: کل ۸۰ و بخش نسیهٔ ۸۰،
