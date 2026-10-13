@@ -424,7 +424,9 @@ test('direct cheque capture cannot expense delivered resale inventory or create 
 
 for(const [role,outgoing,party] of [['prepaid-asset',true,false],['refundable-deposit',true,true],['loan-payable',false,true],['customer-advance',false,true],['deferred-revenue',false,true]]) {
  test(`specialized ${role}: approval, journal, bank, reports, edit lock and reversal stay atomic`,()=>run(async()=>{
-  const amount=230000, item=event(`رویداد تخصصی ${role}`,amount);
+  // پیش‌پرداخت خدمت و درآمد انتقالی بی‌دورهٔ پوشش ثبت نمی‌شوند (موتور ۵)؛ متن دوره را می‌گوید.
+  const timing=['prepaid-asset','deferred-revenue'].includes(role);
+  const amount=230000, item=event(`رویداد تخصصی ${role}${timing?' — قرارداد یک ساله':''}`,amount);
   const contact=party?db.saveContact({name:`طرف آزمایش ${role}`}):null;
   const plan={summary:'ثبت تخصصی',explanation:'دریافت یا پرداخت بدون درآمد و هزینه جاری',missingFacts:[],lines:[
    {role,key:party?contact.name:'بیمه',debit:outgoing?amount:0,credit:outgoing?0:amount},
@@ -441,6 +443,7 @@ for(const [role,outgoing,party] of [['prepaid-asset',true,false],['refundable-de
   assert.equal(journal.reduce((n,l)=>n+l.debit-l.credit,0),0);
   assert.ok(journal.some(l=>l.source_kind===role));
   if(party) assert.ok(journal.find(l=>l.source_kind===role).analytic_id);
+  if(timing) assert.equal(store.scheduleForEvent(database(),item.id).filter(i=>i.status==='planned').reduce((n,i)=>n+i.amount,0),amount);
   const {summarize}=await import('../server/db/transactions.js');
   assert.equal(summarize([tx]).income,0);assert.equal(summarize([tx]).expense,0);
   assert.throws(()=>db.updateTransaction(source.id,{amount:999999}),{code:'REVIEWED_TRANSACTION_LOCKED'});
@@ -448,6 +451,7 @@ for(const [role,outgoing,party] of [['prepaid-asset',true,false],['refundable-de
   assert.throws(()=>db.reviewAiFeedback(item.id,p.id,{accepted:true}),{code:'EVENT_NOT_REVIEWABLE'});
   db.reverseEvent(item.id,'برگشت آزمایش تخصصی');
   assert.equal(db.listAccounts().find(a=>a.id==='cash').balance,initial);
+  if(timing) assert.ok(store.scheduleForEvent(database(),item.id).every(i=>i.status==='superseded'));
  }));
 }
 

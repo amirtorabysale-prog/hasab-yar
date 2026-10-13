@@ -10,7 +10,8 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, decisionForEvent, financialEventAudit, handOverToAccountant, listReviewQueue, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, releaseHeldRecognition, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
 import { todayPersian } from '../../shared/persianDate.js';
@@ -57,14 +58,45 @@ export function reviewQueue(options = {}) {
     return {...item,originalTranscript:originalReviewTranscript(database,row),aiProposal:item.route==='accountant-review'?preparedProposal(database,item.id):null,dnaMatches:item.route==='accountant-review'?relevantDna(database,row).map(d=>({...d,actorName:actorName(d.actor)})):[]};
   })];
   const counts=database.prepare("SELECT state,COUNT(*) count FROM accounting_review_ai WHERE state!='proposed' GROUP BY state").all();
-  return {items,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
+  // اقلام شناسایی رویدادهای ثبت‌شده که دورهٔ بسته جلویشان را گرفته؛ رویداد ثبت‌شده
+  // در صف بالا نیست و بدون این، ماندهٔ دارایی یا بدهی‌اش بی‌صدا می‌ماند.
+  const blockedRecognition=listBlockedRecognition(database,{timeZone:currentTimeZone()});
+  // اقلامی که ماندهٔ حساب دوره‌دارشان کمتر از قلم بود (استرداد بیرون از برنامه).
+  const heldRecognition=listHeldRecognition(database);
+  // ماندهٔ پیش‌پرداخت یا درآمد انتقالی بی‌برنامه (افتتاحیه، سند دستی، سند اصلاحی):
+  // سؤال دوره برای حسابدار، نه دارایی یا بدهی ابدی.
+  const unscheduledBalances=unscheduledTimingBalances(database);
+  return {items,blockedRecognition,heldRecognition,unscheduledBalances,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
 }
 
 function actorName(id) {return id ? controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id)?.display_name || controlDb.prepare('SELECT username FROM users WHERE id=?').get(id)?.username || id : null;}
 function labelHistory(proposal) {return proposal ? {...proposal,conversation:proposal.conversation?.map(m=>({...m,actorName:actorName(m.actor)})),dnaEvidence:proposal.dnaEvidence?.map(d=>({...d,actorName:actorName(d.actor)}))} : null;}
 function preparedProposal(database,eventId,proposal = latestReviewProposal(database,eventId)) {
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
-  return proposal && row ? labelHistory(prepareReviewProposal(database,row,proposal)) : null;
+  return proposal && row ? labelHistory(withTimingCoverage(database,row,prepareReviewProposal(database,row,proposal))) : null;
+}
+
+/**
+ * سطر پیش‌پرداخت خدمت یا درآمد انتقالی بدون دورهٔ پوشش، پیش از «قبول» مانع است.
+ *
+ * چنین سطری دارایی یا بدهی دوره‌دار می‌سازد که بدون برنامه هرگز هزینه یا درآمد
+ * نمی‌شود. ثبت نهایی (`postReviewedComposite`) آن را رد می‌کند؛ اینجا همان مانع
+ * پیش از کلیک دیده می‌شود تا حسابدار دوره را بگوید — در گفت‌وگو یا با کارت
+ * سؤال — نه اینکه با خطای لحظهٔ ثبت روبه‌رو شود. پیش‌پرداخت خرید کالا دوره
+ * ندارد و بیرون است.
+ */
+function withTimingCoverage(database,row,prepared) {
+  if(!prepared?.lines?.length) return prepared;
+  const evidence=originalReviewTranscript(database,row);
+  const supplierAdvance=isReviewSupplierAdvance([evidence,...reviewConversation(database,row.id).filter(m=>m.speaker==='accountant').map(m=>m.body)].join(' '),prepared.lines);
+  const kind=prepared.lines.some(l=>l.role==='deferred-revenue' && l.credit>0) ? 'deferred'
+    : !supplierAdvance && prepared.lines.some(l=>l.role==='prepaid-asset' && l.debit>0) ? 'prepaid' : null;
+  if(!kind) return prepared;
+  const event=reviewedEvent(database,row);
+  const coverage=reviewTimingCoverage(database,row.id,{...event,evidence:event.evidence || evidence});
+  if(coverage.start && coverage.end) return {...prepared,coverage};
+  const text=coverageQuestion(kind);
+  return {...prepared,postingBlockers:[...new Set([...(prepared.postingBlockers || []),text])],canPost:false};
 }
 export function reviewAssistantHistory(eventId) {
   const database = activeWorkspaceDatabase();
@@ -93,7 +125,7 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
   if (!proposal || proposal.id !== proposalId || proposal.state !== 'proposed' || !proposalIsCurrent(proposal, row) || (proposal.contextRevision || 0) !== proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد AI تغییر کرده است؛ صفحه را تازه‌سازی کن.'), { code: 'AI_PROPOSAL_STALE', status: 409 });
   const actor = currentWorkspace()?.userId || null;
   if (accepted) {
-    const prepared=prepareReviewProposal(database,row,proposal);
+    const prepared=withTimingCoverage(database,row,prepareReviewProposal(database,row,proposal));
     if (prepared.canPost && prepared.useLockedPlan) {
       database.exec('BEGIN IMMEDIATE');
       try {
@@ -115,7 +147,7 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
 }
 
 /** حسابدار سطرهای قطعی را انتخاب می‌کند؛ AI فقط شاهد پیشنهاد است. */
-export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false } = {}) {
+export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false, contractEventId = null, contractEnded = null, contractEndedAt = null } = {}) {
   const database = activeWorkspaceDatabase();
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
   if (!row || row.status !== 'pending') throw Object.assign(new Error('این مورد دیگر در انتظار نیست.'), { code: 'EVENT_NOT_PENDING', status: 409 });
@@ -152,7 +184,12 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   const actor = currentWorkspace()?.userId || null;
   database.exec('BEGIN IMMEDIATE');
   try {
-    const item = postReviewedComposite(database, eventId, { lines, reason, actor, timeZone: currentTimeZone() });
+    // استرداد قرارداد: حسابدار از میان نامزدهای سؤال `contract.reference` یکی را
+    // انتخاب می‌کند، پایان یا ادامهٔ قرارداد را می‌گوید و — وقتی ماه‌های پس از
+    // پایان پیش‌تر شناسایی شده‌اند — تاریخ پایان را (`contract.end-date`).
+    const item = postReviewedComposite(database, eventId, { lines, reason, actor, timeZone: currentTimeZone(),
+      contractEventId: contractEventId ? String(contractEventId) : null, contractEnded: typeof contractEnded === 'boolean' ? contractEnded : null,
+      contractEndedAt: contractEndedAt && !Number.isNaN(Date.parse(contractEndedAt)) ? new Date(contractEndedAt).toISOString() : null });
     if (proposal?.state === 'proposed') recordReviewFeedback(database, eventId, proposal.id, {
       state: aiAccepted ? 'accepted' : 'rejected', reason, actor,
     });
@@ -318,21 +355,80 @@ export function answerEvent(eventId, { fact, value, freeText = '' } = {}) {
   return item;
 }
 
-/** تصمیم و برنامهٔ شناسایی یک رویداد — برای صف بررسی. */
 /**
  * اجرای اقلام شناسایی سررسیدرسیده.
  *
- * دستی صدا زده می‌شود، نه خودکار: تا وقتی کسی ندیده موتور چه می‌سازد، اجرای
- * خودکارش روی دفتر واقعی همان حدسی است که کل طرح برای حذفش نوشته شده.
+ * کار دقیقه‌ای سرور (`runRecurringJob`) هر دفتر را با همین اجرا می‌کند و بستن
+ * دوره هم پیش از قفل صدایش می‌زند؛ مسیر HTTP برای اجرای دستی حسابدار می‌ماند.
+ * حدس نیست: هر رویداد هنگام ثبت یا تأیید دیده شده، فقط قلمِ سررسیدرسیدهٔ رویداد
+ * ثبت‌شده سند می‌خورد، تکرار اجرا سند دوم نمی‌سازد و دورهٔ بسته باز نمی‌شود.
  */
 export function runRecognition() {
-  const result = postDueRecognitionItems(activeWorkspaceDatabase(), {
+  const database = activeWorkspaceDatabase();
+  const result = postDueRecognitionItems(database, {
     actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
   });
   if (result.posted) audit('recognize', 'recognition-schedule', 'due', result);
+  // هر اجرا ماندهٔ دوره‌دارِ بی‌برنامه را هم می‌شمارد تا کسی که دکمه را زده
+  // بداند چیزی بیرون از برنامه مانده است.
+  const unscheduled = unscheduledTimingBalances(database).length;
+  return unscheduled ? { ...result, unscheduled } : result;
+}
+
+/** قلم نگه‌داشته‌ای که ماندهٔ قراردادش بیرون از برنامه برگشته، با دلیل کنار می‌رود. */
+export function releaseHeldItem(key, reason = '') {
+  const item = releaseHeldRecognition(activeWorkspaceDatabase(), key, { reason, actor: currentWorkspace()?.userId || null });
+  audit('recognition-release', 'recognition-schedule', item.key, { eventId: item.eventId, reason: String(reason).slice(0, 200) });
+  return { item };
+}
+
+/** ماندهٔ پیش‌پرداخت و درآمد انتقالی که برنامهٔ شناسایی ندارد. */
+export function unscheduledBalances() {
+  return { items: unscheduledTimingBalances(activeWorkspaceDatabase()) };
+}
+
+/**
+ * جواب حسابدار به ماندهٔ بی‌برنامه: دورهٔ پوشش، دسته و (برای حساب کلی) مبلغ.
+ * سندی نمی‌زند؛ فقط برنامهٔ همان مانده را می‌سازد.
+ */
+export function scheduleBalance(accountId, input = {}) {
+  const result = scheduleTimingBalance(activeWorkspaceDatabase(), accountId, {
+    amount: input.amount ?? null, start: input.start || null, end: input.end || null, coverageText: String(input.coverageText || '').slice(0, 300),
+    category: String(input.category || '').slice(0, 120), counterparty: String(input.counterparty || '').slice(0, 120), counterpartyId: input.counterpartyId || null,
+    entryId: input.entryId || null, reason: String(input.reason || '').slice(0, 500),
+    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  });
+  audit('schedule-balance', 'ledger-account', String(accountId), { eventId: result.eventId, amount: result.amount, coverage: result.coverage });
   return result;
 }
 
+/** همان فهرست، فقط برای حساب‌هایی که یک سند لمس کرده — پاسخ تأیید سند دستی. */
+export function unscheduledBalancesForEntry(entryId) {
+  const database = activeWorkspaceDatabase();
+  const touched = new Set(database.prepare('SELECT account_id AS id FROM journal_lines WHERE entry_id=?').all(String(entryId || '')).map((row) => row.id));
+  return unscheduledTimingBalances(database).filter((item) => touched.has(item.accountId));
+}
+
+/** اقلام شناسایی‌ای که دورهٔ بسته جلویشان را گرفته (تصمیم ۳ فاز صفر). */
+export function blockedRecognition() {
+  return { items: listBlockedRecognition(activeWorkspaceDatabase(), { timeZone: currentTimeZone() }) };
+}
+
+/**
+ * ثبت جبرانی یک قلمِ منتظرِ دورهٔ بسته، با دلیل حسابدار.
+ *
+ * جابه‌جایی بی‌صدا نیست: حسابدار دلیلش را می‌نویسد و سند در نخستین دورهٔ باز
+ * می‌نشیند؛ ردپا دورهٔ اصلی و دورهٔ ثبت را هر دو نگه می‌دارد.
+ */
+export function catchUpRecognition(key, reason = '') {
+  const item = postBlockedRecognitionCatchUp(activeWorkspaceDatabase(), key, {
+    reason, actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(),
+  });
+  audit('recognition-catch-up', 'recognition-schedule', item.key, { eventId: item.eventId, period: item.period, reason: String(reason).slice(0, 200) });
+  return { item };
+}
+
+/** تصمیم و برنامهٔ شناسایی یک رویداد — برای صف بررسی. */
 export function eventDecision(eventId) {
   const database = activeWorkspaceDatabase();
   return { decision: decisionForEvent(database, eventId), schedule: scheduleForEvent(database, eventId) };
@@ -340,7 +436,7 @@ export function eventDecision(eventId) {
 
 /** تمام اثرهای دفتر، ردیف نقدی و چک در یک تراکنش؛ پیشنهاد، مجوزِ دور زدن اعتبار حساب/دوره نیست. */
 function acceptPreparedProposal(database,row,proposal,actor) {
-  const prepared = prepareReviewProposal(database,row,proposal);
+  const prepared = withTimingCoverage(database,row,prepareReviewProposal(database,row,proposal));
   if (!prepared.canPost) throw Object.assign(new Error(prepared.postingBlockers.join(' — ') || 'پیشنهاد هنوز قطعی نیست.'), {code:'REVIEW_DETAILS_REQUIRED',status:409});
   database.exec('BEGIN IMMEDIATE');
   try {

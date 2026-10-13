@@ -112,6 +112,10 @@ test('قلمِ دورهٔ بسته ثبت نمی‌شود و علامت می‌�
     assert.ok(blocked.length > 0, 'قلمِ دورهٔ بسته باید علامت بخورد');
     assert.equal(blocked.every((item) => !item.journalEntryId), true, 'و سندی نزده باشد');
     db().prepare("UPDATE accounting_periods SET status='open' WHERE period='1405-08'").run();
+    // علامت پایان راه نیست: دوره که باز شود، اجرای بعدی همان قلم را ثبت می‌کند.
+    store.postDueRecognitionItems(db(), { today: AFTER_TWO_MONTHS, actor: owner.id });
+    const resumed = store.scheduleForEvent(db(), created.id).filter((item) => blocked.some((entry) => entry.key === item.key));
+    assert.ok(resumed.every((item) => item.status === 'posted' && item.journalEntryId), 'قلمِ دورهٔ بازشده ثبت می‌شود');
   });
 });
 
