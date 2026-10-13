@@ -905,6 +905,65 @@ test('جواب دورهٔ پوشش به هر شکلی که حسابدار بنو
   }
 });
 
+test('جواب دوره با نام هر ماه، با «ماه» و بی آن: «اردیبهشت» هشت ماه نیست و «پوشش» شش سال نیست', async () => {
+  const { buildMonthlySchedule } = await import('../shared/recognitionSchedule.js');
+  const { todayPersian } = await import('../shared/persianDate.js');
+  const at = { occurredAt: NOW };
+  const span = (coverage) => {
+    assert.ok(coverage.start && coverage.end, JSON.stringify(coverage));
+    const list = buildMonthlySchedule({ amount: 12_000_000, periodStart: coverage.start, periodEnd: coverage.end, sourceId: 'x' });
+    return [list.length, list[0].periodKey, list.at(-1).periodKey];
+  };
+  const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+  const key = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
+  MONTHS.forEach((name, index) => {
+    const month = index + 1;
+    const lastMonth = month === 1 ? 12 : month - 1;
+    const lastYear = month === 1 ? 1405 : 1406;
+    const year12 = [12, key(1405, month), key(lastYear, lastMonth)];
+    for (const word of ['', ' ماه']) {
+      const label = `${name}${word}`;
+      assert.deepEqual(span(readCoverageAnswers([{ text: `از اول ${label} ۱۴۰۵ به مدت ۱۲ ماه`, side: 'start' }], at)), year12, label);
+      assert.deepEqual(span(readCoverageAnswers([{ text: `از اول ${label} ۱۴۰۵ به مدت یک سال`, side: 'any' }], at)), year12, label);
+      assert.deepEqual(span(readCoverageAnswers([{ text: `اول ${label} ۱۴۰۵`, side: 'start' }, { text: 'یک ساله', side: 'end' }], at)), year12, label);
+      assert.deepEqual(span(readCoverageAnswers([{ text: `${label} ۱۴۰۵ تا ${MONTHS[lastMonth - 1]}${word} ${lastYear}`, side: 'any' }], at)), year12, label);
+      // شروعِ تازه با طولی که از متن پرداخت معلوم بود.
+      assert.deepEqual(span(readCoverageAnswers([{ text: `اول ${label} ۱۴۰۵`, side: 'start' }], { ...at, start: NOW, end: '2027-10-09T08:30:00.000Z', months: 12 })), year12, label);
+      // پایانِ «سال بعد» برای شروعِ معلوم (۱۸ مهر ۱۴۰۵): همان ماه سال ۱۴۰۶، نه هشت یا شش سال بعد.
+      for (const text of [`تا ${label} سال بعد`, `تا آخر ${label} سال بعد`]) {
+        const coverage = readCoverageAnswers([{ text, side: 'end' }], { ...at, start: NOW });
+        const end = todayPersian(new Date(coverage.end));
+        assert.deepEqual([end.year, end.month], [1406, month], text);
+        assert.ok(span(coverage)[0] <= 18, `${text}: ${span(coverage)[0]} ماه`);
+      }
+    }
+  });
+  // «پوشش»: شش درونش طول نیست؛ جواب بی‌طول دوباره پرسیده می‌شود، نه شش سال.
+  assert.equal(readCoverageAnswers([{ text: 'پوشش سال ۱۴۰۵', side: 'any' }], { ...at, start: NOW }).end, null);
+  assert.equal(readCoverageAnswers([{ text: 'کل پوشش ماه مهر', side: 'any' }], { ...at, start: NOW }).end, null);
+  assert.deepEqual(span(readCoverageAnswers([{ text: 'پوشش از اول اردیبهشت ماه ۱۴۰۵ به مدت یک سال', side: 'any' }], at)), [12, '1405-02', '1406-01']);
+  assert.deepEqual(span(readCoverageAnswers([{ text: 'از اول مهر ۱۴۰۵ تا اردیبهشت سال بعد', side: 'any' }], at)), [8, '1405-07', '1406-02']);
+  // شکل‌های گفتنِ طول همچنان خوانده می‌شوند.
+  for (const [text, months] of [['۱۲ ماه', 12], ['یکساله', 12], ['یک‌ساله', 12], ['شش ماهه', 6], ['شیش‌ماهه', 6], ['دوازده‌ماهه', 12], ['دو سال', 24], ['سه ماهه', 3]]) {
+    assert.equal(span(readCoverageAnswers([{ text: `${text} از اول مهر ۱۴۰۵`, side: 'any' }], at))[0], months, text);
+  }
+});
+
+test('جواب «اول اردیبهشت ماه ۱۴۰۵» در صف حسابدار: شروع گفته‌شده می‌نشیند و دوازده قلم از اردیبهشت', async () => {
+  const { inBook, bank } = await freshBook('حسابدار — اردیبهشت ماه');
+  await inBook(async () => {
+    for (const value of ['اول اردیبهشت ماه ۱۴۰۵', 'اول اردیبهشت ۱۴۰۵']) {
+      const { eventId } = capture('بیمه یک ساله انبار ۱۲ میلیون از حساب تجارت دادیم', { approve: false });
+      const ask = [{ id: 'coverage.start', text: 'شروع پوشش بیمه کی بود؟', field: null }];
+      const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(12_000_000, 'بیمه'), { bank, ask, answers: { 'coverage.start': { value } } });
+      assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+      accept();
+      const live = liveItems(eventId);
+      assert.deepEqual([live.length, live[0].periodKey, live.at(-1).periodKey], [12, '1405-02', '1406-01'], value);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // خانوادهٔ «استرداد و فسخ»: سندی که ماندهٔ قرارداد دوره‌دار را کم می‌کند
 // (بیمه‌گر برگرداند، به مستأجر پس دادیم، اشتراک کنسل شد) برنامهٔ همان قرارداد
