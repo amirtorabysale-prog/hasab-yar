@@ -5,7 +5,7 @@ import { PERSIAN_MONTHS, extractOccurrenceDate } from './persianDate.js';
 import { detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
-import { readServicePeriod } from './periodSpeech.js';
+import { periodYearSpans, readServicePeriod } from './periodSpeech.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
 import { EVENT_NATURES, natureNeedsAccountant, readEventNature } from './eventNature.js';
 import { counterpartyMoneyDirection, extractContactCandidate } from './counterpartySpeech.js';
@@ -405,6 +405,8 @@ const IDENTIFIER_PREFIXES = ['شماره', 'فاکتور', 'رسید', 'سفار
 const isYearLike = (value) => (value >= 1300 && value <= 1499) || (value >= 1900 && value <= 2100);
 const MONEY_AFTER = /^(?:تومان|تومن|ریال|هزار|میلیون|میلیارد|دلار|یورو|درهم)/;
 const DATE_SUFFIX = /^(?:شمسی|هجری|ه\s*\.?\s*ش|میلادی)/;
+// «هزار و چهارصد و پنج تا آخر شهریور»: سالی که بازه‌ای از ماه‌ها پشتش آمده.
+const YEAR_RANGE_AFTER = new RegExp(`^[\\s\\u200c]*تا[\\s\\u200c]+(?:(?:آخر|اخر|پایان|انتها[یي]?|اول|ابتدا[یي]?)[\\s\\u200c]+)?(?:${PERSIAN_MONTHS.map(([name]) => name).join('|')})(?![آ-ی])`);
 const YEAR_CONTEXT = new RegExp(`(?:^|\\s)(?:${PERSIAN_MONTHS.map(([name]) => name).join('|')}|ماه|سال)(?:\\s+(?:ماه|سال|مالی))*$`);
 const NUMERIC_DATE = /(?<![\d,.])(\d{1,4})([/\-.])(\d{1,2})\2(\d{1,4})(?![\d,]|\.\d)/g;
 
@@ -425,6 +427,9 @@ function maskNumericDates(text) {
 function isYearSpan(span, before, after) {
   if (!isYearLike(span.amount) || MONEY_AFTER.test(after)) return false;
   if (YEAR_CONTEXT.test(before) || DATE_SUFFIX.test(after)) return true;
+  // سالِ حروفی درست پیش از مبلغِ رقمیِ مقیاس‌دار («هزار و چهارصد و شش ۱۲ میلیون»):
+  // آن مبلغ خودش گفته شده و این عدد سالِ آن است، نه ردیف دوم.
+  if (!/^\d/.test(span.raw) && (/^[\s\u200c]*\d[\d,٬]*[\s\u200c]*(?:میلیون|میلیارد|هزار|تومان|تومن|ریال)/.test(after) || YEAR_RANGE_AFTER.test(after))) return true;
   // سال برهنه فقط به شکل رقمی؛ «هزار و چهارصد» با حروف بی‌بافت تاریخ، مبلغ است.
   return /^\d{4}$/.test(span.raw.replace(/[.,]+$/, ''));
 }
@@ -523,6 +528,10 @@ export function extractAmounts(input) {
       if (/[،,؛;.:!؟?\n]/.test(text.slice(end, next.start))) break;
       if (isNumericWord(next.value)) {
         if (collected.at(-1) !== 'و' && yearEndsBefore(text, token, collected, next)) break;
+        // عددِ حروفی که بی «و» به رقم می‌رسد، یک عدد نیست: «هزار و چهارصد و شش ۱۲
+        // میلیون» ۴۱۸ میلیون و «دو هزار و پونصد ۳ میلیون» ۵۰۳ میلیون خوانده می‌شد.
+        // مقیاسِ حروفی پیش از رقم («یک میلیون ۲۰۰ هزار») همچنان ادامهٔ همان عدد است.
+        if (/^\d/.test(next.value) && !SCALES[next.value] && !/^\d/.test(collected.at(-1)) && collected.at(-1) !== 'و' && !SCALES[collected.at(-1)]) break;
         if (countOfUnitFollows(tokens, cursor, collected)) break;
         collected.push(next.value);
         end = next.end;
@@ -1153,11 +1162,18 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   const eventNature = readEventNature(input);
   // دوره نسبت به تاریخ رویداد حساب می‌شود، نه تاریخ اجرای کد: «برای شش ماه
   // جلوتر» در جمله‌ای که تاریخش دیروز است، از دیروز شروع می‌شود.
-  const servicePeriod = readServicePeriod(normalizePersian(input), { occurredAt: occurredAt || now.toISOString() });
+  // سالی که خوانندهٔ دوره سال می‌خواند («مهر ۰۵ ۳۰ میلیون»، «سال ۱۴۰۶ ۱۲ میلیون»)
+  // مبلغ نیست: پیش از خواندن مبلغ ماسک می‌شود، وگرنه ۳۵ و ۱٬۴۱۸ میلیون خوانده می‌شد.
+  // چون ماسک شده، خوانندهٔ دوره هم دیگر لازم نیست چنین جمله‌ای را نخواند.
+  const yearSpans = periodYearSpans(input, { occurredAt: occurredAt || now.toISOString() });
+  const servicePeriod = readServicePeriod(normalizePersian(input), { occurredAt: occurredAt || now.toISOString(), yearsMasked: true });
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
-  let amountSource = mentionedDate?.match || bank
+  let amountSource = mentionedDate?.match || bank || yearSpans.length
     ? normalizePersian(input)
     : input;
+  for (const span of yearSpans) {
+    amountSource = `${amountSource.slice(0, span.index)}${' '.repeat(span.length)}${amountSource.slice(span.index + span.length)}`;
+  }
   if (mentionedDate?.match) amountSource = amountSource.replace(mentionedDate.match, ' '.repeat(mentionedDate.match.length));
   // نام بانک هم ماسک می‌شود، وگرنه «بانک صادرات» دستهٔ «صادرات» می‌سازد و
   // «بانک مسکن» را هزینهٔ اجاره می‌خواند.
@@ -1248,7 +1264,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ? ownAfter
       : `${ownBefore} ${ownAfter}`.trim();
     // «اشتراک یک‌ساله رو کنسل کرد» دورهٔ قرارداد قبلی است، نه پوششی که حالا خریده‌ایم.
-    const rowPeriod = refundJudgment ? null : segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString() }) : servicePeriod;
+    const rowPeriod = refundJudgment ? null : segment ? readServicePeriod(ownText, { occurredAt: occurredAt || now.toISOString(), yearsMasked: true }) : servicePeriod;
     const rowPrepayment = segment ? readPrepaymentMention(ownText) : prepayment;
     // نامی که خودِ بند گفته؛ وگرنه نام جمله، مثل همیشه. نام حدسیِ بند («به
     // تاریخ ۳۰ آبان»، «به سامان واریز کردند») جای نام مطمئنِ جمله را نمی‌گیرد.

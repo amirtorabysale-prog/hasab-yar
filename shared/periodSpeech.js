@@ -286,7 +286,9 @@ function takeYear(match, name, text, reference, consumed) {
   if (year === null || year === UNREADABLE) return year;
   const [from, to] = match.indices.groups[name];
   consumed.push({ index: from, length: to - from });
-  return NUMBER_NEXT.test(text.slice(to)) ? UNREADABLE : year;
+  // فراخوانی که همین جای‌ها را پیش از خواندن مبلغ ماسک می‌کند (پارسر)، عددِ
+  // پشتِ سال را مبلغی جدا می‌خواند؛ برای او سال خواندنی است.
+  return NUMBER_NEXT.test(text.slice(to)) && !consumed.yearsMaskedByCaller ? UNREADABLE : year;
 }
 
 /**
@@ -607,7 +609,7 @@ export function runsPastMonth(period, occurredAt) {
  * `start` شروعی است که کاربر در جواب سؤال گفته؛ جمله با آن دوباره خوانده می‌شود
  * تا طولِ گفته‌شده («یک‌ساله تمدید کردیم»، «اجاره شش ماه دفتر») پایان را بسازد.
  */
-export function readServicePeriod(input, { occurredAt, answer = false, start: knownStart = null } = {}) {
+export function readServicePeriod(input, { occurredAt, answer = false, start: knownStart = null, yearsMasked = false } = {}) {
   // «مهر هزار و چهارصد و پنج» همان «مهر 1405» است؛ بی‌این، بازه شناخته نمی‌شد.
   // آزمون ارزان پیش از تبدیل: تایپ زنده بودجهٔ میلی‌ثانیه‌ای دارد.
   const raw = normalizePersian(String(input || ''));
@@ -616,6 +618,9 @@ export function readServicePeriod(input, { occurredAt, answer = false, start: kn
   if (PAST.test(text)) return null;
   if (!occurredAt) return null;
   const consumed = [];
+  // `yearsMasked`: فراخوان سال‌های `periodYearSpans` را پیش از خواندن مبلغ ماسک
+  // کرده است. سالِ حروفیِ تبدیل‌شده جایی در متن اصلی ندارد و ماسک نشده است.
+  if (yearsMasked && text === raw) consumed.yearsMaskedByCaller = true;
   const period = readPeriod(text, { occurredAt, answer, knownStart, consumed });
   if (!period || period === UNREADABLE) return null;
   // جای سال‌های خوانده‌شده در متنِ نرمال‌شده؛ وقتی سالِ حروفی به رقم تبدیل شده،

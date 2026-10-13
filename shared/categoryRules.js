@@ -50,6 +50,10 @@ const SERVICE_HEAD = '(?:بیمه|بیمع|اجاره|کرایه)';
 const CHAIN_WORD = '(?:\\s+(?!(?:و|به|از|با|رو|را|که|هم|تا|برای|واسه|بابت|جهت)(?![آ-ی]))\\S+){0,4}?';
 const GOODS_OBJECT = '(?:انبار|کالا|کالاها|کالاهای|موجودی|اجناس)(?![آ-ی])';
 export const SERVICE_OF_GOODS = new RegExp(`(?<![آ-ی])(${SERVICE_HEAD}${CHAIN_WORD})\\s+${GOODS_OBJECT}`, 'g');
+// «بیمهٔ حمل‌ونقل»، «بیمهٔ یک‌سالهٔ باربری»: بار و حملی که بیمه شده مفعولِ بیمه است،
+// نه کرایهٔ حمل؛ وگرنه «بیمه» و «حمل‌ونقل» مساوی می‌شدند و پیش‌پرداخت بیمه به حسابدار می‌رفت.
+const CARGO_OBJECT = '(?:حمل|باربری|ترابری|محموله|بار)(?![آ-ی])';
+export const INSURANCE_OF_CARGO = new RegExp(`(?<![آ-ی])((?:بیمه|بیمع)${CHAIN_WORD})\\s+${CARGO_OBJECT}(?:\\s+و\\s+نقل)?`, 'g');
 const pattern = (head, source) => ({ head, pattern: new RegExp(source) });
 // «بیمهٔ یک‌سالهٔ انبار» و «کرایهٔ شش ماه مغازه»: هسته با فاصلهٔ چند واژه.
 const INSURED_GOODS = pattern('بیمه', `(?<![آ-ی])(?:بیمه|بیمع)${CHAIN_WORD}\\s+${GOODS_OBJECT}`);
@@ -113,7 +117,8 @@ export const CATEGORY_DEFINITIONS = Object.freeze([
   rule('exp-insurance', 'بیمه', 'expense', '8119', [
     [STRONG, ['بیمه تامین اجتماعی', 'بیمه تأمین اجتماعی', 'حق بیمه', 'لیست بیمه', 'بیمه پرسنل', 'بیمه تکمیلی',
       // نوع بیمه موضوع جمله است؛ «بیمهٔ آتش‌سوزی انبار» به‌خاطر «انبار» مواد و کالا می‌شد.
-      'بیمه آتش سوزی', 'بیمه آتش‌سوزی', 'بیمه بدنه', 'بیمه شخص ثالث', 'بیمه مسئولیت', 'بیمه انبار', 'بیمه سرقت', INSURED_GOODS]],
+      'بیمه آتش سوزی', 'بیمه آتش‌سوزی', 'بیمه بدنه', 'بیمه شخص ثالث', 'بیمه مسئولیت', 'بیمه انبار', 'بیمه سرقت', INSURED_GOODS,
+      pattern('بیمه', `(?<![آ-ی])(?:بیمه|بیمع)${CHAIN_WORD}\\s+${CARGO_OBJECT}`)]],
     // «بیمع» غلط تایپی رایج «بیمه» است (ع و ه کنار هم روی صفحه‌کلید).
     [NORMAL, ['بیمه', 'بیمع']],
   ]),
@@ -220,7 +225,8 @@ export function scoreCategories(text, type) {
     if (type && definition.type !== type) continue;
     let score = 0;
     const matched = [];
-    const scoredText = definition.id === 'exp-material' ? serviceObjectsMasked : normalized;
+    const scoredText = definition.id === 'exp-material' ? serviceObjectsMasked
+      : definition.id === 'exp-delivery' ? normalized.replace(INSURANCE_OF_CARGO, (_match, head) => head) : normalized;
     for (const { word, pattern: keywordPattern, weight } of definition.keywords) {
       if (keywordPattern ? !keywordPattern.test(normalized) : !scoredText.includes(word)) continue;
       if (word === 'سنوات' && !/(?:^|[\s،,])سنوات(?:$|[\s،,.])/.test(normalized)) continue;
