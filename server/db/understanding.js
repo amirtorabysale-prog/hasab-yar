@@ -172,12 +172,20 @@ function planCase(understanding, answers, row, now = new Date()) {
       component.preview.lines = component.preview.lines.map((line) => (line.role === 'cash' ? { ...line, role, key: component.item.fundedBy.name || null } : line));
       component.paidBy = { name: component.item.fundedBy.name || null, kind: component.item.fundedBy.kind };
     }
-    if (preview.question && !answers[`engine.${component.id}.${preview.question.fact}`]) {
-      const definition = FACT_QUESTIONS[preview.question.fact];
+    // ودیعه‌ای که جمله نگفته برمی‌گردد یا مصرف می‌شود: اول همین پرسیده می‌شود، هر
+    // دسته‌ای که داشته باشد. موتور این سؤال را فقط برای اجاره می‌پرسد و برای «سپردهٔ
+    // قرارداد» یا «تضمین» شروع دورهٔ پوشش می‌خواست — سؤال غلط از رویداد درست.
+    const refundUnsaid = component.item.paymentPurpose === 'deposit' && typeof component.item.refundable !== 'boolean'
+      && !answers[`engine.${component.id}.refundable`];
+    const engineQuestion = refundUnsaid
+      ? { fact: 'refundable', text: FACT_QUESTIONS.refundable.text, options: FACT_QUESTIONS.refundable.options }
+      : preview.question;
+    if (engineQuestion && !answers[`engine.${component.id}.${engineQuestion.fact}`]) {
+      const definition = FACT_QUESTIONS[engineQuestion.fact];
       plan.questions.push({
-        id: `engine.${component.id}.${preview.question.fact}`, kind: 'information', text: preview.question.text,
+        id: `engine.${component.id}.${engineQuestion.fact}`, kind: 'information', text: engineQuestion.text,
         picker: ENGINE_PICKER[definition?.kind] || 'options',
-        options: (preview.question.options || []).map((option) => ({ value: option.value, label: option.label, freeInput: Boolean(option.freeInput) })),
+        options: (engineQuestion.options || []).map((option) => ({ value: option.value, label: option.label, freeInput: Boolean(option.freeInput) })),
       });
     } else if (preview.route === ROUTES.ACCOUNTANT_REVIEW) {
       plan.reasons.push(...(preview.reasons?.length ? preview.reasons : ['موتور قاعده این جزء را به حسابدار می‌فرستد.']));

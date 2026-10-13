@@ -26,6 +26,7 @@ import { normalizePersian } from './normalize.js';
 import { persianMonthRange, todayPersian } from './persianDate.js';
 import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
+import { saysRefundable } from './moneyPurpose.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -55,6 +56,18 @@ const SERVICE_DONE = /انجام\s*(?:دادیم|دادم|شد)|(?:تموم|تم
 /** ماهیتِ هر مبلغ از شاهدِ خودش، نه از نوعِ کل رویداد. */
 const REFUNDABLE_WORDS = /ودیعه|رهن|سپرده|تضمین|حسن\s*انجام|قرض\s*الحسنه/;
 const ADVANCE_WORDS = /بیعانه|پیش\s*پرداخت|پیش\s*دریافت|علی[\s‌]*الحساب/;
+/**
+ * ودیعه و اجاره در شاهدِ یک مبلغ: «۳۶ میلیون بابت ودیعه و اجاره مهر». سهم هر کدام
+ * گفته نشده؛ هر برچسبی برای کل مبلغ حدس است (اجارهٔ مهر یا پنهان می‌ماند یا ودیعه
+ * هزینه می‌شود). «ودیعهٔ اجارهٔ دفتر» یک چیز است و این‌جا نمی‌گنجد.
+ */
+const DEPOSIT_AND_SERVICE = /(?:ودیعه|رهن|سپرده)\s*و\s*(?:اجاره|کرایه|شارژ)|(?:اجاره|کرایه|شارژ)[^.،,؛\d]{0,24}?\s+و\s+(?:ودیعه|رهن|سپرده)/;
+/**
+ * ودیعه یا رهنی که به ما رسیده: مستاجر داده، یا صاحبخانه ودیعهٔ ما را پس داده.
+ * هیچ‌کدام درآمد نیست؛ اولی بدهیِ برگشت‌پذیر است و دومی طلب قبلی را می‌بندد.
+ * «سود سپرده» درآمد است و این‌جا نمی‌آید.
+ */
+const DEPOSIT_IN_WORDS = /(?<![آ-ی])(?:ودیعه|رهن)|حسن\s*انجام|(?<!سود\s*)(?<![آ-ی])سپرده(?!\s*گذاری)/;
 const THIS_MONTH_WORDS = /(?:این|همین)\s*ماه|ماه\s*جاری/;
 const PARTY_TITLE = /آقای|خانم|شرکت|دکتر|مهندس|حاج|فروشگاه|موسسه|مؤسسه|کارخانه/;
 
@@ -70,7 +83,11 @@ const PURPOSE_BY_KIND = Object.freeze({
   expense: { paymentPurpose: 'expense' },
   'owner-drawing': { paymentPurpose: 'owner-drawing', refundable: false },
   'advance-paid': { paymentPurpose: 'advance' },
-  deposit: { paymentPurpose: 'deposit', refundable: true },
+  // برچسب «ودیعه»ی رویداد به‌تنهایی نه هدف می‌گوید نه استرداد: مدل «بیمهٔ یک‌ساله
+  // انبار»، «اجارهٔ سه ماه آینده» و «اشتراک یک‌ساله» را «ودیعه» نامید و هر سه ودیعهٔ
+  // قابل استرداد شدند — هرگز هزینه نمی‌شدند (موتور ۵، مهر ۱۴۰۵). ماهیتِ ودیعه از
+  // شاهدِ خودِ مبلغ می‌آید (`refundableHere`)؛ بی آن، دسته و دوره تصمیم می‌گیرند.
+  deposit: {},
   sale: { receiptPurpose: 'sale' },
   income: { receiptPurpose: 'other-income' },
   'advance-received': { receiptPurpose: 'advance' },
@@ -442,14 +459,30 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // برچسب «ودیعه»ی مدل به‌تنهایی کافی نیست: «پیش‌پرداخت بیمه … ۱۲ میلیون» را مدل
     // «ودیعه» نامید و ۱۲ میلیون ودیعهٔ قابل استرداد شد (۱۸ مهر ۱۴۰۵). ودیعه یعنی
     // پولی که برمی‌گردد و جمله باید خودش این را بگوید؛ «پیش‌پرداخت» بر برچسب مقدم است.
+    //
+    // نگاه به کل جمله فقط وقتی است که شاهدِ خودِ مبلغ ماهیتی نگفته: در «۳۰ میلیون
+    // رهن و ۶ میلیون اجاره مهر» برچسب «ودیعه» روی ۶ میلیونِ اجاره، رهنِ مبلغ دیگر
+    // را قرض می‌گرفت و اجارهٔ مهر هرگز هزینه نمی‌شد.
     const refundableHere = REFUNDABLE_WORDS.test(own)
-      || (amount.role === 'deposit' && REFUNDABLE_WORDS.test(said) && !ADVANCE_WORDS.test(own));
+      || (amount.role === 'deposit' && REFUNDABLE_WORDS.test(said) && !ADVANCE_WORDS.test(own) && !classifyCategory(own, 'expense').matched);
+    if (type === 'expense' && movement.direction !== 'none' && DEPOSIT_AND_SERVICE.test(own)) {
+      toAccountant(`«${label}» هم ودیعه است و هم اجاره یا هزینهٔ دوره؛ سهم هر کدام گفته نشده و تفکیکش با حسابدار است.`);
+      continue;
+    }
+    if (type === 'income' && movement.direction !== 'none' && (DEPOSIT_IN_WORDS.test(own) || (DEPOSIT_IN_WORDS.test(clause) && !classifyCategory(own, 'income').matched))) {
+      toAccountant(`«${label}» ودیعه یا رهن است، نه درآمد: یا بدهیِ برگشت‌پذیر به پرداخت‌کننده است یا ودیعهٔ قبلیِ ما که برگشته؛ ثبتش در حساب ودیعه با حسابدار است.`);
+      continue;
+    }
+    // ودیعه یعنی پولی که برمی‌گردد؛ اینکه برمی‌گردد یا مصرف می‌شود را جمله باید
+    // بگوید («آخر قرارداد پس می‌گیریم»)، همان قاعدهٔ مسیر قطعی (`saysRefundable`).
+    // وگرنه استرداد پرسیده می‌شود — نامِ «ودیعه» یا «رهن» به‌تنهایی جواب نیست.
+    const returns = saysRefundable(clause || own);
     const advanceHere = ADVANCE_WORDS.test(own) || (ADVANCE_WORDS.test(clause) && !REFUNDABLE_WORDS.test(clause))
       || (ADVANCE_WORDS.test(said) && !REFUNDABLE_WORDS.test(said) && amounts.filter((item) => item.accepted && item.status === 'done' && !retracted.has(item.id)).length === 1);
     const depositSibling = amounts.some((other) => other !== amount && other.accepted && other.partOf === amount.partOf
       && (other.role === 'deposit' || REFUNDABLE_WORDS.test(normalizePersian(other.evidence || ''))));
     const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' }
-      : type === 'expense' && refundableHere ? { paymentPurpose: 'deposit', refundable: true }
+      : type === 'expense' && refundableHere ? (typeof returns === 'boolean' ? { paymentPurpose: 'deposit', refundable: returns } : { paymentPurpose: 'deposit' })
         : advanceHere ? (type === 'expense' ? { paymentPurpose: 'advance' } : { receiptPurpose: 'advance' })
           : serviceUpfront ? { receiptPurpose: 'advance' }
             : type === 'expense' && depositSibling ? { paymentPurpose: 'expense', refundable: false }

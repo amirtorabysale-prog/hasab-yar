@@ -167,3 +167,106 @@ test('منفی: تقسیمِ واقعی بی‌واژهٔ نرخ دست نمی�
     assert.equal(creditOf(posted, /تجارت/), 4_000_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ۲. «ودیعه» فقط وقتی ودیعه است که شاهدِ مبلغ بگوید؛ برگشت‌پذیری را جمله می‌گوید.
+// ---------------------------------------------------------------------------
+
+const party = (name, role = 'supplier') => [{ id: 'c1', name, role, evidence: name }];
+const depositModel = (evidence, role, extra = {}) => model({
+  event: { kind: 'deposit', description: '', status: 'done' },
+  amounts: [amt('a1', role, evidence)],
+  movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')],
+  ...extra,
+});
+
+test('برچسب رویدادِ «ودیعه» بی‌واژهٔ ودیعه: بیمه، اجاره و اشتراک پیش‌پرداخت با جدول ماهانه‌اند', async () => {
+  for (const [text, evidence, role, extra, amount, months] of [
+    ['بیمه یک ساله انبار رو ۱۲ میلیون به بیمه دی از تجارت دادیم، ماهی یک میلیون', '۱۲ میلیون', 'paid-now', { counterparties: party('بیمه دی'), subject: service('بیمه انبار') }, 12_000_000, 12],
+    ['اجاره سه ماه آینده دفتر رو ۱۸ میلیون پیش پیش به آقای رضایی از تجارت دادیم', '۱۸ میلیون', 'total', { counterparties: party('آقای رضایی'), subject: service('اجاره دفتر') }, 18_000_000, 3],
+    ['اشتراک یک ساله نرم افزار ۲۴ میلیون از تجارت پرداخت کردیم', '۲۴ میلیون', 'paid-now', { subject: service('اشتراک نرم افزار') }, 24_000_000, 12],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, depositModel(evidence, role, extra));
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(components(item)[0].treatment, 'prepaid-expense', text);
+      assert.equal(debitOf(posted, /ودیعه/), 0, `${text}: ودیعهٔ قابل استرداد ساخته نشد`);
+      assert.equal(posted.schedule.length, months, text);
+      assert.equal(posted.scheduled, amount, text);
+    });
+  }
+});
+
+test('رهن و اجارهٔ مهر در یک جمله: اجارهٔ مهر هزینهٔ دوره است، رهن استردادش پرسیده می‌شود', async () => {
+  await inFreshWorkspace(async () => {
+    const { item } = await understandCase('۳۰ میلیون رهن و ۶ میلیون اجاره مهر به آقای رضایی از تجارت دادیم', model({
+      event: { kind: 'deposit', description: '', status: 'done' },
+      amounts: [amt('a1', 'deposit', '۳۰ میلیون رهن'), amt('a2', 'deposit', '۶ میلیون اجاره مهر')],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت'), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت')],
+      counterparties: party('آقای رضایی'),
+    }), { commit: false });
+    assert.deepEqual(questionIds(item), ['engine.a1.refundable']);
+    assert.equal(components(item).find((c) => c.amount === 6_000_000).treatment, 'period-expense');
+  });
+});
+
+test('یک مبلغ برای ودیعه و اجاره با هم: سهم‌ها گفته نشده، حسابدار — نه ودیعهٔ کامل', async () => {
+  for (const kind of ['deposit', 'expense']) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase('۳۶ میلیون بابت ودیعه و اجاره مهر به آقای رضایی از تجارت دادیم', model({
+        event: { kind, description: '', status: 'done' },
+        amounts: [amt('a1', 'paid-now', '۳۶ میلیون بابت ودیعه و اجاره مهر')],
+        movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], counterparties: party('آقای رضایی'),
+      }));
+      assert.equal(item.status, 'needs-accountant', kind);
+      assert.equal(posted, null, kind);
+    });
+  }
+});
+
+test('ودیعه/رهن/سپرده بی‌واژهٔ برگشت، استرداد را می‌پرسد؛ با «پس می‌گیریم» نه', async () => {
+  for (const [text, evidence, name] of [
+    ['ودیعه اجاره دفتر ۵۰ میلیون به آقای رضایی از تجارت دادیم', 'ودیعه اجاره دفتر ۵۰ میلیون', 'آقای رضایی'],
+    ['رهن دفتر ۱۰۰ میلیون به آقای رضایی از تجارت دادیم', 'رهن دفتر ۱۰۰ میلیون', 'آقای رضایی'],
+    ['سپرده ۲۰ میلیون بابت قرارداد پیمانکاری به شرکت آلفا از تجارت دادیم', 'سپرده ۲۰ میلیون', 'شرکت آلفا'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const first = await understandCase(text, depositModel(evidence, 'deposit', { counterparties: party(name) }), { commit: false });
+      assert.deepEqual(questionIds(first.item), ['engine.a1.refundable'], text);
+      const answered = await database.answerUnderstandingCase(first.item.id, { 'engine.a1.refundable': { value: true } }, first.options);
+      assert.equal(components(answered)[0].treatment, 'refundable-deposit', text);
+    });
+  }
+  await inFreshWorkspace(async () => {
+    const { item } = await understandCase('ودیعه اجاره دفتر ۵۰ میلیون به آقای رضایی از تجارت دادیم که آخر قرارداد پس می‌گیریم',
+      depositModel('ودیعه اجاره دفتر ۵۰ میلیون', 'deposit', { counterparties: party('آقای رضایی') }), { commit: false });
+    assert.ok(!questionIds(item).includes('engine.a1.refundable'));
+    assert.equal(components(item)[0].treatment, 'refundable-deposit');
+  });
+});
+
+test('ودیعه یا رهنی که به ما رسیده درآمد نیست: حسابدار؛ «سود سپرده» درآمد می‌ماند', async () => {
+  for (const [text, evidence, kind] of [
+    ['آقای کریمی مستاجر ۵۰ میلیون ودیعه به حساب تجارت واریز کرد', '۵۰ میلیون ودیعه', 'income'],
+    ['۵۰ میلیون رهن مغازه رو از آقای کریمی گرفتیم، به تجارت ریخت', '۵۰ میلیون رهن مغازه', 'deposit'],
+    ['آقای کریمی ۵۰ میلیون واریز کرد بابت رهن مغازه', '۵۰ میلیون', 'income'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, model({
+        event: { kind, description: '', status: 'done' },
+        amounts: [amt('a1', 'received-now', evidence)],
+        movements: [mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'آقای کریمی' }, BANK, 'واریز')],
+        counterparties: party('آقای کریمی', 'customer'),
+      }));
+      assert.equal(item.status, 'needs-accountant', text);
+      assert.equal(posted, null, `${text}: درآمدی ساخته نشد`);
+    });
+  }
+  await inFreshWorkspace(async () => {
+    const { posted } = await understandCase('سود سپرده ۲ میلیون به حساب تجارت واریز شد', model({
+      event: { kind: 'income', description: '', status: 'done' },
+      amounts: [amt('a1', 'received-now', '۲ میلیون')], movements: [mv('m1', 'a1', 'in', UNKNOWN, BANK, 'واریز شد')],
+    }));
+    assert.equal(creditOf(posted, /درآمد/), 2_000_000);
+  });
+});
