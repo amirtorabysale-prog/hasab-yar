@@ -90,14 +90,34 @@ const touch = (id, fields) => {
 // نقشه: فهم + پاسخ‌ها + تطبیق با دفتر + پیش‌نمایش موتور
 // ---------------------------------------------------------------------------
 
-/** پاسخ سؤال موتور («بابت چه بود؟»، «مقیاس مبلغ؟») روی ردیف همان جزء. */
-function applyEngineAnswers(component, answers, today) {
+/**
+ * پاسخ سؤال موتور («بابت چه بود؟»، «مقیاس مبلغ؟») روی ردیف همان جزء.
+ *
+ * مرجعِ «از همین ماه» و «از اول ماه بعد» و سالِ تاریخِ تایپ‌شده، تاریخِ پرداختِ خودِ
+ * ردیف است — همان مرجعِ مسیر قطعی (`answerEvent`). ساعتِ دیواری جای آن نمی‌نشیند:
+ * بیمهٔ ۱۵ شهریور با «از همین ماه» در مسیر قطعی از شهریور شروع می‌شد و این‌جا از مهر،
+ * و ثبتِ چند روز بعد دوره را دوباره جابه‌جا می‌کرد (موتور ۵، مهر ۱۴۰۵).
+ *
+ * سؤالِ متنیِ موتور (طرف حساب، …) مقدارِ تایپ‌شده را در `value` می‌فرستد؛ همان متنِ
+ * آزاد است. پاسخی که پذیرفته نمی‌شود: اگر تازه است (`strict`) خطا برمی‌گردد و چیزی
+ * ذخیره نمی‌شود؛ اگر از قبل مانده، کنار می‌رود (`rejected`) و سؤالش دوباره پرسیده
+ * می‌شود — پرونده هرگز بی‌نقشه نمی‌ماند.
+ */
+function applyEngineAnswers(component, answers, today, { strict = new Set(), rejected = new Set() } = {}) {
   let item = { ...component.item };
   const prefix = `engine.${component.id}.`;
+  const reference = item.occurredAt || today;
   for (const [key, answer] of Object.entries(answers)) {
     if (!key.startsWith(prefix)) continue;
     const fact = key.slice(prefix.length);
-    const patch = applyAnswer({ ...item, occurredAt: item.occurredAt || today }, { fact, value: answer.value, freeText: answer.freeText || '' }, { today });
+    const freeText = answer.freeText || (answer.picker === 'text' && typeof answer.value === 'string' ? answer.value.trim() : '');
+    let patch;
+    try { patch = applyAnswer({ ...item, occurredAt: reference }, { fact, value: answer.value, freeText }, { today: reference }); }
+    catch (error) {
+      if (strict.has(key) || !String(error?.code || '').startsWith('ANSWER_')) throw error;
+      rejected.add(key);
+      continue;
+    }
     for (const [field, value] of Object.entries(patch)) {
       if (field === 'cashAccountId') item.accountId = value;
       else if (field === 'counterparty') item = { ...item, contactName: value, linkContact: true, contactNameConfident: true };
@@ -120,7 +140,8 @@ const ENGINE_PICKER = { 'free-input': 'text', options: 'options' };
  * بین پیش‌نمایش و ثبت سند دیگری بدهیِ همان شخص را تسویه کرده باشد، نقشه همان
  * لحظه عوض می‌شود.
  */
-function planCase(understanding, answers, row, now = new Date()) {
+function planCase(understanding, answers, row, now = new Date(), { strict = new Set() } = {}) {
+  const rejected = new Set();
   const resolution = resolveUnderstanding(understanding);
   // سندهای بازِ هر طرف حسابی که در نقشه ممکن است لازم شود: هم‌نامِ قطعی، و
   // شخصی که ثبت‌کننده انتخاب کرده.
@@ -164,7 +185,7 @@ function planCase(understanding, answers, row, now = new Date()) {
       continue;
     }
     if (!component.item) continue;
-    component.item = applyEngineAnswers(component, answers, today);
+    component.item = applyEngineAnswers(component, answers, today, { strict, rejected });
     if (component.kind === 'transfer') continue;
     let preview;
     // ردیفِ یک جملهٔ چندمبلغی متنِ بخشِ خودش را دارد (`component.text`)، همان که ثبت می‌شود.
@@ -191,7 +212,8 @@ function planCase(understanding, answers, row, now = new Date()) {
       ? { fact: 'refundable', text: FACT_QUESTIONS.refundable.text, options: FACT_QUESTIONS.refundable.options }
       : periodUnsaid ? { fact: periodFact, text: FACT_QUESTIONS[periodFact].text, options: FACT_QUESTIONS[periodFact].options }
         : preview.question;
-    if (engineQuestion && !answers[`engine.${component.id}.${engineQuestion.fact}`]) {
+    const engineKey = engineQuestion ? `engine.${component.id}.${engineQuestion.fact}` : null;
+    if (engineQuestion && (!answers[engineKey] || rejected.has(engineKey))) {
       const definition = FACT_QUESTIONS[engineQuestion.fact];
       plan.questions.push({
         id: `engine.${component.id}.${engineQuestion.fact}`, kind: 'information', text: engineQuestion.text,
@@ -393,6 +415,11 @@ export async function answerUnderstandingCase(id, incoming = {}, options = {}) {
       question: question.text, picker: question.picker, reread, answeredAt: new Date().toISOString(), by: currentWorkspace()?.userId || null,
     };
   }
+  // همه یا هیچ: نقشه با پاسخ‌های تازه پیش از هر نوشتنی ساخته می‌شود. پاسخی که موتور
+  // نمی‌پذیرد («آخر فروردین» برای پایان دوره) همین‌جا ۴۰۰ می‌شود و نه پاسخ ذخیره
+  // می‌شود، نه نسخهٔ بی‌نقشه‌ای که پرونده را تا ابد قفل کند.
+  const current = latestVersion(id);
+  if (!needsReread && current) planCase(json(current.understanding, null), answers, row, options.now, { strict: new Set(Object.keys(incoming || {})) });
   touch(id, { answers: JSON.stringify(answers) });
   audit('answer', 'understanding-case', id, { fields: Object.keys(incoming || {}) });
   if (needsReread) {

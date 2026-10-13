@@ -573,3 +573,113 @@ test('منفی: بیعانهٔ کالا پیش‌دریافت از مشتری م
     assert.equal(creditOf(posted, /فروش|درآمد/), 50_000_000, JSON.stringify(posted.lines));
   });
 });
+
+// ---------------------------------------------------------------------------
+// ۸. پاسخ همه یا هیچ؛ متنِ تایپ‌شده جوابِ سؤالِ متنیِ موتور است.
+// ---------------------------------------------------------------------------
+
+const versions = (id) => database.activeWorkspaceDatabase().prepare('SELECT COUNT(*) AS count FROM understanding_versions WHERE case_id=?').get(id).count;
+
+test('پایانِ دورهٔ نامفهوم رد می‌شود و هیچ چیز ذخیره نمی‌شود؛ پرونده همچنان قابل پاسخ و ثبت است', async () => {
+  await inFreshWorkspace(async () => {
+    const text = 'اجاره دفتر برای شش ماه ۳۰ میلیون از تجارت دادیم';
+    const { item: asked, options } = await understandCase(text, model({
+      amounts: [amt('a1', 'paid-now', '۳۰ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('اجاره دفتر'),
+    }), { answers: [{ 'engine.a1.servicePeriodStart': { value: 'next-month' } }], commit: false });
+    assert.deepEqual(questionIds(asked), ['engine.a1.servicePeriodEnd']);
+    const before = versions(asked.id);
+    for (const bad of [{ value: 'custom', freeText: 'آخر فروردین' }, { value: 'custom', freeText: '۶ ماه از مهر' }, { value: 'custom' }]) {
+      await assert.rejects(database.answerUnderstandingCase(asked.id, { 'engine.a1.servicePeriodEnd': bad }, options), (error) => error.status === 400 && /^ANSWER_/.test(error.code));
+    }
+    const still = database.getUnderstandingCase(asked.id);
+    assert.equal(versions(asked.id), before, 'نسخهٔ تازه‌ای ساخته نشد');
+    assert.ok(still.plan, 'نقشه سر جایش است');
+    assert.deepEqual(questionIds(still), ['engine.a1.servicePeriodEnd']);
+    assert.equal(still.answers['engine.a1.servicePeriodEnd'], undefined);
+    assert.equal(still.answers['engine.a1.servicePeriodStart'].value, 'next-month', 'آغاز بی‌صدا عوض نشد');
+    const ready = await database.answerUnderstandingCase(asked.id, { 'engine.a1.servicePeriodEnd': { value: 'six-months' } }, options);
+    assert.equal(ready.status, 'ready');
+    database.commitUnderstandingCase(asked.id, { now: new Date(NOW) });
+    const posted = ledgerNow();
+    assert.equal(posted.schedule.length, 6);
+    assert.equal(posted.schedule[0].period_key, '1405-08');
+  });
+});
+
+test('پاسخِ خرابی که از پیش ذخیره شده پرونده را قفل نمی‌کند: سؤال دوباره پرسیده می‌شود و ثبت «آماده نیست» می‌گوید', async () => {
+  await inFreshWorkspace(async () => {
+    const { item: asked } = await understandCase('بیمه انبار ۱۲ میلیون از تجارت دادیم', model({
+      amounts: [amt('a1', 'paid-now', '۱۲ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('بیمه انبار'),
+    }), { commit: false });
+    assert.deepEqual(questionIds(asked), ['engine.a1.servicePeriodStart']);
+    const db = database.activeWorkspaceDatabase();
+    const answers = { ...asked.answers, 'engine.a1.servicePeriodStart': { value: 'custom', freeText: '۶ ماه از مهر', picker: 'options' } };
+    db.prepare('UPDATE understanding_cases SET answers=? WHERE id=?').run(JSON.stringify(answers), asked.id);
+    assert.throws(() => database.commitUnderstandingCase(asked.id, { now: new Date(NOW) }), (error) => error.code === 'UNDERSTANDING_NOT_READY');
+    assert.deepEqual(questionIds(database.getUnderstandingCase(asked.id)), ['engine.a1.servicePeriodStart']);
+  });
+});
+
+test('طرف حسابِ تایپ‌شده در سؤال متنیِ موتور پذیرفته می‌شود: ودیعه، پیش‌پرداخت خرید، مساعده', async () => {
+  for (const [text, kind, evidence, role, answersFor] of [
+    ['ودیعه اجاره دفتر ۵۰ میلیون از تجارت دادیم', 'deposit', 'ودیعه اجاره دفتر ۵۰ میلیون', 'deposit', [{ 'engine.a1.refundable': { value: true } }]],
+    ['پیش پرداخت خرید کالا ۲۰ میلیون از تجارت دادیم', 'advance-paid', '۲۰ میلیون', 'paid-now', []],
+    ['مساعده ۵ میلیون از تجارت دادیم', 'advance-paid', 'مساعده ۵ میلیون', 'paid-now', []],
+  ]) {
+    await inFreshWorkspace(async () => {
+      let { item, options } = await understandCase(text, model({
+        event: { kind, description: '', status: 'done' }, amounts: [amt('a1', role, evidence)], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')],
+      }), { answers: answersFor, commit: false });
+      for (let guard = 0; guard < 4 && item.status === 'needs-answers'; guard += 1) {
+        const open = item.plan.questions[0];
+        const answer = open.picker === 'text' ? { value: 'آقای رضایی' } : { value: open.options?.[0]?.value };
+        item = await database.answerUnderstandingCase(item.id, { [open.id]: answer }, options);
+      }
+      assert.ok(Object.keys(item.answers).some((key) => /counterparty$/.test(key)), `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify([item.plan?.questions, item.plan?.reasons])}`);
+      database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
+      assert.ok(database.listContacts().some((contact) => contact.name === 'آقای رضایی'), text);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ۹. «از همین ماه» یعنی ماهِ پرداخت، نه ماهِ امروز یا ماهِ ثبت — همان مسیر قطعی.
+// ---------------------------------------------------------------------------
+
+const paidOn = (expression, jalali) => [{ id: 'p1', role: 'payment', expression, relative: null, jalali: { year: null, month: null, day: null, ...jalali } }];
+
+test('مرجعِ پاسخ‌های نسبی و تاریخِ تایپ‌شده تاریخ پرداخت است؛ ثبتِ دیرتر دوره را جابه‌جا نمی‌کند', async () => {
+  for (const [text, payment, start, end, first, last, commitAt] of [
+    ['۱۵ شهریور بیمه انبار ۱۲ میلیون دادیم', paidOn('۱۵ شهریور', { month: 6, day: 15 }), { value: 'this-month' }, { value: 'one-year' }, '1405-06', '1406-05', NOW],
+    ['۱۵ شهریور بیمه انبار ۱۲ میلیون دادیم', paidOn('۱۵ شهریور', { month: 6, day: 15 }), { value: 'this-month' }, { value: 'one-year' }, '1405-06', '1406-05', '2026-10-25T09:00:00.000Z'],
+    ['۱۵ شهریور بیمه انبار ۱۲ میلیون دادیم', paidOn('۱۵ شهریور', { month: 6, day: 15 }), { value: 'next-month' }, { value: 'one-year' }, '1405-07', '1406-06', NOW],
+    ['۲۰ اسفند ۱۴۰۴ بیمه انبار ۱۲ میلیون دادیم', paidOn('۲۰ اسفند ۱۴۰۴', { year: 1404, month: 12, day: 20 }), { value: 'custom', freeText: '۱ اسفند' }, { value: 'one-year' }, '1404-12', '1405-11', NOW],
+    // منفی: پرداختِ همین ماه در هر دو مسیر یکی است.
+    ['۲ مهر بیمه انبار ۱۲ میلیون دادیم', paidOn('۲ مهر', { month: 7, day: 2 }), { value: 'this-month' }, { value: 'one-year' }, '1405-07', '1406-06', NOW],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, options } = await understandCase(text, model({
+        amounts: [amt('a1', 'paid-now', '۱۲ میلیون')], movements: [mv('m1', 'a1', 'out', UNKNOWN, UNKNOWN, 'دادیم')], dates: payment, subject: service('بیمه انبار'),
+      }), { answers: [{ 'movements.m1.account': '$tejarat' }, { 'engine.a1.servicePeriodStart': start }, { 'engine.a1.servicePeriodEnd': end }], commit: false });
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify([item.plan?.questions, item.plan?.reasons])}`);
+      database.commitUnderstandingCase(item.id, { now: new Date(commitAt) });
+      const posted = ledgerNow();
+      assert.equal(posted.schedule[0].period_key, first, `${text} ${start.value} @${commitAt}`);
+      assert.equal(posted.schedule.at(-1).period_key, last, text);
+      assert.equal(posted.scheduled, 12_000_000, text);
+      assert.ok(options);
+    });
+  }
+});
+
+test('آینه: پیش‌دریافتِ اجارهٔ پرداخت‌شده در شهریور با «از همین ماه» از شهریور درآمد می‌شود', async () => {
+  await inFreshWorkspace(async () => {
+    const { item } = await understandCase('۱۵ شهریور مستاجر اجاره مغازه رو پیش پیش داد ۳۰ میلیون به حساب تجارت', received('advance-received', '۳۰ میلیون', {
+      movements: [mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'مستاجر' }, BANK, 'داد')], counterparties: party('مستاجر', 'customer'), dates: paidOn('۱۵ شهریور', { month: 6, day: 15 }),
+    }), { answers: [{ 'engine.a1.servicePeriodStart': { value: 'this-month' } }, { 'engine.a1.servicePeriodEnd': { value: 'three-months' } }], commit: false });
+    assert.equal(item.status, 'ready', JSON.stringify([item.plan?.questions, item.plan?.reasons]));
+    database.commitUnderstandingCase(item.id, { now: new Date('2026-10-25T09:00:00.000Z') });
+    assert.deepEqual(ledgerNow().schedule.map((row) => row.period_key), ['1405-06', '1405-07', '1405-08']);
+  });
+});
