@@ -450,8 +450,14 @@ function relativeIso(relative, now, timeZone) {
 /**
  * سالِ نگفته از نقش تاریخ فهمیده می‌شود: پرداخت و وقوع گذشته‌اند، سررسید و
  * پایان پوشش آینده. «۲۰ آذر» برای سررسید چک یعنی آذرِ پیش رو، نه آذرِ پارسال.
+ *
+ * پایانِ پوششی که آغازش هم گفته شده، به آغازش بسته است نه به امروز (`rollEnd`
+ * خاموش): «اجارهٔ مرداد» که مهر پرداخت شود، مرداد تا مردادِ همین سال است و
+ * گذشته؛ پیش‌تر پایانش به مردادِ سال بعد می‌رفت و اجارهٔ یک ماهِ گذشته
+ * پیش‌پرداختِ ۱۳ ماهه می‌شد (موتور ۵، مهر ۱۴۰۵). پایانی که پیش از آغاز بیفتد،
+ * پایین‌تر با همان آغاز به سال بعد می‌رود.
  */
-function jalaliIso({ year, month, day }, role, now, timeZone) {
+function jalaliIso({ year, month, day }, role, now, timeZone, { rollEnd = true } = {}) {
   if (!Number.isInteger(month) || month < 1 || month > 12) return null;
   if (day != null && (!Number.isInteger(day) || day < 1 || day > 31)) return null;
   const today = todayPersian(now, timeZone);
@@ -469,7 +475,7 @@ function jalaliIso({ year, month, day }, role, now, timeZone) {
   if (!thisYear) return null;
   const future = Date.parse(thisYear) > now.getTime() + 43_200_000;
   if (PAST_DATE_ROLES.has(role) && future) return atDay(today.year - 1);
-  if (!PAST_DATE_ROLES.has(role) && !future && ['due', 'coverage-end', 'delivery', 'installment-start'].includes(role)
+  if (!PAST_DATE_ROLES.has(role) && !future && ['due', ...(rollEnd ? ['coverage-end'] : []), 'delivery', 'installment-start'].includes(role)
     && Date.parse(thisYear) < now.getTime() - 43_200_000 * 60) return atDay(today.year + 1);
   return thisYear;
 }
@@ -483,7 +489,7 @@ const dayKey = (iso, timeZone) => {
  * تاریخ، از سه منبع: «امروز/دیروز»، اجزای شمسی، و خواندنِ قطعیِ خودِ عبارت.
  * اگر دو منبع با هم نخوانند تاریخ پذیرفته نمی‌شود و سؤال می‌شود.
  */
-function resolveDate(date, { now, timeZone }) {
+function resolveDate(date, { now, timeZone, rollEnd = true }) {
   // «سود سپردهٔ این ماه»، «قبض گاز این ماه»: ماهِ جاری، بی‌روز. روز پرداختش همان
   // پیش‌فرضِ امروز است. پوششی که در همین ماه تمام می‌شود چیزی را به دورهٔ بعد
   // نمی‌برد، پس دورهٔ پوشش نیست و پرسیده هم نمی‌شود. آزمون زنده: دو بار «دقیقاً
@@ -508,7 +514,7 @@ function resolveDate(date, { now, timeZone }) {
     const year = spoken.year ?? (spoken.yearOffset != null ? today.year + spoken.yearOffset : null);
     const iso = year != null
       ? (end ? lastDay(year) : persianToISO(year, spoken.month, spoken.day ?? 1, timeZone))
-      : jalaliIso({ year: null, month: spoken.month, day: end ? null : (spoken.day ?? 1) }, end ? 'coverage-end' : date.role, now, timeZone);
+      : jalaliIso({ year: null, month: spoken.month, day: end ? null : (spoken.day ?? 1) }, end ? 'coverage-end' : date.role, now, timeZone, { rollEnd: rollEnd || date.role !== 'coverage-end' });
     return { iso, issue: iso ? null : 'unresolved' };
   }
   // «دیروز» با برچسبِ «امروز»: واژهٔ خودِ عبارت حرف آخر است (گزارش بازبین، مهر ۱۴۰۵).
@@ -516,7 +522,7 @@ function resolveDate(date, { now, timeZone }) {
   const saidRelative = RELATIVE_WORDS.find(([pattern]) => pattern.test(expressed))?.[1] || null;
   const relative = saidRelative || date.relative;
   const fromRelative = relative ? relativeIso(relative, now, timeZone) : null;
-  const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone) : null;
+  const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone, { rollEnd }) : null;
   const mention = date.expression ? extractDateMention(date.expression, { now, timeZone, preferPast: PAST_DATE_ROLES.has(date.role) }) : null;
   const candidates = [fromRelative, jalali].filter(Boolean);
   // عبارت بی‌سال («اول آبان») از خواندن قطعی سالِ حدسی می‌گیرد؛ فقط ماه و روز
@@ -822,6 +828,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   }
 
   // --- تاریخ‌ها --------------------------------------------------------------
+  const startSaid = raw.dates.slice(0, 8).some((item) => item?.role === 'coverage-start' && found(cleanLabel(item.expression, 120), textKey));
   const dates = raw.dates.slice(0, 8).map((item, index) => {
     const date = {
       id: cleanLabel(item.id, 20) || `d${index + 1}`, role: pick(item.role, DATE_ROLES, 'other'),
@@ -834,7 +841,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       iso: null, accepted: false, issue: null,
     };
     if (!found(date.expression, textKey)) { date.issue = 'evidence-not-found'; return date; }
-    const resolved = resolveDate(date, { now, timeZone });
+    const resolved = resolveDate(date, { now, timeZone, rollEnd: !startSaid });
     return { ...date, iso: resolved.iso, accepted: Boolean(resolved.iso), issue: resolved.issue };
   });
   // «از اول مهر تا آخر شهریور»: پایانِ بی‌سالی که پیش از آغاز می‌افتد، سالِ بعد

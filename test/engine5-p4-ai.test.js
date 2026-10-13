@@ -270,3 +270,44 @@ test('ودیعه یا رهنی که به ما رسیده درآمد نیست: ح
     assert.equal(creditOf(posted, /درآمد/), 2_000_000);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ۳. پایان پوششِ ماهِ نام‌برده به آغازش بسته است، نه به امروز.
+// ---------------------------------------------------------------------------
+
+const coverage = (start, end, startJalali = {}, endJalali = {}) => [
+  { id: 'd1', role: 'coverage-start', expression: start, relative: null, jalali: { year: null, month: null, day: null, ...startJalali } },
+  { id: 'd2', role: 'coverage-end', expression: end, relative: null, jalali: { year: null, month: null, day: null, ...endJalali } },
+];
+
+test('اجارهٔ ماهِ گذشته که امروز پرداخت شد هزینهٔ دوره است، نه پیش‌پرداخت ۱۳ ماهه', async () => {
+  for (const [text, evidence, start, end, amount] of [
+    ['اجاره مرداد دفتر رو امروز ۱۰ میلیون از حساب تجارت پرداخت کردیم', '۱۰ میلیون', 'مرداد', 'مرداد', 10_000_000],
+    ['اجاره تیر ماه دفتر رو ۸ میلیون از تجارت دادیم', '۸ میلیون', 'تیر ماه', 'تیر ماه', 8_000_000],
+    ['اجاره انبار از اول فروردین تا آخر مرداد رو امروز ۵۰ میلیون از تجارت دادیم', '۵۰ میلیون', 'اول فروردین', 'آخر مرداد', 50_000_000],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, model({
+        amounts: [amt('a1', 'paid-now', evidence)],
+        movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از')], dates: coverage(start, end), subject: service('اجاره'),
+      }));
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(components(item)[0].treatment, 'period-expense', text);
+      assert.equal(posted.schedule.length, 0, `${text}: جدولی برای دورهٔ گذشته ساخته نشد`);
+      assert.equal(debitOf(posted, /اجاره|هزینه/), amount, text);
+    });
+  }
+});
+
+test('پایانِ پیش از آغاز هنوز به سال بعد می‌رود؛ پایانِ تنها هم همچنان آینده است', () => {
+  const read = (text, dates) => validateUnderstanding(model({ amounts: [amt('a1', 'paid-now', '۱۲ میلیون')], dates }), { text, now: new Date(NOW) }).understanding.dates;
+  const [, aban] = read('بیمه انبار از اول آبان تا آخر مهر ۱۲ میلیون دادیم', coverage('اول آبان', 'آخر مهر'));
+  assert.equal(aban.iso.slice(0, 7), '2027-10', 'مهرِ سال بعد');
+  // دورهٔ نیمه‌گذشته: پایانش همان سال است، نه سال بعد.
+  const [from, to] = read('اجاره از اول مرداد تا آخر آبان ۱۲ میلیون دادیم', coverage('اول مرداد', 'آخر آبان'));
+  assert.equal(from.iso.slice(0, 7), '2026-07');
+  assert.equal(to.iso.slice(0, 7), '2026-11');
+  // «بیمه تا آخر فروردین» بی‌آغاز: فروردینِ پیش رو.
+  const [only] = read('بیمه تا آخر فروردین ۱۲ میلیون دادیم', [{ id: 'd1', role: 'coverage-end', expression: 'آخر فروردین', relative: null, jalali: { year: null, month: 1, day: null } }]);
+  assert.equal(only.iso.slice(0, 7), '2027-04');
+});
