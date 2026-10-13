@@ -5,7 +5,8 @@ import { tempDatabase } from './helpers/tempPath.js';
 import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 import { transactionEventDecision } from '../server/transactionEvent.js';
 import { extractOccurrenceDate, persianToISO, spokenYear, todayPersian } from '../shared/persianDate.js';
-import { readServiceLength, readServicePeriod } from '../shared/periodSpeech.js';
+import { periodYearSpans, readServiceLength, readServicePeriod } from '../shared/periodSpeech.js';
+import { normalizePersian } from '../shared/normalize.js';
 import { applyAnswer } from '../shared/questionAnswer.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
 import { parseFinancialText } from '../shared/parser.js';
@@ -162,6 +163,28 @@ test('سالِ دوره کنار مبلغ: شکل‌های هم‌ارز، و ج
   assert.deepEqual(readServicePeriod(range, { occurredAt: NOW }).consumed.map(({ index, length }) => range.slice(index, index + length)), ['۰۵', '۰۶']);
   // عددی که سال نیست، جای سال گزارش نمی‌شود.
   assert.equal(readServicePeriod('اجاره دفتر از مهر تا اسفند ۶۰ میلیون پرداخت شد', { occurredAt: NOW }).consumed, undefined);
+});
+
+test('سالِ دوره کنار مبلغ: جای سال حتی وقتی دوره پرسیده می‌شود گزارش می‌شود (برای خوانندهٔ مبلغ)', () => {
+  const years = (text) => {
+    const normalized = normalizePersian(text);
+    return periodYearSpans(text, { occurredAt: NOW }).map(({ index, length }) => normalized.slice(index, index + length));
+  };
+  for (const [text, expected] of [
+    ['بیمه سال ۱۴۰۶ ۱۲ میلیون دادیم', ['1406']],
+    ['اجاره دفتر سال ۰۶ ۱۲۰ میلیون دادیم', ['06']],
+    ['اجاره دفتر سال 06 120 میلیون دادیم', ['06']],
+    ['اجاره دفتر از فروردین ۹۹ تا اسفند ۹۹ ۱۲ میلیون دادیم', ['99', '99']],
+    ['اجاره دفتر تا اسفند ۰۵ ۶۰ میلیون دادیم', ['05']],
+    ['بیمه ماشین مهر ۱۴۰۶ ۱۲ میلیون دادیم', ['1406']],
+  ]) {
+    assert.equal(readServicePeriod(text, { occurredAt: NOW }), null, `${text} — دوره پرسیده می‌شود`);
+    assert.deepEqual(years(text), expected, text);
+  }
+  // منفی: مبلغِ کنار ماه سال نیست.
+  for (const text of ['پنجم مهر ۹۹ میلیون فروش داشتیم', 'اجاره مهر ۱۲ میلیون دادیم', 'اجاره مهر ۱۲ و ۵۰۰ دادیم']) {
+    assert.deepEqual(years(text), [], text);
+  }
 });
 
 test('سالِ تاریخ پرداخت کنار مبلغ: در مبلغ جمع نمی‌شود', () => {

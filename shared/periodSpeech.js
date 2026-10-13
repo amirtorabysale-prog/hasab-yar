@@ -623,6 +623,28 @@ export function readServicePeriod(input, { occurredAt, answer = false, start: kn
   return consumed.length && text === raw ? { ...period, consumed: consumed.sort((left, right) => left.index - right.index) } : period;
 }
 
+/**
+ * جای سال‌هایی که خوانندهٔ دوره در جمله سال می‌خواند، حتی وقتی دوره پرسیده
+ * می‌شود: «بیمه سال ۱۴۰۶ ۱۲ میلیون دادیم» شروعش را می‌پرسد، ولی «۱۴۰۶» همچنان
+ * سال است و خوانندهٔ مبلغ نباید آن را به «۱۲ میلیون» بچسباند (۱٬۴۱۸ میلیون).
+ * جای‌ها در متنِ `normalizePersian` شده‌اند؛ سالِ حروفی («هزار و چهارصد و شش»)
+ * گزارش نمی‌شود چون جایش در متن اصلی نیست.
+ */
+export function periodYearSpans(input, { occurredAt } = {}) {
+  const text = normalizePersian(String(input || ''));
+  if (!occurredAt || /هزار\s+و\s+(?:سیصد|چهارصد)/.test(text) || PAST.test(text) || !/سال|\d{2}/.test(text)) return [];
+  const consumed = [];
+  readPeriod(text, { occurredAt, answer: false, knownStart: null, consumed });
+  // «تا اسفند ۰۵ ۶۰ میلیون»: عددی که بین نام ماه و عددِ دیگر نشسته سالِ همان ماه
+  // است (روز پیش از ماه می‌آید)، حتی وقتی خوانندهٔ دوره آن جمله را نمی‌خواند.
+  for (const match of text.matchAll(MONTH_YEAR_BEFORE_NUMBER)) {
+    const [from] = match.indices.groups.year;
+    if (!consumed.some((span) => span.index === from)) consumed.push({ index: from, length: match.groups.year.length });
+  }
+  return consumed.sort((left, right) => left.index - right.index);
+}
+const MONTH_YEAR_BEFORE_NUMBER = new RegExp(`(?<![آ-ی])(?:${MONTH_NAMES})(?![آ-ی])(?:${GAP}ماه)?${GAP}(?:سال${GAP})?(?<year>\\d{4}|\\d{2})(?!\\d)(?=[\\s\\u200c]+\\d)`, 'gd');
+
 function readPeriod(text, { occurredAt, answer, knownStart, consumed }) {
   // ماه‌های نام‌برده بر روز پرداخت مقدم‌اند. «بیمهٔ یک‌ساله، از اول فروردین تا
   // آخر اسفند» دوره را از خودِ جمله دارد؛ شروع کردنش از روز پرداخت — که ممکن
