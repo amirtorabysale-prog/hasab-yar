@@ -15,7 +15,7 @@
 
 import {
   ECONOMIC_FAMILIES, FAMILY_DEFAULT_RISK, FAMILY_UNKNOWN, RISK_LEVELS, TIME_BOUND_SERVICE_CATEGORIES,
-  classifyFamily, isEconomicFamily, isTimeBoundService,
+  classifyFamily, isEconomicFamily, isPrepaidServiceCandidate, isTimeBoundService, signalsGoodsDeliveryLater,
 } from './economicFamily.js';
 import {
   FACT_KEYS, FACT_LABELS, TREATMENTS, isFactPresent, missingFactsFor, nextQuestionFor, requiredFactsFor,
@@ -314,7 +314,10 @@ export const DEFAULT_POLICIES = Object.freeze([
     supportedTreatments: Object.freeze([TREATMENTS.CUSTOMER_ADVANCE, TREATMENTS.DEFERRED_REVENUE]),
     appliesTo() { return true; },
     resolve(facts) {
-      const hasPeriod = isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
+      // «سه ماه بعد تحویل می‌دیم» زمانِ تحویل کالای ماست، نه دورهٔ خدمتی که
+      // ماه‌به‌ماه انجام شود؛ آن پول پیش‌دریافت فروش است تا کالا تحویل شود.
+      const hasPeriod = isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd)
+        && !signalsGoodsDeliveryLater(facts);
       return hasPeriod
         ? {
           treatment: TREATMENTS.DEFERRED_REVENUE,
@@ -379,9 +382,16 @@ export const DEFAULT_POLICIES = Object.freeze([
     riskLevel: RISK_LEVELS.YELLOW,
     supportedTreatments: Object.freeze([TREATMENTS.SUPPLIER_ADVANCE]),
     appliesTo(facts) {
-      // خدمت دوره‌دار سیاست خودش را دارد و آنجا قاعدهٔ ثبت هم هست.
-      return (facts?.prepaymentSignal === true || facts?.paymentPurpose === 'advance')
-        && !TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
+      // خدمت دوره‌دار سیاست خودش را دارد و آنجا قاعدهٔ ثبت هم هست — چه از روی
+      // دسته، چه از روی دورهٔ صریحی که جمله گفته. «پیش پرداخت قرارداد پشتیبانی
+      // یکساله» پیش‌پرداخت خدمت است؛ واژهٔ «پیش پرداخت» در هر دو هست و انتخاب
+      // را واقعیت‌ها می‌کنند، نه ترتیب این فهرست.
+      if (TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim())) return false;
+      if (isPrepaidServiceCandidate(facts)) return false;
+      if (facts?.prepaymentSignal === true || facts?.paymentPurpose === 'advance') return true;
+      // پول کالایی که «سه ماه بعد تحویل میده»: کالا هنوز نرسیده، پس طلب از
+      // تأمین‌کننده است — با هر واژه‌ای که گفته شده باشد.
+      return signalsGoodsDeliveryLater(facts) && ['', 'goods'].includes(String(facts?.paymentPurpose || ''));
     },
     resolve() { return { treatment: TREATMENTS.SUPPLIER_ADVANCE }; },
   }),
@@ -442,9 +452,10 @@ export const DEFAULT_POLICIES = Object.freeze([
      * وقتی دوره صریح است، دیگر نیازی به حدس از روی دسته نیست.
      */
     appliesTo(facts) {
-      if (isTimeBoundService(facts)) return true;
       if (facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
-      return isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
+      // «سه ماه بعد تحویل میده» زمانِ رسیدن کالاست، نه دورهٔ خدمت؛ آن پول
+      // پیش‌پرداخت خرید است و ماه‌به‌ماه هزینه نمی‌شود.
+      return isPrepaidServiceCandidate(facts);
     },
     /**
      * دوره‌ای که کاملاً گذشته، دارایی نمی‌سازد.
@@ -529,8 +540,9 @@ export const DEFAULT_POLICIES = Object.freeze([
     riskLevel: RISK_LEVELS.YELLOW,
     supportedTreatments: Object.freeze([TREATMENTS.PERIOD_EXPENSE, TREATMENTS.INVENTORY_PURCHASE]),
     appliesTo(facts) {
+      // کالایی که هنوز نرسیده، موجودی یا دارایی نیست؛ پیش‌پرداخت خرید است.
       return ['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)
-        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts)
+        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts) && !signalsGoodsDeliveryLater(facts)
         && !isFactPresent(facts?.servicePeriodStart) && !isFactPresent(facts?.servicePeriodEnd);
     },
     resolve(facts) {
