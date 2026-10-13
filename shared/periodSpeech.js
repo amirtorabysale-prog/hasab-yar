@@ -112,9 +112,12 @@ const PAST = new RegExp(`${NUMBER_PATTERN}${GAP}(?:ماه|سال)${GAP}${PAST_WO
  * بعد» پیش‌پرداخت خدمتِ سه‌ماهه می‌شد و پارچه — و حتی دستگاه — طی زمان تحویل
  * هزینه می‌شد. پیش‌پرداخت کالا تا رسیدن کالا دارایی است، نه هزینهٔ ماهانه.
  */
-const DELIVERY_VERB = `(?:تحو${YA}ل|م${YA}${GAP}رس|برس|م${YA}${GAP}[آا]${YA}?د|م${YA}اد|ب${YA}اد|ارسال|م${YA}${GAP}فرست|بفرست|حمل|بار${GAP}م${YA}|آماده|م${YA}${GAP}ساز|بساز|نصب)`;
+//
+// «حمل» فقط وقتی فعل است («حمل میشه»، «حمل کردن») زمان تحویل است؛ «بیمه حمل» و
+// «اجاره کامیون حمل بار» نام خدمت‌اند. «تحویل کلید» هم شروع اجاره است، نه تحویل کالا.
+const DELIVERY_VERB = `(?:تحو${YA}ل(?!${GAP}کل${YA}د)|م${YA}${GAP}رس|برس|م${YA}${GAP}[آا]${YA}?د|م${YA}اد|ب${YA}اد|ارسال|م${YA}${GAP}فرست|بفرست|حمل${GAP}(?:م${YA}|بش|بک|کرد|شد|شه)|بار${GAP}م${YA}|آماده|م${YA}${GAP}ساز|بساز|نصب)`;
 const LEAD_TIME_AFTER = new RegExp(`^${GAP}(?:[^\\s.،؛]+${GAP}){0,1}?${DELIVERY_VERB}`);
-const LEAD_TIME_BEFORE = new RegExp(`(?:تحو${YA}ل|ارسال|حمل|رس${YA}دن)[^\\s]*${GAP}(?:[^\\s]+${GAP}){0,2}$`);
+const LEAD_TIME_BEFORE = new RegExp(`(?:تحو${YA}ل(?!${GAP}کل${YA}د)|ارسال|رس${YA}دن)[^\\s]*${GAP}(?:[^\\s]+${GAP}){0,2}$`);
 
 function deliveryLeadTime(text, match) {
   const end = match.index + match[0].length;
@@ -173,7 +176,11 @@ function lengthOf(text, { bare = false, consumed = [] } = {}) {
   const patterns = [ADJECTIVE, FORWARD, ...(bare || service ? [DURATION] : []), ...(bare ? [BARE] : [])];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
-      if (termOfPayment(text, match.index) || deliveryLeadTime(text, match)) continue;
+      // صفت طول در جملهٔ خدمت دوره‌دار («اجاره کامیون حمل بار یکساله»، «لایسنس
+      // یکساله میاد») طول پوشش است، نه زمان تحویل؛ پیش از این یازده ماه اجاره
+      // همان روز هزینه می‌شد. در جملهٔ کالا («پارچه رو سه ماهه تحویل میدن») زمان تحویل است.
+      const leadTimeMatters = pattern !== ADJECTIVE || !service;
+      if (termOfPayment(text, match.index) || (leadTimeMatters && deliveryLeadTime(text, match))) continue;
       const count = monthsOf(match[1]);
       const unitEnd = match.indices[2][1];
       let months = /سال/.test(match[2]) ? count * 12 : count;
