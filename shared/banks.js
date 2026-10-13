@@ -89,11 +89,17 @@ const COMPILED = BANKS.flatMap((bank) => [
  * نشود؛ «بانک ملت»، «از ملت دادیم» و پاسارگادِ دوم در «به بیمه پاسارگاد از
  * پاسارگاد دادیم» همچنان بانک‌اند.
  */
-const NON_BANK_TITLE = '(?:بیمه|لیزینگ|کارگزاری|صرافی|شرکت|آقای|اقای|خانم|جناب|دکتر|مهندس|حاج|حاجی|فروشگاه|مجتمع(?:\\s+تجاری)?|پاساژ|بیمارستان|هتل)';
+// «حساب/کارت شرکت ملت» حسابِ خودِ ماست در بانک ملت، نه شرکتی به نام ملت: «از
+// حساب شرکت ملت به حساب شرکت پاسارگاد ۱۰ میلیون منتقل کردیم» انتقال داخلی است
+// و پوشاندنش آن را هزینهٔ ده‌میلیونی می‌کرد. فقط «شرکت» این استثنا را دارد؛
+// «به حساب آقای سینا» و «حساب شرکت بیمه ملت» همچنان نام طرف حساب‌اند.
+const OUR_ACCOUNT_BEFORE = '(?<!(?:حساب|کارت|شبا|سپرده|جاری)[\\s\u200c]+)';
+const NON_BANK_TITLE = `(?:${OUR_ACCOUNT_BEFORE}شرکت|بیمه|لیزینگ|کارگزاری|صرافی|آقای|اقای|خانم|جناب|دکتر|مهندس|حاج|حاجی|فروشگاه|مجتمع(?:\\s+تجاری)?|پاساژ|بیمارستان|هتل)`;
+const NON_BANK_TITLE_NEXT = '(?:شرکت|بیمه|لیزینگ|کارگزاری|صرافی|آقای|اقای|خانم|جناب|دکتر|مهندس|حاج|حاجی|فروشگاه|مجتمع(?:\\s+تجاری)?|پاساژ|بیمارستان|هتل)';
 const STRONG_ALIASES = BANKS.flatMap((bank) => bank.strong).map(normalizePersian)
   .sort((left, right) => right.length - left.length)
   .map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'));
-const NON_BANK_NAME = new RegExp(`${BOUNDARY_BEFORE}${NON_BANK_TITLE}(?:\\s+${NON_BANK_TITLE})*\\s+(?:${STRONG_ALIASES.join('|')})${BOUNDARY_AFTER}`, 'g');
+const NON_BANK_NAME = new RegExp(`${BOUNDARY_BEFORE}${NON_BANK_TITLE}(?:\\s+${NON_BANK_TITLE_NEXT})*\\s+(?:${STRONG_ALIASES.join('|')})${BOUNDARY_AFTER}`, 'g');
 
 export function maskNonBankNames(normalized) {
   return String(normalized || '').replace(NON_BANK_NAME, (match) => ' '.repeat(match.length));

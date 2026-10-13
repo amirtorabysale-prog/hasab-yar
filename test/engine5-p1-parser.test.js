@@ -686,6 +686,38 @@ test('منفی: ودیعهٔ قابل استرداد، شرط آیندهٔ «پ�
 });
 
 // ---------------------------------------------------------------------------
+// بازبینی: «حساب/کارت شرکت <بانک>» حساب خودِ ماست
+// ---------------------------------------------------------------------------
+
+test('«حساب/کارت شرکت ملت» بانکِ ماست؛ انتقال میان دو حساب شرکت انتقال داخلی می‌ماند', () => {
+  const accounts = [{ id: 'cash', kind: 'cash' }, { id: 'acc-mellat', kind: 'bank', bankId: 'mellat' }, { id: 'acc-pasargad', kind: 'bank', bankId: 'pasargad' }, { id: 'acc-tejarat', kind: 'bank', bankId: 'tejarat' }];
+  for (const [text, from, to] of [
+    ['از حساب شرکت ملت به حساب شرکت پاسارگاد ۱۰ میلیون منتقل کردیم', 'acc-mellat', 'acc-pasargad'],
+    ['از کارت شرکت ملت به کارت شرکت تجارت ۵ میلیون انتقال دادیم', 'acc-mellat', 'acc-tejarat'],
+    ['از حساب‌شرکت ملت به حساب شرکت پاسارگاد ۱۰ میلیون منتقل کردیم', 'acc-mellat', 'acc-pasargad'],
+  ]) {
+    const transfer = detectCaptureTransfer(text, { now: new Date(NOW), accounts });
+    assert.equal(transfer?.intent, 'transfer', text);
+    assert.deepEqual([transfer.fromAccountId, transfer.toAccountId], [from, to], text);
+  }
+  for (const [text, bankId] of [
+    ['مشتری ۵ میلیون به حساب شرکت ملت واریز کرد', 'mellat'],
+    ['از حساب شرکت ملت ۵ میلیون اجاره دادیم', 'mellat'],
+    ['حقوق آقای رضایی رو از حساب شرکت تجارت ۱۰ میلیون دادیم', 'tejarat'],
+    ['از کارت شرکت پاسارگاد ۲ میلیون بنزین زدیم', 'pasargad'],
+    ['از حساب جاری شرکت ملت ۵ میلیون اجاره دادیم', 'mellat'],
+  ]) {
+    assert.equal(parse(text)[0].bankId, bankId, text);
+    assert.equal(detectBank(text)?.bankId, bankId, text);
+  }
+  assert.equal(voice('از کارت شرکت پاسارگاد ۲ میلیون بنزین زدیم').items[0].outcome, 'post');
+  // منفی: شرکت یا بیمه‌گرِ هم‌نام بانک، بانکِ ما نیست.
+  for (const text of ['به بیمه پاسارگاد ۱۲ میلیون دادیم', 'به شرکت ملت ۵ میلیون دادیم', 'به حساب شرکت بیمه ملت ۵ میلیون دادیم']) {
+    assert.equal(parse(text)[0].bankId, undefined, text);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // دفتر: سه گفته از یک مستاجر، یک طرف حساب و یک حساب تفصیلی.
 // ---------------------------------------------------------------------------
 
