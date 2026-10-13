@@ -1015,3 +1015,36 @@ test('طولِ دوره با عددِ مرکب: ۱۳، ۱۵، ۱۸، ۲۴، ۳۶
     });
   }
 });
+
+test('خدمتِ انجام‌شده با گارانتی یا پشتیبانیِ دوره‌دار پیش‌دریافت خودکار نیست: حسابدار؛ گارانتی طولِ دورهٔ درآمد را نمی‌دهد', async () => {
+  const customer = { kind: 'counterparty', name: 'شرکت آلفا' };
+  const said = (what, evidence, kind) => model({ event: { kind, description: what, status: 'done' }, amounts: [amt('a1', 'received-now', evidence)],
+    movements: [mv('m1', 'a1', 'in', customer, BANK, 'به حساب تجارت')], counterparties: [{ id: 'c1', name: 'شرکت آلفا', role: 'customer', evidence: 'شرکت آلفا' }],
+    subject: { ...service(what), delivered: 'unknown' } });
+  for (const [text, evidence, what] of [
+    ['نصب و راه اندازی شبکه شرکت آلفا رو انجام دادیم و ۴۰ میلیون به حساب تجارت واریز کردن، گارانتی یک ساله هم داره', '۴۰ میلیون', 'نصب و راه اندازی شبکه'],
+    ['طراحی سایت رو برای شرکت آلفا تحویل دادیم و ۵۰ میلیون به تجارت ریختن، شش ماه پشتیبانی رایگان هم داره', '۵۰ میلیون', 'طراحی سایت'],
+    ['تعمیر دستگاه شرکت آلفا تموم شد و ۲۰ میلیون به حساب تجارت واریز کرد، تعمیر شش ماه ضمانت داره', '۲۰ میلیون', 'تعمیر دستگاه'],
+  ]) {
+    for (const kind of ['income', 'sale']) {
+      await inFreshWorkspace(async () => {
+        const { item, posted } = await understandCase(text, said(what, evidence, kind));
+        assert.equal(item.status, 'needs-accountant', `${text} / ${kind}: ${JSON.stringify(item.plan?.questions)}`);
+        assert.equal(posted, null);
+      });
+    }
+  }
+  // منفی: خدمتِ انجام‌شده بی‌گارانتی همین امروز درآمد است.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('نصب شبکه شرکت آلفا رو انجام دادیم و ۴۰ میلیون به حساب تجارت واریز کردن', said('نصب شبکه', '۴۰ میلیون', 'income'));
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions || item.plan?.reasons));
+    assert.equal(posted.schedule.length, 0);
+  });
+  // پشتیبانیِ یک‌سالهٔ پیشاپیش با گارانتیِ شش‌ماههٔ قطعات: دوره ۱۲ ماه است، نه ۶.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('قرارداد پشتیبانی یک ساله با شرکت آلفا بستیم و ۲۴ میلیون پیشاپیش به حساب تجارت واریز کردن، گارانتی شش ماهه قطعات هم داره', said('پشتیبانی', '۲۴ میلیون', 'income'));
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions || item.plan?.reasons));
+    assert.equal(posted.schedule.length, 12);
+    assert.equal(posted.scheduled, 24_000_000);
+  });
+});

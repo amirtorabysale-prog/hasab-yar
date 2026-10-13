@@ -55,7 +55,16 @@ const ADJUSTING_CUE = /ذخیره\s*(?:مرخصی|سنوات|مزایا|مطال
 const CONTRACT_REMAINDER = /(?:(?<![آ-ی])(?:باقی|بقیه|بقیش|مابقی|الباقی|باقیمانده|باقی\s*مانده)(?![آ-ی])|قسط\s*(?:دوم|سوم|چهارم|پنجم|ششم|بعدی|آخر|[0-9۰-۹]+)(?![آ-ی])|(?:دومین|سومین|چهارمین|پنجمین|آخرین)\s*قسط)\s*(?:\S+\s*){0,2}?(?:حق\s*(?:بیمه|اشتراک)|بیمه|اجاره|کرایه|اشتراک|لایسنس|قرارداد)/;
 /** پولِ خدمتی که پیشاپیش آمده. */
 const UPFRONT = /از\s*اول|یک\s*جا|یکجا|پیش\s*پیش|پیشاپیش|جلوتر|کل\s*مبلغ/;
-const SERVICE_DONE = /انجام\s*(?:دادیم|دادم|شد)|(?:تموم|تمام)\s*(?:کردیم|شد)|تحویل\s*دادیم/;
+const SERVICE_DONE = /انجام\s*(?:دادیم|دادم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|تحویل\s*(?:دادیم|دادم|شد)|(?:نصب|اجرا|راه\s*اندازی)\s*(?:کردیم|کردم|شد)(?![آ-ی])/;
+/**
+ * گارانتی و ضمانت دورهٔ درآمد نیست: «گارانتی یک ساله» کنار خدمتِ انجام‌شده، ۴۰
+ * میلیونِ نصب را ۱۲ ماه پیش‌دریافت می‌کرد (بازبین موتور ۵). عبارتِ گارانتی با
+ * طولش از خواندنِ دورهٔ درآمد کنار می‌رود؛ خدمتِ انجام‌شده‌ای که گارانتی یا
+ * پشتیبانیِ دوره‌دار دارد، اینکه سهمی برای تعهدِ بعدی کنار برود، قضاوت حسابدار است.
+ */
+const WARRANTY_WORD = '(?:گارانتی|ضمانت|وارانتی|پشتیبانی\\s*رایگان|خدمات\\s*پس\\s*از\\s*فروش)';
+const WARRANTY_PHRASE = new RegExp(`(?:[^\\s،,.؛]+\\s+){0,2}${WARRANTY_WORD}(?:\\s+[^\\s،,.؛]+){0,3}`, 'g');
+const AFTER_SERVICE = new RegExp(`(?:[^\\s،,.؛]+\\s+){0,2}(?:${WARRANTY_WORD}|پشتیبانی|نگهداری)(?:\\s+[^\\s،,.؛]+){0,3}`, 'g');
 /** ماهیتِ هر مبلغ از شاهدِ خودش، نه از نوعِ کل رویداد. */
 const REFUNDABLE_WORDS = /ودیعه|رهن|سپرده|تضمین|حسن\s*انجام|قرض\s*الحسنه/;
 const ADVANCE_WORDS = /بیعانه|پیش\s*پرداخت|پیش\s*دریافت|علی[\s‌]*الحساب/;
@@ -783,20 +792,28 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // آینه‌اش: «مستاجر اجارهٔ ۶ ماه آینده را واریز کرد»، «پشتیبانی یک‌ساله … از اول
     // واریز کرد». فقط برای خدمت یا اجاره و اشتراک — «گارانتی یک ساله»ی کالای فروخته‌شده
     // دورهٔ درآمد نیست.
-    const timeBoundIncome = type === 'income' && (facts.subject.kind === 'service' || TIME_BOUND_INCOME.test(`${facts.subject.what || ''} ${scope.own}`));
+    const serviceDone = type === 'income' && SERVICE_DONE.test(scope.alone ? said : `${scope.own} ${clause}`);
+    if (serviceDone && movement.direction !== 'none'
+      && [...said.matchAll(AFTER_SERVICE)].some(([phrase]) => monthsIn(phrase) > 0 || (paymentDate && readServicePeriod(phrase, { occurredAt: paymentDate })))) {
+      toAccountant(`«${label}» بابت خدمتی است که انجام شده و برایش گارانتی یا پشتیبانیِ دوره‌دار گفته شده؛ اینکه سهمی از آن برای تعهدِ بعدی کنار برود یا همه درآمد امروز است، قضاوت حسابدار است.`);
+      continue;
+    }
+    const incomeText = (text) => (type === 'income' ? String(text || '').replace(WARRANTY_PHRASE, ' ') : text);
+    const timeBoundIncome = type === 'income' && !serviceDone && (facts.subject.kind === 'service' || TIME_BOUND_INCOME.test(`${facts.subject.what || ''} ${scope.own}`));
     if (!periodStart && !periodEnd && (type === 'expense' || timeBoundIncome) && movement.direction !== 'none' && paymentDate) {
-      const spokenPeriod = readServicePeriod(scope.own, { occurredAt: paymentDate });
+      const spokenPeriod = readServicePeriod(incomeText(scope.own), { occurredAt: paymentDate });
       if (spokenPeriod) { periodStart = spokenPeriod.start; periodEnd = spokenPeriod.end; }
-      else if (!scope.alone && readServicePeriod(scope.shared, { occurredAt: paymentDate })) periodUnowned = true;
+      else if (!scope.alone && readServicePeriod(incomeText(scope.shared), { occurredAt: paymentDate })) periodUnowned = true;
     }
     // «اجاره ۶ ماه دفتر از اول آبان»، «از امروز به مدت یک سال»: آغاز گفته شده و طول
     // هم؛ پایان از همین دو ساخته می‌شود و دوباره پرسیده نمی‌شود. طول یا عددِ «مدت»ِ
     // مدل است، یا همان دورهٔ گفته‌شدهٔ مسیر قطعی — هر دو از بخشِ خودِ همین مبلغ.
     const durationMonths = (facts.nonAmountNumbers || [])
-      .filter((number) => number.role === 'duration' && dateInScope(said, { expression: number.evidence }, scope) !== false)
+      .filter((number) => number.role === 'duration' && dateInScope(said, { expression: number.evidence }, scope) !== false
+        && !(type === 'income' && [...said.matchAll(WARRANTY_PHRASE)].some(([phrase]) => phrase.includes(normalizePersian(number.evidence || '').trim()))))
       .map((number) => monthsIn(number.evidence, number.value))
       .find(Boolean)
-      || (paymentDate ? readServicePeriod(scope.own, { occurredAt: paymentDate })?.months : 0) || 0;
+      || (paymentDate ? readServicePeriod(incomeText(scope.own), { occurredAt: paymentDate })?.months : 0) || 0;
     if (periodStart && !periodEnd && durationMonths) periodEnd = periodEndFrom(periodStart, durationMonths);
     if (periodUnowned && !periodStart && !periodEnd) {
       toAccountant(`دورهٔ پوششی که در جمله آمده مالِ «${label}» است یا مبلغِ دیگرِ همین جمله، روشن نیست؛ کدام هزینهٔ امروز است و کدام پیش‌پرداخت، با حسابدار است.`);
