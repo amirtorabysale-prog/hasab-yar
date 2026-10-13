@@ -167,6 +167,42 @@ export function readServiceLength(input, options = {}) {
   return length === UNREADABLE ? null : length;
 }
 
+/** «با ۲ ماه تاخیر»، «ودیعه ۳ ماه»، «معادل ۳ ماه اجاره» — عدد و ماه، ولی طول پوشش نه. */
+const BARE_NOT_BEFORE = new RegExp(`(?<![آ-ی])(?:با|ود${YA}عه|رهن|جر${YA}مه|د${YA}رکرد|معادل|اندازه|قدر)${GAP}$`);
+/** «۳ ماه عقب بودیم»، «انبار ۶ ماه خالی بود»، «۲ ماه اجاره معوق». */
+const BARE_NOT_AFTER = new RegExp(`^(?:${GAP}[^\\s،,.؛]+){0,2}?${GAP}(?:ت[اأ]خ${YA}ر|عقب|خال${YA}|معوق|د${YA}رکرد|د${YA}ر|جر${YA}مه)(?![آ-ی])`);
+/** «اجاره ۶ ماه»، «اجاره دفتر برای ۶ ماه» — طول بلافاصله بعد از نام خدمت. */
+const BARE_AFTER_SERVICE = new RegExp(`(?<![آ-ی])${SERVICE_NOUN}${COVERAGE_BETWEEN}$`);
+/** «۶ ماه اجاره» — طول بلافاصله پیش از نام خدمت. */
+const BARE_BEFORE_SERVICE = new RegExp(`^${GAP}${SERVICE_NOUN}`);
+/** فاصلهٔ «۶ ماه» تا شروع: هیچ، یا دنبالهٔ طول مرکب («یک سال و شش ماه از مهر»). */
+const BARE_START_GAP = new RegExp(`^(?:${GAP}و${GAP}(?:ن${YA}م|[^\\s]+${GAP}ماه))?${GAP}$|^$`);
+
+/**
+ * «شش ماه» بی‌نشانه فقط وقتی طول پوشش است که کنار نام خدمت («اجاره شش ماه
+ * دفتر»، «شش ماه اجاره») یا کنار شروعِ گفته‌شده («۶ ماه از مهر») آمده باشد.
+ *
+ * پیش از این هر «N ماه» در جمله، همین که شروعی معلوم بود، طول خوانده می‌شد:
+ * «اجاره دفتر از اول مهر با ۲ ماه تاخیر ۱۰ میلیون دادیم» دو ماه پیش‌پرداخت
+ * می‌ساخت و «بیمه انبار ۱۲ میلیون دادیم، انبار ۶ ماه خالی بود» بعد از جواب شروع
+ * پایانِ حدسی می‌گرفت.
+ */
+function bareIsLength(text, match, { start = null } = {}) {
+  const unitEnd = match.indices[2][1];
+  const before = text.slice(0, match.index);
+  const after = text.slice(unitEnd);
+  if (BARE_NOT_BEFORE.test(before) || BARE_NOT_AFTER.test(after)) return false;
+  if (BARE_AFTER_SERVICE.test(before) || BARE_BEFORE_SERVICE.test(after)) return true;
+  if (start?.index == null) return false;
+  if (start.index >= unitEnd) return BARE_START_GAP.test(text.slice(unitEnd, start.index));
+  return match.index >= start.end && BARE_START_GAP.test(text.slice(start.end, match.index));
+}
+
+/**
+ * `bare`: `true` یعنی متن جواب سؤال دوره است و «شش ماه» هرجا طول است؛
+ * `{ start }` یعنی جمله شروعی دارد (`start` جای آن در متن، یا `null` وقتی شروع از
+ * جواب آمده) و «شش ماه» فقط کنار نام خدمت یا همان شروع طول است.
+ */
 function lengthOf(text, { bare = false, consumed = [] } = {}) {
   if (!/ماه|سال/.test(text) || PAST.test(text)) return null;
   const service = COVERAGE_CONTEXT.test(text);
@@ -183,6 +219,7 @@ function lengthOf(text, { bare = false, consumed = [] } = {}) {
       // همان روز هزینه می‌شد. در جملهٔ کالا («پارچه رو سه ماهه تحویل میدن») زمان تحویل است.
       const leadTimeMatters = pattern !== ADJECTIVE || !service;
       if (termOfPayment(text, match.index) || (leadTimeMatters && deliveryLeadTime(text, match))) continue;
+      if (pattern === BARE && bare !== true && !bareIsLength(text, match, bare)) continue;
       const count = monthsOf(match[1]);
       const unitEnd = match.indices[2][1];
       let months = /سال/.test(match[2]) ? count * 12 : count;
@@ -604,7 +641,7 @@ function readPeriod(text, { occurredAt, answer, knownStart, consumed }) {
 
   const stated = knownStart ? { iso: knownStart } : readStart(text, reference, baseYear, occurredAt, consumed);
   if (stated === UNREADABLE) return UNREADABLE;
-  const length = lengthOf(text, { bare: answer || Boolean(stated), consumed });
+  const length = lengthOf(text, { bare: answer || (stated ? { start: stated.index == null ? null : stated } : false), consumed });
   if (length === UNREADABLE) return UNREADABLE;
 
   // شروع: یا گفته شده، یا ماهِ نام‌بردهٔ کنار طول («اجاره مهر برای شش ماه جلوتر»).

@@ -521,6 +521,47 @@ test('شروع آینده در پایان سال: «از اول فروردین �
   assert.deepEqual(period('بیمه یکساله که از اول فروردین شروع میشه ۱۲ میلیون دادیم'), ['1406/1/1', '1406/12/29']);
 });
 
+// ---------------------------------------------------------------------------
+// «N ماه» بی‌نشانه فقط کنار نام خدمت یا شروع طول است
+// ---------------------------------------------------------------------------
+
+const startAnswered = (text) => applyAnswer({ occurredAt: NOW, evidence: text }, { fact: 'servicePeriodStart', value: 'this-month' }, { today: NOW });
+
+test('«N ماه» دور از خدمت: پایانِ حدسی نمی‌سازد (جمله‌های بازبین)', () => {
+  for (const text of [
+    'اجاره دفتر رو با ۲ ماه تاخیر ۱۰ میلیون دادیم',
+    'بیمه انبار ۱۲ میلیون دادیم، انبار ۶ ماه خالی بود',
+    'اجاره دفتر ۱۰ میلیون دادیم ودیعه ۳ ماه اجاره است',
+  ]) {
+    const patch = startAnswered(text);
+    assert.equal(fa(patch.servicePeriodStart), '1405/7/1', text);
+    assert.equal(patch.servicePeriodEnd, undefined, `${text} — پایان پرسیده می‌شود`);
+  }
+  const text = 'اجاره دفتر از اول مهر با ۲ ماه تاخیر ۱۰ میلیون دادیم';
+  assert.deepEqual(period(text), ['1405/7/1', null]);
+  assert.equal(prepaidPosted(text), false);
+  assert.deepEqual(asks(text), ['servicePeriodEnd']);
+});
+
+test('«N ماه» بی‌نشانه: شکل‌های هم‌ارز و نمونه‌های منفی', () => {
+  for (const [text, expected] of [
+    ['شش ماه اجاره رو از مهر دادیم ۳۰ میلیون', ['1405/7/1', '1405/12/29']],
+    ['اجاره دفتر از مهر ۶ ماه ۳۰ میلیون دادیم', ['1405/7/1', '1405/12/29']],
+    ['اجاره دفتر ۶ ماه از مهر ۳۰ میلیون دادیم', ['1405/7/1', '1405/12/29']],
+    ['اجاره دفتر یک سال و شش ماه از مهر ۹۰ میلیون دادیم', ['1405/7/1', '1406/12/29']],
+    ['اجاره شش ماه دفتر رو از مهر دادیم ۳۰ میلیون', ['1405/7/1', '1405/12/29']],
+  ]) assert.deepEqual(period(text), expected, text);
+  for (const text of ['اجاره ۶ ماه دفتر ۳۰ میلیون دادیم', 'شش ماه اجاره ۳۰ میلیون دادیم', 'بیمه یکساله تمدید کردیم ۱۲ میلیون']) {
+    assert.ok(startAnswered(text).servicePeriodEnd, `${text} — طولِ کنار خدمت پایان را می‌سازد`);
+  }
+  for (const text of [
+    'بیمه انبار از اول مهر ۱۲ میلیون دادیم، انبار ۶ ماه خالی بود',
+    'اجاره ۲ ماه معوق رو از اول مهر دادیم',
+    'اجاره دفتر از اول مهر ۱۰ میلیون دادیم معادل ۲ ماه اجاره',
+  ]) assert.deepEqual(period(text), ['1405/7/1', null], text);
+  assert.equal(startAnswered('اجاره دفتر ۱۰ میلیون دادیم، ۳ ماه عقب بودیم').servicePeriodEnd, undefined);
+});
+
 // ===== دفتر =====
 
 process.env.DATABASE_PATH = tempDatabase('engine5-p2-period-review');
@@ -638,3 +679,11 @@ test('دفتر: شروع پوشش بعد از پرداخت سند نقدی ام�
   }
 }));
 
+test('دفتر: «با ۲ ماه تاخیر» برنامهٔ دوماهه نمی‌سازد و پایان پرسیده می‌شود', () => inWorkspace(() => {
+  const event = captured('اجاره دفتر از اول مهر با ۲ ماه تاخیر ۱۰ میلیون دادیم');
+  assert.deepEqual(periodKeys(event.id), []);
+  assert.equal(store.decisionForEvent(db(), event.id).question?.fact, 'servicePeriodEnd');
+  const unread = captured('اجاره دفتر از اواسط آبان شش ماهه ۳۰ میلیون دادیم');
+  assert.deepEqual(periodKeys(unread.id), []);
+  assert.equal(store.decisionForEvent(db(), unread.id).question?.fact, 'servicePeriodStart');
+}));
