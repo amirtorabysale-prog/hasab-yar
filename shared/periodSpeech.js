@@ -1,5 +1,5 @@
 import {
-  DAY_WORD_PATTERN, NOT_A_YEAR, PERSIAN_MONTHS, dayOfToken, normalizeSpokenYears, persianPeriodEnd, persianToISO,
+  COVERAGE_BETWEEN, DAY_WORD_PATTERN, NOT_A_YEAR, PERSIAN_MONTHS, dayOfToken, normalizeSpokenYears, persianPeriodEnd, persianToISO,
   spokenYear, todayPersian,
 } from './persianDate.js';
 import { normalizePersian } from './normalize.js';
@@ -239,8 +239,12 @@ const NAMED_MONTH = new RegExp(`(?<![آ-ی])(?:بابت|مال|برا${YA}|وا�
  */
 const SERVICE_MONTH = new RegExp(`(?<![آ-ی])(?:اجاره|اجاره${GAP}بها|کرا${YA}ه${GAP}(?:دفتر|مغازه|انبار|خانه|خونه)|شارژ|اشتراک)(?:${GAP}${YA}(?![آ-ی])|ٔ)?${GAP}(?:ماه${GAP})?(${MONTH_NAMES})(?![آ-ی])`);
 
-/** تا دو واژه میان نام خدمت و ماه («اجاره خونه ماه بعد»)، به شرط آنکه عدد نباشند. */
-const BETWEEN = `(?:${GAP}${YA}(?![آ-ی]))?(?:[\\s\\u200c]+(?!(?:${NUMBER_SOURCE})(?![آ-ی]))[^\\s\\d]+){0,2}?[\\s\\u200c]+`;
+/**
+ * میان نام خدمت و ماهِ نسبی فقط کسره، مکان یا موضوع خدمت، صفت دوره‌ای و «برای/بابت»
+ * (`COVERAGE_BETWEEN`، همان قاعدهٔ ماسک تاریخ پرداخت). «اجاره رو ماه پیش دادیم» و
+ * «بیمه یکساله ماه پیش دادیم» ماه پیش را زمان پرداخت می‌گویند، نه دورهٔ پوشش.
+ */
+const BETWEEN = COVERAGE_BETWEEN;
 /**
  * ماه و سالِ نسبی («همین ماه»، «ماه قبل»، «سال ۱۴۰۶») فقط پشت نام خدمت دوره‌دار
  * دورهٔ پوشش‌اند. «ماه پیش اجاره دادیم» تاریخ پرداخت است، نه اجارهٔ ماه پیش؛ و
