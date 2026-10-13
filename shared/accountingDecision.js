@@ -714,15 +714,18 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
   // شده. هیچ قاعده‌ای — نه پیش‌پرداخت تازه با دورهٔ نو، نه سؤال «پوشش از کِی؟» —
   // نباید برایش قرارداد دوم بسازد؛ از هر مسیری که آمده باشد، کارت تسویه یا
   // حسابدار آن را به سند همان قرارداد وصل می‌کند.
+  // جملهٔ چندپرداختی: نشانه فقط مال ردیفی است که مبلغش در همان تکه است.
+  // گفتهٔ کامل بر شاهد مقدم است؛ شاهدِ ردیف پارسر در جملهٔ چندمبلغی تکهٔ کنار
+  // مبلغ است و می‌تواند نیمی از تکهٔ ردیف بعدی را داشته باشد.
   const contractPart = ['in', 'out'].includes(facts?.moneyDirection)
-    ? readsContractRemainder(`${facts?.utterance || ''} ${facts?.evidence || ''}`) : null;
+    ? readsContractRemainder(facts?.utterance || facts?.evidence || '', { amount: facts?.amount }) : null;
   if (contractPart) {
     return createDecision({
       family: FAMILY_UNKNOWN,
       riskLevel: RISK_LEVELS.RED,
       sourceReferences: facts?.evidence ? [facts.evidence] : [],
       decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
-      explanation: judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`)
+      explanation: judgmentReason(facts?.utterance || facts?.evidence || '', { amount: facts?.amount })
         || 'باقی یا قسط یک قرارداد موجود است؛ به سند همان قرارداد وصل می‌شود.',
     });
   }
@@ -763,7 +766,7 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
     }
     // جمله‌ای که خودش نشانهٔ قضاوت دارد — «چطور ثبت کنیم؟»، محمولهٔ وارداتی،
     // شریک، تسویهٔ قبلی — سؤال گزینه‌ای نمی‌گیرد؛ هیچ گزینه‌ای درستش نیست.
-    const judged = judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`)
+    const judged = judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`, { amount: facts?.amount })
       || (purchaseNeedsJudgment(facts) ? 'جمله نشانه‌ای دارد که ساده دیدنش را ناامن می‌کند؛ حسابدار ماهیتش را تعیین می‌کند.' : null);
     if (judged) {
       return createDecision({ family, riskLevel, sourceReferences, decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW, explanation: judged });

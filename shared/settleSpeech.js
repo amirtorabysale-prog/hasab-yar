@@ -3,7 +3,7 @@ import { readServicePeriod } from './periodSpeech.js';
 import { isChequeEndorsement } from './voiceIntent.js';
 import { extractOccurrenceDate } from './persianDate.js';
 import { parseFinancialText } from './parser.js';
-import { priorSettlementDirection, readsContractRemainder } from './priorSettlement.js';
+import { priorSettlementDirection, readsWholeContractRemainder } from './priorSettlement.js';
 
 /**
  * تسویه و پرداخت سندهای موجود با صدا.
@@ -124,8 +124,10 @@ export function detectSettleIntent(input, { now = new Date() } = {}) {
   // «پونزده میلیون شارژ ساختمان رو برای شش ماه جلوتر تسویه کردم» یعنی پرداخت
   // کردم — پیش‌پرداخت شش‌ماهه، نه بستن بدهی. کارت تسویه اینجا سندی برای انتخاب
   // ندارد و رویداد درست هیچ‌وقت ساخته نمی‌شد.
-  // ولی «مابقی حق اشتراک یک ساله» دورهٔ قرارداد موجود را نام می‌برد، نه دورهٔ تازه.
-  if (!readsContractRemainder(input) && readServicePeriod(input, { occurredAt: now.toISOString() })) return null;
+  // ولی «مابقی حق اشتراک یک ساله» دورهٔ قرارداد موجود را نام می‌برد، نه دورهٔ تازه —
+  // وقتی کل جمله همان یک پرداخت است؛ «اجاره یکساله ۱۲۰ میلیون دادیم، باقی بیمه ۹
+  // میلیون رو هم تسویه کردیم» دو ردیف است و یک کارت تسویه یکی را گم می‌کرد.
+  if (!readsWholeContractRemainder(input) && readServicePeriod(input, { occurredAt: now.toISOString() })) return null;
   // چک ابزار تسویه است، نه نقد. «برای تسویهٔ طلب ما چک شخص ثالث واگذار کرد»
   // با کارت تسویه به‌صورت وصول نقدی بسته می‌شد؛ کارت چک همان را با پرسش
   // «بابت طلب قبلی؟» درست ثبت می‌کند. پشت‌نویسی چک مشتری هم هیچ‌کدام نیست.

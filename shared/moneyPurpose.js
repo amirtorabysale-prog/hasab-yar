@@ -12,7 +12,7 @@
 import { readPettyCash } from './pettyCashSpeech.js';
 import { normalizePersian } from './normalize.js';
 import { detectPartnerFundedSpend } from './partnerPaidSpeech.js';
-import { readsContractRemainder } from './priorSettlement.js';
+import { isContractInstalment, readsContractRemainder } from './priorSettlement.js';
 
 // همهٔ الگوهای این فایل روی متن یکدست‌شده اجرا می‌شوند: «کهنهٔ» با همزه، ی و ک
 // عربی و نیم‌فاصله هر کدام یک الگو را بی‌صدا از کار می‌انداختند.
@@ -146,7 +146,7 @@ const MONEY_MOVED = /(?<![آ-ی])(?:داد|ریخت|پرداخت|واریز|کش
 // «۵۰ میلیون ضرر زدیم»: زیانِ یک کار است، نه پولی که به کسی پرداخت شد.
 const LOSS_STATEMENT = /(?<![آ-ی])(?:ضرر|زیان)\s*(?:زد|کرد|دید|خورد|داشت)(?:یم|م)(?![آ-ی])/;
 
-export function judgmentReason(input) {
+export function judgmentReason(input, { amount } = {}) {
   const text = clean(input);
   if (!text) return null;
   // سدِ آخر: «تنخواه به رضایی دادیم» در مسیر ثبت روزانه هزینه یا پیش‌پرداخت
@@ -165,13 +165,22 @@ export function judgmentReason(input) {
   if (PRIOR_SETTLEMENT.test(text)) return 'به طلب، بدهی یا فاکتور قبلی اشاره دارد؛ شناسایی دوبارهٔ درآمد یا هزینه نباید رخ دهد.';
   // «قسط دوم بیمه/اجاره» قسط وام نیست؛ اصل و سودی ندارد و به قرارداد موجود
   // برمی‌گردد. برچسب «وام» ماهیت را غلط به حسابدار می‌گفت.
-  const contractPart = readsContractRemainder(text);
+  // با `amount`، فقط اگر همان ردیف جملهٔ چندپرداختی باشد.
+  const contractPart = readsContractRemainder(text, { amount });
   if (contractPart) {
     return contractPart === 'instalment'
       ? 'قسطی از یک قرارداد (بیمه، اجاره، اشتراک) است؛ کل مبلغ قرارداد، بدهی باقی و دورهٔ پوشش را حسابدار با سند مبنا ثبت می‌کند، نه یک پیش‌پرداخت تازه.'
       : 'باقی یا قسط بعدیِ یک قرارداد موجود است؛ بدهی یا طلب همان قرارداد بسته می‌شود و دورهٔ پوشش تازه‌ای ساخته نمی‌شود.';
   }
-  if (LOAN_SERVICE.test(text) && !LOAN_IN.test(text)) return 'قسط یا اصل وام، اصل و سود جدا دارد؛ حسابدار تفکیک می‌کند.';
+  // «حقوق ۴۰ میلیون دادیم، قسط دوم بیمه ۳ میلیون هم دادیم»: «قسط» مال ردیف بیمه
+  // است؛ ردیف حقوق را «قسط وام» نامیدن ماهیتش را غلط می‌گفت. ردیف دیگرِ همان
+  // جمله هم به حسابدار می‌رود: پارسر دسته و دورهٔ هر ردیف را از تکهٔ کنار مبلغ
+  // می‌خواند و در این جمله‌ها «بیمه»ی ردیف قسط به ردیف حقوق یا اجاره هم می‌رسد —
+  // پرسیدن «پوشش بیمه از کِی؟» برای حقوق، یا پیش‌پرداخت با حساب غلط، حدس است.
+  if (amount != null && readsContractRemainder(text)) {
+    return 'این جمله چند پرداخت دارد و یکی از آن‌ها باقی یا قسطِ یک قرارداد موجود است؛ حسابدار ردیف‌ها را از هم جدا و هر کدام را به سند خودش وصل می‌کند.';
+  }
+  if (LOAN_SERVICE.test(text) && !LOAN_IN.test(text) && !isContractInstalment(text)) return 'قسط یا اصل وام، اصل و سود جدا دارد؛ حسابدار تفکیک می‌کند.';
   if (ON_INSTALMENTS.test(text)) return 'باقی مبلغ قسطی پرداخت می‌شود؛ بدهی باقی‌مانده به همان طرف را حسابدار با سند مبنا ثبت می‌کند — وام نیست.';
   if (TAX_REFUND.test(text)) return 'استرداد مالیات طلب قبلی را می‌بندد؛ حسابدار با سند مبنا تطبیق می‌دهد.';
   if (PAYROLL_LIST.test(text)) return 'پرداخت لیست بیمه، بدهی حقوق را تسویه می‌کند و سهم کارفرما و کارکنان دارد.';
