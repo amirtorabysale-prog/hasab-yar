@@ -4,8 +4,9 @@ import { runVoice } from './helpers/voicePipeline.js';
 import { tempDatabase } from './helpers/tempPath.js';
 import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 import { transactionEventDecision } from '../server/transactionEvent.js';
-import { extractOccurrenceDate, spokenYear, todayPersian } from '../shared/persianDate.js';
-import { readServicePeriod } from '../shared/periodSpeech.js';
+import { extractOccurrenceDate, persianToISO, spokenYear, todayPersian } from '../shared/persianDate.js';
+import { readServiceLength, readServicePeriod } from '../shared/periodSpeech.js';
+import { applyAnswer } from '../shared/questionAnswer.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
 import { parseFinancialText } from '../shared/parser.js';
 
@@ -28,6 +29,7 @@ const period = (text, options = {}) => {
   const found = readServicePeriod(text, { occurredAt: NOW, ...options });
   return found ? [fa(found.start), fa(found.end)] : null;
 };
+const TODAY = fa(NOW);
 const occurrence = (text) => fa(extractOccurrenceDate(text, { now: new Date(NOW), preferPast: true })?.iso);
 
 // ---------------------------------------------------------------------------
@@ -294,6 +296,57 @@ test('فهرست ماه‌ها: شکل‌های هم‌ارز و نمونه‌ه
   assert.deepEqual(period('اجاره مهر ۱۰ میلیون دادیم'), ['1405/7/1', '1405/7/30']);
 });
 
+// ---------------------------------------------------------------------------
+// طولِ مرکب: «یک سال و شش ماه»، «یک سال و نیم»
+// ---------------------------------------------------------------------------
+
+test('طول مرکب: یک طول است، نه یک سال (جمله‌های بازبین)', () => {
+  for (const [text, expected] of [
+    ['اشتراک نرم افزار به مدت یک سال و شش ماه ۱۸ میلیون دادیم', [TODAY, '1407/1/17']],
+    ['اجاره دفتر یک سال و سه ماهه ۱۵ میلیون دادیم', [TODAY, '1406/10/17']],
+  ]) {
+    assert.deepEqual(period(text), expected, text);
+    const [row] = parsed(text);
+    assert.deepEqual([fa(row.servicePeriodStart), fa(row.servicePeriodEnd)], expected, `${text} — مسیر پارسر`);
+  }
+  // «نیم» پشتِ عدد مبلغ را خوانندهٔ مبلغ ۱۸٫۵ می‌خواند؛ تا آن درست نشده، ثبت خودکار نمی‌شود.
+  for (const text of ['اجاره دفتر برای یک سال و نیم ۱۸ میلیون دادیم', 'اجاره دفتر از اول آبان یک سال و نیم ۱۸ میلیون دادیم']) {
+    assert.equal(period(text), null, text);
+    assert.notEqual(voice(text).items[0].outcome, 'post', text);
+  }
+  // نیم‌ماه برنامهٔ ماهانه ندارد: پرسیده می‌شود، نه سه ماه.
+  assert.equal(period('اجاره دفتر برای سه ماه و نیم ۳۵ میلیون دادیم'), null);
+  assert.equal(voice('اجاره دفتر برای سه ماه و نیم ۳۵ میلیون دادیم').items[0].fact, 'servicePeriodStart');
+});
+
+test('طول مرکب: شکل‌های هم‌ارز و نمونه‌های منفی', () => {
+  for (const [text, expected] of [
+    ['اجاره دفتر برای یک سال و نیم، ۱۸ میلیون دادیم', [TODAY, '1407/1/17']],
+    ['اجاره دفتر از اول آبان یک سال و نیم مبلغ ۱۸ میلیون دادیم', ['1405/8/1', '1407/1/31']],
+    ['اشتراک یکساله و شش ماهه ۱۸ میلیون دادیم', [TODAY, '1407/1/17']],
+    ['اجاره دفتر یک سال و شش ماه آینده رو ۱۸ میلیون دادیم', [TODAY, '1407/1/17']],
+    ['بیمه به مدت 1 سال و 6 ماه 18 میلیون دادیم', [TODAY, '1407/1/17']],
+    ['اشتراک برای دو سال و نیم، ۳۰ میلیون دادیم', [TODAY, '1408/1/17']],
+  ]) assert.deepEqual(period(text), expected, text);
+  for (const text of ['اجاره مهر برای سه ماه و نیم ۳۵ میلیون دادیم', 'بیمه یک سال و ۱۸ ماه ۱۲ میلیون دادیم']) assert.equal(period(text), null, text);
+  assert.equal(readServiceLength('سه ماه و نیم', { bare: true }), null);
+  assert.equal(readServiceLength('یک سال و نیم', { bare: true }).months, 18);
+  // «یک سال و» بی‌طولِ دوم همان یک سال است.
+  assert.deepEqual(period('بیمه یکساله و ۱۲ میلیون دادیم'), [TODAY, '1406/7/17']);
+});
+
+test('طول مرکب: جواب سؤال پایان همان قاعده را دارد', () => {
+  const mehr = { occurredAt: NOW, servicePeriodStart: persianToISO(1405, 7, 1) };
+  const end = (freeText) => fa(applyAnswer(mehr, { fact: 'servicePeriodEnd', value: 'custom', freeText }, { today: NOW }).servicePeriodEnd);
+  assert.equal(end('یک سال و نیم'), '1406/12/29');
+  assert.equal(end('یک سال و شش ماه'), '1406/12/29');
+  assert.equal(end('یک سال و سه ماهه'), '1406/9/30');
+  assert.equal(end('دو سال و نیم'), '1407/12/29');
+  assert.throws(() => end('سه ماه و نیم'), { code: 'ANSWER_DATE_INVALID' });
+  const start = applyAnswer({ occurredAt: NOW }, { fact: 'servicePeriodStart', value: 'custom', freeText: 'یک سال و نیم از مهر' }, { today: NOW });
+  assert.deepEqual([fa(start.servicePeriodStart), fa(start.servicePeriodEnd)], ['1405/7/1', '1406/12/29']);
+});
+
 // ===== دفتر =====
 
 process.env.DATABASE_PATH = tempDatabase('engine5-p2-period-review');
@@ -337,3 +390,53 @@ test('دفتر: فهرست ماه‌ها برنامهٔ ماه‌به‌ماه �
     assert.deepEqual(periodKeys(event.id), keys, text);
   }
 }));
+
+test('دفتر: طول مرکب هجده قسط می‌سازد', () => inWorkspace(() => {
+  const event = captured('اشتراک نرم افزار به مدت یک سال و شش ماه ۱۸ میلیون دادیم');
+  const keys = periodKeys(event.id);
+  assert.equal(keys.length, 18);
+  assert.deepEqual([keys[0][0], keys.at(-1)[0]], ['1405-07', '1406-12']);
+  assert.equal(keys.reduce((sum, [, amount]) => sum + amount, 0), 18_000_000);
+}));
+
+const none = { op: null, of: [] };
+const outputs = new Map();
+const fetcher = async (url, init) => {
+  const said = JSON.parse(JSON.parse(init.body).input[1].content[0].text)['گفتهٔ کاربر'];
+  return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(outputs.get(said)) }] }], usage: { input_tokens: 1, output_tokens: 1 } }) };
+};
+const aiOptions = { fetcher, env: { OPENAI_API_KEY: 'test-key-not-real', OPENAI_UNDERSTANDING_MODEL: 'test-model' }, now: new Date(NOW) };
+/** خروجی مدل برای یک پرداخت خدمت از حساب تجارت، بی هیچ تاریخی. */
+function modelSaid(text, { amount, evidence, what }) {
+  outputs.set(text, {
+    event: { kind: 'expense', description: what, status: 'done' },
+    amounts: [{ id: 'a1', value: amount, currency: null, role: 'total', status: 'done', partOf: null, basis: 'explicit', computedFrom: none, evidence }],
+    nonAmountNumbers: [], dates: [], counterparties: [],
+    movements: [{ id: 'm1', amountRef: 'a1', direction: 'out', from: { kind: 'bank', name: 'تجارت' }, to: { kind: 'unknown', name: null }, evidence: 'از حساب تجارت' }],
+    subject: { what, kind: 'service', use: 'internal', delivered: 'unknown', usefulLifeMonths: null, evidence: what },
+    conditions: [], ambiguities: [],
+  });
+}
+const lastScheduleKeys = () => db().prepare('SELECT period_key AS key FROM recognition_schedule_items WHERE event_id=(SELECT event_id FROM recognition_schedule_items ORDER BY rowid DESC LIMIT 1) ORDER BY period_key').all().map((row) => row.key);
+
+let aiSequence = 0;
+async function understood(text, { amount, evidence, what }) {
+  modelSaid(text, { amount, evidence, what });
+  aiSequence += 1;
+  return database.createUnderstandingCase({ text, clientId: `p2-review-ai-${aiSequence}` }, aiOptions);
+}
+
+test('دفتر، مسیر فهم: فهرست ماه‌ها و طول مرکب همان دورهٔ مسیر قطعی', async () => {
+  await inWorkspace(async () => {
+    for (const [text, amount, evidence, what, keys] of [
+      ['اجاره این ماه و ماه بعد رو ۲۰ میلیون از حساب تجارت دادیم', 20_000_000, '۲۰ میلیون', 'اجاره', ['1405-07', '1405-08']],
+      ['اشتراک نرم افزار به مدت یک سال و شش ماه ۱۸ میلیون از حساب تجارت دادیم', 18_000_000, '۱۸ میلیون', 'اشتراک نرم افزار',
+        ['1405-07', '1405-08', '1405-09', '1405-10', '1405-11', '1405-12', '1406-01', '1406-02', '1406-03', '1406-04', '1406-05', '1406-06', '1406-07', '1406-08', '1406-09', '1406-10', '1406-11', '1406-12']],
+    ]) {
+      const item = await understood(text, { amount, evidence, what });
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
+      assert.deepEqual(lastScheduleKeys(), keys, text);
+    }
+  });
+});

@@ -45,6 +45,17 @@ export { maskCoveragePhrases } from './persianDate.js';
  */
 
 const GAP = '[\\s\\u200c]*';
+
+/**
+ * جمله‌ای که دوره‌اش خوانده نمی‌شود، با جمله‌ای که دوره ندارد فرق دارد: اولی نباید
+ * به خواننده‌های بعدی برسد. «بیمه از فروردین ۱۳۹۴ تا اسفند ۱۳۹۴» سالِ صریح دارد؛
+ * جایگزین کردنش با سال رویداد یعنی ۱۲ میلیون پیش‌پرداختِ ۱۴۰۵ — حدس، نه خواندن.
+ */
+const UNREADABLE = Object.freeze({ unreadable: true });
+
+/** عددی که درست پشت سال یا «نیم» آمده: «سال ۱۴۰۶ ۱۲ میلیون»، «یک سال و نیم ۱۸ میلیون». */
+const NUMBER_NEXT = /^[\s\u200c]*\d/;
+
 const YA = '[یي]';
 /** مرز چپ واژه: «نه» درون «خونه» و «ماهانه»، و «یه» درون «کرایه» عدد نیستند. */
 const WORD_START = '(?<![آ-ی\\d])';
@@ -69,17 +80,28 @@ const monthsOf = (token) => (/^\d+$/.test(token) ? Number(token) : WORD_VALUE.ge
 
 const PAST_WORDS = `(?:پ${YA}ش|قبل|گذشته|اخ${YA}ر)`;
 /** «شش ماهه»، «یک‌ساله» — صفت، یعنی طول پوشش. */
-const ADJECTIVE = new RegExp(`${NUMBER_PATTERN}${GAP}(ماهه|ساله|سال${GAP}ه)`, 'g');
+const ADJECTIVE = new RegExp(`${NUMBER_PATTERN}${GAP}(ماهه|ساله|سال${GAP}ه)`, 'gd');
 /** «برای شش ماه جلوتر» — عدد و واحد، با نشانهٔ صریح آینده. */
 // تا سه واژه میان مدت و نشانهٔ آینده: «شش ماه دفتر را جلوتر دادیم».
-const FORWARD = new RegExp(`${NUMBER_PATTERN}${GAP}(ماه|سال)(?:${GAP}[^\\s.،؛]+){0,3}?${GAP}(?:${['جلوتر', 'جلو', '[آا]' + YA + 'نده', 'بعد', 'پ' + YA + 'ش' + GAP + 'رو', 'آت' + YA, 'پ' + YA + 'ش' + GAP + '?پرداخت'].join('|')})(?![آ-ی])`, 'g');
+const FORWARD = new RegExp(`${NUMBER_PATTERN}${GAP}(ماه|سال)(?:${GAP}[^\\s.،؛]+){0,3}?${GAP}(?:${['جلوتر', 'جلو', '[آا]' + YA + 'نده', 'بعد', 'پ' + YA + 'ش' + GAP + 'رو', 'آت' + YA, 'پ' + YA + 'ش' + GAP + '?پرداخت'].join('|')})(?![آ-ی])`, 'gd');
 /** «به مدت شش ماه»، «برای سه ماه»، «ظرف دوازده ماه» — حرف اضافه + طول. */
-const DURATION = new RegExp(`(?<![آ-ی])(?:به${GAP}مدت|بمدت|برا${YA}?|واسه|ظرف|ط${YA})${GAP}${NUMBER_PATTERN}${GAP}(ماه|سال)(?![آ-ی])(?!${GAP}${PAST_WORDS})`, 'g');
+const DURATION = new RegExp(`(?<![آ-ی])(?:به${GAP}مدت|بمدت|برا${YA}?|واسه|ظرف|ط${YA})${GAP}${NUMBER_PATTERN}${GAP}(ماه|سال)(?![آ-ی])(?!${GAP}${PAST_WORDS})`, 'gd');
 /**
  * «شش ماه» بی‌صفت و بی‌نشانه، فقط کنار شروعِ گفته‌شده («اجاره شش ماه دفتر رو از
  * مهر دادیم») یا در جواب سؤال دوره. تنها، می‌تواند «شش ماه کار کرد» باشد.
  */
-const BARE = new RegExp(`${NUMBER_PATTERN}${GAP}(ماه|سال)(?![آ-ی])(?!${GAP}(?:${PAST_WORDS}|د${YA}گه|د${YA}گر))`, 'g');
+const BARE = new RegExp(`${NUMBER_PATTERN}${GAP}(ماه|سال)(?![آ-ی])(?!${GAP}(?:${PAST_WORDS}|د${YA}گه|د${YA}گر))`, 'gd');
+/**
+ * طولِ مرکب: «یک سال و شش ماه»، «یک سال و نیم»، «یک سال و سه ماهه».
+ *
+ * الگوهای طول بعد از «یک سال» می‌ایستادند: «اشتراک به مدت یک سال و شش ماه ۱۸
+ * میلیون» دوازده قسط ۱٫۵ میلیونی می‌شد و شش ماهِ آخر هزینه نمی‌شد. «سه ماه و
+ * نیم» نیم‌ماه دارد و برنامهٔ ماهانه نیم‌ماه ندارد؛ خوانده نمی‌شود و پرسیده می‌شود.
+ */
+const YEAR_TAIL = new RegExp(`^${GAP}و${GAP}(?:(?<count>\\d{1,2}|${NUMBER_SOURCE})${GAP}ماه(?:${GAP}ه)?|(?<half>ن${YA}م)(?:${GAP}ه)?)(?![آ-ی])`, 'd');
+const YEAR_HEAD = new RegExp(`${WORD_START}(\\d{1,2}|${NUMBER_SOURCE})${GAP}سال${GAP}و${GAP}$`);
+const MONTH_HALF = new RegExp(`^${GAP}و${GAP}ن${YA}م(?![آ-ی])`);
+
 /** گذشته: صریحاً یک زمان است، نه دوره. */
 const PAST = new RegExp(`${NUMBER_PATTERN}${GAP}(?:ماه|سال)${GAP}${PAST_WORDS}`);
 
@@ -133,9 +155,16 @@ const LENDING = new RegExp(`(?<![آ-ی])(?:قرض|وام|مساعده)`);
  * `bare` شکل بی‌نشانهٔ «شش ماه» را هم می‌پذیرد — فقط وقتی شروع جدا گفته شده یا
  * متن جواب سؤال دوره است. همین تابع طولِ جمله را برای جواب سؤال شروع هم می‌خواند:
  * کسی که گفته «یک‌ساله»، بعد از گفتن شروع نباید دوباره پایان را بگوید.
+ *
+ * طولی که خوانده نمی‌شود («سه ماه و نیم») هم `null` است؛ خوانندهٔ دوره آن را از
+ * `lengthOf` جدا می‌شناسد و دوره را نمی‌سازد.
  */
-export function readServiceLength(input, { bare = false } = {}) {
-  const text = normalizePersian(String(input || ''));
+export function readServiceLength(input, options = {}) {
+  const length = lengthOf(normalizePersian(String(input || '')), options);
+  return length === UNREADABLE ? null : length;
+}
+
+function lengthOf(text, { bare = false, consumed = [] } = {}) {
   if (!/ماه|سال/.test(text) || PAST.test(text)) return null;
   const service = COVERAGE_CONTEXT.test(text);
   if (!service && LENDING.test(text)) return null;
@@ -146,8 +175,30 @@ export function readServiceLength(input, { bare = false } = {}) {
     for (const match of text.matchAll(pattern)) {
       if (termOfPayment(text, match.index) || deliveryLeadTime(text, match)) continue;
       const count = monthsOf(match[1]);
-      const months = /سال/.test(match[2]) ? count * 12 : count;
-      if (months > 0 && months <= 120) return { months, index: match.index };
+      const unitEnd = match.indices[2][1];
+      let months = /سال/.test(match[2]) ? count * 12 : count;
+      let end = unitEnd;
+      if (/سال/.test(match[2])) {
+        const tail = YEAR_TAIL.exec(text.slice(unitEnd));
+        if (tail) {
+          const extra = tail.groups.half ? 6 : monthsOf(tail.groups.count);
+          if (!extra || extra >= 12) return UNREADABLE;
+          months += extra;
+          end = unitEnd + tail[0].length;
+          if (tail.groups.half) {
+            // «نیم» را خوانندهٔ مبلغ به عددِ بعدش می‌چسباند («نیم ۱۸ میلیون» = ۱۸٫۵):
+            // جایش گزارش می‌شود و تا آن را کنار نگذارد، ثبت خودکار نمی‌شود.
+            const [from, to] = tail.indices.groups.half;
+            consumed.push({ index: unitEnd + from, length: to - from });
+            if (NUMBER_NEXT.test(text.slice(end))) return UNREADABLE;
+          }
+        }
+      } else {
+        if (MONTH_HALF.test(text.slice(unitEnd))) return UNREADABLE;
+        const head = YEAR_HEAD.exec(text.slice(0, match.index));
+        if (head) months += monthsOf(head[1]) * 12;
+      }
+      if (months > 0 && months <= 120) return { months, index: match.index, end };
     }
   }
   return null;
@@ -162,12 +213,6 @@ const MONTH_PART = (name) => `(?:ماه${GAP})?(?<${name}>${MONTH_NAMES})(?![آ-
 const START_DAY = `ابتدا${YA}?`;
 const END_DAY = `آخر|اخر|پا${YA}ان|انتها${YA}?`;
 
-/**
- * جمله‌ای که دوره‌اش خوانده نمی‌شود، با جمله‌ای که دوره ندارد فرق دارد: اولی نباید
- * به خواننده‌های بعدی برسد. «بیمه از فروردین ۱۳۹۴ تا اسفند ۱۳۹۴» سالِ صریح دارد؛
- * جایگزین کردنش با سال رویداد یعنی ۱۲ میلیون پیش‌پرداختِ ۱۴۰۵ — حدس، نه خواندن.
- */
-const UNREADABLE = Object.freeze({ unreadable: true });
 
 /**
  * سالِ گفته‌شده بعد از ماه (`spokenYear`): باورپذیر همان سال است؛ صریح ولی دور
@@ -180,8 +225,6 @@ function saidYear(digits, reference) {
   return said.plausible ? said.year : UNREADABLE;
 }
 
-/** عددی که درست پشت سال آمده: «سال ۱۴۰۶ ۱۲ میلیون». */
-const NUMBER_NEXT = /^[\s\u200c]*\d/;
 
 /**
  * سالِ یک گروهِ تطبیق، و ثبتِ جایش در متن.
@@ -467,7 +510,8 @@ function readPeriod(text, { occurredAt, answer, knownStart, consumed }) {
   const baseYear = reference.year + yearShift(text);
   const stated = knownStart || readStart(text, reference, baseYear, occurredAt, consumed);
   if (stated === UNREADABLE) return UNREADABLE;
-  const length = readServiceLength(text, { bare: answer || Boolean(stated) });
+  const length = lengthOf(text, { bare: answer || Boolean(stated), consumed });
+  if (length === UNREADABLE) return UNREADABLE;
 
   const range = readRange(text, reference, baseYear, consumed);
   if (range === UNREADABLE) return UNREADABLE;
