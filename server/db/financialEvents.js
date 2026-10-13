@@ -10,7 +10,7 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, releaseHeldRecognition, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, releaseHeldRecognition, reviewedTimingCategory, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
@@ -94,9 +94,13 @@ function withTimingCoverage(database,row,prepared) {
   if(!kind) return prepared;
   const event=reviewedEvent(database,row);
   const coverage=reviewTimingCoverage(database,row.id,{...event,evidence:event.evidence || evidence});
-  if(coverage.start && coverage.end) return {...prepared,coverage};
-  const text=coverageQuestion(kind);
-  return {...prepared,postingBlockers:[...new Set([...(prepared.postingBlockers || []),text])],canPost:false};
+  // دستهٔ هزینه یا درآمد ماهانه هم پیش از «قبول»: حساب کلی «پیش‌پرداخت‌ها» با
+  // دستهٔ «مواد و کالا»ی لحظهٔ ضبط، دسته را نمی‌گوید.
+  const line=prepared.lines.find(l=>l.role===(kind==='deferred' ? 'deferred-revenue' : 'prepaid-asset'));
+  const category=reviewedTimingCategory(database,row.id,event,{kind,accountId:line?.accountId || null},prepared.lines);
+  const blockers=[...(coverage.start && coverage.end ? [] : [coverageQuestion(kind)]),...(category.question ? [category.question.text] : [])];
+  if(!blockers.length) return {...prepared,coverage,timingCategory:category.category};
+  return {...prepared,postingBlockers:[...new Set([...(prepared.postingBlockers || []),...blockers])],canPost:false};
 }
 export function reviewAssistantHistory(eventId) {
   const database = activeWorkspaceDatabase();
