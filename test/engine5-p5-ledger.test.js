@@ -981,8 +981,9 @@ const AHMADI_RENT = 'اجاره گرفتم شش ماهه ۶۰ میلیون از 
 async function contractBook(name) {
   const book = await freshBook(name);
   await book.inBook(() => {
-    book.insurance = capture(FIRE_INSURANCE).eventId;
-    book.rent = capture(AHMADI_RENT).eventId;
+    const insurance = capture(FIRE_INSURANCE);
+    const rent = capture(AHMADI_RENT);
+    [book.insurance, book.insuranceTx, book.rent, book.rentTx] = [insurance.eventId, insurance.transactionId, rent.eventId, rent.transactionId];
     run(DEY1);
     const { resolveEventRole } = book;
     book.ledger = (where, ...args) => sql().prepare(`SELECT id FROM ledger_accounts WHERE ${where}`).get(...args)?.id;
@@ -1206,6 +1207,169 @@ test('منفی: استرداد روی حساب پیش‌پرداختی که قر
     const event = refundPlaceholder('بیمه پاسارگاد ۴ میلیون حق بیمه رو به حساب تجارت برگردوند', 4_000_000);
     assert.throws(() => database.recordReviewedComposite(event.id, { lines: [{ accountId: bankLedger, debit: 4_000_000, credit: 0 }, { accountId: prepaid, debit: 0, credit: 4_000_000 }], reason: 'برگشت حق بیمه بی‌سند مبنا' }),
       { code: 'REVIEW_DETAILS_REQUIRED', message: /کافی نیست/ });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «برگشتِ یک طرفِ پیوند استرداد»: برگشت استرداد برنامهٔ قرارداد را
+// به پیش از آن برمی‌گرداند (پایان یا ادامه، پیش‌پرداخت یا درآمد انتقالی، قلم
+// پایانیِ سندخورده یا نه)؛ و قراردادی که استرداد زنده دارد، تا آن استرداد سر
+// جایش است برنمی‌گردد — نه از پرونده، نه با حذف تراکنش.
+// ---------------------------------------------------------------------------
+
+const INSURER_REFUND = 'بیمه آتش سوزی رو فسخ کردیم بیمه پاسارگاد ۶ میلیون حق بیمه برگشت داد به حساب تجارت';
+const TENANT_REFUND = 'آقای احمدی مستاجر زودتر تخلیه کرد ۱۰ میلیون از اجاره جلو گرفته رو از صندوق بهش پس دادیم';
+const insurerRefund = (book, amount = 6_000_000, text = INSURER_REFUND, options = {}) => {
+  const event = refundPlaceholder(text, amount);
+  database.recordReviewedComposite(event.id, { lines: [{ accountId: book.bankLedger, debit: amount, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: amount }], reason: 'برگشت بخشی از حق بیمهٔ قرارداد', ...options });
+  return event.id;
+};
+const tenantRefund = (book, amount = 10_000_000, text = TENANT_REFUND, options = {}) => {
+  const event = refundPlaceholder(text, amount);
+  database.recordReviewedComposite(event.id, { lines: [{ accountId: book.deferred, debit: amount, credit: 0, analyticId: book.tenantAnalytic }, { accountId: book.cashLedger, debit: 0, credit: amount }], reason: 'پس دادن بخشی از اجارهٔ پیش‌دریافت', ...options });
+  return event.id;
+};
+
+test('برگشت استرداد بیمه‌گر: برنامهٔ بیمه برمی‌گردد — پیش‌پرداخت صفر و هزینهٔ بیمه ۱۲ میلیون، نه ۶ میلیون سرگردان', async () => {
+  const book = await contractBook('برگشت استرداد — بیمه‌گر');
+  await book.inBook(() => {
+    const refund = insurerRefund(book);
+    assert.equal(unrecognised(book.insurance), 3_000_000);
+    database.reverseEvent(refund, 'استرداد اشتباه ثبت شد؛ بیمه‌گر هنوز پولی نداده');
+    assert.equal(ledgerOf(book.prepaid), 9_000_000);
+    assert.equal(unrecognised(book.insurance), 9_000_000, 'برنامه با ماندهٔ پیش‌پرداخت برابر است');
+    assert.deepEqual(liveItems(book.insurance).filter((item) => item.status === 'planned').map((item) => item.amount), Array(9).fill(1_000_000));
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 12_000_000);
+    assert.deepEqual(store.unscheduledTimingBalances(sql()), []);
+  });
+});
+
+test('برگشت استرداد پس از آنکه قلم پایانی سند خورد: سند قلم پایانی هم معکوس می‌شود', async () => {
+  const book = await contractBook('برگشت استرداد — قلم پایانی سندخورده');
+  await book.inBook(() => {
+    const refund = insurerRefund(book);
+    run('2026-12-28T08:00:00.000Z');
+    assert.equal(ledgerOf(book.prepaid), 0, 'قلم پایانی ۳ میلیون سند خورد');
+    database.reverseEvent(refund, 'استرداد اشتباه ثبت شد');
+    assert.equal(ledgerOf(book.prepaid), 9_000_000);
+    assert.equal(net('expense-category'), 3_000_000, 'فقط سه ماه گذشته');
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 12_000_000);
+  });
+});
+
+test('آینه: برگشت استردادِ مستأجر — درآمد انتقالی صفر و درآمد اجاره ۶۰ میلیون', async () => {
+  const book = await contractBook('برگشت استرداد — مستأجر');
+  await book.inBook(() => {
+    const refund = tenantRefund(book);
+    database.reverseEvent(refund, 'استرداد اشتباه ثبت شد؛ مستاجر هنوز هست');
+    assert.equal(unrecognised(book.rent), 30_000_000);
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.deferred), 0, 'نه منفی ۱۰ میلیون');
+    assert.equal(net('income-category'), -60_000_000);
+  });
+});
+
+test('برگشت استردادِ قراردادی که ادامه دارد، پس از آنکه اقلام کم‌شده سند خوردند: تفاوت جبران و پیش‌پرداخت صفر', async () => {
+  const book = await contractBook('برگشت استرداد — ادامه');
+  await book.inBook(() => {
+    const refund = insurerRefund(book, 3_000_000, 'بیمه گر به خاطر کاهش پوشش ۳ میلیون از حق بیمه آتش سوزی رو به حساب تجارت برگردوند، بیمه ادامه داره');
+    run(ESFAND);
+    database.reverseEvent(refund, 'کاهش پوشش لغو شد و پول برگشت');
+    assert.equal(unrecognised(book.insurance), ledgerOf(book.prepaid), 'برنامه و مانده یکی‌اند');
+    assert.ok(items(book.insurance).some((item) => item.key.includes(':restore:') && item.status === 'planned'), 'قلم جبرانیِ ماه‌هایی که با مبلغ کمتر سند خوردند');
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 12_000_000);
+  });
+});
+
+test('آینه، ادامه: برگشت تخفیفی که به مستأجر پس دادیم — درآمد انتقالی صفر و درآمد ۶۰ میلیون', async () => {
+  const book = await contractBook('برگشت استرداد — ادامهٔ اجاره');
+  await book.inBook(() => {
+    const refund = tenantRefund(book, 5_000_000, 'آقای احمدی ادامه میده؛ ۵ میلیون از اجاره جلو گرفته رو بابت تخفیف از صندوق بهش پس دادیم');
+    assert.equal(unrecognised(book.rent), 25_000_000);
+    run(ESFAND);
+    database.reverseEvent(refund, 'تخفیف اشتباه ثبت شد');
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.deferred), 0);
+    assert.equal(net('income-category'), -60_000_000);
+  });
+});
+
+test('دو استرداد روی یک قرارداد: اولی تا دومی سر جایش است برنمی‌گردد؛ به ترتیب برگشت، برنامه کامل برمی‌گردد', async () => {
+  const book = await contractBook('برگشت استرداد — دو استرداد');
+  await book.inBook(() => {
+    const first = insurerRefund(book, 2_000_000, 'بیمه پاسارگاد ۲ میلیون از حق بیمه آتش سوزی رو به حساب تجارت برگردوند، بیمه ادامه داره');
+    const second = insurerRefund(book, 4_000_000);
+    const before = JSON.stringify(items(book.insurance));
+    assert.throws(() => database.reverseEvent(first, 'استرداد اول اشتباه بود'), { code: 'EVENT_HAS_LINKED_REFUND' });
+    assert.equal(JSON.stringify(items(book.insurance)), before, 'هیچ چیز عوض نشد');
+    database.reverseEvent(second, 'استرداد دوم اشتباه بود');
+    assert.equal(unrecognised(book.insurance), 7_000_000);
+    database.reverseEvent(first, 'استرداد اول اشتباه بود');
+    assert.equal(unrecognised(book.insurance), 9_000_000);
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 12_000_000);
+  });
+});
+
+test('منفی: برگشت استردادی که به هیچ قرارداد دوره‌داری وصل نیست، به برنامه‌ای دست نمی‌زند', async () => {
+  const book = await contractBook('برگشت استرداد — بی‌قرارداد');
+  await book.inBook(async () => {
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    const supplier = database.saveContact({ name: 'کارخانه فولاد مبارکه' });
+    const advance = resolveEventRole(sql(), 'supplier-advance', 'کارخانه فولاد مبارکه', { counterpartyId: supplier.id });
+    const paid = refundPlaceholder('پیش پرداخت خرید ورق ۲۰ میلیون به کارخانه فولاد مبارکه از حساب تجارت دادیم', 20_000_000);
+    database.recordReviewedComposite(paid.id, { lines: [{ accountId: advance, debit: 20_000_000, credit: 0 }, { accountId: book.bankLedger, debit: 0, credit: 20_000_000 }], reason: 'پیش‌پرداخت خرید کالا' });
+    const goods = refundPlaceholder('کارخانه فولاد مبارکه پیش پرداخت خرید ورق رو چون بار نرسید ۲۰ میلیون به حساب تجارت برگردوند', 20_000_000);
+    database.recordReviewedComposite(goods.id, { lines: [{ accountId: book.bankLedger, debit: 20_000_000, credit: 0 }, { accountId: advance, debit: 0, credit: 20_000_000 }], reason: 'برگشت پیش‌پرداخت خرید کالا' });
+    const before = JSON.stringify([items(book.insurance), items(book.rent)]);
+    database.reverseEvent(goods.id, 'برگشت اشتباه ثبت شد');
+    assert.equal(JSON.stringify([items(book.insurance), items(book.rent)]), before);
+  });
+});
+
+for (const [label, side] of [['بیمه', 'insurance'], ['اجارهٔ پیش‌دریافت', 'rent']]) {
+  test(`قرارداد ${label} با استرداد زنده برنمی‌گردد — نه از پرونده، نه با حذف تراکنش؛ پس از برگشت استرداد برمی‌گردد`, async () => {
+    const book = await contractBook(`برگشت قرارداد — ${label}`);
+    await book.inBook(() => {
+      const refund = side === 'insurance' ? insurerRefund(book) : tenantRefund(book);
+      const account = side === 'insurance' ? book.prepaid : book.deferred;
+      const before = [ledgerOf(account), JSON.stringify(items(book[side]))];
+      assert.throws(() => database.reverseEvent(book[side], 'قرارداد اصلی اشتباه ثبت شده بود'), { code: 'EVENT_HAS_LINKED_REFUND', message: /اول آن استرداد را برگردان/ });
+      assert.throws(() => database.deleteTransaction(book[`${side}Tx`]), { code: 'EVENT_HAS_LINKED_REFUND' });
+      assert.deepEqual([ledgerOf(account), JSON.stringify(items(book[side]))], before, 'هیچ سندی نخورد');
+      assert.equal(sql().prepare('SELECT status FROM financial_events WHERE id=?').get(book[side]).status, 'posted');
+      database.reverseEvent(refund, 'استرداد اشتباه بود');
+      database.reverseEvent(book[side], 'قرارداد اصلی اشتباه ثبت شده بود');
+      run(LONG_AFTER);
+      assert.equal(ledgerOf(account), 0, 'نه پیش‌پرداخت بستانکار، نه مستأجرِ بدهکار');
+      assert.equal(net(side === 'insurance' ? 'expense-category' : 'income-category'), 0, 'قراردادِ برگشته نه هزینه دارد نه درآمد');
+    });
+  });
+}
+
+test('ماندهٔ با علامت غلط دیده می‌شود: پیش‌پرداخت بستانکار و درآمد انتقالی بدهکار از سند دستی', async () => {
+  const { inBook, bank } = await freshBook('مانده — علامت غلط');
+  await inBook(async () => {
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    const prepaid = resolveEventRole(sql(), 'prepaid-asset', 'بیمه', {});
+    const deferred = resolveEventRole(sql(), 'deferred-revenue', 'آقای احمدی', {});
+    const bankLedger = resolveEventRole(sql(), 'cash', bank.id, { accountId: bank.id });
+    const batch = database.createJournalDocuments([
+      { occurredAt: REFUND_AT, memo: 'برگشت حق بیمه', lines: [{ accountId: bankLedger, debit: 4_000_000 }, { accountId: prepaid, credit: 4_000_000 }] },
+      { occurredAt: REFUND_AT, memo: 'پس دادن اجاره', lines: [{ accountId: deferred, debit: 7_000_000 }, { accountId: bankLedger, credit: 7_000_000 }] },
+    ]);
+    for (const id of batch.entryIds) { database.submitJournalApproval(id, 'submitted'); database.submitJournalApproval(id, 'approved'); }
+    const listed = store.unscheduledTimingBalances(sql());
+    assert.deepEqual(listed.map((item) => [item.accountId, item.kind, item.wrongSign, item.balance]).sort(), [[prepaid, 'prepaid', true, -4_000_000], [deferred, 'deferred', true, -7_000_000]].sort());
+    assert.ok(listed.every((item) => /بستانکار|بدهکار/.test(item.question) && item.entries.length === 1));
+    assert.throws(() => database.scheduleBalance(prepaid, { coverageText: 'از اول مهر ۱۴۰۵ به مدت ۱۲ ماه', category: 'بیمه', reason: 'آزمون علامت غلط' }), { code: 'TIMING_BALANCE_WRONG_SIGN' });
   });
 });
 

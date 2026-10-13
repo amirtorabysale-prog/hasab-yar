@@ -1126,9 +1126,12 @@ export function reduceContractSchedule(database, contractEventId, { refund, at, 
   const remaining = live.reduce((sum, item) => sum + item.amount, 0);
   if (!(refund > 0) || refund > remaining) throw storeError('استرداد از بخش شناسایی‌نشدهٔ قرارداد بیشتر است.', 'REVIEW_DETAILS_REQUIRED', 409);
   const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
+  // وضعیت پیشینِ هر قلمی که این استرداد عوض می‌کند: برگشت استرداد همین را باز
+  // می‌گرداند، نه برنامه‌ای حدسی.
+  const touched = [];
   let closing = null;
   if (ended) {
-    for (const item of live) supersede.run(item.key);
+    for (const item of live) { touched.push({ key: item.key, amount: item.amount, status: item.status }); supersede.run(item.key); }
     const left = remaining - refund;
     if (left > 0) {
       const periodKey = persianPeriodKey(at, timeZone);
@@ -1147,12 +1150,99 @@ export function reduceContractSchedule(database, contractEventId, { refund, at, 
     const reprice = database.prepare('UPDATE recognition_schedule_items SET amount=? WHERE key=?');
     pool.forEach((item, index) => {
       const amount = index === pool.length - 1 ? target - (share * (pool.length - 1)) : share;
+      touched.push({ key: item.key, amount: item.amount, status: item.status });
       if (amount > 0) reprice.run(amount, item.key); else supersede.run(item.key);
     });
   }
-  const detail = { refundEventId, refund, remainingBefore: remaining, remainingAfter: remaining - refund, ended: Boolean(ended), closingItem: closing };
+  const detail = { refundEventId, refund, at, remainingBefore: remaining, remainingAfter: remaining - refund, ended: Boolean(ended), closingItem: closing, touched };
   writeAudit(database, contractEventId, 'contract-reduced', detail, actor);
   return detail;
+}
+
+/**
+ * استردادهای ثبت‌شده‌ای که برنامهٔ یک قرارداد را کم کرده‌اند — به ترتیب ثبت.
+ *
+ * پیوند در ردپای `contract-linked` خودِ استرداد است؛ استردادِ برگشت‌خورده دیگر
+ * پیوند زنده نیست.
+ */
+function linkedRefunds(database, contractEventId) {
+  return database.prepare(`SELECT a.rowid AS auditRow,a.event_id AS eventId,a.detail,j.document_number AS documentNumber
+    FROM financial_event_audit a JOIN financial_events e ON e.id=a.event_id LEFT JOIN journal_entries j ON j.id=e.journal_entry_id
+    WHERE a.stage='contract-linked' AND json_extract(a.detail,'$.contractEventId')=? AND e.status='posted'
+    ORDER BY a.rowid`).all(String(contractEventId || ''))
+    .map((row) => ({ ...row, detail: JSON.parse(row.detail || '{}') }));
+}
+
+function refundLabel(refunds) {
+  return refunds.map((item) => (item.documentNumber != null ? `سند ${Number(item.documentNumber).toLocaleString('fa-IR', { useGrouping: false })}` : item.eventId)).join('، ');
+}
+
+/**
+ * برگشت استرداد، برنامهٔ قرارداد را به پیش از آن برمی‌گرداند — در همان تراکنش.
+ *
+ * استرداد سه اثر روی برنامه داشت و هر سه برمی‌گردند:
+ *
+ * - **قلم پایانی** (بخشی که برنگشت و در لحظهٔ فسخ هزینه یا درآمد شد): اگر سند
+ *   خورده، سندش معکوس می‌شود؛ وگرنه باطل.
+ * - **اقلام باطل‌شده یا بازقیمت‌گذاری‌شده**: با مبلغ و وضعیت پیشین برمی‌گردند
+ *   (قلمی که حالا در دورهٔ بسته می‌افتد، منتظر دورهٔ بسته).
+ * - **آنچه از آن پس با مبلغ کمتر سند خورده یا معکوس شده** قابل بازگرداندن روی
+ *   همان قلم نیست؛ تفاوتش یک قلم جبرانی به تاریخ خودِ استرداد می‌شود.
+ *
+ * پایان کار: جمع اقلام شناسایی‌نشدهٔ قرارداد دوباره برابر ماندهٔ حساب دوره‌دار
+ * است — پیش‌پرداخت سرگردان یا درآمد انتقالیِ ابدی نمی‌ماند.
+ */
+function restoreContractSchedule(database, link, { actor = null, timeZone = 'Asia/Tehran', memo = 'برگشت استرداد' } = {}) {
+  const detail = link.detail || {};
+  const contractEventId = detail.contractEventId;
+  if (!contractEventId) return null;
+  if (!Array.isArray(detail.touched)) {
+    throw storeError('ردپای این استرداد برای بازگرداندن برنامهٔ قرارداد کافی نیست؛ برنامهٔ قرارداد را حسابدار بررسی کند.', 'REFUND_LINK_UNRESTORABLE', 409);
+  }
+  const contract = database.prepare('SELECT payload FROM financial_events WHERE id=?').get(contractEventId);
+  const contractEvent = contract ? JSON.parse(contract.payload) : {};
+  const lockedPeriods = lockedPeriodSet(database);
+  const statusFor = (date) => (lockedPeriods.has(periodForDate(notBeforeDate(date, contractEvent.occurredAt), timeZone))
+    ? SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD : SCHEDULE_ITEM_STATUS.PLANNED);
+  const itemRow = database.prepare(`SELECT key,status,amount,recognition_date AS recognitionDate,period_key AS periodKey,account_id AS accountId
+    FROM recognition_schedule_items WHERE key=?`);
+  const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
+  const reversalEntryIds = [];
+  let shortfall = 0;
+  if (detail.closingItem?.key) {
+    const closing = itemRow.get(detail.closingItem.key);
+    if (closing?.status === SCHEDULE_ITEM_STATUS.POSTED) {
+      const reversal = reverseJournalEntry(database, { sourceType: 'recognition-schedule', sourceId: closing.key, memo, createdBy: actor, timeZone });
+      if (reversal) reversalEntryIds.push(reversal.id);
+    }
+    if (closing) supersede.run(closing.key);
+  }
+  const restored = [];
+  const restore = database.prepare('UPDATE recognition_schedule_items SET amount=?,status=? WHERE key=?');
+  for (const before of detail.touched) {
+    const current = itemRow.get(before.key);
+    if (!current) continue;
+    // از آن پس با مبلغ بازقیمت‌گذاری‌شده سند خورده: تفاوت جبران می‌شود.
+    if (current.status === SCHEDULE_ITEM_STATUS.POSTED) { shortfall += before.amount - current.amount; continue; }
+    const status = statusFor(current.recognitionDate);
+    restore.run(before.amount, status, before.key);
+    restored.push({ key: before.key, amount: before.amount, status });
+  }
+  // ماه‌هایی که پس از تاریخ پایان سند خورده بودند و استرداد معکوسشان کرد.
+  for (const reversed of detail.reversedPosted || []) shortfall += Number(reversed.amount) || 0;
+  let compensation = null;
+  if (shortfall > 0) {
+    const at = detail.at || contractEvent.occurredAt;
+    const periodKey = persianPeriodKey(at, timeZone);
+    compensation = { key: `${contractEventId}:${periodKey}:restore:${detail.refundEventId || link.eventId}`, periodKey, recognitionDate: at, amount: shortfall };
+    const status = statusFor(at);
+    database.prepare(`INSERT INTO recognition_schedule_items (key,event_id,period_key,recognition_date,amount,status,account_id) VALUES (?,?,?,?,?,?,?)`)
+      .run(compensation.key, contractEventId, periodKey, at, shortfall, status, detail.accountId ?? null);
+    if (status === SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD) writeAudit(database, contractEventId, 'recognition-blocked', blockedDetail(compensation, timeZone), actor);
+  }
+  const result = { refundEventId: detail.refundEventId || link.eventId, restored, closingReversed: reversalEntryIds, compensation };
+  writeAudit(database, contractEventId, 'contract-restored', result, actor);
+  return result;
 }
 
 /** ثبتِ بررسی‌شدهٔ گفتهٔ چندمبلغی؛ حسابدار حساب‌ها و همهٔ مبالغ را صریح انتخاب می‌کند. */
@@ -1226,6 +1316,30 @@ export function reverseFinancialEvent(database, eventId, { actor = null, reason 
   if (!row) throw storeError('رویداد پیدا نشد.', 'EVENT_MISSING', 404);
   if (row.status !== 'posted') throw storeError('فقط رویداد ثبت‌شده معکوس می‌شود.', 'EVENT_NOT_POSTED', 409);
 
+  // قراردادی که استرداد ثبت‌شده‌ای برنامه‌اش را کم کرده، تا آن استرداد سر جایش
+  // است برنمی‌گردد — همان قاعدهٔ اثر وابستهٔ موجودی و چک. برگشت قرارداد همهٔ
+  // پرداخت را برمی‌گرداند؛ استردادِ ماندهٔ بخشی از همان پول، پیش‌پرداخت را
+  // بستانکار (و درآمد انتقالی را بدهکار، «مستأجر به ما بدهکار است») می‌کرد.
+  const dependents = linkedRefunds(database, row.id).filter((link) => link.eventId !== row.id);
+  if (dependents.length) {
+    throw storeError(`این قرارداد استرداد ثبت‌شده دارد (${refundLabel(dependents)})؛ اول آن استرداد را برگردان، بعد خود قرارداد را.`, 'EVENT_HAS_LINKED_REFUND', 409);
+  }
+  // استردادی که به قرارداد وصل است: برنامهٔ قرارداد هم با آن برمی‌گردد. استرداد
+  // دیگری که بعد از آن همان قرارداد را کم کرده، اول باید برگردد؛ وگرنه
+  // بازگرداندن وضعیت پیشین اثر استرداد بعدی را پاک می‌کرد.
+  const ownLinks = database.prepare("SELECT rowid AS auditRow,event_id AS eventId,detail FROM financial_event_audit WHERE event_id=? AND stage='contract-linked' ORDER BY rowid DESC")
+    .all(row.id).map((link) => ({ ...link, detail: JSON.parse(link.detail || '{}') }));
+  for (const link of ownLinks) {
+    const later = linkedRefunds(database, link.detail.contractEventId).filter((other) => other.eventId !== row.id && other.auditRow > link.auditRow);
+    if (later.length) {
+      throw storeError(`پس از این استرداد، استرداد دیگری همان قرارداد را کم کرده (${refundLabel(later)})؛ اول آن را برگردان.`, 'EVENT_HAS_LINKED_REFUND', 409);
+    }
+  }
+  const restoreLinks = () => {
+    const memo = reason ? `برگشت استرداد: ${reason}`.slice(0, 200) : 'برگشت استرداد';
+    return ownLinks.map((link) => restoreContractSchedule(database, link, { actor, timeZone, memo }));
+  };
+
   // سند این رویداد ممکن است به تراکنش لنگر خورده باشد، نه به خودِ رویداد.
   // جست‌وجوی لنگر اشتباه چیزی پیدا نمی‌کند و `reverseJournalEntry` بی‌صدا
   // `null` برمی‌گرداند — رویداد «معکوس‌شده» علامت می‌خورد ولی سندش سر جایش
@@ -1257,8 +1371,12 @@ export function reverseFinancialEvent(database, eventId, { actor = null, reason 
     // درآمد انتقالی هر دو. بدون این، هزینهٔ ماه‌های گذشته برای پولی که برگشته
     // در دفتر می‌ماند و اجرای بعدی ماه‌های آینده را هم می‌ساخت.
     retireRecognitionSchedule(database, row.id, { actor, timeZone, memo: reason ? `برگشت شناسایی: ${reason}`.slice(0, 200) : undefined });
+    const restoredContracts = restoreLinks();
     database.prepare("UPDATE financial_events SET status='reversed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(row.id);
-    writeAudit(database, row.id, 'reversed', { reason: String(reason || '').slice(0, 300), reversalEntryId: reversal.id }, actor);
+    writeAudit(database, row.id, 'reversed', {
+      reason: String(reason || '').slice(0, 300), reversalEntryId: reversal.id,
+      ...(restoredContracts.length ? { restoredContracts: ownLinks.map((link) => link.detail.contractEventId) } : {}),
+    }, actor);
     if (!withinTransaction) database.exec('COMMIT');
   } catch (error) { if (!withinTransaction) database.exec('ROLLBACK'); throw error; }
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
@@ -1808,8 +1926,31 @@ export function unscheduledTimingBalances(database, { accountId = null } = {}) {
     const held = kind === 'prepaid' ? balance : -balance;
     const scheduled = scheduledOnAccount(database, account.id);
     const residual = held - scheduled;
-    if (residual <= 0) continue;
     const sign = kind === 'prepaid' ? 1 : -1;
+    // ماندهٔ با علامت غلط — پیش‌پرداخت بستانکار، درآمد انتقالی بدهکار («طرف به ما
+    // بدهکار است») — برنامه‌ای نمی‌خواهد؛ خطایی است که باید دیده و اصلاح شود، نه
+    // اینکه چون «اختلاف مثبت نیست» بی‌صدا رد شود.
+    if (held < 0) {
+      const label = kind === 'prepaid' ? 'پیش‌پرداخت' : 'درآمد انتقالی';
+      const side = kind === 'prepaid' ? 'بستانکار' : 'بدهکار';
+      const entries = database.prepare(`SELECT j.id,j.source_type AS sourceType,j.occurred_at AS occurredAt,j.memo,j.document_number AS documentNumber,
+          SUM(l.debit)-SUM(l.credit) AS net, group_concat(l.description,' ') AS descriptions
+        FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id
+        WHERE l.account_id=? AND j.approval_state='approved' AND j.reverses_entry_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reverses_entry_id=j.id)
+        GROUP BY j.id HAVING net*?<0 ORDER BY j.occurred_at DESC,j.id DESC LIMIT 20`).all(account.id, sign)
+        .map((entry) => ({
+          entryId: entry.id, sourceType: entry.sourceType, occurredAt: entry.occurredAt, documentNumber: entry.documentNumber,
+          memo: entry.memo, description: entry.descriptions || '', amount: Math.abs(entry.net), suggestedCoverage: null, suggestedCategory: null,
+        }));
+      result.push({
+        accountId: account.id, accountName: account.name, chartCode: account.chartCode || null, kind,
+        balance: held, scheduled, residual, entries, category: null, wrongSign: true,
+        question: `ماندهٔ «${account.name}» ${(-held).toLocaleString('fa-IR')} تومان ${side} است؛ ${label} نباید ماندهٔ ${side} داشته باشد. استرداد، برگشت یا سند دستیِ بیرون از برنامه را بررسی و اصلاح کن.`,
+      });
+      continue;
+    }
+    if (residual <= 0) continue;
     const entries = database.prepare(`SELECT j.id,j.source_type AS sourceType,j.occurred_at AS occurredAt,j.memo,j.document_number AS documentNumber,
         SUM(l.debit)-SUM(l.credit) AS net, group_concat(l.description,' ') AS descriptions
       FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id
@@ -1856,8 +1997,12 @@ export function scheduleTimingBalance(database, accountId, {
   entryId = null, reason = '', actor = null, timeZone = 'Asia/Tehran',
 } = {}) {
   ensureFinancialEventSchema(database);
-  const [open] = unscheduledTimingBalances(database, { accountId: String(accountId || '') });
-  if (!open) throw storeError('این حساب ماندهٔ بی‌برنامه‌ای ندارد.', 'TIMING_BALANCE_NOT_OPEN', 409);
+  const listed = unscheduledTimingBalances(database, { accountId: String(accountId || '') });
+  const open = listed.find((item) => !item.wrongSign);
+  if (!open) {
+    const wrong = listed.find((item) => item.wrongSign);
+    throw storeError(wrong ? wrong.question : 'این حساب ماندهٔ بی‌برنامه‌ای ندارد.', wrong ? 'TIMING_BALANCE_WRONG_SIGN' : 'TIMING_BALANCE_NOT_OPEN', 409);
+  }
   const value = amount == null ? open.residual : Number(amount);
   if (!Number.isSafeInteger(value) || value <= 0) throw storeError('مبلغ برنامه باید عدد صحیح مثبت به تومان باشد.', 'TIMING_BALANCE_INVALID', 400);
   if (value > open.residual) throw storeError(`مبلغ برنامه از ماندهٔ بی‌برنامه (${open.residual.toLocaleString('fa-IR')} تومان) بیشتر است.`, 'TIMING_BALANCE_INVALID', 400);
