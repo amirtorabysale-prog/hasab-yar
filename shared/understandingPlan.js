@@ -375,16 +375,40 @@ export function periodEndFrom(startIso, months) {
   return next ? new Date(Date.parse(next) - 86_400_000).toISOString() : null;
 }
 
-const COUNT_WORDS = Object.freeze({ یک: 1, یه: 1, دو: 2, سه: 3, چهار: 4, پنج: 5, شش: 6, شیش: 6, هفت: 7, هشت: 8, نه: 9, ده: 10, یازده: 11, دوازده: 12, هجده: 18, بیست: 20 });
-const DURATION_SAID = new RegExp(`([0-9۰-۹]{1,3}|${Object.keys(COUNT_WORDS).join('|')})[\\s\\u200c]*(ماه|سال)`);
+/**
+ * طولِ دوره به ماه از شاهدِ «۶ ماه»، «یک سال»، «یکساله»، «پانزده ماه»، «بیست و
+ * چهار ماه»، «یک سال و نیم».
+ *
+ * عددِ فارسی مرزِ واژه دارد: «پانزده» «ده» نیست و «بیست و چهار» «چهار» نیست —
+ * وگرنه ۴۸ میلیونِ پشتیبانیِ ۲۴ ماهه در ۴ ماه هزینه می‌شد (بازبین موتور ۵). عددِ
+ * مدل (`value`) فقط وقتی پذیرفته است که شاهد همان را بگوید؛ هر جا طول با اطمینان
+ * خوانده نشد، صفر است و پایانِ دوره پرسیده می‌شود، نه حدس زده.
+ */
+const COUNT_WORDS = Object.freeze({
+  یک: 1, یه: 1, دو: 2, سه: 3, چهار: 4, پنج: 5, شش: 6, شیش: 6, هفت: 7, هشت: 8, نه: 9, ده: 10,
+  یازده: 11, دوازده: 12, سیزده: 13, چهارده: 14, پانزده: 15, پونزده: 15, شانزده: 16, شونزده: 16,
+  هفده: 17, هیفده: 17, هجده: 18, هیجده: 18, نوزده: 19, بیست: 20, سی: 30, چهل: 40, پنجاه: 50,
+  شصت: 60, هفتاد: 70, هشتاد: 80, نود: 90, صد: 100,
+});
+const NUMBER_WORD = `(?:${Object.keys(COUNT_WORDS).sort((a, b) => b.length - a.length).join('|')})`;
+const LENGTH_SAID = new RegExp(`(?<![آ-ی0-9])([0-9]{1,3}|${NUMBER_WORD}(?:\\s+و\\s+${NUMBER_WORD})*)[\\s\\u200c]*(ماه|سال)ه?(?![آ-ی])(?:\\s+و\\s+(نیم|${NUMBER_WORD}[\\s\\u200c]*ماه)(?![آ-ی]))?`);
+const countOf = (said) => (/^\d+$/.test(said) ? Number(said)
+  : said.split(/\s+و\s+/).reduce((sum, word) => sum + (COUNT_WORDS[word.trim()] || Number.NaN), 0));
 
-/** طولِ دوره به ماه از شاهدِ «۶ ماه»، «یک سال»، «یکساله». */
-function monthsIn(evidence) {
-  const match = DURATION_SAID.exec(normalizePersian(evidence || '').replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit))));
-  if (!match) return 0;
-  const count = /^\d+$/.test(match[1]) ? Number(match[1]) : COUNT_WORDS[match[1]] || 0;
-  const months = match[2] === 'سال' ? count * 12 : count;
-  return months > 0 && months <= 120 ? months : 0;
+function monthsIn(evidence, claimed = null) {
+  const text = normalizePersian(evidence || '').replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)));
+  const matches = [...text.matchAll(new RegExp(LENGTH_SAID.source, 'g'))];
+  // دو طول در یک شاهد («۶ ماه از یک سال») یعنی طولِ این دوره روشن نیست.
+  if (matches.length !== 1) return 0;
+  const [, number, unit, extra] = matches[0];
+  const count = countOf(number);
+  let months = unit === 'سال' ? count * 12 : count;
+  if (extra === 'نیم') months += unit === 'سال' ? 6 : Number.NaN;
+  else if (extra) months += countOf(extra.replace(/[\s‌]*ماه$/, ''));
+  if (!Number.isInteger(months) || months <= 0 || months > 120) return 0;
+  const value = Number(claimed);
+  if (claimed != null && claimed !== '' && Number.isFinite(value) && value !== months && value !== count) return 0;
+  return months;
 }
 
 function monthOf(iso) {
@@ -770,7 +794,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // مدل است، یا همان دورهٔ گفته‌شدهٔ مسیر قطعی — هر دو از بخشِ خودِ همین مبلغ.
     const durationMonths = (facts.nonAmountNumbers || [])
       .filter((number) => number.role === 'duration' && dateInScope(said, { expression: number.evidence }, scope) !== false)
-      .map((number) => monthsIn(number.evidence))
+      .map((number) => monthsIn(number.evidence, number.value))
       .find(Boolean)
       || (paymentDate ? readServicePeriod(scope.own, { occurredAt: paymentDate })?.months : 0) || 0;
     if (periodStart && !periodEnd && durationMonths) periodEnd = periodEndFrom(periodStart, durationMonths);

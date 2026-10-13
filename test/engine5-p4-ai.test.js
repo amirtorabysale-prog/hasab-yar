@@ -457,7 +457,9 @@ test('منفی: مبلغِ تنها، اجزای یک کل، و اجارهٔ ه�
 // ۶. آغاز و طولِ گفته‌شده با هم یک دوره‌اند؛ طولِ تنها فقط آغاز را می‌پرسد.
 // ---------------------------------------------------------------------------
 
-const duration = (evidence) => [{ value: evidence.replace(/[^\d۰-۹]/g, '') || '1', role: 'duration', evidence }];
+// عددی که مدل واقعی برای طول می‌نویسد: «شش ماه» → ۶، «یک سال» → ۱.
+const SPOKEN_COUNT = { یک: '1', دو: '2', سه: '3', شش: '6', دوازده: '12' };
+const duration = (evidence) => [{ value: evidence.replace(/[^\d۰-۹]/g, '') || SPOKEN_COUNT[evidence.split(/\s+/)[0]] || '1', role: 'duration', evidence }];
 
 test('آغاز + طول: «از اول آبان ۶ ماه» و «از امروز به مدت یک سال» بی‌سؤال یک دوره‌اند', async () => {
   for (const [text, evidence, startDate, months, first, amount] of [
@@ -979,6 +981,37 @@ test('اجزای یک کل: ماهیت جدا یعنی بخش جدا؛ اجزا�
     await inFreshWorkspace(async () => {
       const { posted } = await understandCase(SAID, model({ amounts: [a1, amt('a2', 'paid-now', 'ماهی ۱۰ میلیون')], movements: [mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], subject: service('اجاره دفتر') }));
       assert.ok(!posted || posted.schedule.length !== 12, JSON.stringify(posted?.schedule));
+    });
+  }
+});
+
+test('طولِ دوره با عددِ مرکب: ۱۳، ۱۵، ۱۸، ۲۴، ۳۶ ماه و «یک سال و نیم»؛ عددی که شاهد تأییدش نکند پایان را می‌پرسد', async () => {
+  const startAban = [{ id: 'd1', role: 'coverage-start', expression: 'از اول آبان', relative: null, jalali: { year: null, month: 8, day: 1 } }];
+  const family = [
+    ['اجاره انبار از اول آبان به مدت سیزده ماه ۲۶ میلیون از تجارت دادیم', 'سیزده ماه', '13', '۲۶ میلیون', 13],
+    ['اجاره انبار از اول آبان به مدت پانزده ماه ۴۵ میلیون از تجارت دادیم', 'پانزده ماه', '15', '۴۵ میلیون', 15],
+    ['اجاره انبار از اول آبان به مدت هجده ماه ۳۶ میلیون از تجارت دادیم', 'هجده ماه', '18', '۳۶ میلیون', 18],
+    ['قرارداد پشتیبانی نرم افزار از اول آبان به مدت بیست و چهار ماه ۴۸ میلیون از تجارت دادیم', 'بیست و چهار ماه', '24', '۴۸ میلیون', 24],
+    ['اجاره انبار از اول آبان به مدت سی و شش ماه ۷۲ میلیون از تجارت دادیم', 'سی و شش ماه', '36', '۷۲ میلیون', 36],
+    ['اجاره انبار از اول آبان به مدت یک سال و نیم ۳۶ میلیون از تجارت دادیم', 'یک سال و نیم', null, '۳۶ میلیون', 18],
+    ['اجاره انبار از اول آبان به مدت ۱۵ ماه ۴۵ میلیون از تجارت دادیم', '۱۵ ماه', '15', '۴۵ میلیون', 15],
+  ];
+  for (const [text, evidence, value, amount, months] of family) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, model({ event: { kind: 'advance-paid', description: '', status: 'done' }, amounts: [amt('a1', 'paid-now', amount)],
+        movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], nonAmountNumbers: [{ value, role: 'duration', evidence }], dates: startAban, subject: service('اجاره انبار') }));
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(posted.schedule.length, months, text);
+      assert.equal(posted.schedule[0].period_key, '1405-08', text);
+    });
+  }
+  // منفی: عددِ مدل با شاهد نمی‌خواند، یا طول عدد ندارد — پایان پرسیده می‌شود، نه حساب.
+  for (const [evidence, value] of [['پانزده ماه', '12'], ['چند ماه', null]]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(`اجاره انبار از اول آبان به مدت ${evidence} ۴۵ میلیون از تجارت دادیم`, model({ event: { kind: 'advance-paid', description: '', status: 'done' },
+        amounts: [amt('a1', 'paid-now', '۴۵ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], nonAmountNumbers: [{ value, role: 'duration', evidence }], dates: startAban, subject: service('اجاره انبار') }));
+      assert.equal(posted, null, evidence);
+      assert.ok(questionIds(item).includes('engine.a1.servicePeriodEnd'), `${evidence}: ${JSON.stringify(questionIds(item))}`);
     });
   }
 });
