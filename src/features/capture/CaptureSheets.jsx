@@ -110,7 +110,9 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
       reviewReasons: entry.reviewReasons || [],
     };
   });
-  const missingPaymentDate = (entry) => Boolean(entry.servicePeriodStart && !entry.occurredAt);
+  // فقط وقتی شروع پوشش گفته شده و تاریخ پرداخت نه (پارسر `paymentDateUnknown`
+  // می‌گذارد). دورهٔ فقط‌مدت از همان امروزِ پرداخت شروع می‌شود و پرسیدنی ندارد.
+  const missingPaymentDate = (entry) => Boolean(entry.paymentDateUnknown && !entry.occurredAt);
   const finish = () => missingPaymentDate(item) ? undefined : index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
   const statusCards = [
     ['ready', 'آماده ارسال', summary.ready, 'border-income/30 bg-income/5 text-income'],
@@ -223,7 +225,9 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
                 : 'معلوم نیست این خرج از کدام تنخواه بوده؛ خودت از فهرست بالا انتخاب کن.'}
             </p>
           </div>}
-          {missingPaymentDate(item) && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
+          {/* پرچم پایدار، نه «تاریخ هنوز خالی است»: ورودی با هر کلید ثبت می‌کند و با
+              نخستین تاریخ ناقص («1405/07/1») جمع می‌شد و روز ۱۸ را ۱ ثبت می‌کرد. */}
+          {item.paymentDateUnknown && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
             <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>
             <PersianDateInput value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
           </label>}

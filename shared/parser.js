@@ -448,6 +448,18 @@ const RECEIVABLE_STATEMENT = /قرار(?:ه)?\s*(?:بدن|بده|بدهند|پر
 // فعل پرداختِ اول‌شخص. «برای خرید مواد اولیه» اسم است، نه فعل؛ جلوی تشخیص
 // ورود را نمی‌گیرد.
 const MONEY_OUT_VERB = /(?:دادم|دادیم|ریختم|ریختیم|زدم|زدیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم)|برداشت\s*کرد)/;
+/**
+ * «ریختیم به حساب ملت/شرکت/صندوق»: پول در حساب خودِ دفتر ماند، به کسی پرداخت
+ * نشد. نام بانک پیش از این از پنجره برداشته شده، پس «به حساب ملت» این‌جا
+ * «به حساب» خالی است؛ «به حساب بیمه ایران» نام گیرنده را نگه می‌دارد.
+ */
+function paidIntoOwnAccount(text) {
+  if (/(?:به|تو|توی)\s*(?:بانک|صندوق|حساب(?:مون|مان|م))(?![آ-ی])/.test(text)) return true;
+  const destination = /(?:(?:به|تو|توی)\s*|ریخت(?:یم|م)\s*)(?:حساب|کارت)(?![آ-ی])\s*(\S*)/.exec(text);
+  if (!destination) return false;
+  const next = destination[1];
+  return !next || MONEY_OUT_VERB.test(next) || /^(?:بانک|شرکت|خود|صندوق)|^ما$/.test(next) || Boolean(detectBank(destination[0]));
+}
 
 /**
  * «مشتری ۹ میلیون داد»، «خانم توکلی از بدهیش پرداخت کرد»، «کارت به کارت کرد» —
@@ -500,6 +512,16 @@ function classify(context, learnings = [], categoryContext = '') {
     : incomeScore === expenseScore
       ? 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.'
       : `متن هر دو نشانه را دارد؛ نوع از فعل ${type === 'income' ? 'دریافت' : 'پرداخت'} برداشت شد و باید کنترل شود.`;
+  // «سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم/زدیم»: فعل پرداختِ اول‌شخص است ولی در
+  // فهرست واژه‌ها نیست، پس نوع بی‌نشانه می‌ماند و جمله به حسابدار می‌رفت. فقط
+  // وقتی هیچ نشانهٔ دیگری نیست («فروش زدیم» درآمد است)، مقصد حسابِ خودِ دفتر
+  // نیست («نقد رو ریختیم به حساب ملت» انتقال است) و فعل، صدور سند نیست.
+  if (!hasIncome && !hasExpense && MONEY_OUT_VERB.test(normalizedContext) && !paidIntoOwnAccount(normalizedContext)
+    && !/فاکتور|صورت\s*حساب|سفارش|کارتخوان|پوز|تخفیف|چک/.test(normalizedContext)) {
+    type = 'expense';
+    confidence = 0.93;
+    typeReason = 'نوع از فعل پرداخت اول‌شخص تشخیص داده شد.';
+  }
   // نگاشت تأییدشدهٔ کاربر از هر قاعده‌ای قوی‌تر است: او یک‌بار همین را اصلاح
   // کرده و نباید دوباره از او پرسیده شود.
   let category = learned?.category;
@@ -701,6 +723,11 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
   // دوره نسبت به تاریخ رویداد حساب می‌شود، نه تاریخ اجرای کد: «برای شش ماه
   // جلوتر» در جمله‌ای که تاریخش دیروز است، از دیروز شروع می‌شود.
   const servicePeriod = readServicePeriod(normalizePersian(input), { occurredAt: occurredAt || now.toISOString() });
+  // «بیمه یک ساله ۱۲ میلیون دادیم»: دورهٔ فقط‌مدت از همان تاریخ پرداخت (امروز)
+  // شروع می‌شود؛ تاریخی گفته نشده که با تاریخ پرداخت اشتباه شود — همان قاعدهٔ
+  // «تاریخ نگفته یعنی امروز» مسیر AI. فقط وقتی شروع پوشش گفته شده («از اول
+  // فروردین تا آخر اسفند») تاریخ پرداخت را باید جدا پرسید.
+  const paymentDateUnknown = Boolean(servicePeriod && !occurredAt && servicePeriod.start !== now.toISOString());
   // فقط بخشِ تاریخ با فاصله جایگزین می‌شود تا بقیهٔ جمله و مبلغ دست‌نخورده بماند.
   let amountSource = mentionedDate?.match || bank
     ? normalizePersian(input)
@@ -794,7 +821,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
     const reviewReasons = [];
-    if (servicePeriod && !occurredAt) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
+    if (paymentDateUnknown) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
     // آوردهٔ مالک درآمد نیست و دارایی ثابت هزینه نیست.
     //
     // برای این جمله‌ها برگهٔ مخصوص باز می‌شود، ولی اگر کاربر آن را ببندد و
@@ -819,7 +846,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ...(prepayment ? { prepaymentSignal: true } : {}),
       ...(unpaid ? { unpaidSignal: true } : {}),
       ...(eventNature !== EVENT_NATURES.NEW ? { eventNature } : {}),
-      ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), chartCode: classified.chartCode,
+      ...(servicePeriod ? { servicePeriodStart: servicePeriod.start, servicePeriodEnd: servicePeriod.end } : {}), ...(paymentDateUnknown ? { paymentDateUnknown: true } : {}), chartCode: classified.chartCode,
       // Amount extraction masks banks and dates. Those masks must never become
       // the user's evidence. Keep scoped context for genuinely separate amounts.
       rawText: spans.length === 1 ? String(input) : rawContext || text,

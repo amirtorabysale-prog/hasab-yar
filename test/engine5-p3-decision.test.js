@@ -478,3 +478,88 @@ test('مسیر AI: باقی یا قسطِ قرارداد، هر برچسبی ک�
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// پیش‌پرداخت بی‌تاریخ: «تاریخ نگفته یعنی امروز»؛ «ریختیم/زدیم» فعل پرداخت است
+// ---------------------------------------------------------------------------
+
+const PAYMENT_DATE_REASON = /^تاریخ پرداخت مشخص نیست/;
+// جمله‌های واقعی گزارش عیناً، به‌علاوهٔ فعل‌های هم‌ارز با بیمه، اجاره، اشتراک و لایسنس.
+const UNDATED_PREPAID = [
+  ['سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم', 18_000_000, 12],
+  ['بیمه آتش سوزی یکساله ۱۲ میلیون ریختیم به حساب بیمه ایران', 12_000_000, 12],
+  ['بیمه یکساله ۱۲ میلیون دادیم', 12_000_000, 12],
+  ['اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون', 30_000_000, 6],
+  ['بیمه یک ساله مغازه ۱۲ میلیون دادیم', 12_000_000, 12],
+  ['سرور ابری ۱۲ ماهه ۱۸ میلیون زدیم', 18_000_000, 12],
+  ['لایسنس یک ساله آنتی ویروس ۸ میلیون زدم', 8_000_000, 12],
+  ['اشتراک شش ماهه نرم افزار ۶ میلیون ریختم', 6_000_000, 6],
+  ['اجاره شش ماهه مغازه ۴۸ میلیون ریختیم', 48_000_000, 6],
+  ['بیمه یکساله خودرو ۹ میلیون زدیم', 9_000_000, 12],
+];
+
+test('پیش‌پرداخت بی‌تاریخ گفته‌شده، امروز پرداخت شده است: نه دلیل «تاریخ پرداخت مشخص نیست»، نه ابهام نوع، نه حسابدار', () => {
+  for (const [text, amount] of UNDATED_PREPAID) {
+    const row = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions[0];
+    assert.equal(row.amount, amount, text);
+    assert.equal(row.type, 'expense', text);
+    assert.ok(row.confidence >= 0.9, `${text}: ${row.confidence}`);
+    assert.ok(row.servicePeriodStart, text);
+    assert.equal(row.paymentDateUnknown, undefined, text);
+    assert.ok(!(row.reviewReasons || []).some((reason) => PAYMENT_DATE_REASON.test(reason)), text);
+    assert.ok(!(row.reviewReasons || []).some((reason) => /نوع/.test(reason)), text);
+    const item = voice(text).items[0];
+    assert.notEqual(item.outcome, 'accountant', text);
+    assert.deepEqual(roles(item).map(([role]) => role), ['prepaid-asset', 'cash'], text);
+  }
+});
+
+test('تاریخ گفته‌شده همان تاریخ پرداخت است؛ شروع پوششِ گفته‌شده بی‌تاریخ پرداخت هنوز پرسیده می‌شود', () => {
+  for (const [text, iso] of [
+    ['بیمه یک ساله مغازه ۱۲ میلیون امروز دادیم', '2026-10-10'],
+    ['بیمه یک ساله مغازه ۱۲ میلیون دیروز دادیم', '2026-10-09'],
+    ['بیمه یک ساله مغازه ۱۲ میلیون ۱۵ مهر دادیم', '2026-10-07'],
+  ]) {
+    const row = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions[0];
+    assert.equal(row.occurredAt.slice(0, 10), iso, text);
+    assert.equal(row.paymentDateUnknown, undefined, text);
+    assert.ok(!(row.reviewReasons || []).some((reason) => PAYMENT_DATE_REASON.test(reason)), text);
+  }
+  // دورهٔ پوشش با ماه‌های نام‌برده: تاریخ پوشش جای تاریخ پرداخت نیست.
+  for (const text of ['بیمه آتش سوزی از اول آبان تا آخر مهر سال بعد ۱۲ میلیون دادیم', 'اجاره دفتر از اول فروردین تا آخر اسفند ۱۲۰ میلیون دادیم']) {
+    const row = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions[0];
+    assert.equal(row.paymentDateUnknown, true, text);
+    assert.ok(row.reviewReasons.some((reason) => PAYMENT_DATE_REASON.test(reason)), text);
+  }
+});
+
+test('منفی: «فروش زدیم»، پولی که به حساب ما ریخته شد و صدور فاکتور، پرداخت مطمئن نمی‌شوند', () => {
+  const row = (text) => parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions[0];
+  assert.equal(row('امروز ۵۰ میلیون فروش زدیم').type, 'income');
+  assert.equal(row('مشتری ۱۰ میلیون ریخت به حساب شرکت').type, 'income');
+  assert.equal(row('۱۰ میلیون ریختن به حسابمون معلوم نیس کی ریخته').type, 'income');
+  // واریز نقد به بانک خودمان انتقال است، نه هزینهٔ مطمئن.
+  for (const text of ['۵ میلیون نقد رو ریختیم به حساب ملت', 'نقد ۵ میلیون رو به حساب ملت ریختیم', '۵ میلیون نقد رو ریختیم تو کارت ملت', '۵ میلیون ریختیم به حساب شرکت', '۵ میلیون ریختیم به صندوق', '۲۰ میلیون فاکتور زدیم برای مشتری']) {
+    const parsed = row(text);
+    assert.ok(parsed.type !== 'expense' || parsed.confidence < 0.8, `${text}: ${parsed.type} ${parsed.confidence}`);
+  }
+  // پرداخت به حساب شخص دیگر، پرداخت است.
+  assert.equal(row('۳ میلیون ریختیم به حساب آقای رضایی').type, 'expense');
+});
+
+test('دفتر: «سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم» با یک تأیید برگه ثبت می‌شود و دوازده قسط می‌سازد', async () => {
+  for (const [text, amount, months] of [UNDATED_PREPAID[0], UNDATED_PREPAID[4]]) {
+    await inFreshWorkspace(async () => {
+      const cash = database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 100_000_000 });
+      const parsed = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+      // همان چیزی که برگهٔ تأیید می‌فرستد: بی‌تاریخ، با دلیل‌های خود پارسر.
+      database.insertTransactions({ transcript: text, transactions: parsed.map((row) => ({ ...row, accountId: cash.id, userConfirmed: true, needsReview: false, reviewState: 'ready' })) });
+      const event = database.activeWorkspaceDatabase().prepare('SELECT route, status FROM financial_events').get();
+      assert.notEqual(event.route, 'accountant-review', text);
+      assert.equal(event.status, 'posted', text);
+      const schedule = scheduleTotals();
+      assert.equal(schedule.n, months, text);
+      assert.equal(schedule.total, amount, text);
+    }, {});
+  }
+});
