@@ -1,4 +1,5 @@
 import { normalizePersian } from './normalize.js';
+import { detectPartnerFundedSpend } from './partnerPaidSpeech.js';
 
 /**
  * هدف خرید — تفاوت هزینه، موجودی و دارایی ثابت.
@@ -56,9 +57,20 @@ const category = (facts) => String(facts?.category || '').trim();
  */
 const NEEDS_JUDGMENT = /[?؟]|نمی\s*دونم|نمی\s*دانم|چطور|چگونه|شخصی|شریک|سهامدار|ارزش\s*افزوده|مالیات|غیر\s*رسمی|بدهی\s*قبلی|طلب\s*قبلی|محموله|واردات|وارداتی|گمرک|ترخیص|بارنامه|انبار/;
 
+/**
+ * منبع پولی که گفته شده، قضاوت نیست.
+ *
+ * «شریکمون هزینه تعمیر کولر رو از جیب خودش داد» پرداخت‌کننده و جهت را گفته:
+ * شرکت به شریک بدهکار شد. همان جمله با «مدیرعامل» سؤال هدف را می‌گرفت و با
+ * «شریک» به صف حسابدار می‌رفت. فقط واژه‌های پرداخت‌کننده کنار می‌روند؛
+ * «وسایل ویلای شخصی شریک» (مصرف شخصی) هنوز «شخصی» دارد و قضاوت می‌ماند.
+ */
+const FUNDER_WORDS = /(?:(?:از|با)\s*)?(?:پول|جیب|حساب|کارت)\s*(?:شخصی|خودش|خودشون|خودشان|خودم|خودمون)(?:\s*(?:ش|اش|خودش|خودشون))?(?![آ-ی])|(?:شریک|سهام\s*دار)[آ-ی]*/g;
+
 /** آیا گفته نشانه‌ای دارد که ساده دیدنش را ناامن می‌کند؟ */
 export function needsJudgment(facts) {
-  return NEEDS_JUDGMENT.test(text(facts));
+  const value = text(facts);
+  return NEEDS_JUDGMENT.test(detectPartnerFundedSpend(value) ? value.replace(FUNDER_WORDS, ' ') : value);
 }
 
 /**

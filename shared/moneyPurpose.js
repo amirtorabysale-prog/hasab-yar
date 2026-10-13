@@ -11,6 +11,7 @@
  */
 import { readPettyCash } from './pettyCashSpeech.js';
 import { normalizePersian } from './normalize.js';
+import { detectPartnerFundedSpend } from './partnerPaidSpeech.js';
 
 // همهٔ الگوهای این فایل روی متن یکدست‌شده اجرا می‌شوند: «کهنهٔ» با همزه، ی و ک
 // عربی و نیم‌فاصله هر کدام یک الگو را بی‌صدا از کار می‌انداختند.
@@ -139,7 +140,11 @@ export function judgmentReason(input) {
   if (readPettyCash(text)?.action === 'fund') return 'پرداخت یا شارژ تنخواه هزینه نیست؛ انتقال از صندوق یا بانک به حساب تنخواه است و از صفحهٔ «تنخواه‌گردان» ثبت می‌شود.';
   if (SUSPICIOUS.test(text)) return 'جمله از مبلغ مشکوک یا پنهان‌کاری می‌گوید؛ ثبتش قضاوت حسابدار لازم دارد.';
   if (UNCERTAIN.test(text) && !UNKNOWN_ORIGIN.test(text)) return 'ثبت‌کننده خودش گفته ماهیت را نمی‌داند؛ حسابدار تعیین می‌کند.';
-  if (PARTNER.test(text)) return 'پای شریک یا سهامدار در میان است؛ آورده، قرض یا برداشت بودنش را حسابدار تعیین می‌کند.';
+  // «آقای رضایی شریکمون اجاره شش ماهه دفتر رو از جیب خودش داد»: پرداخت‌کننده و
+  // جهت هر دو گفته شده — شرکت به شریک بدهکار شد، همان چیزی که با «مدیرعامل»
+  // هم ثبت می‌شود. نشانهٔ شریک فقط وقتی قضاوت است که آورده، قرض یا برداشت بودن
+  // معلوم نباشد. مسیر AI همین را در `understandingPlan` می‌کند.
+  if (PARTNER.test(text) && !detectPartnerFundedSpend(input)) return 'پای شریک یا سهامدار در میان است؛ آورده، قرض یا برداشت بودنش را حسابدار تعیین می‌کند.';
   if (PRIOR_SETTLEMENT.test(text)) return 'به طلب، بدهی یا فاکتور قبلی اشاره دارد؛ شناسایی دوبارهٔ درآمد یا هزینه نباید رخ دهد.';
   if (LOAN_SERVICE.test(text) && !LOAN_IN.test(text)) return 'قسط یا اصل وام، اصل و سود جدا دارد؛ حسابدار تفکیک می‌کند.';
   if (TAX_REFUND.test(text)) return 'استرداد مالیات طلب قبلی را می‌بندد؛ حسابدار با سند مبنا تطبیق می‌دهد.';

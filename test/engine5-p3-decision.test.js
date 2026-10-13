@@ -103,11 +103,11 @@ database.ensureAdmin();
 const owner = database.authenticateUser('p3-owner', 'p3-strong-password-7719');
 let workspaceCount = 0;
 /** هر آزمون دفتر خودش را دارد تا مانده‌ها و برنامه‌ها روی هم نیفتند. */
-const inFreshWorkspace = (callback) => {
+const inFreshWorkspace = (callback, policy = { understandingMode: 'active', understandingScope: 'all' }) => {
   const workspace = database.createWorkspace(owner.id, { name: `دفتر p3 ${++workspaceCount}`, profileType: 'business' });
   return database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, async () => {
     database.installChartTemplate();
-    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true, understandingMode: 'active', understandingScope: 'all' });
+    database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true, ...policy });
     return callback();
   });
 };
@@ -155,4 +155,68 @@ test('مسیر AI: «advance-paid» با دورهٔ صریح، پیش‌پردا
     database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
     assert.equal(scheduleTotals().n, 0);
   });
+});
+
+// ---------------------------------------------------------------------------
+// هزینه از جیب شریک: «شریک» و «سهامدار» همان «مدیرعامل»اند
+// ---------------------------------------------------------------------------
+
+test('پیش‌پرداخت از جیب شریک/سهامدار مثل مدیرعامل ثبت می‌شود: پیش‌پرداخت در برابر جاری شریک، با برنامهٔ ماهانه', () => {
+  for (const [text, amount, payer] of [
+    ['آقای رضایی شریکمون اجاره شش ماهه دفتر رو ۳۰ میلیون از جیب خودش داد', 30_000_000, 'آقای رضایی'],
+    ['مدیرعامل اجاره شش ماهه دفتر رو ۳۰ میلیون از پول شخصیش داد', 30_000_000, 'مدیرعامل'],
+    ['سهامدارمون آقای رضایی بیمه یکساله ماشین شرکت رو ۱۲ میلیون از جیب خودش داد', 12_000_000, 'آقای رضایی'],
+    ['آقای رضایی سهامدارمون بیمه یکساله ماشین شرکت رو ۱۲ میلیون از جیب خودش داد', 12_000_000, 'آقای رضایی'],
+    ['شریکم اشتراک یک ساله نرم افزار رو ۲۴ میلیون از پول شخصیش پرداخت کرد', 24_000_000, null],
+    ['سهام دار شرکت اشتراک دوازده ماهه نرم افزار رو ۲۴ میلیون از جیب خودش داد', 24_000_000, null],
+  ]) {
+    const [item] = voice(text).items;
+    assert.equal(item.outcome, 'post', text);
+    assert.equal(item.decision.treatment, 'prepaid-expense', text);
+    assert.equal(item.decision.recognitionMethod, 'monthly-straight-line', text);
+    assert.deepEqual(item.plan.lines.map((line) => line.role), ['prepaid-asset', 'partner-payable'], text);
+    if (payer) assert.equal(item.plan.lines[1].key, payer, text);
+  }
+  const [goods] = voice('آقای سهرابی شریکمون با پول شخصی خودش ۱۰۰ میلیون مواد اولیه برای شرکت خرید').items;
+  assert.equal(goods.outcome, 'post');
+  assert.deepEqual(goods.plan.lines.map((line) => line.role), ['inventory-unsplit', 'partner-payable']);
+  assert.equal(goods.plan.lines[1].key, 'آقای سهرابی');
+  // هزینهٔ سادهٔ شریک همان سؤال هدفی را می‌گیرد که مدیرعامل می‌گیرد.
+  for (const text of ['شریکمون هزینه تعمیر کولر ۵ میلیون از جیب خودش داد', 'مدیرعامل هزینه تعمیر کولر ۵ میلیون از جیب خودش داد']) {
+    assert.equal(voice(text).items[0].outcome, 'ask', text);
+  }
+});
+
+test('منفی: پول شریک که به شرکت آمد، وام به دیگری، برداشت و مصرف شخصی، با حسابدار می‌ماند', () => {
+  for (const text of [
+    'شریکمون از جیب خودش ۵۰ میلیون به شرکت داد',
+    'شریکمون ۵۰ میلیون از پول شخصیش به صندوق داد',
+    'شریکمون از جیب خودش ۲۰ میلیون به آقای کریمی قرض داد',
+    '۳۰ میلیون به شریکمون دادیم',
+    'شریک شرکت هفتاد میلیون از حساب شرکت برداشت کرد',
+    'شریکمون وسایل ویلای شخصی خودش رو ۲۰ میلیون از پول شخصیش خرید',
+  ]) {
+    for (const item of voice(text).items) {
+      assert.equal(item.outcome, 'accountant', text);
+      assert.ok(!item.plan, text);
+    }
+  }
+});
+
+test('دفتر: پیش‌پرداخت از جیب شریک تأیید می‌شود و شش قسط ۳۰ میلیونی می‌سازد', async () => {
+  await inFreshWorkspace(async () => {
+    const text = 'آقای رضایی شریکمون اجاره شش ماهه دفتر رو ۳۰ میلیون از جیب خودش داد';
+    const rows = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+    const result = database.insertTransactions({ transcript: text, transactions: rows.map((row, index) => ({ ...row, occurredAt: row.occurredAt || NOW, userConfirmed: true, clientId: `p3-partner-${index}` })) });
+    const eventId = result.nonCash?.[0]?.eventId;
+    assert.ok(eventId, JSON.stringify(result));
+    const db = database.activeWorkspaceDatabase();
+    if (db.prepare('SELECT status FROM financial_events WHERE id = ?').get(eventId).status === 'pending') database.approveEvent(eventId);
+    const schedule = db.prepare('SELECT COUNT(*) AS n, SUM(amount) AS total FROM recognition_schedule_items WHERE event_id = ?').get(eventId);
+    assert.equal(schedule.n, 6);
+    assert.equal(schedule.total, 30_000_000);
+    const credit = ledgerRows().find((row) => row.credit === 30_000_000);
+    assert.match(credit.name, /جاری شریک/);
+    assert.match(credit.name, /آقای رضایی$/);
+  }, {});
 });
