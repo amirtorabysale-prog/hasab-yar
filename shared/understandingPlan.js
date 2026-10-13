@@ -23,7 +23,7 @@
 import { classifyCategory } from './categoryRules.js';
 import { detectBank } from './banks.js';
 import { normalizePersian } from './normalize.js';
-import { persianMonthRange, todayPersian } from './persianDate.js';
+import { persianMonthRange, persianToISO, todayPersian } from './persianDate.js';
 import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { saysRefundable } from './moneyPurpose.js';
@@ -261,6 +261,30 @@ function dateInScope(said, date, scope) {
   if (at < 0) return null;
   const index = scope.spans.findIndex((span, position) => at >= scope.owned[position].from && at + key.length <= scope.owned[position].to);
   return index < 0 ? null : scope.spans[index].mine;
+}
+
+/**
+ * پایانِ دوره‌ای که آغاز و طولش گفته شده: همان روزِ ماه، N ماه شمسی جلوتر، منهای یک
+ * روز — همان حسابِ مسیر قطعی («یک ساله») و گزینه‌های «شش ماه» و «یک سال».
+ */
+export function periodEndFrom(startIso, months) {
+  if (!startIso || !(months > 0)) return null;
+  const day = todayPersian(new Date(startIso));
+  const total = (day.year * 12) + (day.month - 1) + months;
+  const next = persianToISO(Math.floor(total / 12), (total % 12) + 1, Math.min(day.day, 28));
+  return next ? new Date(Date.parse(next) - 86_400_000).toISOString() : null;
+}
+
+const COUNT_WORDS = Object.freeze({ یک: 1, یه: 1, دو: 2, سه: 3, چهار: 4, پنج: 5, شش: 6, شیش: 6, هفت: 7, هشت: 8, نه: 9, ده: 10, یازده: 11, دوازده: 12, هجده: 18, بیست: 20 });
+const DURATION_SAID = new RegExp(`([0-9۰-۹]{1,3}|${Object.keys(COUNT_WORDS).join('|')})[\\s\\u200c]*(ماه|سال)`);
+
+/** طولِ دوره به ماه از شاهدِ «۶ ماه»، «یک سال»، «یکساله». */
+function monthsIn(evidence) {
+  const match = DURATION_SAID.exec(normalizePersian(evidence || '').replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit))));
+  if (!match) return 0;
+  const count = /^\d+$/.test(match[1]) ? Number(match[1]) : COUNT_WORDS[match[1]] || 0;
+  const months = match[2] === 'سال' ? count * 12 : count;
+  return months > 0 && months <= 120 ? months : 0;
 }
 
 function monthOf(iso) {
@@ -628,6 +652,15 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       if (spokenPeriod) { periodStart = spokenPeriod.start; periodEnd = spokenPeriod.end; }
       else if (!scope.alone && readServicePeriod(scope.shared, { occurredAt: paymentDate })) periodUnowned = true;
     }
+    // «اجاره ۶ ماه دفتر از اول آبان»، «از امروز به مدت یک سال»: آغاز گفته شده و طول
+    // هم؛ پایان از همین دو ساخته می‌شود و دوباره پرسیده نمی‌شود. طول یا عددِ «مدت»ِ
+    // مدل است، یا همان دورهٔ گفته‌شدهٔ مسیر قطعی — هر دو از بخشِ خودِ همین مبلغ.
+    const durationMonths = (facts.nonAmountNumbers || [])
+      .filter((number) => number.role === 'duration' && dateInScope(said, { expression: number.evidence }, scope) !== false)
+      .map((number) => monthsIn(number.evidence))
+      .find(Boolean)
+      || (paymentDate ? readServicePeriod(scope.own, { occurredAt: paymentDate })?.months : 0) || 0;
+    if (periodStart && !periodEnd && durationMonths) periodEnd = periodEndFrom(periodStart, durationMonths);
     if (periodUnowned && !periodStart && !periodEnd) {
       toAccountant(`دورهٔ پوششی که در جمله آمده مالِ «${label}» است یا مبلغِ دیگرِ همین جمله، روشن نیست؛ کدام هزینهٔ امروز است و کدام پیش‌پرداخت، با حسابدار است.`);
       continue;
@@ -661,6 +694,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     components.push({
       id: amount.id, amountRef: amount.id, kind: movement.direction === 'none' ? 'obligation' : 'cash',
       amount: amount.value, item, text: scope.alone ? null : scope.own,
+      // طولِ گفته‌شده بی‌آغاز: آغاز پرسیده می‌شود و پایان از همین طول ساخته می‌شود.
+      durationMonths: durationMonths || null,
       label: `${verb} ${money(amount.value)} تومان${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}`,
     });
   }

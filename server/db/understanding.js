@@ -10,7 +10,7 @@ import { postAccountTransferJournal } from '../accounting.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { understandText, understandingProvider } from '../eventUnderstandingAi.js';
 import { resolveUnderstanding } from '../understandingResolve.js';
-import { buildUnderstandingPlan } from '../../shared/understandingPlan.js';
+import { buildUnderstandingPlan, periodEndFrom } from '../../shared/understandingPlan.js';
 import { inUnderstandingScope, understandingReasons } from '../../shared/understandingScope.js';
 import { applyAnswer } from '../../shared/questionAnswer.js';
 import { FACT_QUESTIONS } from '../../shared/factRequirements.js';
@@ -103,6 +103,10 @@ function applyEngineAnswers(component, answers, today) {
       else if (field === 'counterparty') item = { ...item, contactName: value, linkContact: true, contactNameConfident: true };
       else item[field] = value;
     }
+  }
+  // «بیمه به مدت یک سال»: طول گفته شده بود و فقط آغاز پرسیده شد؛ پایان از همان طول.
+  if (component.durationMonths && item.servicePeriodStart && !item.servicePeriodEnd) {
+    item.servicePeriodEnd = periodEndFrom(item.servicePeriodStart, component.durationMonths);
   }
   return item;
 }

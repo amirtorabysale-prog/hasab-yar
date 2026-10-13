@@ -452,3 +452,46 @@ test('منفی: مبلغِ تنها، اجزای یک کل، و اجارهٔ ه�
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// ۶. آغاز و طولِ گفته‌شده با هم یک دوره‌اند؛ طولِ تنها فقط آغاز را می‌پرسد.
+// ---------------------------------------------------------------------------
+
+const duration = (evidence) => [{ value: evidence.replace(/[^\d۰-۹]/g, '') || '1', role: 'duration', evidence }];
+
+test('آغاز + طول: «از اول آبان ۶ ماه» و «از امروز به مدت یک سال» بی‌سؤال یک دوره‌اند', async () => {
+  for (const [text, evidence, startDate, months, first, amount] of [
+    ['اجاره ۶ ماه دفتر از اول آبان رو ۳۰ میلیون از تجارت دادیم', '۶ ماه', { id: 'd1', role: 'coverage-start', expression: 'از اول آبان', relative: null, jalali: { year: null, month: 8, day: 1 } }, 6, '1405-08', 30_000_000],
+    ['اجاره دفتر از امروز به مدت یک سال ۶۰ میلیون از تجارت دادیم', 'یک سال', { id: 'd1', role: 'coverage-start', expression: 'از امروز', relative: 'today', jalali: { year: null, month: null, day: null } }, 12, '1405-07', 60_000_000],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, model({
+        amounts: [amt('a1', 'paid-now', amount === 30_000_000 ? '۳۰ میلیون' : '۶۰ میلیون')], nonAmountNumbers: duration(evidence),
+        movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], dates: [startDate], subject: service('اجاره دفتر'),
+      }));
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify([item.plan?.questions, item.plan?.reasons])}`);
+      assert.equal(posted.schedule.length, months, text);
+      assert.equal(posted.schedule[0].period_key, first, text);
+      assert.equal(posted.scheduled, amount, text);
+    });
+  }
+});
+
+test('طولِ تنها («به مدت یک سال»، «برای شش ماه»): فقط آغاز پرسیده می‌شود، پایان از طول', async () => {
+  for (const [text, evidence, amount, start, months, first] of [
+    ['بیمه آتش سوزی انبار به مدت یک سال ۱۲ میلیون از تجارت دادیم', 'یک سال', '۱۲ میلیون', 'this-month', 12, '1405-07'],
+    ['اجاره دفتر برای شش ماه ۳۰ میلیون از تجارت دادیم', 'شش ماه', '۳۰ میلیون', 'next-month', 6, '1405-08'],
+  ]) {
+    const said = model({ amounts: [amt('a1', 'paid-now', amount)], nonAmountNumbers: duration(evidence), movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service(text.split(' ')[0]) });
+    await inFreshWorkspace(async () => {
+      const { item } = await understandCase(text, said, { commit: false });
+      assert.deepEqual(questionIds(item), ['engine.a1.servicePeriodStart'], text);
+    });
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, said, { answers: [{ 'engine.a1.servicePeriodStart': { value: start } }] });
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.equal(posted.schedule.length, months, text);
+      assert.equal(posted.schedule[0].period_key, first, text);
+    });
+  }
+});
