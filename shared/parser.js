@@ -47,7 +47,8 @@ const INCOME_WORDS = ['فروش', 'درآمد', 'دریافت', 'واریز', '�
   'اومده تو حساب', 'اومد تو حساب', 'به حساب اومده', 'به حساب اومد', 'عودت', 'به حساب شرکت انتقال داد', 'به حساب شرکت واریز کرد',
   // «از نوری قرض گرفتیم» پول آمده است، نه رفته؛ «گرفتیم» در «گرفتم» نمی‌گنجد.
   // «گرفتیم»ِ تنها عمداً نیست: «مشاوره/پشتیبانی یکساله/پیتزا گرفتیم» خرید است.
-  // «اجاره رو از مستاجر گرفتیم» را نقش پرداخت‌کننده («از مستاجر») وارد می‌کند.
+  // «اجاره رو از مستاجر گرفتیم» را نقش پرداخت‌کننده («از مستاجر») و «۲۰ میلیون
+  // گرفتیم» را مفعولِ پولیِ فعل (`takenMoney`) وارد می‌کند.
   'قرض گرفت', 'وام گرفت'];
 const EXPENSE_WORDS = ['هزینه', 'خرج', 'خرید', 'خریدم', 'خریدیم', 'حقوق', 'اجاره', 'پرداخت', 'دادم', 'دادیم', 'برداشت', 'قبض', 'کرایه', 'مواد', 'واریز کردیم', 'واریز کردم'];
 // فعلِ جهت‌دار از اسم قوی‌تر است. «از مشتری ده میلیون گرفتم بابت پیش پرداخت»
@@ -694,11 +695,34 @@ const PAYER_GAVE = new RegExp(`${PAYER_ROLE}(?:\\s+\\S+){0,10}?\\s+(?:نقد\\s*
 const RECEIVED_AS_INCOME = /پیش\s*دریافت|درآمد\s*(?:اجاره|کرایه|اشتراک)|(?:اجاره|کرایه)\s*(?:بها\s*)?دریافتی|(?:حق\s*)?اشتراک\s*دریافتی|فروش\s*اشتراک|(?<![آ-ی])(?:دریافت|وصول)\s*(?:اجاره|کرایه)|(?<![آ-ی])(?:اجاره|کرایه)(?:\s+\S+){0,8}?\s+(?:دریافت|وصول)\s*(?:کرد(?:یم|م|ن|ند)?|شد)(?![آ-ی])/;
 const PAID_BACK = /(?<![آ-ی])(?:پس|عودت)\s*داد(?:یم|م)|برگردوند(?:یم|م)|برگرداند(?:یم|م)/;
 
+/**
+ * «۲۰ میلیون (رو) گرفتیم»، «بیست میلیون از آقای کریمی گرفتم»: مفعولِ «گرفتن» خودِ
+ * پول است، پس پول آمده. «پیتزا/مشاوره/پشتیبانی یکساله گرفتیم» و «۳ میلیون پیتزا
+ * گرفتیم» خرید است: میان مبلغ و فعل چیزی جز «رو»، «نقد» یا مبدأِ «از X» نیست.
+ */
+const TAKEN_AFTER_AMOUNT = /^\s*(?:(?:تومان|تومن|ریال)\s*)?(?:(?:رو|را|شو)\s*)?(?:(?:هم|نقد|نقدی|کامل)\s*)?(?:از\s*(?:(?:آقای|اقای|خانم|جناب|شرکت|مهندس|دکتر|حاج|حاجی)\s+)?\S+\s*)?(?:(?:رو|را|هم|نقد|نقدی)\s*)?گرفت(?:یم|م)(?![آ-ی])/;
+// پیش از مبلغ مفعولی نیست: آغاز بند، حرف ربط، قید، فعلِ قبلی یا مبدأِ «از X».
+// «اشتراک یکساله رو ۲۴ میلیون گرفتیم» مفعولش اشتراک است و مبلغ بهای آن.
+const NO_OBJECT_BEFORE = /(?:^|[،,.؛:]|(?<![آ-ی])(?:و|هم|ولی|اما|امروز|دیروز|الان|رفت|بعد|بعدش|نقد|فقط|تازه|کلا|داد(?:یم|م)|فروخت(?:یم|م)|کرد(?:یم|م)|شد)|(?<![آ-ی])از\s+(?:(?:آقای|اقای|خانم|جناب|شرکت|مهندس|دکتر|حاج|حاجی)\s+)?\S+)\s*$/;
+function takenMoney(input) {
+  const text = maskNumericDates(repairNumberSpeech(normalizePersian(input)));
+  if (!/گرفت(?:یم|م)(?![آ-ی])/.test(text)) return false;
+  return extractAmounts(input).spans.some((span) => TAKEN_AFTER_AMOUNT.test(text.slice(span.end))
+    && NO_OBJECT_BEFORE.test(text.slice(0, span.start)));
+}
+
+// «دادیم رفت ۳ میلیون گرفتیم»: واگذاریِ وسیله است، نه پرداخت؛ پولِ جمله آمده.
+const GAVE_AWAY = /داد(?:یم|م)\s*رفت(?![آ-ی])/g;
+
 export function counterpartyPaidUs(input) {
   const text = normalizePersian(input).replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
-  if (MONEY_OUT_VERB.test(text) || PAID_BACK.test(text) || OTHER_RECIPIENT.test(text)) return false;
+  const vetoText = GAVE_AWAY.test(text) && takenMoney(text) ? text.replace(GAVE_AWAY, ' ') : text;
+  GAVE_AWAY.lastIndex = 0;
+  if (MONEY_OUT_VERB.test(vetoText) || PAID_BACK.test(text) || OTHER_RECIPIENT.test(text)) return false;
   if (payerHasNotPaid(text)) return false;
-  return FROM_PAYER.test(text) || PAYER_GAVE.test(text.replace(NOT_MONEY_GAVE, ' ')) || RECEIVED_AS_INCOME.test(text);
+  // «اجاره … ۶۰ میلیون گرفتم» بی پرداخت‌کننده جهتِ روشنی ندارد (RENT_TAKEN).
+  return FROM_PAYER.test(text) || PAYER_GAVE.test(text.replace(NOT_MONEY_GAVE, ' ')) || RECEIVED_AS_INCOME.test(text)
+    || (!RENT_TAKEN.test(text) && takenMoney(text));
 }
 
 /**
