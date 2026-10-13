@@ -1,6 +1,7 @@
 import { taxPenaltyFacts, isTaxPenaltyCategory } from './reviewTaxPenalty.js';
 import { conditionalWaiver, conditionalPaymentProposal } from './reviewSettlement.js';
 import { normalizePersian } from './normalize.js';
+import { insuranceNature } from './insuranceNature.js';
 
 // Recognition and settlement are different events. These constraints do not
 // derive dates, counterparties, tax rates or evidence from model output.
@@ -12,8 +13,12 @@ export function reviewNature(text) {
   // فعل‌های رسمی تنها، رابطهٔ شریک «نامشخص» خوانده می‌شد (آزمون زندهٔ مهر ۱۴۰۵).
   const partner=/شریک|سهامدار|سهام دار/.test(t) && /واریز|انتقال|پرداخت|برداشت|ریخت|کارت به کارت|داد(?![آ-ی])|دادن/.test(t);
   const capital=/افزایش سرمایه|آورده (?:قطعی|سرمایه)|ثبت سرمایه/.test(t) && !/بدون|هنوز|نیست|نشده/.test(t);
-  const insuranceSettlement=/بیمه/.test(t) && /حقوق|کارکنان|کارگر|تامین اجتماعی|لیست/.test(t) && /پرداخت|تسویه|واریز/.test(t);
-  const prepaid=(/پیش پرداخت/.test(t) || (/بیمه/.test(t) && /یک ساله|یکساله|12 ماه|دوازده ماه/.test(t) && !insuranceSettlement)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
+  // همان قاعدهٔ موتور (`shared/insuranceNature.js`): «بیمهٔ تکمیلی کارکنان یک
+  // ساله» حق بیمهٔ یک بیمه‌نامه است و پیش‌پرداخت، نه لیست تأمین اجتماعی؛ و
+  // «حقوقی» یا «لیست قیمت» در جمله، لیست حقوق نمی‌سازد.
+  const insurance=insuranceNature(t);
+  const insuranceSettlement=insurance.payrollList && insurance.paid;
+  const prepaid=(/پیش پرداخت/.test(t) || (insurance.insurance && (insurance.coverage || /12 ماه|دوازده ماه/.test(t)) && !insurance.payrollList && !insurance.claim)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
   const advance=/پیش دریافت/.test(t) || /(?:خدمات|خدماتی|خدمت).*هنوز.*انجام نشده/.test(t) && /دریافت|واریز/.test(t);
   const deposit=/ودیعه|سپرده/.test(t) && /استرداد|قابل برگشت|پس می/.test(t);
   const intangible=/حق استفاده|حق امتیاز|علامت تجاری/.test(t) && /خرید|پرداخت/.test(t);

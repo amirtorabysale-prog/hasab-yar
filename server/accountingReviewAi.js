@@ -14,6 +14,7 @@ import { proposalDependsOnLedger, proposalIsStale, reviewAccountCatalog, reviewK
 import { fixedAssetReviewProposal, payrollReviewQuestion } from '../shared/reviewRuleProposals.js';
 import { ROLES } from '../shared/accountingRules.js';
 import { ensureFinancialEventSchema, decisionForEvent } from './financialEventStore.js';
+import { insuranceNature } from '../shared/insuranceNature.js';
 
 const roles = new Set([...Object.values(ROLES),'inventory-asset']);
 // Responses Structured Outputs constrains syntax; posting guards still decide
@@ -132,12 +133,14 @@ async function proposeReviewOnce(database, eventId, { fetcher = fetch, message =
   // کرده فقط نام و عمر مفید می‌خواهد، و حقوق اول باید خالص یا ناخالص بودنش
   // روشن شود.
   const ruled=(originalTradeFacts && fixedAssetReviewProposal({text:captured,amount:row.amount,decision:decisionForEvent(database,eventId),answers:context.questionAnswers || {},kind:event.kind}))
-    || payrollReviewQuestion({category:event.category,answers:context.questionAnswers || {}});
+    // حق بیمهٔ بیمه‌نامهٔ کارکنان («بیمه حوادث کارگران دوازده ماهه») حقوق نیست،
+    // حتی وقتی دسته‌اش «حقوق و دستمزد» خورده؛ پرسیدن خالص یا ناخالص سؤال غلط است.
+    || (!insurancePremium(captured) && payrollReviewQuestion({category:event.category,answers:context.questionAnswers || {}}));
   const localProposal=unsupported || ruled || (originalTradeFacts && (
     taxPenaltyProposal(captured,row.amount,context) ||
     (!event.amountReferenceOnly && simpleReviewCashProposal(captured,row.amount)) ||
     conditionalPaymentProposal(captured,context) || tradeCollectionProposal(captured,row.amount,event)
-  )) || taxRefundProposal(database,captured,row.amount,event) || insuranceSettlementProposal(database,captured,row.amount,event) ||
+  )) || taxRefundProposal(database,captured,row.amount,event) || (originalTradeFacts && !timeBoundPrepaid(database,eventId) && insuranceSettlementProposal(database,captured,row.amount,event)) ||
     unidentifiedReceiptProposal(captured,row.amount) || partnerTransferProposal(captured,row.amount,context);
   const openai = Boolean(process.env.OPENAI_API_KEY);
   const apiKey = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
@@ -245,6 +248,20 @@ export function proposalMatchesPlan(proposal, plan) {
 }
 
 const inFlight=new WeakMap();
+
+/**
+ * موتور این پرداخت را پیش‌پرداخت خدمت دوره‌دار تصمیم گرفته (حق بیمهٔ یک‌ساله،
+ * اجارهٔ جلو). قاعدهٔ «پرداخت لیست بیمه» نباید بی‌خبر از آن، پیش از مدل، همان
+ * پول را تسویهٔ لیست تأمین اجتماعی کند: موتور و دستیار یک جواب می‌دهند.
+ */
+function insurancePremium(text) {
+  const nature=insuranceNature(text);
+  return nature.premium && !nature.payrollList && !nature.claim;
+}
+
+function timeBoundPrepaid(database,eventId) {
+  return decisionForEvent(database,eventId)?.treatment==='prepaid-expense';
+}
 export async function proposeReview(database,eventId,options={}) {
   let requests=inFlight.get(database);
   if(!requests) {requests=new Map();inFlight.set(database,requests);}

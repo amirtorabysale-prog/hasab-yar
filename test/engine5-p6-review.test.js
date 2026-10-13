@@ -374,3 +374,148 @@ test('کارت امروز: مسیر جواب در تجربهٔ ساده باز �
     assert.match(plain, /مطمئن نیستم/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// review-insurance-settlement-misfire — حق بیمهٔ کارکنان، لیست تأمین اجتماعی نیست
+// ---------------------------------------------------------------------------
+
+const { proposeReview } = await import('../server/accountingReviewAi.js');
+const { buildWorkbook } = await import('../server/spreadsheet.js');
+const { reviewNature } = await import('../shared/reviewNature.js');
+const { isTimeBoundService } = await import('../shared/economicFamily.js');
+
+const PAYROLL_HEADER = ['نام پرسنل', 'کد ملی', 'حقوق ناخالص', 'بیمه سهم کارمند', 'بیمه سهم کارفرما', 'مالیات', 'سایر کسورات', 'خالص پرداختی'];
+// بیمهٔ لیست: ۳٫۵ + ۱۱٫۵ = ۱۵ میلیون.
+const PAYROLL_PEOPLE = [
+  ['رضا کریمی', '0012345678', 30_000_000, 2_100_000, 6_900_000, 600_000, 0, 27_300_000],
+  ['مینا رجبی', '0023456789', 20_000_000, 1_400_000, 4_600_000, 400_000, 0, 18_200_000],
+];
+
+/** مدل، اگر پرسیده شود، همان پیش‌پرداخت را پیشنهاد می‌دهد؛ شمارنده نشان می‌دهد پرسیده شد یا نه. */
+function prepaidModel() {
+  const calls = { n: 0 };
+  const fetcher = async (_url, init) => {
+    calls.n += 1;
+    const amount = Number(JSON.parse(init.body).input[0].content[0].text.match(/مبلغ قطعی رویداد: (\d+)/)?.[1]);
+    const out = { questions: [], summary: 'پیش‌پرداخت بیمه', explanation: 'حق بیمهٔ دوره‌دار', missingFacts: [], counterpartyName: null, inventoryItems: [],
+      lines: [{ role: 'prepaid-asset', key: 'پیش‌پرداخت بیمه', accountId: null, chartAccountId: null, debit: amount, credit: 0 }, { role: 'cash', key: null, accountId: null, chartAccountId: null, debit: 0, credit: amount }] };
+    return { ok: true, status: 200, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(out) }] }], usage: {} }) };
+  };
+  return { fetcher, calls };
+}
+
+async function withModelKey(callback) {
+  const previous = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key-not-real';
+  try { return await callback(); } finally { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; }
+}
+
+/** گفته از کارت ثبت، «مطمئن نیستم»، و پیشنهاد دستیار حسابدار. */
+async function reviewOf(text, { payroll = false, message = '' } = {}) {
+  const run = freshWorkspace();
+  return withModelKey(() => run(async () => {
+    const cash = database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 500_000_000 });
+    if (payroll) database.importPayrollFile(buildWorkbook([{ name: 'حقوق', rows: [PAYROLL_HEADER, ...PAYROLL_PEOPLE] }]), 'payroll.xlsx', { period: '۱۴۰۵/۰۶', occurredAt: '2026-09-01' });
+    const transactions = parseFinancialText(text, { source: 'voice', now: TODAY }).transactions
+      .map((item) => ({ ...item, accountId: cash.id, occurredAt: item.occurredAt || TODAY.toISOString() }));
+    database.insertTransactions({ transcript: text, transactions, allowDuplicates: true });
+    const sql = database.activeWorkspaceDatabase();
+    const event = sql.prepare('SELECT id,route FROM financial_events ORDER BY rowid DESC').get();
+    if (event.route !== 'accountant-review') database.handOverPending(event.id);
+    const model = prepaidModel();
+    const proposal = await proposeReview(sql, event.id, { fetcher: model.fetcher, message, facts: { accountId: cash.id } });
+    const item = database.reviewQueue().items.find((entry) => entry.id === event.id);
+    return { proposal, modelCalled: model.calls.n > 0, canPost: item?.aiProposal?.canPost, eventId: event.id, decision: database.eventDecision(event.id).decision, sql };
+  }));
+}
+const roleShape = (proposal) => proposal.lines.map((line) => [line.role, line.debit || 0, line.credit || 0]);
+
+test('دستیار حسابدار: حق بیمهٔ کارکنان و کارگران با دورهٔ پوشش به مدل می‌رسد و پیش‌پرداخت می‌شود، نه لیست حقوق', async () => {
+  for (const [text, amount] of [
+    ['بیمه تکمیلی کارکنان یک ساله ۲۴ میلیون پرداخت کردیم', 24_000_000],
+    ['بیمه مسئولیت کارگران یک ساله ۱۲ میلیون پرداخت کردیم', 12_000_000],
+    ['بیمه درمان کارکنان شش ماهه ۱۸ میلیون واریز کردیم', 18_000_000],
+    ['بیمه عمر کارکنان یک ساله ۱۰ میلیون دادیم', 10_000_000],
+    ['بیمه حوادث كارگران دوازده ماهه 6 میلیون پرداخت شد', 6_000_000],
+    ['بیمه تکمیلي كاركنان يكساله 24 میلیون پرداخت کردیم', 24_000_000],
+  ]) {
+    const review = await reviewOf(text);
+    assert.equal(review.modelCalled, true, `${text}: مدل پرسیده شد`);
+    assert.notEqual(review.proposal.model, 'nature-rules-v1', text);
+    assert.deepEqual(roleShape(review.proposal), [['prepaid-asset', amount, 0], ['cash', 0, amount]], text);
+    assert.equal(review.canPost, true, text);
+  }
+});
+
+test('دستیار حسابدار: «حقوقی» و «لیست قیمت» در جملهٔ بیمه‌نامه، لیست حقوق نمی‌سازند؛ پیام آزاد حسابدار به مدل می‌رسد', async () => {
+  for (const text of [
+    'بیمه مسئولیت شخص حقوقی شرکت یک ساله ۲۰ میلیون پرداخت شد',
+    'بیمه آتش سوزی کارگاه یک ساله ۱۵ میلیون طبق لیست قیمت بیمه دی پرداخت شد',
+  ]) {
+    const review = await reviewOf(text);
+    assert.equal(review.modelCalled, true, text);
+    assert.ok(!review.proposal.lines.some((line) => line.role === 'payroll-insurance-payable'), text);
+    assert.doesNotMatch(JSON.stringify(review.proposal.questions), /لیست حقوق/, text);
+  }
+  const corrected = await reviewOf('بیمه تکمیلی کارکنان یک ساله ۳۰ میلیون پرداخت کردیم', { message: 'این حق بیمه تکمیلی یک ساله به شرکت بیمه است نه لیست تامین اجتماعی؛ پیش پرداخت ثبت کن' });
+  assert.equal(corrected.modelCalled, true);
+  assert.deepEqual(roleShape(corrected.proposal), [['prepaid-asset', 30_000_000, 0], ['cash', 0, 30_000_000]]);
+});
+
+test('دستیار حسابدار: لیست حقوق باز با همان مبلغ، حق بیمهٔ تکمیلی را تسویهٔ لیست نمی‌کند؛ لیست واقعی همچنان تسویه می‌شود', async () => {
+  const premium = await reviewOf('بیمه تکمیلی کارکنان یک ساله ۱۵ میلیون پرداخت کردیم', { payroll: true });
+  assert.equal(premium.modelCalled, true);
+  assert.deepEqual(roleShape(premium.proposal), [['prepaid-asset', 15_000_000, 0], ['cash', 0, 15_000_000]]);
+  assert.equal(premium.sql.prepare('SELECT insurance_paid_at AS paid FROM payroll_runs').get().paid, null, 'لیست حقوق پرداخت‌نشده می‌ماند');
+  for (const text of [
+    '۱۵ میلیون تومن بیمه تامین اجتماعی پرسنل (سهم کارفرما، بیکاری و کارگر) به تامین اجتماعی پرداخت شد',
+    'لیست بیمه شهریور رو ۱۵ میلیون دادیم',
+  ]) {
+    const list = await reviewOf(text, { payroll: true });
+    assert.equal(list.proposal.model, 'nature-rules-v1', text);
+    assert.equal(list.modelCalled, false, text);
+    assert.deepEqual(roleShape(list.proposal), [['payroll-insurance-payable', 15_000_000, 0], ['cash', 0, 15_000_000]], text);
+  }
+});
+
+test('ماهیت بیمه: موتور و دستیار یک قاعده می‌خوانند', () => {
+  const premiums = [
+    'بیمه تکمیلی کارکنان یک ساله ۲۴ میلیون پرداخت کردیم',
+    'بیمه مسئولیت کارگران یک ساله ۱۲ میلیون پرداخت کردیم',
+    'بیمه کارکنان یک ساله ۲۴ میلیون پرداخت کردیم',
+    'بیمه مسئولیت شخص حقوقی شرکت یک ساله ۲۰ میلیون پرداخت شد',
+    'بیمه آتش سوزی کارگاه یک ساله ۱۵ میلیون طبق لیست قیمت بیمه دی پرداخت شد',
+    'بیمه انبار یک ساله ۱۲ میلیون پرداخت کردیم',
+  ];
+  const lists = [
+    '۱۵ میلیون تومن بیمه تامین اجتماعی پرسنل (سهم کارفرما، بیکاری و کارگر) به تامین اجتماعی پرداخت شد',
+    'لیست بیمه شهریور رو ۱۵ میلیون دادیم',
+    'سه میلیون حق بیمه پرسنل دادم',
+    'بیمه کارکنان شهریور ۱۵ میلیون پرداخت شد',
+    'حق بیمه تأمین اجتماعی لیست حقوق مهر رو ریختیم',
+  ];
+  for (const text of premiums) {
+    const nature = reviewNature(text);
+    assert.equal(nature.insuranceSettlement, false, text);
+    assert.equal(nature.prepaid, true, `${text}: نگهبان «منفعت آینده هزینه نیست» روشن است`);
+    assert.equal(isTimeBoundService({ category: 'بیمه', utterance: text }), true, text);
+  }
+  for (const text of lists) {
+    assert.equal(reviewNature(text).insuranceSettlement, true, text);
+    assert.equal(reviewNature(text).prepaid, false, text);
+    assert.equal(isTimeBoundService({ category: 'بیمه', utterance: text }), false, text);
+  }
+  // خسارت دریافتی از بیمه‌گر: نه حق بیمه، نه لیست.
+  const claim = 'خسارت بیمه انبار ۲۵ میلیون واریز شد';
+  assert.equal(reviewNature(claim).insuranceSettlement, false);
+  assert.equal(isTimeBoundService({ category: 'بیمه', utterance: claim }), false);
+});
+
+test('دستیار حسابدار: حق بیمهٔ حوادث کارگران که دستهٔ «حقوق و دستمزد» خورده، سؤال خالص/ناخالص حقوق نمی‌گیرد', async () => {
+  const text = 'بیمه حوادث کارگران دوازده ماهه ۶ میلیون پرداخت شد';
+  const review = await reviewOf(text);
+  assert.ok(!review.proposal.questions.some((question) => question.id === 'payroll.gross-or-net'), JSON.stringify(review.proposal.questions));
+  // منفی: حقوق واقعی همان سؤال را می‌گیرد.
+  const salary = await reviewOf('حقوق مهر کارکنان ۴۰ میلیون پرداخت شد');
+  assert.ok(salary.proposal.questions.some((question) => question.id === 'payroll.gross-or-net'), JSON.stringify(salary.proposal));
+});
