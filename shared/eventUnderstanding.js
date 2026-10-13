@@ -31,6 +31,7 @@ import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
 import { detectBank } from './banks.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
 import { mentionsPersonalMoney } from './partnerPaidSpeech.js';
+import { readServicePeriod } from './periodSpeech.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
@@ -1035,13 +1036,26 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // پول — و هیچ سندی ساخته نشد؛ بدهی به ادارهٔ برق گم شد. همان قاعدهٔ قطعیِ مسیر
   // فعلی (`readUnpaidSignal`) این‌جا هم داور است، و سفارش، پیش‌فاکتور یا قرار
   // آینده («قرار است») هرگز بدهی نمی‌سازد.
-  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته)|(?:دریافت|واریز)\s*ن(?:شده|کرده|کردیم))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
+  // سوم‌شخص هم: «مستاجر اجاره رو هنوز نداده» همان «هنوز نگرفتیم» است؛ بی‌این،
+  // مبلغ انجام‌شده می‌ماند و «پول به کدام حساب آمد؟» برای پولی که نیامده پرسیده می‌شد.
+  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته|داده|دادن|دادند|ریخته|ریختن|ریختند)|(?:دریافت|واریز|پرداخت)\s*ن(?:شده|کرده|کردیم|کردن|کردند))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
   // «تموم کردیم و تحویل دادیم؛ قراره بدن»: «قرار» دربارهٔ پول است و طلب امروز هست
   // (آزمون زنده V15). «قرار» فقط وقتی چیزی را آینده می‌کند که تحویلی گفته نشده باشد.
   const deliveredInSpeech = /تحویل\s*(?:دادیم|دادم|گرفتیم|گرفتم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|انجام\s*(?:دادیم|دادم|شد)/.test(spoken)
     && !/(?:نه|هنوز)\s*تحویل|تحویل\s*ن(?:دادیم|داده|گرفتیم|گرفته|شده)/.test(spoken);
   const notYetReal = /سفارش|پیش\s*فاکتور/.test(spoken) || (/قرار\s*(?:است|بود)|قراره/.test(spoken) && !deliveredInSpeech) || subject.delivered === 'no';
   const accrues = ['expense', 'purchase', 'asset-purchase', 'sale', 'income'].includes(eventKind) && !notYetReal;
+  // «اجارهٔ ۶ ماه آینده ۳۰ میلیون شد ولی هنوز پرداخت نکردیم»: قراردادِ اجرانشده.
+  // خدمتی که دوره‌اش هنوز نیامده و پولش هم نرفته، امروز نه هزینه است نه بدهی؛
+  // تبدیلش به «بدهیِ پرداخت‌نشده» شش ماه اجارهٔ آینده را امروز هزینه می‌کرد
+  // (موتور ۵). دوره‌ای که از ماهِ جاری جلوتر می‌رود — گفته‌شده یا از تاریخ پوشش —
+  // بدهیِ خودکار نمی‌سازد و با حسابدار است؛ همان کاری که مسیر قطعی می‌کند.
+  const today = todayPersian(now, timeZone);
+  const thisMonthEnd = Date.parse(persianMonthEnd(today.year, today.month, timeZone) || '') || Infinity;
+  const spokenPeriod = readServicePeriod(text, { occurredAt: new Date(now).toISOString() });
+  const futureCoverage = (spokenPeriod && Date.parse(spokenPeriod.end) > thisMonthEnd)
+    || dates.some((date) => date.accepted && ['coverage-start', 'coverage-end'].includes(date.role) && Date.parse(date.iso) > thisMonthEnd);
+  const executory = new Set();
   const becameObligation = new Set();
   for (const condition of conditions.filter((item) => item.kind === 'negation')) {
     for (const ref of condition.affects) {
@@ -1052,6 +1066,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       // جهت از نوع رویداد: مدل در «هنوز پولی نگرفتیم» جابه‌جایی را «خروج» نوشت.
       const direction = ['sale', 'income'].includes(eventKind) ? 'in' : 'out';
       if (!unpaidHere[direction]) continue;
+      if (futureCoverage) { executory.add(target.id); continue; }
       target.status = 'done';
       for (const item of own) { item.direction = 'none'; item.amountRef = target.id; }
       if (!own.length) movements.push({ id: `${target.id}-unpaid`, amountRef: target.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: condition.evidence });
@@ -1065,7 +1080,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   if (unpaidHere.out && !becameObligation.size && !['sale', 'income'].includes(eventKind) && (accrues || (eventKind === 'obligation' && !notYetReal))) {
     const candidates = amounts.filter((item) => item.accepted && !isRetracted(item.id) && ['total', 'other'].includes(item.role) && ['done', 'future'].includes(item.status));
     const othersDone = amounts.some((item) => item.accepted && !isRetracted(item.id) && item.status === 'done' && !candidates.includes(item));
-    if (candidates.length === 1 && !othersDone) {
+    if (candidates.length === 1 && !othersDone && futureCoverage) executory.add(candidates[0].id);
+    else if (candidates.length === 1 && !othersDone) {
       const [target] = candidates;
       target.status = 'done';
       const own = movements.filter((item) => item.amountRef === target.id);
@@ -1075,15 +1091,35 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       violations.push(`amounts.${target.id}:unpaid-obligation`);
     }
   }
+  for (const id of executory) {
+    // پولی هم جابه‌جا نشده: هیچ سطر نقدی، هیچ سؤال «از کدام حساب».
+    byId.get(id).status = 'future';
+    for (const movement of movements.filter((item) => item.amountRef === id)) movement.direction = 'none';
+    violations.push(`amounts.${id}:executory-contract`);
+    ask(`amounts.${id}.executory`, 'judgment', `«${byId.get(id)?.evidence || id}» برای دورهٔ آینده است و هنوز پرداخت نشده؛ قراردادِ اجرانشده امروز هزینه یا بدهی نمی‌سازد و ثبتش با حسابدار است.`);
+  }
   // «اجارهٔ شش ماه آینده را ... پرداخت کردیم»: «آینده» دربارهٔ دورهٔ اجاره است، نه
   // پول. مبلغی که مدل «آینده» نامید ولی جابه‌جایی‌اش با فعلِ انجام‌شده آمده، انجام
   // شده است. آزمون زنده (V10): هیچ سندی ساخته نشد.
+  //
+  // فعل فقط در شاهدِ جابه‌جایی نیست: مدل شاهد را «از تجارت» نوشت و فعلِ «پرداخت
+  // کردیم» در دنبالهٔ بندِ خودِ مبلغ ماند؛ پرداخت ۳۰ میلیونی گم می‌شد (موتور ۵).
+  // دنبالهٔ بند، از پایان شاهدِ مبلغ تا مرز بعدی است؛ «بقیه رو ماه بعد میدیم» فعل
+  // انجام‌شده‌ای ندارد و «۴ میلیون دادیم»ِ پیش از آن به آن نمی‌رسد.
+  const tailOf = (evidence) => {
+    const key = normalizePersian(evidence || '').trim();
+    const clause = clauseOf(evidence);
+    const at = key ? clause.indexOf(key) : -1;
+    return at < 0 ? '' : clause.slice(at + key.length);
+  };
   const hedged = new Set(conditions.filter((item) => ['negation', 'condition', 'promise'].includes(item.kind)).flatMap((item) => item.affects));
   for (const movement of movements.filter((item) => ['in', 'out', 'transfer'].includes(item.direction))) {
     const amount = byId.get(movement.amountRef);
     if (!amount?.accepted || amount.status !== 'future' || STATUS_BY_ROLE[amount.role] || hedged.has(amount.id) || becameObligation.has(amount.id)) continue;
     const said = normalizePersian(movement.evidence || '');
-    if (!said || !foundLoosely(movement.evidence, textKey) || !DONE_MONEY_VERB.test(said) || NOT_YET.test(said)) continue;
+    const tail = tailOf(amount.evidence);
+    const doneHere = said && foundLoosely(movement.evidence, textKey) && DONE_MONEY_VERB.test(said) && !NOT_YET.test(said);
+    if (!doneHere && !(DONE_MONEY_VERB.test(tail) && !NOT_YET.test(tail))) continue;
     amount.status = 'done';
     violations.push(`amounts.${amount.id}:done-in-speech`);
   }

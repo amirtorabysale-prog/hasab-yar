@@ -311,3 +311,61 @@ test('پایانِ پیش از آغاز هنوز به سال بعد می‌رو�
   const [only] = read('بیمه تا آخر فروردین ۱۲ میلیون دادیم', [{ id: 'd1', role: 'coverage-end', expression: 'آخر فروردین', relative: null, jalali: { year: null, month: 1, day: null } }]);
   assert.equal(only.iso.slice(0, 7), '2027-04');
 });
+
+// ---------------------------------------------------------------------------
+// ۴. «آینده»ی دورهٔ پوشش زمانِ پول نیست؛ قراردادِ اجرانشده بدهی نمی‌سازد.
+// ---------------------------------------------------------------------------
+
+const negation = (evidence) => [{ kind: 'negation', affects: ['a1'], evidence, text: evidence }];
+
+test('مبلغی که مدل «آینده» خواند ولی فعل انجام‌شده در بند خودش است، پرداخت شده است', async () => {
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('اجاره شش ماه آینده دفتر رو ۳۰ میلیون از تجارت پرداخت کردیم', model({
+      amounts: [amt('a1', 'paid-now', '۳۰ میلیون', { status: 'future' })],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('اجاره دفتر'),
+    }));
+    assert.equal(item.status, 'ready', JSON.stringify(item.plan?.reasons));
+    assert.equal(debitOf(posted, /پیش‌پرداخت/), 30_000_000);
+    assert.equal(posted.schedule.length, 6);
+    assert.equal(posted.scheduled, 30_000_000);
+  });
+  // منفی: پرداختی که واقعاً آینده است («پرداخت می‌کنیم») سند ندارد.
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('اجاره شش ماه آینده رو ۳۰ میلیون ماه بعد از تجارت پرداخت می‌کنیم', model({
+      amounts: [amt('a1', 'paid-now', '۳۰ میلیون', { status: 'future' })],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('اجاره دفتر'),
+    }));
+    assert.equal(item.status, 'no-entry');
+    assert.equal(posted, null);
+  });
+});
+
+test('اجاره یا بیمهٔ دورهٔ آینده که هنوز پرداخت نشده: نه هزینه نه بدهیِ امروز — حسابدار', async () => {
+  for (const [text, extra] of [
+    ['اجاره ۶ ماه آینده دفتر ۳۰ میلیون شد ولی هنوز پرداخت نکردیم', { conditions: negation('هنوز پرداخت نکردیم') }],
+    ['اجاره ۶ ماه آینده دفتر ۳۰ میلیون شد ولی هنوز پرداخت نکردیم', {}],
+    ['اجاره آبان تا دی دفتر ۳۰ میلیون شد ولی هنوز پرداخت نکردیم', { conditions: negation('هنوز پرداخت نکردیم'), dates: coverage('آبان', 'دی', { month: 8 }, { month: 10 }) }],
+    ['مستاجر اجاره شش ماه بعد رو ۳۰ میلیون هنوز نداده', { event: { kind: 'income', description: '', status: 'done' }, conditions: negation('هنوز نداده') }],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, model({ amounts: [amt('a1', 'total', '۳۰ میلیون')], subject: service('اجاره دفتر'), ...extra }),
+        { answers: [] });
+      assert.equal(item.status, 'needs-accountant', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      assert.deepEqual(questionIds(item), [], `${text}: «از کدام حساب» برای پولی که نرفته پرسیده نمی‌شود`);
+      assert.equal(posted, null, text);
+    });
+  }
+});
+
+test('منفی: قبض و اجارهٔ همین ماه یا ماهِ گذشته که پرداخت نشده، بدهی/طلبِ امروز است', async () => {
+  for (const [text, evidence, kind, negated] of [
+    ['قبض برق ۲ میلیون اومده هنوز پرداخت نکردیم', '۲ میلیون', 'expense', 'هنوز پرداخت نکردیم'],
+    ['اجاره مهر دفتر ۱۰ میلیون شد هنوز ندادیم', '۱۰ میلیون', 'expense', 'هنوز ندادیم'],
+    ['مستاجر اجاره مرداد رو ۱۰ میلیون هنوز نداده', '۱۰ میلیون', 'income', 'هنوز نداده'],
+  ]) {
+    const result = validateUnderstanding(model({ event: { kind, description: '', status: 'done' }, amounts: [amt('a1', 'total', evidence)], conditions: negation(negated) }),
+      { text, now: new Date(NOW) });
+    assert.ok(result.violations.includes('amounts.a1:unpaid-obligation'), `${text}: ${result.violations}`);
+    assert.ok(!result.violations.includes('amounts.a1:executory-contract'), text);
+  }
+});
