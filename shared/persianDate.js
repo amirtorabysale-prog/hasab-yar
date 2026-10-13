@@ -555,6 +555,10 @@ const COVERAGE_OBJECT = [
 ].join('|');
 export const COVERAGE_BETWEEN = `(?:[\\s\\u200c]*[یي](?![آ-ی])|ٔ)?(?:[\\s\\u200c]+(?:${COVERAGE_OBJECT})(?![آ-ی])(?:[\\s\\u200c]*[یي](?![آ-ی]))?){0,3}(?:[\\s\\u200c]+(?:برا[یي]?|بابت|واسه|مال[یي]?)(?![آ-ی]))?[\\s\\u200c]+`;
 const SPAN_MONTH = `(?:ماه\\s*)?(?:${MONTH_PATTERN})(?![آ-ی])(?:\\s*ماه)?`;
+/** ماهِ شروع با فعل ربطِ چسبیده: «شروعش از اول آبانه». */
+const SPAN_START_MONTH = `(?:ماه\\s*)?(?:${MONTH_PATTERN})(?:ه)?(?![آ-ی])(?:\\s*ماه)?`;
+/** «تاریخ شروع»، «شروعش»، «اعتبارش»، «تحویل کلید» — نشانهٔ شروع پوشش پیش از تاریخ. */
+const START_CUE = '(?:(?:تاریخ\\s*)?(?:شروع|آغاز|اعتبار|فعال\\s*سازی)(?:\\s*ش)?|تحویل\\s*کلید)';
 const SPAN_YEAR = '(?:\\s+(?:سال\\s+)?(?:\\d{4}|\\d{2})(?!\\d)(?!\\s*(?:م[یي]?ل[یي]?ون|م[یي]?ل[یي]ارد|هزار|تومان|تومن|ریال|ماه|روز|سال|درصد|قسط|و\\s*\\d)))?';
 const SPAN_START_DAY = `(?:(?:${DAY_WORD_PATTERN}|ابتدای|ابتدا|\\d{1,2})\\s*(?:ام\\s*)?)?`;
 const SPAN_END_DAY = `(?:(?:آخر|اخر|پایان|انتهای|${DAY_WORD_PATTERN}|\\d{1,2})\\s*(?:ام\\s*)?)?`;
@@ -568,10 +572,14 @@ const COVERAGE_MASKS = Object.freeze([
   // بازهٔ ماه‌ها، با «از» یا بی آن، با روز و سالِ اختیاری کنار هر ماه:
   // «از اول آبان ۱۴۰۵ تا پایان مهر ۱۴۰۶»، «از ۱ آبان تا ۳۰ بهمن»، «مهر تا اسفند».
   new RegExp(`(?<![آ-ی])(?:از\\s*)?${SPAN_START_DAY}${SPAN_MONTH}${SPAN_YEAR}\\s*(?:تا|الی|لغایت)\\s*${SPAN_END_DAY}${SPAN_MONTH}${SPAN_YEAR}(?:\\s+همین\\s+امسال)?`, 'g'),
-  // شروعِ گفته‌شده: «از اول آذر»، «از ۱۴۰۵/۰۸/۰۱»، «که اول آبان شروع میشه».
-  new RegExp(`(?<![آ-ی])از\\s*${SPAN_START_DAY}${SPAN_MONTH}${SPAN_YEAR}`, 'g'),
+  // شروعِ گفته‌شده: «از اول آذر»، «از ۱۴۰۵/۰۸/۰۱»، «که اول آبان شروع میشه»،
+  // «تاریخ شروع اول آبان»، «شروعش از اول آبانه»، «تحویل کلید اول آبان»،
+  // «که اول آبان فعال میشه»، «اول آذر کلید رو میگیریم».
+  new RegExp(`(?<![آ-ی])(?:از|${START_CUE}\\s*(?:از)?)\\s*:?\\s*${SPAN_START_DAY}${SPAN_START_MONTH}${SPAN_YEAR}`, 'g'),
   /(?<![آ-ی])از\s*(?:\d{4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{1,2}|\d{1,2}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{4})(?!\d)/g,
-  new RegExp(`(?<![آ-ی])${SPAN_START_DAY}${SPAN_MONTH}${SPAN_YEAR}\\s*(?:شروع|آغاز)`, 'g'),
+  new RegExp(`(?<![آ-ی])${SPAN_START_DAY}${SPAN_START_MONTH}${SPAN_YEAR}\\s*(?:شروع|آغاز|فعال|کلید)`, 'g'),
+  // «از اول ماه بعد»، «از ماه بعد»، «از فردا»، «از اول ۱۴۰۶»، «از اول سال بعد».
+  new RegExp(`(?<![آ-ی])(?:از|${START_CUE})\\s*(?:از\\s*)?(?:(?:اول|ابتدای?)\\s*)?(?:(?:این|همین)\\s*ماه|ماه\\s*(?:جاری|بعدی|بعد|آینده|اینده|دیگه|دیگر|قبل|گذشته|پیش)|پس\\s*فردا|فردا|سال\\s*(?:بعدی|بعد|آینده|اینده|دیگه|دیگر)|امسال|(?:سال\\s*)?\\d{4})(?![آ-ی\\d])`, 'g'),
   /(?:شروع|آغاز)\s*(?:پوشش|بیمه|قرارداد)\s*[^،,؛.]+/g,
   // «اجاره سه ماه گذشته»، «شارژ ماه آینده»، «اجاره این ماه»: ماهِ خدمت، نه روز پرداخت.
   new RegExp(`(?<![آ-ی])${COVERAGE_NOUN}${COVERAGE_BETWEEN}(?:${SPAN_NUMBER}\\s*ماه\\s*(?:گذشته|اخیر)|(?:همین|این)\\s*ماه|ماه\\s*(?:جاری|قبل|گذشته|پیش|بعدی|بعد|آینده|اینده|دیگه|دیگر))(?![آ-ی])${MONTH_LIST_TAIL}`, 'g'),
@@ -610,6 +618,45 @@ const DELIVERY_LEAD_TIME = new RegExp(`${SPAN_NUMBER}\\s*(?:ماه|هفته|رو
 const PAST_MONEY_VERB = /(?<![آ-ی])(?:داد(?:یم|م|ن|ند)?|گرفت(?:یم|م)?|خرید(?:یم|م)|ریخت(?:یم|م)?|زد(?:یم|م)|پرداخت(?:یم|م))(?![آ-ی])|(?:واریز|پرداخت|کارت\s*به\s*کارت|تسویه)\s*(?:شد|کرد(?:یم|م|ن|ند)?)(?![آ-ی])/;
 const FUTURE_MONEY_VERB = /(?<![آ-ی])(?:می\s?(?:د(?:یم|م|ن|ه|ید)|ده(?:یم|م|ن|ند|د)|ریز(?:یم|م|ن|ه)|پرداز(?:یم|م|ن|ه)|کن(?:یم|م|ن|ه|ند))|خواه(?:یم|ند|د|م)\s*(?:داد|پرداخت|ریخت))(?![آ-ی])/;
 
+/** طولِ پوششِ گفته‌شده: «یکساله»، «شش ماهه»، «سه ماه آینده». */
+const LENGTH_SIGNAL = new RegExp(`(?<![آ-ی])${SPAN_NUMBER}\\s*(?:ماهه|ساله|سال\\s*ه)(?![آ-ی])|${COVERAGE_LENGTH.source}`);
+const DAY_MONTH_ALL = new RegExp(DAY_MONTH_SOURCE, 'g');
+/** فعلِ آینده در همان بند، پشت تاریخ: «تحویل میدن»، «شروع میشه»، «کالا میرسه». */
+const FUTURE_CLAUSE = /^[^،,.؛]{0,30}?(?<![آ-ی])(?:می[\s\u200c]?(?:شه|شود|شن|شوند|رسه|رسد|رسن|رسند|اد|آد|آید|ان|آیند|دن|دهند|ده|دهد|گیریم|گیرن|گیرند|کنن|کنند|کنیم|فرستن|فرستند)|خواهد|خواهند|بشه)(?![آ-ی])/;
+
+/**
+ * روزِ بی‌سالِ پیشِ رو، بعد از فعلِ پرداختِ گذشته، در جمله‌ای که طول پوشش را گفته:
+ * شروع پوشش است، نه روز پرداخت.
+ *
+ * «بیمه یکساله ۱۲ میلیون دادیم، اول آبان» — پول «دادیم» یعنی رفته؛ «اول آبان» که
+ * هنوز نرسیده نمی‌تواند روز همین پرداخت باشد، و عقب بردنش به آبانِ پارسال سند نقدی
+ * را در سال مالی قبل می‌نشاند. همان تاریخ پیش از فعل («اول آذر اجاره دادیم»)
+ * همچنان روز پرداخت است و پارسال خوانده می‌شود. خروجی جای هر تاریخ در متن
+ * نرمال‌شده است؛ خوانندهٔ تاریخ پرداخت آن را پاک می‌کند و خوانندهٔ دوره، اگر با
+ * نشانهٔ شروع نیامده باشد، شروع را می‌پرسد.
+ *
+ * بیرون از جملهٔ پوشش هم همان روز، وقتی فعلِ آینده پشتش آمده («۱۲ میلیون پارچه
+ * خریدیم اول آبان تحویل میدن»)، روز تحویل یا شروع است، نه روز پرداخت.
+ */
+export function coverageStartsAfterPayment(input, { now = new Date(), timeZone = 'Asia/Tehran' } = {}) {
+  const text = String(input || '');
+  const verb = PAST_MONEY_VERB.exec(text);
+  if (!verb) return [];
+  const serviceLength = COVERAGE_CONTEXT.test(text) && LENGTH_SIGNAL.test(text);
+  const today = persianParts(now instanceof Date ? now : new Date(now), timeZone);
+  const from = verb.index + verb[0].length;
+  const found = [];
+  for (const match of text.slice(from).matchAll(DAY_MONTH_ALL)) {
+    if (!serviceLength && !FUTURE_CLAUSE.test(text.slice(from + match.index + match[0].length))) continue;
+    if (spokenYear(match[3], today.year)) continue;
+    const day = PERSIAN_DIGITS.test(match[1]) ? Number(match[1]) : DAY_WORDS.get(match[1]);
+    const month = MONTH_BY_NAME.get(match[2]);
+    if (!(day >= 1 && day <= 31) || !month) continue;
+    if (month > today.month || (month === today.month && day > today.day)) found.push({ index: from + match.index, length: match[0].length });
+  }
+  return found;
+}
+
 /** Dates belonging to coverage, an old invoice, or future cheque cashing are
  * not occurrence dates. Keep raw text intact for evidence and service parsing. */
 export function extractOccurrenceDate(input, options = {}) {
@@ -619,6 +666,9 @@ export function extractOccurrenceDate(input, options = {}) {
   text = text.replace(/(?:بهره برداری|شروع خدمت|تحویل گزارش|تحویل کالا|ارائه خدمات|انجام خدمات)[^،,؛.]*ماه\s*(?:آینده|بعد|آتی)[^،,؛.]*/g, ' ');
   text = text.replace(DELIVERY_LEAD_TIME, ' ');
   text = maskCoveragePhrases(text);
+  for (const { index, length } of coverageStartsAfterPayment(text, options)) {
+    text = `${text.slice(0, index)}${' '.repeat(length)}${text.slice(index + length)}`;
+  }
   text = text.replace(/(?:خرید|فروش|فاکتور|بدهی|اجاره)\s*(?:ماه\s*(?:قبل|پیش|گذشته)|سال\s*(?:قبل|گذشته))/g, ' ');
   text = text.replace(/(?:سفارش\s*)?(?:خدمات|خدمت|پوشش|اشتراک)\s*(?:ماه\s*(?:آینده|بعد|آتی)|سال\s*(?:آینده|بعد))/g, ' ');
   text = text.replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');

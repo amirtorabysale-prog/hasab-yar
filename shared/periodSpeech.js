@@ -1,5 +1,5 @@
 import {
-  COVERAGE_BETWEEN, DAY_WORD_PATTERN, NOT_A_YEAR, PERSIAN_MONTHS, dayOfToken, normalizeSpokenYears, persianPeriodEnd, persianToISO,
+  COVERAGE_BETWEEN, DAY_WORD_PATTERN, NOT_A_YEAR, PERSIAN_MONTHS, coverageStartsAfterPayment, dayOfToken, normalizeSpokenYears, persianPeriodEnd, persianToISO,
   spokenYear, todayPersian,
 } from './persianDate.js';
 import { normalizePersian } from './normalize.js';
@@ -260,10 +260,48 @@ function takeYear(match, name, text, reference, consumed) {
  * ۲۵ میلیون اجارهٔ ماه‌های آینده همان روز هزینه می‌شد.
  */
 const MONTH_RANGE = new RegExp(`(?<![آ-ی])(?:(?<from>از)${GAP})?${DAY_PART('startDay', START_DAY)}${MONTH_PART('startMonth')}${YEAR_PART('startYear')}${GAP}(?:تا|الی|لغایت)${GAP}${DAY_PART('endDay', END_DAY)}${MONTH_PART('endMonth')}${YEAR_PART('endYear')}`, 'gd');
+/** ماهِ شروع، با فعل ربطِ چسبیده: «شروعش از اول آبانه». */
+const START_MONTH_PART = (name) => `(?:ماه${GAP})?(?<${name}>${MONTH_NAMES})(?:ه)?(?![آ-ی])(?:${GAP}ماه(?![آ-ی]))?`;
+const START_AT = `${DAY_PART('startDay', START_DAY)}${START_MONTH_PART('startMonth')}${YEAR_PART('startYear')}`;
 /** «از اول آبان»، «از فروردین ۱۴۰۵» — شروعِ تنها. */
-const START_MONTH = new RegExp(`(?<![آ-ی])از${GAP}${DAY_PART('startDay', START_DAY)}${MONTH_PART('startMonth')}${YEAR_PART('startYear')}(?!${GAP}(?:تا|الی|لغایت)(?![آ-ی]))`, 'd');
-/** «که اول آذر شروع میشه» — شروعِ تنها، با فعل شروع به‌جای «از». */
-const START_VERB = new RegExp(`(?<![آ-ی])${DAY_PART('startDay', START_DAY)}${MONTH_PART('startMonth')}${YEAR_PART('startYear')}${GAP}(?:شروع|آغاز)`, 'd');
+const START_MONTH = new RegExp(`(?<![آ-ی])از${GAP}${START_AT}(?!${GAP}(?:تا|الی|لغایت)(?![آ-ی]))`, 'd');
+/**
+ * «که اول آذر شروع میشه»، «که اول آبان فعال میشه»، «اول آذر کلید رو میگیریم» —
+ * شروعِ تنها، با فعل شروع به‌جای «از».
+ */
+const START_VERB = new RegExp(`(?<![آ-ی])${START_AT}${GAP}(?:شروع|آغاز|فعال|کل${YA}د)`, 'd');
+/**
+ * «تاریخ شروع اول آبان»، «شروعش اول آبانه»، «اعتبارش از اول آبان»، «تحویل کلید
+ * اول آبان» — نشانهٔ شروع پیش از تاریخ.
+ *
+ * بی‌این، «بیمه یکساله ۱۲ میلیون دادیم، تاریخ شروع اول آبان» پوشش را از روز
+ * پرداخت می‌گرفت و «اول آبان» تاریخ پرداختِ پارسال خوانده می‌شد.
+ */
+const START_CUE_WORD = `(?:(?:تار${YA}خ${GAP})?(?:شروع|آغاز|اعتبار|فعال${GAP}?ساز${YA})(?:${GAP}?ش)?|تحو${YA}ل${GAP}کل${YA}د)`;
+const START_CUE = new RegExp(`(?<![آ-ی])${START_CUE_WORD}${GAP}(?:از${GAP})?(?::${GAP})?${START_AT}`, 'd');
+/** «از اول ماه بعد»، «از ماه بعد»، «از همین ماه». */
+const START_RELATIVE = new RegExp(`(?<![آ-ی])(?:از|${START_CUE_WORD})${GAP}(?:از${GAP})?(?:(?:اول|ابتدا${YA}?)${GAP})?(?:(?<current>(?:ا${YA}ن|هم${YA}ن)${GAP}ماه|ماه${GAP}جار${YA})|ماه${GAP}(?:(?<next>بعد${YA}?|[آا]${YA}نده|د${YA}گه|د${YA}گر)|(?<previous>قبل|گذشته|پ${YA}ش)))(?![آ-ی])`, 'd');
+/**
+ * «از اول ۱۴۰۶»، «از سال ۱۴۰۶»، «از ۱۴۰۶»، «از اول سال بعد»، «از اول امسال».
+ * دورقمی فقط پشت «اول» یا «سال» سال است: «از ۱۰ تا ۲۰ مهر» سال ندارد.
+ */
+const YEAR_START_WORD = `(?:(?:اول|ابتدا${YA}?)${GAP})`;
+const START_YEAR = new RegExp(`(?<![آ-ی])(?:از|${START_CUE_WORD})${GAP}(?:از${GAP})?(?:(?:${YEAR_START_WORD}(?:سال${GAP})?|سال${GAP})(?<startYear>\\d{4}|\\d{2})|(?<bareYear>\\d{4}))(?!\\d)${NOT_A_YEAR}(?![آ-ی\\d])|(?<![آ-ی])(?:از|${START_CUE_WORD})${GAP}(?:از${GAP})?${YEAR_START_WORD}?(?:(?<nextYear>سال${GAP}(?:بعد${YA}?|[آا]${YA}نده|د${YA}گه|د${YA}گر))|(?<thisYear>امسال|سال${GAP}جار${YA}))(?![آ-ی])|(?<![آ-ی])(?:از|${START_CUE_WORD})${GAP}(?:از${GAP})?${YEAR_START_WORD}(?<yearStart>سال)(?![آ-ی])(?!${GAP}(?:قبل|گذشته|پ${YA}ش|\\d))`, 'd');
+/** «از فردا»، «از پس‌فردا». */
+const START_DAY_WORD = new RegExp(`(?<![آ-ی])(?:از|${START_CUE_WORD})${GAP}(?:از${GAP})?(?:(?<dayAfter>پس${GAP}فردا)|(?<tomorrow>فردا))(?![آ-ی])`, 'd');
+/**
+ * «از» یا نشانهٔ شروعی که پشتش زمانی آمده که خوانده نمی‌شود: «از اواسط آبان»،
+ * «شروعش هفته بعد»، «تحویل کلید آخر ماه». شروع گفته شده ولی معلوم نیست؛ دوره از
+ * روز پرداخت ساختن یعنی حدس — پس پرسیده می‌شود.
+ */
+const START_UNREAD = new RegExp(`(?<![آ-ی])(?:از|${START_CUE_WORD})${GAP}(?:از${GAP})?(?:[^\\s\\d،,.؛]+${GAP})?(?:${MONTH_NAMES}|ماه|سال|امسال|هفته|فردا|\\d{4}|\\d{1,2}${GAP}[/\\-.])(?![آ-ی])`);
+/**
+ * شروعی که هنوز نرسیده («که از اول فروردین شروع میشه»، «اول آذر کلید رو میگیریم»):
+ * ماهِ بی‌سالش اولین همان ماه از روز پرداخت به بعد است. در اسفند، «از اول فروردین
+ * شروع میشه» فروردینِ پیش روست؛ فروردینِ همین سال پوششی را می‌ساخت که تقریباً
+ * تمام شده و یک‌جا هزینه می‌شد.
+ */
+const FUTURE_START = new RegExp(`^[^،,.؛]{0,30}?(?<![آ-ی])(?:م${YA}${GAP}?(?:شه|شود|شن|شوند|گ${YA}ر${YA}م|گ${YA}رن|گ${YA}رند|ده|دن|دهند|د${YA}م)|خواهد|بشه)(?![آ-ی])`);
 /** «از 1405/08/01»، «از ۱/۸/۱۴۰۵». */
 const START_DATE = /(?<![آ-ی])از[\s‌]*(?:(?<y1>\d{4})\s*[/\-.]\s*(?<m1>\d{1,2})\s*[/\-.]\s*(?<d1>\d{1,2})|(?<d2>\d{1,2})\s*[/\-.]\s*(?<m2>\d{1,2})\s*[/\-.]\s*(?<y2>\d{4}))(?![\d/\-.])/;
 /** «از امروز به مدت یک سال». */
@@ -364,8 +402,12 @@ function readRange(text, reference, baseYear, consumed) {
   return null;
 }
 
-/** شروعِ گفته‌شده، به ISO؛ `null` یعنی جمله شروعی نگفته. */
+/**
+ * شروعِ گفته‌شده: `{ iso, index, end }`؛ `null` یعنی جمله شروعی نگفته و
+ * `UNREADABLE` یعنی شروعی گفته شده که خوانده نمی‌شود.
+ */
 function readStart(text, reference, baseYear, occurredAt, consumed) {
+  const at = (iso, found) => (iso ? { iso, index: found.index, end: found.index + found[0].length } : null);
   const dated = START_DATE.exec(text);
   if (dated) {
     const { y1, m1, d1, d2, m2, y2 } = dated.groups;
@@ -373,21 +415,55 @@ function readStart(text, reference, baseYear, occurredAt, consumed) {
     // سالِ زیر ۱۷۰۰ همیشه شمسی است؛ بالاتر میلادی.
     const gregorian = year >= 1700 ? new Date(Date.UTC(year, month - 1, day, 8, 30)) : null;
     const iso = gregorian ? (gregorian.getUTCMonth() === month - 1 ? gregorian.toISOString() : null) : persianToISO(year, month, day);
-    if (iso) return iso;
+    if (iso) return at(iso, dated);
   }
-  for (const pattern of [START_MONTH, START_VERB]) {
+  for (const pattern of [START_CUE, START_MONTH, START_VERB]) {
     const found = pattern.exec(text);
     if (!found || UNTIL_NOW.test(text.slice(found.index + found[0].length))) continue;
     const said = takeYear(found, 'startYear', text, reference, consumed);
     if (said === UNREADABLE) return UNREADABLE;
-    const year = said || baseYear;
-    const iso = dayIn(year, monthNumber(found.groups.startMonth), dayOfToken(found.groups.startDay) || 1);
-    if (iso) return iso;
+    const month = monthNumber(found.groups.startMonth);
+    const day = dayOfToken(found.groups.startDay) || 1;
+    let year = said || baseYear;
+    if (!said && year === reference.year && FUTURE_START.test(text.slice(found.index + found[0].length))) {
+      year = month > reference.month || (month === reference.month && day >= reference.day) ? reference.year : reference.year + 1;
+    }
+    const iso = dayIn(year, month, day);
+    if (iso) return at(iso, found);
+  }
+  const relative = START_RELATIVE.exec(text);
+  if (relative) {
+    const { current, previous } = relative.groups;
+    const total = (reference.year * 12) + (reference.month - 1) + (current ? 0 : previous ? -1 : 1);
+    return at(persianToISO(Math.floor(total / 12), (total % 12) + 1, 1), relative);
+  }
+  const yearStart = START_YEAR.exec(text);
+  if (yearStart) {
+    const { startYear, bareYear, nextYear } = yearStart.groups;
+    const year = startYear || bareYear ? takeYear(yearStart, startYear ? 'startYear' : 'bareYear', text, reference, consumed)
+      : nextYear ? reference.year + 1 : reference.year;
+    if (year === UNREADABLE) return UNREADABLE;
+    if (year) return at(persianToISO(year, 1, 1), yearStart);
+  }
+  const later = START_DAY_WORD.exec(text);
+  if (later) {
+    const days = later.groups.dayAfter ? 2 : 1;
+    const { year, month, day } = todayPersian(new Date(Date.parse(occurredAt) + (days * 86_400_000)));
+    return at(persianToISO(year, month, day), later);
   }
   const today = START_TODAY.exec(text);
-  if (today && !UNTIL_NOW.test(text.slice(today.index + today[0].length))) return occurredAt;
+  if (today && !UNTIL_NOW.test(text.slice(today.index + today[0].length))) return at(occurredAt, today);
+  const unread = START_UNREAD.exec(text);
+  if (unread && !UNTIL_NOW_AFTER.test(text.slice(unread.index))) return UNREADABLE;
+  // «بیمه یکساله ۱۲ میلیون دادیم اول آبان»: روزِ پیشِ رو بعد از فعلِ گذشته روز
+  // پرداخت نیست (خوانندهٔ تاریخ پرداخت پاکش می‌کند) و بی نشانهٔ شروع هم معلوم
+  // نیست شروع پوشش است یا چیز دیگر؛ پوشش از روز پرداخت ساختن حدس است، پس پرسیده می‌شود.
+  if (coverageStartsAfterPayment(text, { now: new Date(occurredAt) }).length) return UNREADABLE;
   return null;
 }
+
+/** «از اول مهر تا حالا»، «از ماه قبل تا حالا»: جمعِ گذشته است، نه شروع پوشش. */
+const UNTIL_NOW_AFTER = new RegExp(`^[^،,.؛]*?(?:تا|الی)${GAP}(?:حالا|الان|امروز)(?![آ-ی])`);
 
 /** «اجارهٔ مهر»، «بابت اردیبهشت ماه» — یک ماهِ نام‌برده. */
 function singleMonth(text, baseYear, reference) {
@@ -517,24 +593,26 @@ function readPeriod(text, { occurredAt, answer, knownStart, consumed }) {
   // می‌آید، مگر جمله خودش سال دیگری بگوید.
   const reference = todayPersian(new Date(occurredAt));
   const baseYear = reference.year + yearShift(text);
-  const stated = knownStart || readStart(text, reference, baseYear, occurredAt, consumed);
-  if (stated === UNREADABLE) return UNREADABLE;
-  const length = lengthOf(text, { bare: answer || Boolean(stated), consumed });
-  if (length === UNREADABLE) return UNREADABLE;
 
   const range = readRange(text, reference, baseYear, consumed);
   if (range === UNREADABLE) return UNREADABLE;
   if (range) {
     // بازه و صفتِ ناسازگار («یک‌ساله، از مهر تا اسفند») حدس نمی‌خورد؛ پرسیده می‌شود.
-    return length && length.months !== range.months ? null : range;
+    const length = lengthOf(text, { bare: answer, consumed });
+    return length === UNREADABLE || (length && length.months !== range.months) ? null : range;
   }
+
+  const stated = knownStart ? { iso: knownStart } : readStart(text, reference, baseYear, occurredAt, consumed);
+  if (stated === UNREADABLE) return UNREADABLE;
+  const length = lengthOf(text, { bare: answer || Boolean(stated), consumed });
+  if (length === UNREADABLE) return UNREADABLE;
 
   // شروع: یا گفته شده، یا ماهِ نام‌بردهٔ کنار طول («اجاره مهر برای شش ماه جلوتر»).
   const named = length && !stated ? singleMonth(text, baseYear, reference) || relativeSpan(text, reference, consumed) : null;
   if (named === UNREADABLE) return UNREADABLE;
   // «اشتراک یک‌ساله سال آینده»: سالِ نام‌برده خودش دوره است؛ طولِ ناسازگار پرسیده می‌شود.
   if (named?.basis === 'year') return named.months === length.months ? named : null;
-  const start = stated || named?.start || null;
+  const start = stated?.iso || named?.start || null;
   if (start && length) {
     const end = persianPeriodEnd(start, length.months);
     return end ? { start, end, months: length.months, basis: 'start+length' } : null;
