@@ -255,3 +255,122 @@ test('یادداشت دوره: هزینهٔ یک‌جا دوره‌اش را م�
     assert.equal(recognitionPreview({ amount: 60_000_000, servicePeriodStart: '2026-10-10', servicePeriodEnd: '2027-10-09' }, { recognitionMethod: 'immediate' }), null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// today-card-drops-engine-question — کارت «یک سؤال کوتاه» صاحب کسب‌وکار
+// ---------------------------------------------------------------------------
+
+const TODAY = new Date('2026-10-12T08:00:00.000Z');
+/** یک گفته از مسیر قطعی (همان insertTransactions کارت ثبت) در دفتر تازه. */
+function capture(text) {
+  const run = freshWorkspace();
+  run(() => {
+    database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 100_000_000 });
+    const transactions = parseFinancialText(text, { source: 'voice', now: TODAY }).transactions
+      .map((item) => ({ ...item, occurredAt: item.occurredAt || TODAY.toISOString() }));
+    database.insertTransactions({ transcript: text, transactions });
+  });
+  return run;
+}
+const journalLines = (entryId) => database.activeWorkspaceDatabase()
+  .prepare('SELECT l.debit,l.credit,a.name FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id WHERE l.entry_id=? ORDER BY l.debit DESC')
+  .all(entryId).map((row) => [row.debit ? 'Dr' : 'Cr', row.name, row.debit || row.credit]);
+
+/** کارت امروز را تا آخرین سؤال جواب می‌دهد و بعد «بله» می‌زند. */
+function answerThroughToday(run, answers) {
+  return run(() => {
+    const asked = [];
+    for (const answer of answers) {
+      const [card] = database.pendingConfirmations().items;
+      assert.ok(card?.ask, `سؤالی برای جواب ${JSON.stringify(answer)} نیست`);
+      assert.equal(card.hint, card.ask.text, 'راهنما همان سؤال زنده است');
+      asked.push(card.ask.fact);
+      database.answerPending(card.id, { fact: card.ask.fact, ...answer });
+    }
+    const [card] = database.pendingConfirmations().items;
+    assert.equal(card.ask, null, 'بعد از آخرین جواب سؤالی نمی‌ماند');
+    assert.notEqual(card.hint, 'دورهٔ پوشش از کِی شروع می‌شود؟', 'راهنمای کهنه نمی‌ماند');
+    const posted = database.confirmPending(card.id);
+    assert.equal(posted.status, 'posted');
+    const schedule = database.activeWorkspaceDatabase().prepare("SELECT COUNT(*) n, COALESCE(SUM(amount),0) total FROM recognition_schedule_items WHERE status='planned'").get();
+    return { asked, lines: journalLines(posted.journalEntryId), schedule: { n: schedule.n, total: schedule.total } };
+  });
+}
+
+test('کارت امروز: سؤال دورهٔ پوشش با گزینه‌هایش؛ «بله» فقط بعد از جواب، با پیش‌پرداخت و دوازده قسط', () => {
+  for (const [text, amount] of [
+    ['بیمه انبار ۱۲ میلیون دادیم', 12_000_000],
+    ['اجاره دفتر رو جلو جلو دادیم ۳۰ میلیون', 30_000_000],
+    ['اشتراک نرم افزار 24 میلیون پرداخت کردیم', 24_000_000],
+    ['بيمه بدنه ماشين ۹ ميليون داديم', 9_000_000],
+  ]) {
+    const run = capture(text);
+    run(() => {
+      const [card] = database.pendingConfirmations().items;
+      assert.deepEqual(card.ask.options.map((option) => option.label), ['از همین ماه', 'از اول ماه بعد', 'دوره‌اش گذشته', 'تاریخش را می‌گویم'], text);
+      // «بله» پیش از جواب همان خطای قبلی است؛ کارت دیگر آن را نشان نمی‌دهد.
+      assert.throws(() => database.confirmPending(card.id), { code: 'EVENT_PLAN_REVISION_REQUIRED' });
+    });
+    const result = answerThroughToday(run, [{ value: 'this-month' }, { value: 'one-year' }]);
+    assert.deepEqual(result.asked, ['servicePeriodStart', 'servicePeriodEnd'], text);
+    assert.equal(result.lines.length, 2, text);
+    assert.match(result.lines[0][1], /پیش‌پرداخت/, `${text}: ${JSON.stringify(result.lines)}`);
+    assert.deepEqual([result.lines[0][0], result.lines[0][2]], ['Dr', amount], text);
+    assert.deepEqual([result.lines[1][0], result.lines[1][2]], ['Cr', amount], text);
+    assert.match(result.lines[1][1], /صندوق/, text);
+    assert.deepEqual(result.schedule, { n: 12, total: amount }, text);
+  }
+  // تاریخ آزاد: «تاریخش را می‌گویم» با متن.
+  const typed = answerThroughToday(capture('بیمه انبار ۱۲ میلیون دادیم'), [{ value: 'custom', freeText: '۱ آبان ۱۴۰۵' }, { value: 'one-year' }]);
+  assert.deepEqual(typed.schedule, { n: 12, total: 12_000_000 });
+});
+
+test('کارت امروز: هر سؤال موتور — قابل استرداد، کاربرد خرید، بابت پرداخت و بابت دریافت — همین‌جا جواب می‌گیرد', () => {
+  const deposit = answerThroughToday(capture('ودیعه اجاره دفتر ۵۰ میلیون دادیم'), [{ value: true }, { freeText: 'آقای کریمی' }]);
+  assert.deepEqual(deposit.asked, ['refundable', 'counterparty']);
+  assert.equal(deposit.schedule.n, 0, 'ودیعهٔ قابل استرداد برنامهٔ هزینه ندارد');
+  assert.doesNotMatch(deposit.lines[0][1], /هزینه|اجاره$/, JSON.stringify(deposit.lines));
+  assert.deepEqual(answerThroughToday(capture('لپ تاپ ۸۰ میلیون خریدیم'), [{ value: 'current-consumption' }]).asked, ['intendedUse']);
+  assert.deepEqual(answerThroughToday(capture('۵۰ میلیون به آقای رضایی دادیم'), [{ value: 'advance' }]).asked, ['paymentPurpose']);
+  assert.deepEqual(answerThroughToday(capture('اقای کریمی ۲۰ میلیون داد'), [{ value: 'sale' }]).asked, ['receiptPurpose']);
+});
+
+test('کارت امروز: جواب فقط برای همان سؤال و گزینه‌های خودش؛ مورد بی‌سؤال همان «بله» را دارد', () => {
+  const run = capture('بیمه انبار ۱۲ میلیون دادیم');
+  run(() => {
+    const [card] = database.pendingConfirmations().items;
+    assert.throws(() => database.answerPending(card.id, { fact: 'servicePeriodEnd', value: 'one-year' }), { code: 'CONFIRMATION_QUESTION_CHANGED' });
+    assert.throws(() => database.answerPending(card.id, { fact: 'servicePeriodStart', value: 'one-year' }), { code: 'CONFIRMATION_OPTION_INVALID' });
+    assert.throws(() => database.answerPending(card.id, { fact: 'servicePeriodStart', value: 'custom', freeText: '  ' }), { code: 'CONFIRMATION_ANSWER_REQUIRED' });
+    assert.equal(database.pendingConfirmations().items[0].ask.fact, 'servicePeriodStart', 'جواب ردشده چیزی را عوض نکرد');
+  });
+  // منفی: مورد کم‌اطمینان عادی سؤالی ندارد و «بله» همچنان ثبت می‌کند.
+  const plain = capture('ناهار پرسنل ۲ میلیون دادیم');
+  plain(() => {
+    const [card] = database.pendingConfirmations().items;
+    assert.equal(card.ask, null);
+    assert.throws(() => database.answerPending(card.id, { fact: 'servicePeriodStart', value: 'this-month' }), { code: 'CONFIRMATION_NO_QUESTION' });
+    assert.equal(database.confirmPending(card.id).status, 'posted');
+  });
+});
+
+test('کارت امروز: مسیر جواب در تجربهٔ ساده باز است و همان رتبهٔ «بله» را می‌خواهد', async () => {
+  const { minimumRoleForRequest } = await import('../server/access.js');
+  const { pathNeedsProfessional } = await import('../shared/experience.js');
+  assert.equal(minimumRoleForRequest('POST', '/confirmations/abc/answer'), minimumRoleForRequest('POST', '/confirmations/abc/confirm'));
+  assert.equal(pathNeedsProfessional('/confirmations/abc/answer'), false);
+  assert.equal(pathNeedsProfessional('/financial-events/abc/answer'), true, 'ابزار حسابدار همچنان حرفه‌ای است');
+  const server = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  assert.match(server, /app\.post\('\/api\/confirmations\/:id\/answer'/);
+  await withVite(async (vite) => {
+    const { PendingQuestionView } = await vite.ssrLoadModule('/src/features/today/TodayPage.jsx');
+    const render = (question) => renderToStaticMarkup(React.createElement(PendingQuestionView, { question, onYes() {}, onHandover() {}, onAnswer() {} }));
+    const ask = { fact: 'servicePeriodStart', kind: 'options', text: 'دورهٔ پوشش از کِی شروع می‌شود؟', options: FACT_QUESTIONS.servicePeriodStart.options.map((option) => ({ ...option, freeInput: Boolean(option.freeInput) })) };
+    const asking = render({ id: 'e1', question: 'پرداخت بابت بیمه — ۱۲٬۰۰۰٬۰۰۰ تومان', hint: ask.text, ask });
+    for (const label of ['از همین ماه', 'از اول ماه بعد', 'دوره‌اش گذشته', 'تاریخش را می‌گویم', 'مطمئن نیستم']) assert.match(asking, new RegExp(label));
+    assert.doesNotMatch(asking, /بله، درست است/);
+    const plain = render({ id: 'e2', question: 'پرداخت بابت خوراک — ۲٬۰۰۰٬۰۰۰ تومان', hint: '', ask: null });
+    assert.match(plain, /بله، درست است/);
+    assert.match(plain, /مطمئن نیستم/);
+  });
+});

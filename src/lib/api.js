@@ -380,6 +380,7 @@ export const api = {
   confirmations: () => request('/api/confirmations'),
   confirmPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({}) }),
   handOverPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/handover`, { method: 'POST', body: JSON.stringify({}) }),
+  answerPending: (id, answer) => request(`/api/confirmations/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify(answer || {}) }),
   // صف بررسی حسابدار: رویدادهایی که موتور اطمینان ثبتشان را متوقف کرده است.
   reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
   journalReviewHistory: (id) => request(`/api/accounting/journal/${encodeURIComponent(id)}/review-history`),
