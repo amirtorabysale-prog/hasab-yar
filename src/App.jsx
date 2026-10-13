@@ -919,11 +919,16 @@ export default function App() {
         const { item } = await withCounterpartyConfirmation((counterpartyResolution) => api.recordCheque({
           direction: draft.direction, counterpartyName: draft.contactName, amount: draft.amount,
           against: draft.against, dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
-          note: draft.transcript.slice(0, 300), counterpartyResolution,
+          note: draft.transcript.slice(0, 300), counterpartyResolution, source: 'voice',
+          // سری چک («۱۲ تا چک ۱۰ میلیونی») با تعدادش می‌رود؛ سرور آن را یک چکِ
+          // تک ثبت نمی‌کند.
+          ...(draft.chequeCount > 1 ? { chequeCount: draft.chequeCount, perChequeAmount: draft.perChequeAmount || null } : {}),
         }));
         setIntentDraft(null);
         await load();
-        notify(item.queuedForAccountant ? item.queuedReason : draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
+        notify(item.queuedForAccountant ? item.queuedReason
+          : item.pendingQuestion ? `چک در دفتر چک‌ها ثبت شد؛ سندش منتظر یک جواب است: ${item.pendingQuestion}`
+            : draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
         return;
       }
       await api.saveObligation({

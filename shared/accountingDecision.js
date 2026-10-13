@@ -129,6 +129,31 @@ export function decisionAuthorizesPosting(decision) {
 }
 
 /**
+ * سندِ پایه‌ای که پولی جابه‌جا نمی‌کند و طرفش ماییم یا طرف مقابل.
+ *
+ * چکی که بابت طلب یا بدهی قبلی است فقط شکل تعهد را عوض می‌کند و برآوردی
+ * («برآورد شد») قضاوت حسابدار است؛ هیچ‌کدام خدمت تازه نیستند.
+ */
+function onAccount(facts, side) {
+  if (facts?.moneyDirection !== 'none' || isFactPresent(facts?.estimateBasis)) return false;
+  if (facts?.chequeAgainst === 'receivable') return false;
+  return facts?.obligationDirection === side || facts?.chequeDirection === side;
+}
+
+/** دوره‌ای که از ماهِ خودِ سند جلوتر می‌رود — یعنی چیزی را به ماه‌های بعد می‌برد. */
+function coverageRunsPastMonth(facts) {
+  const end = facts?.servicePeriodEnd;
+  if (!isFactPresent(facts?.servicePeriodStart) || !isFactPresent(end) || !facts?.occurredAt) return false;
+  const month = persianMonthOf(facts.occurredAt);
+  return Boolean(month) && new Date(end).getTime() > new Date(month.to).getTime();
+}
+
+/** دستهٔ درآمدی که خودش دوره‌دار است: اجاره‌ای که می‌گیریم. */
+const TIME_BOUND_INCOME_CATEGORIES = Object.freeze(['درآمد اجاره']);
+const DEPOSIT_WORDS = /ودیعه|رهن|قرض\s*الحسنه|سپرده|تضمین|حسن\s*انجام/;
+const policyByKey = (key) => DEFAULT_POLICIES.find((policy) => policy.policyKey === key);
+
+/**
  * قاعده‌ها، به‌صورت داده.
  *
  * چرا قاعده لازم است و طبقه‌بند کافی نیست: طبقه‌بند می‌گوید «این ایجاد دارایی
@@ -144,6 +169,70 @@ export function decisionAuthorizesPosting(decision) {
  * فعلاً فقط ذخیره می‌شود تا تصمیم بدون نسخه ساخته نشود.
  */
 export const DEFAULT_POLICIES = Object.freeze([
+  /**
+   * خدمت دوره‌دار روی سندِ پایه‌ای که پولی جابه‌جا نمی‌کند — چک پرداختی، بدهی،
+   * فاکتور خرید.
+   *
+   * «اجارهٔ یک‌ساله دفتر رو با چک ۱۲۰ میلیون دادیم» همان پیش‌پرداختی است که با
+   * نقد می‌شد؛ ابزار پرداخت ماهیت را عوض نمی‌کند. بی‌این قاعده چک پرداختی اصلاً
+   * قاعده نداشت و بدهیِ «اشتراک یک‌ساله» زیر قاعدهٔ هزینهٔ تعهدی کل مبلغ را
+   * همین ماه هزینه می‌کرد. پس همان حل‌وفصلِ پیش‌پرداخت خدمت اجرا می‌شود: دورهٔ
+   * آینده → پیش‌پرداخت با شناسایی ماهانه؛ دورهٔ گذشته یا همین ماه → هزینهٔ دوره؛
+   * ودیعه → سؤال استرداد؛ دورهٔ نامعلوم → سؤال، نه حدس. طرف بستانکار را قاعدهٔ
+   * سند از نوع رویداد می‌گیرد (اسناد پرداختنی یا حساب پرداختنی)، نه صندوق.
+   *
+   * قبضِ مصرف‌شده («قبض برق شهریور هنوز پرداخت نشده») اینجا نمی‌رسد: نه دستهٔ
+   * دوره‌دار دارد و نه دوره‌ای که از ماه سند بگذرد؛ همان هزینهٔ تعهدی می‌ماند.
+   */
+  Object.freeze({
+    policyKey: 'prepaid-service-on-account',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.PREPAID_EXPENSE, TREATMENTS.PERIOD_EXPENSE, TREATMENTS.REFUNDABLE_DEPOSIT]),
+    appliesTo(facts) {
+      if (!onAccount(facts, 'payable')) return false;
+      if (isTimeBoundService(facts) || facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
+      return coverageRunsPastMonth(facts);
+    },
+    resolve(facts, context) { return policyByKey('prepaid-service').resolve(facts, context); },
+  }),
+  /**
+   * آینه‌اش: خدمت دوره‌دار روی چک دریافتی، طلب یا فاکتور فروش — پیش‌دریافت.
+   *
+   * «چک ۶۰ میلیونی اجارهٔ شش ماه آینده رو از مستاجر گرفتیم» شش ماه درآمد آینده
+   * است، نه فروش امروز. درآمد ماه‌به‌ماه شناسایی می‌شود و تا آن موقع درآمد
+   * انتقالی (بدهی) است. ودیعهٔ مستاجر هرگز درآمد نیست و حسابش با حسابدار است؛
+   * دورهٔ نامعلوم پرسیده می‌شود. فروش کالا و خدمتِ بی‌دوره اینجا نمی‌رسند.
+   */
+  Object.freeze({
+    policyKey: 'deferred-revenue-on-account',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.DEFERRED_REVENUE, TREATMENTS.RECOGNIZED_REVENUE]),
+    appliesTo(facts) {
+      if (!onAccount(facts, 'receivable') || isFactPresent(facts?.deliveryDate)) return false;
+      // «بابت فروش تازه یا طلب قبلی؟» پیش از هر چیز؛ آن را قاعدهٔ چک دریافتی می‌پرسد.
+      if (facts?.chequeDirection === 'receivable' && facts?.chequeAgainst !== 'income') return false;
+      if (TIME_BOUND_INCOME_CATEGORIES.includes(String(facts?.category || '').trim()) || isTimeBoundService(facts)) return true;
+      if (facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
+      return coverageRunsPastMonth(facts);
+    },
+    resolve(facts, { today }) {
+      const said = `${facts?.evidence || ''} ${facts?.utterance || ''}`;
+      if (facts?.refundable === true || facts?.paymentPurpose === 'deposit' || (DEPOSIT_WORDS.test(said) && facts?.refundable !== false)) {
+        return { treatment: TREATMENTS.REFUNDABLE_DEPOSIT, reviewNote: 'ودیعه یا سپرده‌ای که گرفته‌ایم بدهی ماست، نه درآمد؛ حساب ودیعهٔ دریافتی و شرط استردادش را حسابدار تعیین می‌کند.' };
+      }
+      const start = facts?.servicePeriodStart;
+      const end = facts?.servicePeriodEnd;
+      if (!isFactPresent(start) || !isFactPresent(end)) return { treatment: TREATMENTS.DEFERRED_REVENUE };
+      const immediate = { treatment: TREATMENTS.RECOGNIZED_REVENUE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
+      if (new Date(end).getTime() <= new Date(today).getTime()) return immediate;
+      if (!coverageRunsPastMonth(facts)) return immediate;
+      return { treatment: TREATMENTS.DEFERRED_REVENUE, recognitionMethod: RECOGNITION_METHODS.MONTHLY_STRAIGHT_LINE, recognitionDate: start };
+    },
+  }),
   /**
    * خرید نسیهٔ کالا.
    *

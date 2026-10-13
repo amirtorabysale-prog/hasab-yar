@@ -9,7 +9,7 @@ import {
 export { extractContactName };
 import { CAPITAL_PATTERNS, FIXED_ASSET_PATTERNS } from './capitalSpeech.js';
 import { extractDateMention } from './persianDate.js';
-import { parseFinancialText } from './parser.js';
+import { parseFinancialText, wordsToNumber } from './parser.js';
 import { detectTaxMention, parseInvoiceLines, wantsImmediateIssue } from './invoiceSpeech.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from './financialEvent.js';
 import { EVENT_NATURES, readEventNature } from './eventNature.js';
@@ -169,6 +169,54 @@ function issuedUnpaidInvoice(text) {
  * طرف مقابل بسته می‌شود. کارت چک یا کارت تسویه هیچ‌کدام این شکل را ندارند و
  * هرکدام سند غلطی می‌زدند (نقد یا چک پرداختنی)؛ پس به حسابدار می‌رود.
  */
+/**
+ * چکی که طرف مقابل به ما داد — با فعل سوم‌شخص، به ترتیب عادی جملهٔ فارسی.
+ *
+ * «مستاجر … یه چک ۶۰ میلیونی داد»، «… به ما داد»، «… بهمون داد»: فعل در آخر
+ * می‌آید و فاعل طرف مقابل است. پیش از این فقط «داد به ما» و «چک دادن» چسبیده
+ * شناخته می‌شد؛ بقیه از مسیر چک بیرون می‌افتادند و در صف حسابدار به‌عنوان
+ * پیش‌پرداخت اجارهٔ **خودمان** (پول خارج‌شده) با مبلغ یک قسط می‌نشستند.
+ *
+ * «آقای احمدی چک ۵ میلیونی به آقای رضایی داد» میان دو نفر دیگر است و جهتی برای
+ * ما نمی‌سازد؛ «به <کسی جز ما>» این حالت را بیرون نگه می‌دارد. «به تاریخ» و
+ * «به مبلغ» گیرنده نیستند.
+ */
+const NOT_A_RECIPIENT = '(?:ما|من|تاریخ|مبلغ|ارزش|عنوان|مدت|نام\\s*(?:ما|من|شرکت))(?![آ-ی])';
+function chequeGivenToUs(part) {
+  if (/(?:به\s*(?:ما|من)|بهمون|بهم|بمون|بما)\s*(?:\S+\s+){0,2}داد(?:ن|ند|ه)?(?![آ-ی])/.test(part)) return true;
+  return /(?<![آ-ی])داد(?:ن|ند)?(?![آ-ی])/.test(part)
+    && !new RegExp(`(?<![آ-ی])به\\s+(?!${NOT_A_RECIPIENT})\\S+`).test(part);
+}
+
+/**
+ * چند برگ چک در یک جمله: «۱۲ تا چک»، «شش فقره چک»، «دوازده برگ چک»، «۱۲تا چک».
+ * فقط شمارِ پیش از «چک» — «دسته چک پنجاه برگه» تعداد برگ دسته‌چک است، نه سری.
+ */
+const SERIES_COUNT = /(?<![آ-ی\d])((?:\d{1,2})|(?:[آ-ی]+(?:\s+و\s+[آ-ی]+)?))\s*(?:تا|فقره|برگ|برگه|عدد|قطعه)\s*(?:چک|چکِ)(?![آ-ی])/;
+export function chequeSeriesCount(input) {
+  const text = normalizePersian(input);
+  const match = SERIES_COUNT.exec(text);
+  if (!match) return 0;
+  const token = match[1];
+  const count = /^\d+$/.test(token) ? Number(token) : wordsToNumber(token.split(/\s+/));
+  return Number.isInteger(count) && count >= 2 && count <= 60 ? count : 0;
+}
+
+/**
+ * مبلغ گفته‌شده در جملهٔ سری، مالِ هر برگ است یا جمع؟
+ *
+ * «چک ۱۰ میلیونی» صفت است و مبلغ هر برگ را می‌گوید؛ «جمعاً ۱۲۰ میلیون» جمع را.
+ * بی‌هیچ‌کدام («شش تا چک دادیم ۶۰ میلیون») معلوم نیست و `null` برمی‌گردد تا مبلغ
+ * پرسیده شود.
+ */
+function seriesAmounts(text, count, spoken) {
+  if (/جمعا|جمعاً|مجموعا|مجموعاً|در\s*مجموع|روی\s*هم|کلا|کلاً|کل\s*مبلغ/.test(text)) {
+    return spoken % count === 0 ? { total: spoken, per: spoken / count } : { total: spoken, per: null };
+  }
+  if (/(?:میلیون|ملیون|هزار|تومن|تومان)ی(?![آ-ی])/.test(text)) return { total: spoken * count, per: spoken };
+  return null;
+}
+
 export function isChequeEndorsement(input) {
   const text = normalizePersian(input);
   if (!/(?<![آ-ی])چک/.test(text)) return false;
@@ -191,6 +239,47 @@ export function isChequeEndorsement(input) {
  * پس نقش هر تاریخ از واژهٔ معرفی‌کننده‌اش فهمیده می‌شود، نه از جایش در جمله.
  */
 const DUE_MARKERS = /(?:سررسید|سر\s*رسید|مهلت|تا\s*تاریخ|موعد|تسویه\s*تا|پرداخت\s*تا)/;
+
+/**
+ * دورهٔ پوشش تاریخِ سند نیست.
+ *
+ * «اجاره شش ماه آینده رو با چک ۶۰ میلیونی دادیم» دربارهٔ شش ماه **اجاره** است؛
+ * چک تاریخ خودش را نگفته. خواندن «شش ماه آینده» به‌عنوان سررسید، چکِ امروز را
+ * شش ماه عقب‌تر در فهرست چک‌ها می‌نشاند و «از اول آبان تا آخر اسفند» اولِ آبان
+ * را سررسید می‌کرد. پیش از جست‌وجوی تاریخِ تنها، هر عبارتی که پوشش را می‌گوید
+ * کنار گذاشته می‌شود: بازهٔ ماه‌ها (با سال و بی‌سال، روز عددی یا «اول/آخر»، و
+ * تایپ «ابان/اخر»)، طولِ آینده پس از نام خدمت («اجاره/بیمه/اشتراک … شش ماه
+ * آینده»)، «اجارهٔ آبان»، و «پوشش از …». تاریخی که با نشانهٔ صریح آمده —
+ * «سررسید ۱۵ آذر»، «به تاریخ ۲۰ آذر» — و تاریخِ خودِ چک («چک … دو ماه دیگه»)
+ * دست نمی‌خورند. چیزی نماند یعنی سررسید خالی است و پرسیده می‌شود، نه حدس.
+ */
+const COVERAGE_MONTH = 'فروردین|اردیبهشت|ارديبهشت|خرداد|تیر|تير|مرداد|امرداد|شهریور|شهريور|مهر|آبان|ابان|آذر|اذر|دی|بهمن|اسفند';
+const COVERAGE_SERVICE = '(?:اجاره|کرایه|بیمه|بیمع|اشتراک|لایسنس|لاینسس|پشتیبانی|شارژ|پوشش|قرارداد|سرویس|هاستینگ|هاست|سرور|آبونمان|عضویت|نگهداری|رهن|ودیعه)(?:\\s*(?:ی|ٔ|ء|بها))?';
+const COVERAGE_COUNT = '(?:\\d{1,2}|یک|یه|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه|ده|یازده|دوازده|هجده|بیست(?:\\s*و\\s*چهار)?)';
+const COVERAGE_AHEAD = '(?:آینده|اینده|بعد|بعدی|جلوتر|جلو|آتی|پیش\\s*رو|دیگه|دیگر)(?![آ-ی])';
+// واژهٔ میان نام خدمت و طولش؛ «چک» و مبلغ یعنی آن طول مالِ چک است، نه خدمت.
+const COVERAGE_GAP = '(?:\\s+(?!چک|چکی|میلیون|ملیون|تومن|تومان|هزار)[^\\s\\d]+){0,3}?';
+const COVERAGE_YEAR = '(?:\\s+(?:سال\\s+)?\\d{2,4}(?!\\d))?';
+const COVERAGE_PATTERNS = [
+  // «از اول آبان تا آخر اسفند»، «از ۱ آبان تا ۳۰ بهمن»، «مهر ۱۴۰۵ تا شهریور ۱۴۰۶».
+  new RegExp(`(?:از\\s+)?(?:[^\\s]+\\s+)?(?:${COVERAGE_MONTH})(?:\\s*ماه)?${COVERAGE_YEAR}\\s+تا\\s+(?:[^\\s]+\\s+)?(?:${COVERAGE_MONTH})(?![آ-ی])(?:\\s*ماه)?${COVERAGE_YEAR}`, 'g'),
+  new RegExp(`(?:پوشش|شروع\\s*(?:پوشش|بیمه|قرارداد))\\s*(?:بیمه\\s*)?(?:از|برای)\\s*[^،,؛.]+`, 'g'),
+  // «اجاره شش ماه آینده»، «بیمه یک سال بعد»، «اشتراک ماه آینده».
+  new RegExp(`(${COVERAGE_SERVICE}${COVERAGE_GAP})\\s+(?:${COVERAGE_COUNT}\\s*)?(?:ماه|سال)(?:\\s*ه)?\\s*${COVERAGE_AHEAD}`, 'g'),
+  // «شش ماه آینده اجاره رو …» — طول پیش از نام خدمت.
+  new RegExp(`(?:${COVERAGE_COUNT}\\s*)?(?:ماه|سال)\\s*${COVERAGE_AHEAD}(?=\\s+(?:رو\\s+|را\\s+)?${COVERAGE_SERVICE})`, 'g'),
+  // «اجارهٔ آبان»، «اجاره ماه آذر».
+  new RegExp(`(${COVERAGE_SERVICE})\\s*(?:ماه\\s*)?(?:${COVERAGE_MONTH})(?![آ-ی])`, 'g'),
+];
+
+export function maskCoveragePhrases(input) {
+  let text = normalizePersian(input);
+  for (const pattern of COVERAGE_PATTERNS) {
+    // نام خدمت می‌ماند؛ فقط خودِ دوره پاک می‌شود تا الگوی بعدی هم آن را ببیند.
+    text = text.replace(pattern, (match, service) => (typeof service === 'string' ? `${service} ` : ' '));
+  }
+  return text.replace(/\s+/g, ' ').trim();
+}
 const OCCURRED_MARKERS = /(?:در\s*تاریخ|مورخ|تاریخِ?)/;
 
 function dateAfter(text, marker, now, preferPast) {
@@ -221,16 +310,18 @@ export function splitDateRoles(input, { now, isCheque = false } = {}) {
   const occurredAt = dateAfter(text, OCCURRED_MARKERS, now, true);
   if (dueAt || occurredAt) return { occurredAt, dueAt };
 
+  // تاریخِ تنها فقط از آنچه پس از کنار گذاشتن دورهٔ پوشش می‌ماند خوانده می‌شود.
+  const dated = maskCoveragePhrases(input);
   // چک اصلاً دربارهٔ سررسید است، پس تاریخِ تنها در جملهٔ چک سررسید است.
   if (isCheque) {
-    const cheque = extractDateMention(input, { now, preferPast: false });
+    const cheque = extractDateMention(dated, { now, preferPast: false });
     return { occurredAt: null, dueAt: cheque?.iso || null };
   }
   // برای طلب و بدهی، خودِ تاریخ نقشش را می‌گوید: کسی در آینده بدهکار نمی‌شود،
   // پس تاریخ آینده فقط می‌تواند سررسید باشد و تاریخ گذشته فقط رویداد.
-  const forward = extractDateMention(input, { now, preferPast: false });
+  const forward = extractDateMention(dated, { now, preferPast: false });
   if (forward && new Date(forward.iso).getTime() > now.getTime()) return { occurredAt: null, dueAt: forward.iso };
-  const lone = extractDateMention(input, { now, preferPast: true });
+  const lone = extractDateMention(dated, { now, preferPast: true });
   return { occurredAt: lone?.iso || null, dueAt: null };
 }
 
@@ -323,7 +414,8 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   const directionText = isCheque ? text.replace(/تخفیف(?:\s+تجاری)?\s+داد(?:یم|م)/g, '') : text;
   const readDirection = (part) => ({
     receivable: matchesAny(part, RECEIVABLE_PATTERNS)
-      || (isCheque && /(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*(?:\d+\s*روزه\s*)?دادن(?![آ-ی]))/.test(part)),
+      || (isCheque && (/(?:گرفتم|گرفتیم|دریافت\s*کردم|داد\s*به\s*(?:من|ما)|دادن\s*به\s*(?:من|ما)|به\s*(?:ما|من)\s*واگذار\s*کرد|چک\s*(?:\d+\s*روزه\s*)?دادن(?![آ-ی]))/.test(part)
+        || chequeGivenToUs(part))),
     payable: matchesAny(part, PAYABLE_PATTERNS)
       || (isCheque && /(?:دادم|دادیم|نوشتم|کشیدم|صادر\s*کردم)/.test(part)),
   });
@@ -348,20 +440,30 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   const chequeAmounts = isCheque && chequeClause ? parseFinancialText(chequeClause, { source: 'voice' }).transactions.map((item) => Number(item.amount) || 0).filter(Boolean) : [];
   const ownAmount = chequeAmounts.length === 1 ? chequeAmounts[0] : 0;
   const severalAmounts = !ownAmount && hasSeveralAmounts(input);
-  const finalAmount = ownAmount || amount;
+  const spoken = ownAmount || amount;
+  // «۱۲ تا چک ۱۰ میلیونی»: پارسر عدد شمارش را عمداً مبلغ نمی‌خواند، پس مبلغ
+  // گفته‌شده مالِ **یک** چک است. کارت تک‌چکی آن را کل سند می‌کرد و ۱۱۰ میلیون
+  // بدهی گم می‌شد. سری با جمعِ کامل و تعدادش برمی‌گردد؛ ثبت تک‌چکی برایش ساخته
+  // نمی‌شود چون سررسید هر برگ را جمله نگفته (سرور به حسابدار می‌فرستد). وقتی
+  // معلوم نیست مبلغ گفته‌شده مال هر برگ است یا جمع، مبلغ پرسیده می‌شود.
+  const series = isCheque ? chequeSeriesCount(chequeClause || text) : 0;
+  const seriesRead = series && spoken ? seriesAmounts(chequeClause || text, series, spoken) : null;
+  const seriesUnclear = Boolean(series) && !seriesRead;
+  const finalAmount = seriesRead ? seriesRead.total : spoken;
   return {
     intent: isCheque ? 'cheque' : 'obligation',
     direction,
     ambiguous: !direction,
-    amount: severalAmounts ? 0 : finalAmount,
+    amount: severalAmounts || seriesUnclear ? 0 : finalAmount,
     // مبلغ خالی یعنی «هنوز گفته نشده»، نه صفر؛ کارت تأیید تا نوشتنش پیش نمی‌رود.
-    needsAmount: !finalAmount || severalAmounts,
+    needsAmount: !finalAmount || severalAmounts || seriesUnclear,
     ...(severalAmounts ? { amountHint: amount } : {}),
+    ...(series ? { chequeCount: series, ...(seriesRead ? { perChequeAmount: seriesRead.per } : {}) } : {}),
     // چک خرید یا فروش با ارزش افزوده: کل مبلغ چک بهای کالا یا درآمد نیست.
     ...(isCheque && /ارزش\s*افزوده|مالیات\s*بر\s*ارزش/.test(text) ? { vatMentioned: true } : {}),
     contactName,
     ...splitDateRoles(input, { now, isCheque }),
-    title: [isCheque ? 'چک' : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
+    title: [isCheque ? (series ? `${series.toLocaleString('fa-IR')} چک` : 'چک') : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
     transcript: text,
   };
 }
