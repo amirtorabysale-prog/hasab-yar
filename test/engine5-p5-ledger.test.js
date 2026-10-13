@@ -1567,6 +1567,97 @@ test('منفی: قراردادی که ادامه دارد بیش از بخش ش�
 });
 
 // ---------------------------------------------------------------------------
+// تمام شد یا ادامه دارد؟ — فقط وقتی فعل پایان دربارهٔ خود قرارداد است («بیمه
+// رو لغو کردیم»، «قرارداد اجاره رو فسخ کرد»، «تخلیه کرد»). «آب قطع شد»، «برق
+// دو هفته قطع شد» و «تمدید نکرد» قرارداد را تمام نمی‌کنند: پرسیده می‌شود و تا
+// جواب، ماه‌های آینده جلو نمی‌افتند.
+// ---------------------------------------------------------------------------
+
+const tenantLines = (book, amount) => [{ accountId: book.deferred, debit: amount, credit: 0, analyticId: book.tenantAnalytic }, { accountId: book.cashLedger, debit: 0, credit: amount }];
+const insurerLines = (book, amount) => [{ accountId: book.bankLedger, debit: amount, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: amount }];
+const closingItems = (eventId) => items(eventId).filter((item) => /:close:/.test(item.key) && item.status !== 'superseded');
+
+for (const [side, sentence] of [
+  ['rent', 'آب انبار یه ماه قطع شد، ۲ میلیون از اجاره رو به آقای احمدی از صندوق پس دادیم'],
+  ['rent', 'برق مغازه دو هفته قطع شد، ۲ میلیون از اجاره رو به آقای احمدی از صندوق پس دادیم'],
+  ['rent', 'آقای احمدی گفت تمدید نکرد اما فعلا هست، ۲ میلیون از اجاره رو از صندوق بهش پس دادیم'],
+  ['rent', 'اجاره رو به خاطر قطع شدن آب ۲ میلیون کم کردیم و از صندوق به آقای احمدی پس دادیم'],
+  ['rent', 'هنوز تخلیه نکرده ولی ۲ میلیون از اجاره رو به آقای احمدی از صندوق پس دادیم'],
+  ['insurance', 'برق انبار قطع شد بیمه پاسارگاد ۲ میلیون از حق بیمه آتش سوزی رو به حساب تجارت برگردوند'],
+]) {
+  test(`منفی، پایان قرارداد حدس زده نمی‌شود: «${sentence}» — پرسیده می‌شود و ماه‌های آینده جلو نمی‌افتند`, async () => {
+    const book = await contractBook(`پایان حدسی نه — ${sentence.slice(0, 20)}`);
+    await book.inBook(() => {
+      const [contract, lines, account] = side === 'rent' ? [book.rent, tenantLines(book, 2_000_000), book.deferred] : [book.insurance, insurerLines(book, 2_000_000), book.prepaid];
+      const before = { ledger: ledgerOf(account), unrecognised: unrecognised(contract), journals: sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n };
+      const event = refundPlaceholder(sentence, 2_000_000);
+      assert.throws(() => database.recordReviewedComposite(event.id, { lines, reason: side === 'rent' ? 'پس دادن بخشی از اجارهٔ پیش‌دریافت' : 'برگشت بخشی از حق بیمه' }),
+        (error) => error.code === 'REVIEW_DETAILS_REQUIRED' && error.question?.id === 'contract.ended');
+      assert.deepEqual({ ledger: ledgerOf(account), unrecognised: unrecognised(contract), journals: sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n }, before, 'هیچ چیز پیش از جواب');
+      assert.deepEqual(closingItems(contract), []);
+    });
+  });
+}
+
+for (const [side, sentence] of [
+  ['rent', 'آقای احمدی قرارداد اجاره رو فسخ کرد، ۲ میلیون از صندوق بهش پس دادیم'],
+  ['rent', 'اجاره انبار رو آقای احمدی کنسل کرد، ۲ میلیون از صندوق بهش پس دادیم'],
+  ['rent', 'قرارداد اجاره با آقای احمدی تمام شد ۲ میلیون از صندوق بهش پس دادیم'],
+  ['rent', 'آقای احمدی مستاجر تخلیه کرد ۲ میلیون از اجاره رو از صندوق بهش پس دادیم'],
+  ['insurance', 'بیمه آتش سوزی رو لغو کردیم بیمه پاسارگاد ۲ میلیون برگشت داد به حساب تجارت'],
+  ['insurance', 'بیمه‌نامه آتش سوزی باطل شد، بیمه پاسارگاد ۲ میلیون برگردوند به حساب تجارت'],
+]) {
+  test(`پایان خود قرارداد: «${sentence}» — قلم پایانی و حساب دوره‌دار صفر`, async () => {
+    const book = await contractBook(`پایان قرارداد — ${sentence.slice(0, 20)}`);
+    await book.inBook(() => {
+      const [contract, lines, account] = side === 'rent' ? [book.rent, tenantLines(book, 2_000_000), book.deferred] : [book.insurance, insurerLines(book, 2_000_000), book.prepaid];
+      const remaining = unrecognised(contract);
+      const event = refundPlaceholder(sentence, 2_000_000);
+      database.recordReviewedComposite(event.id, { lines, reason: side === 'rent' ? 'پس دادن بخشی از اجارهٔ پیش‌دریافت' : 'برگشت بخشی از حق بیمه' });
+      assert.deepEqual(closingItems(contract).map((item) => item.amount), [remaining - 2_000_000]);
+      run(LONG_AFTER);
+      assert.equal(ledgerOf(account), 0);
+    });
+  });
+}
+
+for (const [answer, ended] of [
+  ['نه، ادامه داره', false],
+  ['نه، فسخ نشده', false],
+  ['هنوز تخلیه نکرده', false],
+  ['ادامه نداره، تخلیه کرد', true],
+  ['آره قرارداد تمام شد', true],
+]) {
+  test(`جواب حسابدار به «تمام شد یا ادامه دارد؟»: «${answer}» — ${ended ? 'قلم پایانی' : 'اقلام آینده کم می‌شوند و جلو نمی‌افتند'}`, async () => {
+    const book = await contractBook(`جواب پایان — ${answer}`);
+    await book.inBook(async () => {
+      // مسیر دستیار عودتِ درآمد انتقالی را فقط با «پیش دریافت» در گفته می‌پذیرد (بستهٔ بررسی).
+      const sentence = 'آب انبار یه ماه قطع شد، ۲ میلیون از پیش دریافت اجاره رو به آقای احمدی از صندوق پس دادیم';
+      const event = refundPlaceholder(sentence, 2_000_000);
+      const cashBox = database.listAccounts().find((account) => account.name === 'صندوق نقدی');
+      const facts = { accountId: cashBox.id, counterpartyId: sql().prepare("SELECT id FROM contacts WHERE name LIKE '%احمدی%'").get().id };
+      const lines = [{ role: 'deferred-revenue', key: 'احمدی', accountId: book.deferred, debit: 2_000_000, credit: 0 }, { role: 'cash', key: null, accountId: book.cashLedger, debit: 0, credit: 2_000_000 }];
+      const ask = [{ id: 'contract.ended', text: 'قرارداد با این استرداد تمام شد یا با مبلغ کمتر ادامه دارد؟', field: null }];
+      await proposeReview(sql(), event.id, { message: 'تمام شد؟', fetcher: fakeAi({ questions: ask }), facts });
+      const proposal = await proposeReview(sql(), event.id, { message: 'عودت بخشی از پیش‌دریافت اجاره بابت قطعی آب', facts: { ...facts, questionAnswers: { 'contract.ended': { value: answer } } }, fetcher: fakeAi({ summary: 'جبران از اجارهٔ پیش‌دریافت', lines }) });
+      database.reviewAiFeedback(event.id, proposal.id, { accepted: true });
+      if (ended) assert.deepEqual(closingItems(book.rent).map((item) => item.amount), [28_000_000]);
+      else {
+        assert.deepEqual(closingItems(book.rent), [], 'قرارداد ادامه دارد: قلم پایانی نیست');
+        assert.equal(unrecognised(book.rent), 28_000_000);
+        run(REFUND_AT);
+        const future = items(book.rent).filter((item) => item.status === 'planned');
+        assert.deepEqual(future.map((item) => item.periodKey), ['1405-11', '1405-12'], 'بهمن و اسفند در دی شناسایی نشدند');
+        assert.equal(ledgerOf(book.deferred), -unrecognised(book.rent));
+      }
+      run(LONG_AFTER);
+      assert.equal(ledgerOf(book.deferred), 0);
+      assert.equal(net('income-category'), -58_000_000);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // خانوادهٔ «ماندهٔ دفتر کل بی‌سند»: پیش‌پرداخت یا درآمد انتقالی‌ای که از
 // افتتاحیه، سند دستی دسته‌ای یا سند اصلاحی آمده و رویدادی پشتش نیست. دفتر کل
 // باید آن را ببیند و دوره‌اش را بپرسد؛ با جواب حسابدار برنامه می‌گیرد و هیچ

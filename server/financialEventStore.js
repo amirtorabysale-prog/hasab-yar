@@ -1027,8 +1027,19 @@ function contractPosition(database, contractEventId, cutoff = null) {
   return { remaining, postedAfter, postedAfterTotal, available: remaining + postedAfterTotal };
 }
 
-/** «فسخ»، «تخلیه»، «کنسل» — قرارداد تمام شد؛ «ادامه دارد»، «تخفیف» — با مبلغ کمتر ادامه دارد. */
-const CONTRACT_ENDED = /فسخ|تخلیه|کنسل|لغو|ابطال|خاتمه|پایان\s*(?:قرارداد|همکاری)|قرارداد\s*(?:تمام|بسته)\s*شد|قطع\s*(?:کردیم|کرد|شد)|تمدید\s*نکرد/;
+/**
+ * پایان خودِ قرارداد — نه هر «قطع شد»ی.
+ *
+ * «فسخ» و «تخلیه» فقط دربارهٔ قرارداد گفته می‌شوند. «کنسل»، «لغو»، «ابطال»،
+ * «قطع» و «تمام» فقط وقتی پایان‌اند که فاعل یا مفعولشان خود قرارداد باشد («بیمه
+ * رو کنسل کردیم»، «اشتراک قطع شد»، «قرارداد تمام شد»)؛ «آب انبار قطع شد» یا «برق
+ * دو هفته قطع شد» قرارداد را تمام نمی‌کند. «تمدید نکرد» یعنی در سررسید ادامه
+ * ندارد، نه امروز. فعل منفی («تخلیه نکرده»، «فسخ نشد») پایان نیست.
+ */
+const CONTRACT_NOUN = '(?:قرارداد|بیمه(?:\\s*نامه)?|اشتراک|اجاره(?:\\s*نامه)?|لایسنس|عضویت|اکانت|پشتیبانی|سرویس\\s*(?:پشتیبانی|نرم\\s*افزار|ابری|هاستینگ|میزبانی))';
+const END_SOLE_VERB = /(?:فسخ|تخلیه)(?!\s*ن(?:کرد|کردیم|کرده|کردند|شد|شده|می|میکن|میشه))/;
+const END_CONTRACT_VERB = new RegExp(`${CONTRACT_NOUN}[^،,.؛!؟?]{0,60}?(?:کنسل|لغو|ابطال|باطل|خاتمه|قطع|تمام)(?:\\s*(?:کردیم|کردند|کرد|کرده|شده|شد|گردید|دادیم|داد))(?![آ-ی])`);
+const CONTRACT_ENDED = new RegExp(`${END_SOLE_VERB.source}|${END_CONTRACT_VERB.source}|پایان\\s*(?:قرارداد|همکاری)|خاتمه\\s*(?:قرارداد|همکاری)`);
 const CONTRACT_CONTINUES = /ادامه\s*(?:دارد|داره|می\s*دهیم|میدیم|می\s*دهد|میده|پیدا)|تخفیف|کاهش\s*(?:پوشش|مبلغ|نرخ|اجاره|حق)|ارزان\s*تر|کمتر\s*شد/;
 
 /** از متن: `true` پایان، `false` ادامه، `null` نامعلوم یا متناقض. */
@@ -1047,9 +1058,13 @@ function contractEndedFromAnswer(text) {
   const fromText = contractEndedFrom(text);
   if (fromText !== null) return fromText;
   const normalized = normalizePersian(text);
-  const negated = /(?:^|\s)(?:نه|خیر)(?=$|\s|[،,.])|(?:^|\s)ن(?:شد|شده|کرد|کردیم|کردند|میشه|می\s*شود)(?=$|\s|[،,.])/.test(normalized);
-  const ended = /(?:^|\s)(?:تمام|خاتمه|پایان|کنسل|لغو|باطل|فسخ|تخلیه)/.test(normalized) && !negated;
-  const continues = /ادامه|هنوز|برقرار/.test(normalized);
+  const negated = /(?:^|\s)(?:نه|خیر)(?=$|\s|[،,.])|(?:^|\s)ن(?:شد|شده|کرد|کرده|کردیم|کردند|میشه|می\s*شود)(?=$|\s|[،,.])/.test(normalized);
+  const endWord = /(?:^|\s)(?:تمام|خاتمه|پایان|کنسل|لغو|باطل|فسخ|تخلیه)/.test(normalized);
+  // «ادامه نداره»، «برقرار نیست» پایان‌اند؛ «فسخ نشده»، «هنوز تخلیه نکرده» ادامه.
+  const stops = /ادامه\s*ن(?:دار|داد|می)|برقرار\s*نیست/.test(normalized);
+  const goesOn = /ادامه(?!\s*ن(?:دار|داد|می))|هنوز|برقرار(?!\s*نیست)/.test(normalized);
+  const ended = (endWord && !negated) || stops;
+  const continues = goesOn || (endWord && negated);
   return ended === continues ? null : ended;
 }
 
