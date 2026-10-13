@@ -1812,3 +1812,136 @@ test('بستن دوره و تأیید سند دستی، ماندهٔ بی‌بر
   const approval = source.slice(source.indexOf("app.post('/api/accounting/journal/:id/approval'"), source.indexOf("app.get('/api/accounting/templates'"));
   assert.match(approval, /unscheduledBalancesForEntry\(request\.params\.id\)/);
 });
+
+// ---------------------------------------------------------------------------
+// دستهٔ هزینهٔ ماهانه همان است که حسابدار انتخاب کرد: حسابِ دسته‌دار
+// («پیش‌پرداخت — بیمه»)، جواب «کدام دسته؟» یا کلید سطر («بیمه انبار»). دستهٔ
+// کهنهٔ لحظهٔ ضبط («مواد و کالا») برای پیش‌پرداخت خدمت حدس است: پرسیده می‌شود.
+// آینه: درآمد انتقالی هم با جواب حسابدار به دستهٔ درآمد درست می‌رود.
+// ---------------------------------------------------------------------------
+
+const byCategory = (kind) => Object.fromEntries(sql().prepare(`SELECT a.source_key AS k, SUM(l.debit)-SUM(l.credit) AS n FROM journal_lines l
+  JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id
+  WHERE a.source_kind=? AND j.approval_state='approved' GROUP BY a.source_key HAVING n<>0`).all(kind).map((row) => [row.k, row.n]));
+const WAREHOUSE_INSURANCE = 'بیمه یک ساله انبار ۱۲ میلیون از حساب تجارت دادیم';
+/** دستهٔ کهنهٔ لحظهٔ ضبط — همان که گزارش دید («مواد و کالا») — مستقل از دسته‌بندی گفتار. */
+const staleCategory = (eventId, category) => sql().prepare("UPDATE financial_events SET payload=json_set(payload,'$.category',?) WHERE id=?").run(category, eventId);
+const payloadOf = (eventId) => JSON.parse(sql().prepare('SELECT payload FROM financial_events WHERE id=?').get(eventId).payload);
+
+test(`حساب «پیش‌پرداخت — بیمه» که حسابدار بدهکار کرد دستهٔ هزینه است، نه «مواد و کالا»ی لحظهٔ ضبط: «${WAREHOUSE_INSURANCE}»`, async () => {
+  const { inBook, bank } = await freshBook('دسته — حساب دسته‌دار');
+  await inBook(async () => {
+    capture(FIRE_INSURANCE);
+    const linked = sql().prepare("SELECT id FROM ledger_accounts WHERE source_kind='prepaid-asset' AND source_key='بیمه'").get().id;
+    const { eventId } = capture(WAREHOUSE_INSURANCE, { approve: false });
+    staleCategory(eventId, 'مواد و کالا');
+    const lines = [{ role: 'prepaid-asset', key: null, accountId: linked, debit: 12_000_000, credit: 0 }, { role: 'cash', key: null, debit: 0, credit: 12_000_000 }];
+    const { prepared, accept } = await accountantReview(eventId, lines, { bank });
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    assert.equal(prepared.lines[0].accountName, 'پیش‌پرداخت — بیمه');
+    accept();
+    assert.equal(payloadOf(eventId).category, 'بیمه', 'دسته روی خود رویداد هم نشست');
+    assert.ok(store.decisionForEvent(sql(), eventId).sourceReferences.some((ref) => ref.type === 'category' && ref.id === 'بیمه' && ref.basis === 'account'));
+    run(LONG_AFTER);
+    assert.deepEqual(byCategory('expense-category'), { بیمه: 24_000_000 });
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+  });
+});
+
+test('ثبت دستی حسابدار روی «پیش‌پرداخت — بیمه»: شناسایی به هزینهٔ بیمه می‌رود', async () => {
+  const { inBook, bank } = await freshBook('دسته — ثبت دستی');
+  await inBook(() => {
+    capture(FIRE_INSURANCE);
+    const linked = sql().prepare("SELECT id FROM ledger_accounts WHERE source_kind='prepaid-asset' AND source_key='بیمه'").get().id;
+    const bankLedger = sql().prepare("SELECT id FROM ledger_accounts WHERE source_kind='operational-account' AND source_key=?").get(bank.id).id;
+    const eventId = placeholder(WAREHOUSE_INSURANCE, 12_000_000, 'p5-category-manual').id;
+    staleCategory(eventId, 'مواد و کالا');
+    database.recordReviewedComposite(eventId, { lines: [{ accountId: linked, debit: 12_000_000, credit: 0 }, { accountId: bankLedger, debit: 0, credit: 12_000_000 }], reason: 'پیش‌پرداخت بیمهٔ یک‌سالهٔ انبار' });
+    run(LONG_AFTER);
+    assert.deepEqual(byCategory('expense-category'), { بیمه: 24_000_000 });
+  });
+});
+
+test('حساب کلی «پیش‌پرداخت‌ها» با کلید سطر «بیمه انبار»: هزینهٔ بیمه، نه «مواد و کالا»', async () => {
+  const { inBook, bank } = await freshBook('دسته — کلید سطر');
+  await inBook(async () => {
+    const { eventId } = capture(WAREHOUSE_INSURANCE, { approve: false });
+    staleCategory(eventId, 'مواد و کالا');
+    const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(12_000_000, 'بیمه انبار'), { bank });
+    assert.equal(prepared.lines[0].accountName, 'پیش‌پرداخت‌ها');
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    run(LONG_AFTER);
+    assert.deepEqual(byCategory('expense-category'), { بیمه: 12_000_000 });
+    assert.deepEqual(timingBalances('prepaid-asset'), []);
+  });
+});
+
+test('حساب کلی بی‌کلیدِ دسته‌دار و دستهٔ «مواد و کالا»: پیش از قبول «کدام دسته؟» پرسیده می‌شود؛ جواب «بیمه» همان دسته است', async () => {
+  const { inBook, bank } = await freshBook('دسته — پرسیدن');
+  await inBook(async () => {
+    const { eventId } = capture(WAREHOUSE_INSURANCE, { approve: false });
+    staleCategory(eventId, 'مواد و کالا');
+    const unanswered = await accountantReview(eventId, LINES.prepaid(12_000_000, 'پیش پرداخت'), { bank });
+    assert.equal(unanswered.prepared.canPost, false);
+    assert.ok(unanswered.prepared.postingBlockers.includes(store.timingCategoryQuestion('prepaid')), unanswered.prepared.postingBlockers.join(' / '));
+    const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+    await proposeReview(sql(), eventId, { message: 'کدام دسته؟', fetcher: fakeAi({ questions: [{ id: 'timing.category', text: store.timingCategoryQuestion('prepaid') }] }), facts: { accountId: bank.id } });
+    const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(12_000_000, 'پیش پرداخت'), { bank, answers: { 'timing.category': { value: 'بیمه' } } });
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals, 'هیچ سندی پیش از جواب');
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    run(LONG_AFTER);
+    assert.deepEqual(byCategory('expense-category'), { بیمه: 12_000_000 });
+  });
+});
+
+test('منفی: ثبت دستی روی حساب کلی با دستهٔ «سایر هزینه‌ها» سند نمی‌زند و «کدام دسته؟» می‌پرسد', async () => {
+  const { inBook, bank } = await freshBook('دسته — دستی بی‌دسته');
+  await inBook(() => {
+    const eventId = placeholder(WAREHOUSE_INSURANCE, 12_000_000, 'p5-category-generic').id;
+    staleCategory(eventId, 'سایر هزینه‌ها');
+    const generic = sql().prepare("SELECT la.id FROM ledger_accounts la JOIN chart_accounts ca ON ca.id=la.chart_account_id WHERE ca.code='1401' LIMIT 1").get().id;
+    const bankLedger = sql().prepare("SELECT id FROM ledger_accounts WHERE source_kind='operational-account' AND source_key=?").get(bank.id).id;
+    const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+    assert.throws(() => database.recordReviewedComposite(eventId, { lines: [{ accountId: generic, debit: 12_000_000, credit: 0 }, { accountId: bankLedger, debit: 0, credit: 12_000_000 }], reason: 'پیش‌پرداخت یک‌ساله' }),
+      (error) => error.code === 'REVIEW_DETAILS_REQUIRED' && error.question?.id === 'timing.category');
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals);
+  });
+});
+
+test('منفی: دستهٔ خدمتِ لحظهٔ ضبط («اجاره») با حساب کلی و کلید بی‌دسته می‌ماند و چیزی پرسیده نمی‌شود', async () => {
+  const { inBook, bank } = await freshBook('دسته — اجارهٔ ضبط');
+  await inBook(async () => {
+    const { eventId } = capture('اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون از حساب تجارت', { approve: false });
+    staleCategory(eventId, 'اجاره');
+    const { prepared, accept } = await accountantReview(eventId, LINES.prepaid(30_000_000, 'پیش پرداخت'), { bank });
+    assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+    accept();
+    run(LONG_AFTER);
+    assert.deepEqual(byCategory('expense-category'), { اجاره: 30_000_000 });
+  });
+});
+
+for (const [label, answers, expected] of [
+  ['جواب «درآمد اجاره» جای «سایر درآمدها»ی لحظهٔ ضبط', { 'timing.category': { value: 'درآمد اجاره' } }, { 'درآمد اجاره': -30_000_000 }],
+  ['بی‌جواب، دستهٔ لحظهٔ ضبط می‌ماند و پرسیده نمی‌شود', null, { 'سایر درآمدها': -30_000_000 }],
+]) {
+  test(`آینه، درآمد انتقالی: ${label}`, async () => {
+    const { inBook, bank } = await freshBook(`دسته — آینه ${label.slice(0, 12)}`);
+    await inBook(async () => {
+      const { eventId } = capture('اجاره شش ماه آینده انبار رو ۳۰ میلیون از آقای کریمی پیش دریافت کردیم، ریختن حساب تجارت', { approve: false });
+      staleCategory(eventId, 'سایر درآمدها');
+      if (answers) {
+        database.handOverPending(eventId);
+        await proposeReview(sql(), eventId, { message: 'درآمدش کدام دسته است؟', fetcher: fakeAi({ questions: [{ id: 'timing.category', text: store.timingCategoryQuestion('deferred') }] }), facts: { accountId: bank.id } });
+      }
+      const { prepared, accept } = await accountantReview(eventId, LINES.deferred(30_000_000, 'کریمی'), { bank, answers, message: 'پیش‌دریافت اجارهٔ شش ماهه است؛ درآمد انتقالی ثبت کن' });
+      assert.equal(prepared.canPost, true, prepared.postingBlockers.join(' / '));
+      accept();
+      run(LONG_AFTER);
+      assert.deepEqual(byCategory('income-category'), expected);
+      assert.deepEqual(timingBalances('deferred-revenue'), []);
+    });
+  });
+}
