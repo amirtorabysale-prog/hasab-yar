@@ -101,6 +101,114 @@ test('مسیر AI با «advance-paid» همان تصمیم مسیر قطعی ر
 });
 
 // ---------------------------------------------------------------------------
+// کالا با دورهٔ گفته‌شده، و تحویلِ چیزی که کالا نیست (بازبینی دوم)
+// ---------------------------------------------------------------------------
+
+/** پیش‌پرداخت خرید: نه دارایی پیش‌پرداخت خدمت، نه برنامهٔ ماهانه، نه حدس. */
+const assertSupplierAdvance = (text) => {
+  const [item] = voice(text).items;
+  assert.equal(item.decision.treatment, 'supplier-advance', text);
+  assert.notEqual(item.decision.recognitionMethod, 'monthly-straight-line', text);
+  assert.ok(!roles(item).some(([role]) => role === 'prepaid-asset' || role === 'expense'), text);
+  assert.ok(item.outcome === 'ask' ? item.fact === 'counterparty' : roles(item)[0][0] === 'supplier-advance', text);
+};
+
+test('پیش‌پرداخت/بیعانه/علی‌الحساب خرید کالا با دورهٔ گفته‌شده پیش‌پرداخت خرید می‌ماند، نه هزینهٔ ماهانه', () => {
+  // جمله‌های بازبین، عیناً.
+  for (const text of [
+    'علی الحساب خرید مواد اولیه سه ماه آینده ۳۰ میلیون به شرکت آلفا دادیم',
+    'پیش پرداخت قرارداد تامین مواد اولیه شش ماهه ۶۰ میلیون به شرکت آلفا دادیم',
+    'پیش پرداخت خرید آهن شش ماه آینده ۵۰ میلیون به آقای رضایی دادیم',
+    'پیش پرداخت خرید پارچه برای شش ماه آینده ۶۰ میلیون به تولیدی نوری دادیم',
+    'بیعانه خرید پارچه شش ماهه ۶۰ میلیون به تولیدی نوری دادیم',
+  ]) assertSupplierAdvance(text);
+  // واژهٔ پیش‌پرداخت × کالا × شکل دوره، با عدد لاتین.
+  for (const advance of ['پیش پرداخت', 'بیعانه', 'علی الحساب']) {
+    for (const [goods, party] of [['خرید آهن', 'آقای رضایی'], ['خرید پارچه', 'تولیدی نوری'], ['خرید مواد اولیه', 'شرکت آلفا']]) {
+      for (const period of ['شش ماه آینده', 'شش ماهه', 'سه ماه آینده', '6 ماهه']) {
+        assertSupplierAdvance(`${advance} ${goods} ${period} ۴۰ میلیون به ${party} دادیم`);
+      }
+    }
+  }
+  // مسیر AI: «advance-paid» همان واقعیت‌ها را می‌دهد.
+  const ai = decide({
+    moneyDirection: 'out', amount: 50_000_000, occurredAt: NOW, counterparty: 'آقای رضایی', paymentPurpose: 'advance', category: 'سایر هزینه‌ها',
+    servicePeriodStart: NOW, servicePeriodEnd: '2027-04-09T00:00:00.000Z', evidence: 'پیش پرداخت خرید آهن شش ماه آینده ۵۰ میلیون به آقای رضایی دادیم',
+  }, { today: NOW });
+  assert.equal(ai.policyKey, 'supplier-advance');
+});
+
+test('منفی: خدمتی که کالا فقط وصفش است، پیش‌پرداخت خدمت می‌ماند؛ خرید کالا با دوره و بی نشانهٔ پیش‌پرداخت حدس زده نمی‌شود', () => {
+  for (const [text, amount] of [
+    ['پیش پرداخت قرارداد پشتیبانی دستگاه یکساله ۲۴ میلیون دادیم', 24_000_000],
+    ['قرارداد نگهداری تجهیزات شش ماهه ۳۰ میلیون پیش پرداخت کردیم', 30_000_000],
+    ['پیش پرداخت بیمه انبار کالا یک ساله ۱۲ میلیون دادیم', 12_000_000],
+    ['اجاره دستگاه شش ماهه ۳۰ میلیون پیش پرداخت کردیم', 30_000_000],
+  ]) {
+    const [item] = voice(text).items;
+    assert.equal(item.decision.treatment, 'prepaid-expense', text);
+    assert.deepEqual(roles(item), [['prepaid-asset', amount], ['cash', amount]], text);
+  }
+  // «خرید مواد اولیه شش ماهه»: پیش‌پرداخت است یا مواد رسیده؟ — نه هزینهٔ ماهانه، نه سند خودکار.
+  const [unclear] = voice('خرید مواد اولیه شش ماهه ۶۰ میلیون به شرکت آلفا دادیم').items;
+  assert.notEqual(unclear.outcome, 'post');
+  assert.notEqual(unclear.decision.treatment, 'prepaid-expense');
+});
+
+test('تحویلِ سند، گزارش یا آدم، تحویل کالا نیست: برنامهٔ خدمت، موجودیِ رسیده و پیش‌دریافت خدمت سر جایشان می‌مانند', () => {
+  // خدمت دوره‌دار با «فاکتورش/گزارشش رو … ارسال میکنن»: همچنان برنامهٔ ماهانه.
+  for (const [text, amount] of [
+    ['قرارداد پشتیبانی یکساله ۲۴ میلیون به شرکت آلفا دادیم، فاکتورش رو هفته بعد ارسال میکنن', 24_000_000],
+    ['قرارداد تبلیغات شش ماهه ۶۰ میلیون دادیم، گزارشش رو ماهانه ارسال میکنن', 60_000_000],
+    ['قرارداد پشتیبانی یکساله ۲۴ میلیون به شرکت آلفا دادیم، نصابشون هفته بعد میاد', 24_000_000],
+  ]) {
+    const [item] = voice(text).items;
+    assert.equal(item.decision.treatment, 'prepaid-expense', text);
+    assert.equal(item.decision.recognitionMethod, 'monthly-straight-line', text);
+    assert.deepEqual(roles(item), [['prepaid-asset', amount], ['cash', amount]], text);
+  }
+  // کالای رسیده که فقط فاکتورش نیامده، موجودی است، نه پیش‌پرداخت خرید.
+  const [received] = voice('۲۰ میلیون مواد اولیه از شرکت آلفا خریدیم ولی فاکتورش ارسال نشده').items;
+  assert.notEqual(received.decision.treatment, 'supplier-advance');
+  assert.ok(!roles(received).some(([role]) => role === 'supplier-advance'));
+  // «نصابش/حسابدار فردا میاد» آدم است؛ همان سؤال‌های خرید کالا، نه پیش‌پرداخت خرید.
+  for (const text of ['خرید دستگاه ۵۰ میلیون نقدی دادیم، نصابش فردا میاد', '۲۰ میلیون جنس خریدیم حسابدار فردا میاد ثبت کنه']) {
+    const [item] = voice(text).items;
+    assert.notEqual(item.decision.treatment, 'supplier-advance', text);
+    assert.equal(item.outcome, 'ask', text);
+    assert.ok(['intendedUse', 'paymentPurpose'].includes(item.fact), text);
+  }
+  // وارونه: پیش‌دریافت خدمت با «گزارش/فاکتور رو براشون میفرستیم» درآمد انتقالی با برنامه است.
+  for (const text of [
+    'شرکت آلفا قرارداد پشتیبانی یکساله ۲۴ میلیون به ما واریز کرد، گزارش ماهانه رو براشون میفرستیم',
+    'شرکت آلفا قرارداد پشتیبانی یکساله ۲۴ میلیون به ما واریز کرد، فاکتورش رو هفته بعد براشون ارسال میکنیم',
+  ]) {
+    const [item] = voice(text).items;
+    assert.equal(item.decision.treatment, 'deferred-revenue', text);
+    assert.deepEqual(roles(item), [['cash', 24_000_000], ['deferred-revenue', 24_000_000]], text);
+  }
+  for (const evidence of ['فاکتورش رو هفته بعد ارسال میکنن', 'گزارشش رو ماهانه ارسال میکنن', 'نصابش فردا میاد', 'حسابدار فردا میاد ثبت کنه', 'گزارش ماهانه رو براشون میفرستیم', 'مواد اولیه خریدیم ولی فاکتورش ارسال نشده']) {
+    assert.equal(goodsDeliveryLater({ evidence }), null, evidence);
+  }
+});
+
+test('تحویل مجهول و مرکب: «تحویل داده میشه/می‌شود»، «ارسال خواهد شد» پیش‌پرداخت خرید است', () => {
+  for (const text of [
+    '۳۰ میلیون به تولیدی نوری دادیم برای پارچه که سه ماه بعد تحویل داده میشه',
+    '۳۰ میلیون به تولیدی نوری دادیم برای پارچه که سه ماه بعد تحویل داده می‌شود',
+    '۳۰ میلیون به تولیدی نوری دادیم برای پارچه که 3 ماه بعد تحویل داده میشه',
+    '۵۰ میلیون به آقای رضایی دادیم برای دستگاه که دو ماه دیگه ارسال خواهد شد',
+    '۳۰ میلیون به تولیدی نوری دادیم پارچه رو سه ماه بعد تحویلش میدن به ما',
+  ]) assertSupplierAdvance(text);
+  assert.equal(goodsDeliveryLater({ evidence: 'پارچه سه ماه بعد تحویل داده می شود' }), 'unknown');
+  assert.equal(goodsDeliveryLater({ evidence: 'ورق رو از آقای رضایی ماه بعد تحویل می گیریم' }), 'supplier');
+  // وارونه: پیش‌دریافت با تحویل مجهول هم درآمد ماه‌به‌ماه نمی‌شود.
+  const [received] = voice('آقای رضایی ۳۰ میلیون بیعانه داد برای پارچه که سه ماه بعد تحویل داده میشه').items;
+  assert.notEqual(received.decision.treatment, 'deferred-revenue');
+  assert.notEqual(received.decision.recognitionMethod, 'monthly-straight-line');
+});
+
+// ---------------------------------------------------------------------------
 // «افزایش سرمایه» در حق بیمهٔ اضافه و هزینهٔ ثبت: پول رفته، آوردهٔ مالک نیست
 // ---------------------------------------------------------------------------
 
@@ -200,6 +308,44 @@ test('مسیر AI: «advance-paid» با دورهٔ صریح، پیش‌پردا
     database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 500_000_000 });
     const text = 'پیش پرداخت خرید آهن ۵۰ میلیون به آقای رضایی از تجارت دادیم';
     const item = await database.createUnderstandingCase({ text, clientId: 'p3-ai-goods' }, aiOptions(modelSaid({ kind: 'advance-paid', what: 'آهن', value: 50_000_000, evidence: '۵۰ میلیون', party: 'آقای رضایی', subjectKind: 'goods' })));
+    assert.equal(item.status, 'ready');
+    assert.deepEqual(item.plan.components[0].preview.lines.map((line) => line.role), ['supplier-advance', 'cash']);
+    database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
+    assert.equal(scheduleTotals().n, 0);
+  });
+});
+
+test('دفتر: کالا با دورهٔ گفته‌شده پیش‌پرداخت خرید از تأمین‌کننده است و برنامه ندارد؛ خدمتی که «فاکتورش رو ارسال میکنن» برنامه‌اش را دارد', async () => {
+  const confirm = (text) => {
+    const cash = database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 200_000_000 });
+    const parsed = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+    database.insertTransactions({ transcript: text, transactions: parsed.map((row) => ({ ...row, accountId: cash.id, userConfirmed: true, needsReview: false, reviewState: 'ready' })) });
+    const db = database.activeWorkspaceDatabase();
+    for (const event of db.prepare("SELECT id FROM financial_events WHERE route = 'confirm' AND status = 'pending'").all()) database.confirmPending(event.id);
+  };
+  for (const [text, amount] of [
+    ['علی الحساب خرید مواد اولیه سه ماه آینده ۳۰ میلیون به شرکت آلفا دادیم', 30_000_000],
+    ['پیش پرداخت قرارداد تامین مواد اولیه شش ماهه ۶۰ میلیون به شرکت آلفا دادیم', 60_000_000],
+  ]) {
+    await inFreshWorkspace(async () => {
+      confirm(text);
+      const debit = ledgerRows().find((row) => row.debit === amount);
+      assert.ok(debit?.name.startsWith('پیش‌پرداخت خرید'), `${text}: ${debit?.name}`);
+      assert.equal(scheduleTotals().n, 0, text);
+    }, {});
+  }
+  await inFreshWorkspace(async () => {
+    confirm('قرارداد پشتیبانی یکساله ۲۴ میلیون به شرکت آلفا دادیم، فاکتورش رو هفته بعد ارسال میکنن');
+    assert.ok(!ledgerRows().some((row) => row.name.startsWith('پیش‌پرداخت خرید')));
+    assert.deepEqual({ ...scheduleTotals() }, { n: 12, total: 24_000_000 });
+  }, {});
+});
+
+test('مسیر AI: «advance-paid» برای کالا با دورهٔ گفته‌شده پیش‌پرداخت خرید است و برنامه نمی‌سازد', async () => {
+  await inFreshWorkspace(async () => {
+    database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 500_000_000 });
+    const text = 'پیش پرداخت خرید آهن شش ماه آینده ۵۰ میلیون به آقای رضایی از تجارت دادیم';
+    const item = await database.createUnderstandingCase({ text, clientId: 'p3-ai-goods-period' }, aiOptions(modelSaid({ kind: 'advance-paid', what: 'آهن', value: 50_000_000, evidence: '۵۰ میلیون', party: 'آقای رضایی', subjectKind: 'goods' })));
     assert.equal(item.status, 'ready');
     assert.deepEqual(item.plan.components[0].preview.lines.map((line) => line.role), ['supplier-advance', 'cash']);
     database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
