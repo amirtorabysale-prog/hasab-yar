@@ -683,3 +683,43 @@ test('آینه: پیش‌دریافتِ اجارهٔ پرداخت‌شده در 
     assert.deepEqual(ledgerNow().schedule.map((row) => row.period_key), ['1405-06', '1405-07', '1405-08']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ۱۰. ردیفِ صف حسابدار واقعیت‌های گفته‌شده را با خودش می‌برد.
+// ---------------------------------------------------------------------------
+
+test('چکِ پیش‌پرداخت یا پیش‌دریافت که به حسابدار رفت: دوره، طرف حساب و دسته روی ردیف صف هست', async () => {
+  for (const [text, said, months, party_] of [
+    ['اجاره یک ساله دفتر رو با چک ۱۲۰ میلیون به آقای رضایی دادیم', model({
+      event: { kind: 'advance-paid', description: '', status: 'done' }, amounts: [amt('a1', 'paid-now', 'چک ۱۲۰ میلیون')],
+      movements: [mv('m1', 'a1', 'out', UNKNOWN, { kind: 'counterparty', name: 'آقای رضایی' }, 'با چک')], counterparties: party('آقای رضایی', 'landlord'), subject: service('اجاره دفتر'),
+    }), 12, 'آقای رضایی'],
+    ['آقای احمدی مستاجرمون اجاره شش ماه آینده رو یه چک ۶۰ میلیونی داد', model({
+      event: { kind: 'advance-received', description: '', status: 'done' }, amounts: [amt('a1', 'received-now', 'چک ۶۰ میلیونی')],
+      movements: [mv('m1', 'a1', 'in', { kind: 'counterparty', name: 'آقای احمدی' }, UNKNOWN, 'داد')], counterparties: party('آقای احمدی', 'customer'), subject: service('اجاره مغازه'),
+    }), 6, 'آقای احمدی'],
+    // منفی: چکِ خرید کالا دوره ندارد.
+    ['چک ۵۰ میلیونی بابت خرید کالا به آقای رضایی دادیم', model({
+      event: { kind: 'purchase', description: '', status: 'done' }, amounts: [amt('a1', 'paid-now', 'چک ۵۰ میلیونی')],
+      movements: [mv('m1', 'a1', 'out', UNKNOWN, { kind: 'counterparty', name: 'آقای رضایی' }, 'دادیم')], counterparties: party('آقای رضایی', 'supplier'),
+    }), 0, 'آقای رضایی'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item } = await understandCase(text, said, { commit: false });
+      assert.equal(item.status, 'needs-accountant', `${text}: ${JSON.stringify(item.plan?.questions)}`);
+      database.sendUnderstandingToAccountant(item.id);
+      const row = database.activeWorkspaceDatabase().prepare('SELECT payload FROM financial_events WHERE source_event_id=?').get(`understanding:${item.id}`);
+      const payload = JSON.parse(row.payload);
+      assert.equal(payload.counterparty, party_, text);
+      if (!months) {
+        assert.equal(payload.servicePeriodStart, null, text);
+        return;
+      }
+      assert.ok(payload.servicePeriodStart && payload.servicePeriodEnd, `${text}: ${row.payload}`);
+      const span = (Date.parse(payload.servicePeriodEnd) - Date.parse(payload.servicePeriodStart)) / 86_400_000;
+      assert.ok(Math.abs(span - months * 30.4) < 10, `${text}: ${span} روز`);
+      // دستهٔ «درآمد اجاره» برای جملهٔ سوم‌شخصِ مستاجر از قاعدهٔ دسته‌هاست (بستهٔ پارسر).
+      if (said.event.kind === 'advance-paid') assert.match(payload.category || '', /اجاره/, text);
+    });
+  }
+});

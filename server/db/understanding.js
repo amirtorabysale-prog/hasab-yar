@@ -14,6 +14,8 @@ import { buildUnderstandingPlan, periodEndFrom } from '../../shared/understandin
 import { inUnderstandingScope, understandingReasons } from '../../shared/understandingScope.js';
 import { applyAnswer } from '../../shared/questionAnswer.js';
 import { FACT_QUESTIONS } from '../../shared/factRequirements.js';
+import { readServicePeriod } from '../../shared/periodSpeech.js';
+import { classifyCategory } from '../../shared/categoryRules.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
 
@@ -529,6 +531,42 @@ export function commitUnderstandingCase(id, { now } = {}) {
  * مبلغ مرجع بزرگ‌ترین مبلغِ سنجیده‌شده است و فقط برای نمایش؛ اگر هیچ مبلغی
  * سنجیده نشده بود، پرونده در صف درخواست‌های بی‌مبلغ می‌نشیند — مبلغی ساخته نمی‌شود.
  */
+/**
+ * واقعیت‌هایی که متن و فهم همین حالا می‌دانند، روی ردیفِ صف حسابدار.
+ *
+ * «اجاره یک ساله دفتر رو با چک ۱۲۰ میلیون به آقای رضایی دادیم» برای چک به حسابدار
+ * می‌رود، ولی دوره، طرف حساب و سررسیدش در خود جمله است. ردیفِ بی‌دوره، بررسیِ AI و
+ * حسابدار را با دورهٔ [خالی، خالی] تنها می‌گذاشت و پیش‌پرداختی که ثبت می‌شد هرگز
+ * جدولِ هزینه نمی‌گرفت (موتور ۵). دوره فقط وقتی کپی می‌شود که جمله یک مبلغ دارد؛
+ * دورهٔ یک جملهٔ چندمبلغی صاحبِ روشنی ندارد و حدس زده نمی‌شود.
+ */
+function placeholderFacts(understanding, transcript, now) {
+  const accepted = (understanding?.amounts || []).filter((amount) => amount.accepted && amount.status !== 'context' && Number.isSafeInteger(amount.value) && amount.value > 0);
+  const groups = new Set(accepted.filter((amount) => !['unit-price', 'installment', 'prior-balance'].includes(amount.role)).map((amount) => amount.partOf || amount.id));
+  const date = (roles) => (understanding?.dates || []).find((item) => item.accepted && roles.includes(item.role) && item.iso)?.iso || null;
+  const occurredAt = date(['payment', 'occurrence']) || now;
+  const incoming = (understanding?.movements || []).some((movement) => movement.direction === 'in')
+    || ['sale', 'income', 'advance-received', 'loan-received', 'capital-in'].includes(understanding?.event?.kind);
+  const counterparty = (understanding?.counterparties || []).find((item) => item.name && item.role !== 'bank')?.name || null;
+  let servicePeriodStart = null;
+  let servicePeriodEnd = null;
+  if (groups.size === 1) {
+    servicePeriodStart = date(['coverage-start']);
+    servicePeriodEnd = date(['coverage-end']);
+    if (!servicePeriodStart && !servicePeriodEnd) {
+      const spoken = readServicePeriod(transcript, { occurredAt });
+      if (spoken) ({ start: servicePeriodStart, end: servicePeriodEnd } = spoken);
+    }
+  }
+  const described = [understanding?.subject?.what, transcript].filter(Boolean).join(' ');
+  const category = classifyCategory(described, incoming ? 'income' : 'expense');
+  return {
+    occurredAt, servicePeriodStart, servicePeriodEnd, dueAt: date(['due']),
+    ...(counterparty ? { counterparty } : {}),
+    ...(category.matched ? { category: category.category } : {}),
+  };
+}
+
 export function sendUnderstandingToAccountant(id) {
   ensureUnderstandingSchema();
   const row = caseRow(id);
@@ -543,7 +581,8 @@ export function sendUnderstandingToAccountant(id) {
   let ref;
   if (amounts.length) {
     const event = normalizeFinancialEvent({
-      kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: Math.max(...amounts), amountReferenceOnly: true, occurredAt: new Date().toISOString(),
+      kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: Math.max(...amounts), amountReferenceOnly: true,
+      ...placeholderFacts(understanding, row.transcript, new Date().toISOString()),
       source: row.source === 'voice' ? 'voice' : 'text', evidence: row.transcript, utterance: row.transcript, description: summary,
     });
     const recorded = recordFinancialEvent(db, event, {
