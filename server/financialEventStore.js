@@ -4,7 +4,8 @@ import { ensureReviewIntakeSchema } from './reviewIntakeSchema.js';
 import { randomUUID } from 'node:crypto';
 import { ROLES, planJournal, treatmentHasPlan } from '../shared/accountingRules.js';
 import { ROUTES } from '../shared/confidenceEngine.js';
-import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule, readCoverageAnswers } from '../shared/recognitionSchedule.js';
+import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule, coverageMonths, readCoverageAnswers, readCoverageLength } from '../shared/recognitionSchedule.js';
+import { extractAmounts } from '../shared/parser.js';
 import { readServicePeriod } from '../shared/periodSpeech.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { scoreCategories } from '../shared/categoryRules.js';
@@ -1116,14 +1117,56 @@ function reviewContractAnswers(database, eventId, event = {}) {
   return result;
 }
 
+/** «سند ۱۸»، «سند شمارهٔ ۱۸»، «شماره ۱۸»، «#۱۸» — شمارهٔ سندی که صریحاً نام برده شد. */
+const DOCUMENT_REFERENCE = /(?:سند|شماره|#)(?:[\s\u200cٔ]*(?:ی|سند|شماره|ه))*[\s\u200cٔ]*[#:]?\s*(\d+)(?![\d])/g;
+/** واژه‌ای که پس از عدد آمد، آن را تاریخ، مبلغ یا مدت می‌کند، نه شمارهٔ سند. */
+const NOT_DOCUMENT_AFTER = new RegExp(`^\\s*(?:${MONTH_NAMES}|هزار|میلیون|میلیارد|تومن|تومان|ریال|ماهه|ماه|ساله|سال|روز|درصد|تا)(?![آ-ی])`);
+
+/** شماره‌های سندی که جواب صریحاً گفت؛ جوابِ فقط-عدد هم به سؤال «شمارهٔ سند؟» شماره است. */
+function documentNumbersIn(normalized) {
+  const bare = /^\s*#?\s*(\d+)\s*[.؟?!]?\s*$/.exec(normalized);
+  if (bare) return [Number(bare[1])];
+  const numbers = [];
+  for (const match of normalized.matchAll(DOCUMENT_REFERENCE)) {
+    if (!NOT_DOCUMENT_AFTER.test(normalized.slice(match.index + match[0].length))) numbers.push(Number(match[1]));
+  }
+  return numbers;
+}
+
+/** تاریخ یک نامزد با «۱۸ مهر»ِ جواب می‌خواند — روز ضبط یا شروع پوشش. */
+function contractOnDate(candidate, named) {
+  return [candidate.occurredAt, candidate.servicePeriodStart].filter(Boolean).some((iso) => {
+    const parts = todayPersian(new Date(iso));
+    return parts.month === named.month && (!named.day || parts.day === named.day) && (!named.year || parts.year === named.year);
+  });
+}
+
+/**
+ * کدام قرارداد؟ — از جواب حسابدار.
+ *
+ * هر نشانه‌ای که جواب گفت، نامزدها را جدا می‌کند و قرارداد باید با همهٔ آن‌ها
+ * بخواند: شمارهٔ سندِ صریح («سند ۱۸»)، تاریخ («که ۱۸ مهر گرفتیم»)، مبلغ («همون
+ * ۶۰ میلیونی»)، مدت («سه ماهه») و نام طرف یا دسته. عددی که کنار نام ماه،
+ * «میلیون» یا «ماهه» آمده شمارهٔ سند نیست. نشانه‌ای که به هیچ نامزدی نخورد،
+ * یا نشانه‌هایی که به دو قرارداد مختلف اشاره کنند، یعنی دوباره بپرس — حدس نه.
+ */
 function pickContract(candidates, references) {
   for (const text of references) {
     const normalized = normalizePersian(text);
-    const numbers = new Set((normalized.match(/\d+/g) || []).map(Number));
-    const byNumber = candidates.filter((item) => item.documentNumber != null && numbers.has(Number(item.documentNumber)));
-    if (byNumber.length === 1) return byNumber[0];
+    const signals = [];
+    const numbers = documentNumbersIn(normalized);
+    if (numbers.length) signals.push(candidates.filter((item) => item.documentNumber != null && numbers.includes(Number(item.documentNumber))));
+    const named = readJalaliExpression(normalized);
+    if (named) signals.push(candidates.filter((item) => contractOnDate(item, named)));
+    const amounts = extractAmounts(normalized).spans.map((span) => span.amount).filter((value) => value >= 1000);
+    if (amounts.length) signals.push(candidates.filter((item) => amounts.includes(Number(item.amount))));
+    const length = readCoverageLength(normalized);
+    if (length) signals.push(candidates.filter((item) => coverageMonths(item.servicePeriodStart, item.servicePeriodEnd) === length.months));
     const byName = candidates.filter((item) => [item.counterparty, item.category].some((name) => name && normalized.includes(normalizePersian(name))));
-    if (byName.length === 1) return byName[0];
+    if (byName.length) signals.push(byName);
+    if (!signals.length || signals.some((matched) => !matched.length)) continue;
+    const chosen = candidates.filter((item) => signals.every((matched) => matched.includes(item)));
+    if (chosen.length === 1) return chosen[0];
   }
   return null;
 }
@@ -1182,7 +1225,7 @@ export function reviewedContractReductions(database, eventId, event, lines, { co
       : candidates.length === 1 ? candidates[0] : pickContract(candidates, answers.reference);
     if (contractEventId && !chosen) throw storeError('قرارداد انتخاب‌شده روی این حساب برنامهٔ زنده‌ای ندارد.', 'REVIEW_DETAILS_REQUIRED', 409);
     if (!chosen) {
-      throw contractQuestionError(`این استرداد کدام قرارداد را کم می‌کند؟ چند قرارداد زنده روی همین حساب ${label} هست؛ شمارهٔ سند یا طرف قرارداد را بگو.`, 'contract.reference', { candidates });
+      throw contractQuestionError(`این استرداد کدام قرارداد را کم می‌کند؟ چند قرارداد زنده روی همین حساب ${label} هست؛ «سند شمارهٔ …»، تاریخ، مبلغ یا مدت همان قرارداد را بگو.`, 'contract.reference', { candidates });
     }
     const amount = (value) => value.toLocaleString('fa-IR');
     if (said === false && reduction.amount > chosen.remaining) {

@@ -1126,6 +1126,81 @@ test('آینه، دو اجاره از یک مستأجر روی یک حساب د�
   });
 });
 
+// ---------------------------------------------------------------------------
+// «کدام قرارداد؟» — عددی که در جواب حسابدار هست شمارهٔ سند نیست مگر صریحاً
+// «سند»/«شماره»/«#» باشد. روز ماه، مبلغ میلیونی و مدت ماهه با شمارهٔ سندهای
+// کوچک برخورد می‌کنند؛ قرارداد باید با همهٔ نشانه‌های گفته‌شده بخواند، وگرنه
+// دوباره پرسیده می‌شود.
+// ---------------------------------------------------------------------------
+
+/** شمارهٔ سند قرارداد را عوض می‌کند تا برخوردِ گزارش‌شده (سند #۱۸ کنار «۱۸ مهر») ساخته شود. */
+function setContractDocument(eventId, number) {
+  const entry = sql().prepare('SELECT journal_entry_id AS id FROM financial_events WHERE id=?').get(eventId).id;
+  sql().prepare('UPDATE journal_entries SET document_number=document_number+100000 WHERE document_number=? AND id<>?').run(number, entry);
+  sql().prepare('UPDATE journal_entries SET document_number=? WHERE id=?').run(number, entry);
+}
+
+/** دو اجارهٔ احمدی روی یک درآمد انتقالی؛ استرداد ۳ میلیون با جواب حسابدار به «کدام قرارداد؟». */
+async function answerWhichRent(book, answer, { secondDocument = null } = {}) {
+  const second = capture('اجاره گرفتم سه ماهه ۹ میلیون از آقای احمدی', { now: DEY1 }).eventId;
+  if (secondDocument != null) setContractDocument(second, secondDocument);
+  const event = refundPlaceholder('آقای احمدی انبار رو زودتر تخلیه کرد ۳ میلیون از پیش دریافت اجاره رو از صندوق بهش پس دادیم', 3_000_000);
+  const cashBox = database.listAccounts().find((account) => account.name === 'صندوق نقدی');
+  const facts = { accountId: cashBox.id, counterpartyId: sql().prepare("SELECT id FROM contacts WHERE name LIKE '%احمدی%'").get().id };
+  const lines = [{ role: 'deferred-revenue', key: 'احمدی', accountId: book.deferred, debit: 3_000_000, credit: 0 }, { role: 'cash', key: null, accountId: book.cashLedger, debit: 0, credit: 3_000_000 }];
+  const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+  const ask = [{ id: 'contract.reference', text: 'این استرداد کدام قرارداد اجاره را کم می‌کند؟', field: null }];
+  await proposeReview(sql(), event.id, { message: 'کدام قرارداد؟', fetcher: fakeAi({ questions: ask }), facts });
+  const proposal = await proposeReview(sql(), event.id, { message: 'عودت پیش‌دریافت اجاره است', facts: { ...facts, questionAnswers: { 'contract.reference': { value: answer } } }, fetcher: fakeAi({ summary: 'عودت پیش‌دریافت اجاره', lines }) });
+  let error = null;
+  try { database.reviewAiFeedback(event.id, proposal.id, { accepted: true }); } catch (caught) { error = caught; }
+  return { second, error, journals };
+}
+
+for (const [label, answer, expected, secondDocument] of [
+  ['جملهٔ گزارش، تاریخ ضبط اجارهٔ اول؛ اجارهٔ دوم سند #۱۸ است', 'همون اجاره‌ای که ۱۸ مهر گرفتیم', 'rent', 18],
+  ['مبلغ اجارهٔ اول؛ اجارهٔ دوم سند #۶۰ است', 'همون اجاره ۶۰ میلیونی آقای احمدی', 'rent', 60],
+  ['مبلغ با حروف', 'اونی که شصت میلیون بود', 'rent', null],
+  ['مدت اجارهٔ اول؛ اجارهٔ دوم سند #۶ است', 'همون ۶ ماهه', 'rent', 6],
+  ['مدت اجارهٔ دوم با حروف', 'اون سه ماهه', 'second', null],
+  ['تاریخ اجارهٔ دوم', 'همونی که اول دی گرفتیم', 'second', null],
+  ['شمارهٔ سند صریح', 'سند ۱۸', 'second', 18],
+  ['فقط شماره، جواب به «شمارهٔ سند؟»', '۱۸', 'second', 18],
+  ['شمارهٔ سند و تاریخی که با همان سند می‌خواند', 'سند شماره ۱۸ که اول دی ثبت شد', 'second', 18],
+]) {
+  test(`کدام قرارداد — ${label}: «${answer}»`, async () => {
+    const book = await contractBook(`کدام قرارداد — ${label}`);
+    await book.inBook(async () => {
+      const { second, error } = await answerWhichRent(book, answer, { secondDocument });
+      assert.equal(error, null, error?.message);
+      const [picked, other] = expected === 'rent' ? [book.rent, second] : [second, book.rent];
+      assert.equal(unrecognised(other), other === book.rent ? 30_000_000 : 9_000_000, 'قرارداد دیگر دست نخورد');
+      assert.equal(unrecognised(picked), (other === book.rent ? 9_000_000 : 30_000_000) - 3_000_000, 'همان قرارداد کم شد');
+    });
+  });
+}
+
+for (const [label, answer, secondDocument] of [
+  ['نشانه‌های متناقض: شمارهٔ سند اجارهٔ دوم، تاریخ اجارهٔ اول', 'سند شماره ۱۸ که ۱۸ مهر گرفتیم', 18],
+  ['تاریخی که به هیچ قراردادی نمی‌خورد، با روزی هم‌عدد شمارهٔ سند', 'اجاره‌ای که ۱۸ آبان گرفتیم', 18],
+  ['مبلغی که به هیچ قراردادی نمی‌خورد، هم‌عدد شمارهٔ سند', 'همون ۱۸ میلیونی', 18],
+  ['فقط نام طرف، که هر دو قرارداد مال اوست', 'اجارهٔ آقای احمدی', null],
+  ['شماره‌ای که سند هیچ قراردادی نیست', 'سند ۹۹۹', null],
+]) {
+  test(`منفی، کدام قرارداد — ${label}: «${answer}» دوباره پرسیده می‌شود و سندی نمی‌خورد`, async () => {
+    const book = await contractBook(`کدام قرارداد منفی — ${label}`);
+    await book.inBook(async () => {
+      const { second, error, journals } = await answerWhichRent(book, answer, { secondDocument });
+      assert.equal(error?.code, 'REVIEW_DETAILS_REQUIRED');
+      assert.equal(error.question?.id, 'contract.reference');
+      assert.deepEqual(error.candidates.map((item) => item.eventId).sort(), [book.rent, second].sort());
+      assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals, 'هیچ سندی پیش از جواب درست');
+      assert.equal(unrecognised(book.rent), 30_000_000);
+      assert.equal(unrecognised(second), 9_000_000);
+    });
+  });
+}
+
 test('منفی: استرداد بیش از بخش شناسایی‌نشده رد می‌شود و هیچ چیز عوض نمی‌شود', async () => {
   const book = await contractBook('استرداد — بیش از مانده');
   await book.inBook(() => {

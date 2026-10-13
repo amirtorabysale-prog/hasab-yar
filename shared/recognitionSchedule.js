@@ -158,6 +158,23 @@ const COUNT_PATTERN = `(\\d{1,3}|${Object.keys(COUNT_WORDS).sort((a, b) => b.len
  * واحد هم حرفی نمی‌چسبد («ماهانه» واحد مدت نیست).
  */
 const DURATION = new RegExp(`(?<![\\d\\u0600-\\u06FF\\u200c])${COUNT_PATTERN}[\\s\\u200c]*(ماهه|ماه|ساله|سال)(?![\\u0600-\\u06FF])`);
+/**
+ * طول پوششی که در یک متن آمده، به ماه: «سه ماهه» ۳، «یک‌ساله» ۱۲؛ نگفته `null`.
+ * `match` همان تکه‌ای است که خوانده شد تا جای دیگری تاریخ خوانده نشود.
+ */
+export function readCoverageLength(input) {
+  const text = normalizePersian(String(input || ''));
+  const duration = DURATION.exec(text);
+  const count = duration ? (/^\d+$/.test(duration[1]) ? Number(duration[1]) : COUNT_WORDS[duration[1]] || 0) : 0;
+  const months = duration && count > 0 ? (/سال/.test(duration[2]) ? count * 12 : count) : 0;
+  return months > 0 && months <= 120 ? { months, match: duration[0] } : null;
+}
+
+/** طول یک دورهٔ پوشش به ماه شمسی (برای مقایسه با «سه ماهه»ی جواب). */
+export function coverageMonths(periodStart, periodEnd) {
+  return periodStart && periodEnd ? periodMonths(periodStart, periodEnd) || null : null;
+}
+
 /** مرز «از … تا …» در جواب. */
 const RANGE_SPLIT = /\s(?:تا|الی|لغایت)\s/;
 
@@ -215,12 +232,10 @@ export function readCoverageAnswers(answers = [], { occurredAt = null, start = n
     const text = normalizePersian(String(answer?.text || '')).replace(/[()«»"\[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text) continue;
     const side = answer.side || 'any';
-    const duration = DURATION.exec(text);
-    const count = duration ? (/^\d+$/.test(duration[1]) ? Number(duration[1]) : COUNT_WORDS[duration[1]] || 0) : 0;
-    const length = duration && count > 0 ? (/سال/.test(duration[2]) ? count * 12 : count) : 0;
-    if (!months && length > 0 && length <= 120) months = length;
+    const duration = readCoverageLength(text);
+    if (!months && duration) months = duration.months;
     // عدد مدت تاریخ نیست: «۱۲ ماه» نباید «۱۲ مهر» خوانده شود.
-    const dated = duration ? text.replace(duration[0], ' ') : text;
+    const dated = duration ? text.replace(duration.match, ' ') : text;
     const [head, tail] = dated.split(RANGE_SPLIT);
     if (tail !== undefined) {
       const first = coverageBound(head, { reference });
