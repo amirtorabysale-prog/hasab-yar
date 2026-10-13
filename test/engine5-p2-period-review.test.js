@@ -123,3 +123,51 @@ test('سالِ صریح بیرون از پنجره: شکل‌های هم‌ار�
   assert.equal(spokenYear('45', 1405), null);
   assert.equal(spokenYear('1200', 1405), null);
 });
+
+// ---------------------------------------------------------------------------
+// سالی که دوره از آن خوانده شد، در مبلغ جمع نمی‌شود
+// ---------------------------------------------------------------------------
+
+test('سالِ دوره کنار مبلغ: ثبت خودکار نمی‌شود و جای سال گزارش می‌شود (جمله‌های بازبین)', () => {
+  for (const text of [
+    'بیمه سال ۱۴۰۶ ۱۲ میلیون دادیم',
+    'اجاره دفتر سال ۱۴۰۶ ۱۲۰ میلیون دادیم',
+    'اجاره دفتر سال ۰۶ ۱۲۰ میلیون دادیم',
+  ]) {
+    assert.equal(period(text), null, text);
+    for (const item of voice(text).items) assert.notEqual(item.outcome, 'post', `${text} — مبلغِ سال‌دار ثبت نمی‌شود`);
+  }
+});
+
+test('سالِ دوره کنار مبلغ: شکل‌های هم‌ارز، و جای سال‌ها برای خوانندهٔ مبلغ', () => {
+  for (const text of [
+    'اجاره از مهر تا اسفند ۰۵ ۶۰ میلیون دادیم',
+    'بیمه از فروردین ۹۹ تا اسفند ۹۹ ۱۲ میلیون دادیم',
+    'بیمه یکساله از اول آبان ۱۴۰۵ ۱۲ میلیون دادیم',
+    'بیمه از آبان 1405 تا مهر 1406 24 میلیون دادیم',
+    'اشتراک سال 06 24 میلیون دادیم',
+  ]) assert.equal(period(text), null, text);
+  // سالِ جدا از مبلغ همچنان خوانده می‌شود و جایش گزارش می‌شود.
+  const text = 'اجاره دفتر برای سال ۱۴۰۶ رو ۱۲۰ میلیون دادیم';
+  const found = readServicePeriod(text, { occurredAt: NOW });
+  assert.deepEqual([fa(found.start), fa(found.end)], ['1406/1/1', '1406/12/29']);
+  assert.deepEqual(found.consumed.map(({ index, length }) => text.slice(index, index + length)), ['۱۴۰۶']);
+  const range = 'بیمه از آبان ۰۵ تا مهر ۰۶، ۲۴ میلیون';
+  assert.deepEqual(readServicePeriod(range, { occurredAt: NOW }).consumed.map(({ index, length }) => range.slice(index, index + length)), ['۰۵', '۰۶']);
+  // عددی که سال نیست، جای سال گزارش نمی‌شود.
+  assert.equal(readServicePeriod('اجاره دفتر از مهر تا اسفند ۶۰ میلیون پرداخت شد', { occurredAt: NOW }).consumed, undefined);
+});
+
+test('سالِ تاریخ پرداخت کنار مبلغ: در مبلغ جمع نمی‌شود', () => {
+  for (const [text, date] of [
+    ['۵ مهر ۹۹ ۱۲ میلیون خرید کردیم', '1399/7/5'],
+    ['۵ مهر ۰۵ ۱۲ میلیون اجاره دادیم', '1405/7/5'],
+    ['۵ مهر ۱۴۰۵ ۱۲ میلیون اجاره دادیم', '1405/7/5'],
+    ['5 مهر 1404 12 میلیون اجاره دادیم', '1404/7/5'],
+  ]) {
+    const [row] = parsed(text);
+    assert.deepEqual([fa(row.occurredAt), row.amount], [date, 12_000_000], text);
+  }
+  // عددی که سال نیست، مبلغ می‌ماند.
+  assert.equal(parsed('پنجم مهر ۹۹ میلیون فروش داشتیم')[0].amount, 99_000_000);
+});

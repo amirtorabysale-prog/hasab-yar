@@ -444,7 +444,10 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
       if (said) year = said.year;
       else if (preferPast && (month > today.month || (month === today.month && day > today.day))) year -= 1;
       const iso = persianToISO(year, month, day, timeZone);
-      if (iso) return { iso, label: `${day} ${dayMonth[2]} ${year}`, kind: said ? 'explicit' : 'inferred-year' };
+      // سالِ خوانده‌شده مبلغ نیست: `match` به پارسر می‌گوید همین تکه را از متن مبلغ
+      // کنار بگذارد، همان کاری که برای «۱۴۰۵/۰۷/۰۵» می‌کند. بی‌این «۵ مهر ۹۹ ۱۲
+      // میلیون» ۱۱۱ میلیون خوانده می‌شد.
+      if (iso) return { iso, label: `${day} ${dayMonth[2]} ${year}`, kind: said ? 'explicit' : 'inferred-year', ...(said ? { match: dayMonth[0] } : {}) };
     }
   }
 
