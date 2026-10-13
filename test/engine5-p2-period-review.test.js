@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runVoice } from './helpers/voicePipeline.js';
-import { extractOccurrenceDate, todayPersian } from '../shared/persianDate.js';
+import { extractOccurrenceDate, spokenYear, todayPersian } from '../shared/persianDate.js';
+import { readServicePeriod } from '../shared/periodSpeech.js';
 import { parseFinancialText } from '../shared/parser.js';
 
 /**
@@ -19,6 +20,10 @@ const fa = (iso) => {
 };
 const parsed = (text) => parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
 const voice = (text) => runVoice(text, { today: NOW });
+const period = (text, options = {}) => {
+  const found = readServicePeriod(text, { occurredAt: NOW, ...options });
+  return found ? [fa(found.start), fa(found.end)] : null;
+};
 const occurrence = (text) => fa(extractOccurrenceDate(text, { now: new Date(NOW), preferPast: true })?.iso);
 
 // ---------------------------------------------------------------------------
@@ -71,4 +76,50 @@ test('تاریخ پرداخت: پولی که هنوز نرفته، روزش یک
   assert.equal(occurrence('اجاره رو ۲۵ اسفند ۱۰ میلیون دادیم'), '1404/12/25');
   // «قرارداد» فعل گذشته نیست.
   assert.equal(occurrence('قرارداد اجاره رو اول آبان ۱۰ میلیون پرداخت می‌کنیم'), '1405/8/1');
+});
+
+// ---------------------------------------------------------------------------
+// سالِ صریحِ دور جای خودش را به سال رویداد نمی‌دهد؛ پرسیده می‌شود
+// ---------------------------------------------------------------------------
+
+test('سالِ صریح بیرون از پنجره: دوره پرسیده می‌شود، نه سال رویداد (جمله‌های بازبین)', () => {
+  for (const text of [
+    'بیمه از فروردین ۱۳۹۴ تا اسفند ۱۳۹۴ مبلغ ۱۲ میلیون دادیم',
+    'اجاره دفتر از فروردین ۱۴۰۸ تا اسفند ۱۴۰۸ مبلغ ۶۰ میلیون دادیم',
+    'اجاره سوله از اول آبان ۱۴۱۰ به مدت یک سال ۶۰ میلیون دادیم',
+    'اجاره دفتر از مهر تا اسفند ۰۸ مبلغ ۶۰ میلیون دادیم',
+    'بیمه از فروردین ۹۴ تا اسفند ۹۴ مبلغ ۱۲ میلیون دادیم',
+  ]) {
+    assert.equal(period(text), null, text);
+    const [row] = parsed(text);
+    assert.equal(row.servicePeriodStart, undefined, `${text} — مسیر پارسر`);
+    const [item] = voice(text).items;
+    assert.equal(item.outcome, 'ask', text);
+    assert.equal(item.fact, 'servicePeriodStart', text);
+  }
+});
+
+test('سالِ صریح بیرون از پنجره: شکل‌های هم‌ارز و نمونه‌های منفی', () => {
+  for (const text of [
+    'اجاره دفتر از فروردین 1408 تا اسفند 1408 مبلغ 60 میلیون دادیم',
+    'بیمه از فروردین سال ۹۴ تا اسفند سال ۹۴ ۱۲ میلیون دادیم',
+    'اجاره دفتر سال ۱۴۱۰ رو ۱۰ میلیون دادیم',
+    'اجاره دفتر از اول آبان ۰۸ برای یک سال ۱۲ میلیون دادیم',
+    'بیمه یکساله که از اول آبان ۱۴۱۲ شروع میشه ۱۲ میلیون دادیم',
+    'اجاره از مهر تا اسفند ۱۴۲۰ دادیم',
+  ]) assert.equal(period(text), null, text);
+  // سالِ باورپذیر همچنان خوانده می‌شود.
+  assert.deepEqual(period('بیمه از فروردین ۹۹ تا اسفند ۹۹ دادیم ۱۲ میلیون'), ['1399/1/1', '1399/12/30']);
+  assert.deepEqual(period('بیمه از آبان ۱۴۰۶ تا مهر ۱۴۰۷'), ['1406/8/1', '1407/7/30']);
+  assert.deepEqual(period('اجاره از مهر تا اسفند ۰۵ مبلغ ۶۰ میلیون'), ['1405/7/1', '1405/12/29']);
+  // عددی که حتی به‌عنوان سال بی‌معناست مبلغ گفتاری است: سال از تاریخ رویداد.
+  assert.deepEqual(period('اجاره از مهر تا اسفند ۴۵ دادیم'), ['1405/7/1', '1405/12/29']);
+  assert.deepEqual(period('اجاره از مهر تا اسفند ۶۰ میلیون دادیم'), ['1405/7/1', '1405/12/29']);
+  // قاعدهٔ مشترک سال.
+  assert.deepEqual(spokenYear('99', 1405), { year: 1399, plausible: true });
+  assert.deepEqual(spokenYear('08', 1405), { year: 1408, plausible: false });
+  assert.deepEqual(spokenYear('94', 1405), { year: 1394, plausible: false });
+  assert.deepEqual(spokenYear('1394', 1405), { year: 1394, plausible: false });
+  assert.equal(spokenYear('45', 1405), null);
+  assert.equal(spokenYear('1200', 1405), null);
 });

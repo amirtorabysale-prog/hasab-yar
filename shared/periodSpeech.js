@@ -1,5 +1,6 @@
 import {
-  DAY_WORD_PATTERN, PERSIAN_MONTHS, dayOfToken, normalizeSpokenYears, persianPeriodEnd, persianToISO, todayPersian,
+  DAY_WORD_PATTERN, NOT_A_YEAR, PERSIAN_MONTHS, dayOfToken, normalizeSpokenYears, persianPeriodEnd, persianToISO,
+  spokenYear, todayPersian,
 } from './persianDate.js';
 import { normalizePersian } from './normalize.js';
 
@@ -155,15 +156,6 @@ export function readServiceLength(input, { bare = false } = {}) {
 const MONTH_NAMES = PERSIAN_MONTHS.map(([name]) => name).sort((left, right) => right.length - left.length).join('|');
 const monthNumber = (name) => PERSIAN_MONTHS.find(([candidate]) => candidate === name)?.[1] || 0;
 
-/**
- * عددی که بعد از ماه آمده، سال نیست وقتی واحد دارد.
- *
- * «اجاره دفتر از مهر تا اسفند ۶۰ میلیون پرداخت شد» دوره را ۱۴۶۰ می‌خواند: ۶۰ِ
- * مبلغ سالِ دورقمی شمرده می‌شد و برنامهٔ هزینه پنجاه سال بعد می‌نشست، یعنی هرگز.
- * عدد پیش از میلیون/هزار/تومان مبلغ است، پیش از ماه/سال طول است و «۲۰ و ۵۰۰»
- * یک عدد گفتاری است.
- */
-const NOT_A_YEAR = `(?!${GAP}(?:م${YA}?ل${YA}?ون|م${YA}?ل${YA}ارد|هزار|تومان|تومن|ر${YA}ال|ماه|روز|سال|درصد|قسط|و${GAP}(?:\\d|صد|دو${YA}ست|س${YA}صد|چهارصد|پانصد|ششصد|هفتصد|هشتصد|نهصد|هزار)))`;
 const YEAR_PART = (name) => `(?:${GAP}(?:سال${GAP})?(?<${name}>\\d{4}|\\d{2})(?!\\d)${NOT_A_YEAR})?`;
 const DAY_PART = (name, extra) => `(?:(?<${name}>${extra}|${DAY_WORD_PATTERN}|\\d{1,2})${GAP}(?:ام${GAP})?)?`;
 const MONTH_PART = (name) => `(?:ماه${GAP})?(?<${name}>${MONTH_NAMES})(?![آ-ی])(?:${GAP}ماه(?![آ-ی]))?`;
@@ -171,21 +163,21 @@ const START_DAY = `ابتدا${YA}?`;
 const END_DAY = `آخر|اخر|پا${YA}ان|انتها${YA}?`;
 
 /**
- * سالِ گفته‌شده، فقط وقتی باورپذیر است.
- *
- * دورقمی به نزدیک‌ترین سده می‌رود («۹۹» در ۱۴۰۵ یعنی ۱۳۹۹، نه ۱۴۹۹) و سالی که
- * بیش از ده سال پیش یا دو سال بعد از رویداد باشد سال نیست؛ همان عدد بی‌سال خوانده
- * می‌شود و سال از تاریخ رویداد می‌آید. پنجره نامتقارن است، چون پرداختِ دیرِ دورهٔ
- * گذشته واقعی است ولی پیش‌پرداخت ده سال جلوتر نه.
+ * جمله‌ای که دوره‌اش خوانده نمی‌شود، با جمله‌ای که دوره ندارد فرق دارد: اولی نباید
+ * به خواننده‌های بعدی برسد. «بیمه از فروردین ۱۳۹۴ تا اسفند ۱۳۹۴» سالِ صریح دارد؛
+ * جایگزین کردنش با سال رویداد یعنی ۱۲ میلیون پیش‌پرداختِ ۱۴۰۵ — حدس، نه خواندن.
  */
-function plausibleYear(value, referenceYear) {
-  if (!value) return null;
-  let year = Number(value);
-  if (value.length === 2) {
-    year += 1400;
-    if (Math.abs(year - 100 - referenceYear) < Math.abs(year - referenceYear)) year -= 100;
-  }
-  return year >= referenceYear - 10 && year <= referenceYear + 2 ? year : null;
+const UNREADABLE = Object.freeze({ unreadable: true });
+
+/**
+ * سالِ گفته‌شده بعد از ماه (`spokenYear`): باورپذیر همان سال است؛ صریح ولی دور
+ * («۱۳۹۴»، «۰۸ مبلغ»، «۱۴۱۰») خواندنی نیست و پرسیده می‌شود؛ عددی که سال نیست
+ * (`null`) کنار گذاشته می‌شود و سال از تاریخ رویداد می‌آید.
+ */
+function saidYear(digits, reference) {
+  const said = spokenYear(digits, reference.year);
+  if (!said) return null;
+  return said.plausible ? said.year : UNREADABLE;
 }
 
 /**
@@ -283,8 +275,10 @@ function readRange(text, reference, baseYear) {
     // سال شروع از روی ترتیب ماه‌ها پیدا می‌شود.
     const fromMonth = monthNumber(groups.startMonth);
     const toMonth = monthNumber(groups.endMonth);
-    const saidEndYear = plausibleYear(groups.endYear, reference.year);
-    const startYear = plausibleYear(groups.startYear, reference.year) || (saidEndYear ? (toMonth < fromMonth ? saidEndYear - 1 : saidEndYear) : baseYear);
+    const saidStartYear = saidYear(groups.startYear, reference);
+    const saidEndYear = saidYear(groups.endYear, reference);
+    if (saidStartYear === UNREADABLE || saidEndYear === UNREADABLE) return UNREADABLE;
+    const startYear = saidStartYear || (saidEndYear ? (toMonth < fromMonth ? saidEndYear - 1 : saidEndYear) : baseYear);
     const endYear = saidEndYear || (toMonth < fromMonth ? startYear + 1 : startYear);
     const startDay = dayOfToken(groups.startDay) || 1;
     const endDay = groups.endDay && !new RegExp(`^(?:${END_DAY})$`).test(groups.endDay) ? dayOfToken(groups.endDay) : null;
@@ -308,7 +302,9 @@ function readStart(text, reference, baseYear, occurredAt) {
   for (const pattern of [START_MONTH, START_VERB]) {
     const found = pattern.exec(text);
     if (!found || UNTIL_NOW.test(text.slice(found.index + found[0].length))) continue;
-    const year = plausibleYear(found.groups.startYear, reference.year) || baseYear;
+    const said = saidYear(found.groups.startYear, reference);
+    if (said === UNREADABLE) return UNREADABLE;
+    const year = said || baseYear;
     const iso = dayIn(year, monthNumber(found.groups.startMonth), dayOfToken(found.groups.startDay) || 1);
     if (iso) return iso;
   }
@@ -342,7 +338,8 @@ function relativeSpan(text, reference) {
   const year = RELATIVE_YEAR.exec(text);
   if (!year) return null;
   const { year: said, thisYear, lastYear } = year.groups;
-  const target = said ? plausibleYear(said, reference.year) : thisYear ? reference.year : lastYear ? reference.year - 1 : reference.year + 1;
+  const target = said ? saidYear(said, reference) : thisYear ? reference.year : lastYear ? reference.year - 1 : reference.year + 1;
+  if (target === UNREADABLE) return UNREADABLE;
   return target ? monthSpan(target, 1, 12, 'year') : null;
 }
 
@@ -384,9 +381,11 @@ export function readServicePeriod(input, { occurredAt, answer = false, start: kn
   const reference = todayPersian(new Date(occurredAt));
   const baseYear = reference.year + yearShift(text);
   const stated = knownStart || readStart(text, reference, baseYear, occurredAt);
+  if (stated === UNREADABLE) return null;
   const length = readServiceLength(text, { bare: answer || Boolean(stated) });
 
   const range = readRange(text, reference, baseYear);
+  if (range === UNREADABLE) return null;
   if (range) {
     // بازه و صفتِ ناسازگار («یک‌ساله، از مهر تا اسفند») حدس نمی‌خورد؛ پرسیده می‌شود.
     return length && length.months !== range.months ? null : range;
@@ -394,6 +393,7 @@ export function readServicePeriod(input, { occurredAt, answer = false, start: kn
 
   // شروع: یا گفته شده، یا ماهِ نام‌بردهٔ کنار طول («اجاره مهر برای شش ماه جلوتر»).
   const named = length && !stated ? singleMonth(text, baseYear) || relativeSpan(text, reference) : null;
+  if (named === UNREADABLE) return null;
   // «اشتراک یک‌ساله سال آینده»: سالِ نام‌برده خودش دوره است؛ طولِ ناسازگار پرسیده می‌شود.
   if (named?.basis === 'year') return named.months === length.months ? named : null;
   const start = stated || named?.start || null;
@@ -414,5 +414,6 @@ export function readServicePeriod(input, { occurredAt, answer = false, start: kn
     const end = persianPeriodEnd(occurredAt, length.months);
     return end ? { start: occurredAt, end, months: length.months, basis: 'length' } : null;
   }
-  return singleMonth(text, baseYear) || relativeSpan(text, reference);
+  const single = singleMonth(text, baseYear) || relativeSpan(text, reference);
+  return single === UNREADABLE ? null : single;
 }
