@@ -169,6 +169,100 @@ function clauseOf(said, evidence) {
   return said.slice(start, end);
 }
 
+/** جای شاهد در متن؛ «۲ میلیون» درونِ «۱۲ میلیون» پیدا نمی‌شود. */
+function locate(said, evidence, taken) {
+  const key = normalizePersian(evidence || '').trim();
+  if (!key) return null;
+  for (let at = said.indexOf(key); at >= 0; at = said.indexOf(key, at + 1)) {
+    const end = at + key.length;
+    if (/[0-9۰-۹٠-٩]/.test(said[at - 1] || '') && /^[0-9۰-۹٠-٩]/.test(key)) continue;
+    if (taken.some((span) => at < span.end && end > span.start)) continue;
+    return { start: at, end };
+  }
+  return null;
+}
+
+/** «آبان و آذر»، «۶ و نیم»: «و» میان دو ماه یا دو عدد مرزِ دو مبلغ نیست. */
+const MONTH_NAMES = 'فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند';
+const AND_NOT_BOUNDARY = new RegExp(`^\\s+و\\s+(?:${MONTH_NAMES}|نیم|[0-9۰-۹٠-٩]|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده)(?![آ-ی])`);
+const PUNCTUATION = /[.،,؛;!؟?\n:]/;
+
+/**
+ * بخشی از جمله که فقط مالِ یک مبلغ است.
+ *
+ * «قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون از تجارت دادیم»: دورهٔ «۶ ماه
+ * جلوتر» مالِ اجاره است، نه قبض. خواندنِ دوره از کل جمله برای هر مبلغ، قبض برق و
+ * کرایهٔ حمل را پیش‌پرداختِ ۶ و ۱۲ ماهه می‌کرد (موتور ۵، مهر ۱۴۰۵) — هزینه‌ای که
+ * همین امروز مصرف شده ماه‌ها در دارایی می‌ماند. بندِ نقطه‌گذاری کافی نیست، چون گفتار
+ * بی‌ویرگول است؛ مرزِ دو مبلغ اولین «و» یا نشانهٔ جداکننده میانِ شاهدهای آن‌هاست
+ * (توضیحِ هر مبلغ در فارسی پیش از خودش می‌آید). متنِ پیش از مبلغِ اول و پس از
+ * مبلغِ آخر تا نشانهٔ جداکننده مالِ همان مبلغ است؛ آن‌سوی نشانه، و فاصلهٔ بی‌مرزِ
+ * میان دو مبلغ، مشترک است: دوره‌ای که آن‌جا گفته شده صاحبِ روشنی ندارد.
+ *
+ * اجزای یک کل («۳۰ میلیون اجاره، ۱۰ نقد و ۲۰ از تجارت») یک صاحب‌اند و دوره را با هم
+ * می‌برند. وقتی مبلغِ دیگری برای ثبت نیست، کل جمله مالِ همین مبلغ است.
+ */
+function amountScope(said, amount, amounts, retracted) {
+  const group = (item) => item.partOf || item.id;
+  // مبلغِ آینده یا شرطی هم بخشِ خودش را دارد: «اجارهٔ شش ماه آینده رو ماه بعد میدیم
+  // و قبض ۲ میلیون دادیم» دورهٔ اجاره را به قبض نمی‌دهد. نرخ و قسط و ماندهٔ قبلی
+  // زمینهٔ مبلغ دیگرند و بخشی از جمله را از آن جدا نمی‌کنند.
+  const claims = (item) => item.accepted && item.status !== 'context' && !retracted.has(item.id)
+    && !['unit-price', 'installment', 'prior-balance'].includes(item.role);
+  const mine = group(amount);
+  const isMine = (item) => group(item) === mine || item.id === mine;
+  const others = amounts.filter((item) => claims(item) && !isMine(item));
+  if (!others.length) return { alone: true, own: said, shared: '' };
+  const members = [...amounts.filter(isMine), ...others]
+    .sort((a, b) => normalizePersian(b.evidence || '').length - normalizePersian(a.evidence || '').length);
+  const spans = [];
+  for (const item of members) {
+    const span = locate(said, item.evidence, spans);
+    if (span) spans.push({ ...span, mine: isMine(item) });
+  }
+  spans.sort((a, b) => a.start - b.start);
+  if (!spans.some((span) => span.mine)) return { alone: false, own: normalizePersian(amount.evidence || ''), shared: said, spans: [], owned: [] };
+  // برش‌ها: میان دو شاهدِ دو صاحبِ متفاوت، اولین مرز؛ بی‌مرز، فاصله مشترک می‌ماند.
+  const owned = spans.map(() => ({ from: 0, to: said.length }));
+  let lead = spans[0].start;
+  while (lead > 0 && !PUNCTUATION.test(said[lead - 1])) lead -= 1;
+  owned[0].from = lead;
+  let tail = spans[spans.length - 1].end;
+  while (tail < said.length && !PUNCTUATION.test(said[tail])) tail += 1;
+  owned[spans.length - 1].to = tail;
+  for (let index = 1; index < spans.length; index += 1) {
+    const left = spans[index - 1];
+    const right = spans[index];
+    if (left.mine === right.mine) { owned[index - 1].to = right.start; owned[index].from = left.end; continue; }
+    const gap = said.slice(left.end, right.start);
+    let cut = -1;
+    for (let at = 0; at < gap.length; at += 1) {
+      if (PUNCTUATION.test(gap[at])) { cut = at; break; }
+      if (/^\s+و\s/.test(gap.slice(at)) && (at === 0 || !/\s/.test(gap[at - 1])) && !AND_NOT_BOUNDARY.test(gap.slice(at))) { cut = at; break; }
+    }
+    owned[index - 1].to = cut < 0 ? left.end : left.end + cut;
+    owned[index].from = cut < 0 ? right.start : left.end + cut;
+  }
+  const own = [];
+  const claimed = new Array(said.length).fill(false);
+  spans.forEach((span, index) => {
+    for (let at = owned[index].from; at < owned[index].to; at += 1) claimed[at] = true;
+    if (span.mine) own.push(said.slice(owned[index].from, owned[index].to));
+  });
+  const shared = said.split('').map((char, at) => (claimed[at] ? ' ' : char)).join('').replace(/\s+/g, ' ').trim();
+  return { alone: false, own: own.join(' ').trim(), shared, spans, owned };
+}
+
+/** تاریخی که عبارتش درونِ بخشِ این مبلغ است: `true` مالِ همین، `false` مالِ دیگری، `null` نامعلوم. */
+function dateInScope(said, date, scope) {
+  if (scope.alone) return true;
+  const key = normalizePersian(date?.expression || '').trim();
+  const at = key ? said.indexOf(key) : -1;
+  if (at < 0) return null;
+  const index = scope.spans.findIndex((span, position) => at >= scope.owned[position].from && at + key.length <= scope.owned[position].to);
+  return index < 0 ? null : scope.spans[index].mine;
+}
+
 function monthOf(iso) {
   const day = todayPersian(new Date(iso));
   return persianMonthRange(day.year, day.month);
@@ -456,6 +550,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // دیگری ودیعه اجاره می‌شد (آزمون بازبین و گزارش مالک محصول، مهر ۱۴۰۵).
     const own = normalizePersian(amount.evidence || '');
     const clause = clauseOf(said, amount.evidence);
+    const scope = amountScope(said, amount, amounts, retracted);
     // برچسب «ودیعه»ی مدل به‌تنهایی کافی نیست: «پیش‌پرداخت بیمه … ۱۲ میلیون» را مدل
     // «ودیعه» نامید و ۱۲ میلیون ودیعهٔ قابل استرداد شد (۱۸ مهر ۱۴۰۵). ودیعه یعنی
     // پولی که برمی‌گردد و جمله باید خودش این را بگوید؛ «پیش‌پرداخت» بر برچسب مقدم است.
@@ -506,21 +601,36 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       continue;
     }
 
-    // دسته هم اول از شاهدِ خودِ مبلغ و بندِ آن، و فقط اگر چیزی نگفتند از شرحِ کل.
+    // دسته هم اول از شاهدِ خودِ مبلغ و بندِ آن (در جملهٔ چندمبلغی، بخشِ خودِ آن)،
+    // و فقط اگر چیزی نگفتند از شرحِ کل.
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
-    const category = [amount.evidence, clause].map((part) => (part ? classifyCategory(part, type) : null)).find((result) => result?.matched)?.category
+    const category = [amount.evidence, scope.alone ? clause : scope.own].map((part) => (part ? classifyCategory(part, type) : null)).find((result) => result?.matched)?.category
       || classifyCategory(describe, type).category;
     // «۶ میلیون اجارهٔ همین ماه»: پوششی که در ماهِ پرداخت تمام می‌شود هزینهٔ همین
     // دوره است. برای درآمد، پوششِ درونِ همین ماه چیزی را به بعد نمی‌برد.
     const paidMonth = paymentDate ? monthOf(paymentDate) : null;
     const inPaidMonth = (iso) => Boolean(iso && paidMonth && Date.parse(iso) >= Date.parse(paidMonth.from) && Date.parse(iso) <= Date.parse(paidMonth.to));
-    let periodStart = coverageStart;
-    let periodEnd = coverageEnd;
+    // تاریخ پوششِ مدل برای کل رویداد است، نه برای یک مبلغ: در جملهٔ چندمبلغی فقط
+    // به مبلغی می‌رسد که عبارتش در بخشِ خودِ آن است (`amountScope`).
+    const coverageHere = (date) => {
+      const at = facts.dates.find((item) => item.accepted && item.role === date && item.iso);
+      return at ? dateInScope(said, at, scope) : true;
+    };
+    const coverageOwner = [coverageHere('coverage-start'), coverageHere('coverage-end')];
+    let periodStart = coverageOwner[0] === true ? coverageStart : null;
+    let periodEnd = coverageOwner[1] === true ? coverageEnd : null;
+    let periodUnowned = coverageOwner.includes(null);
     // «پوشش یک‌ساله»، «شش ماه جلوتر»: همان قاعدهٔ مسیر قطعی (`readServicePeriod`)،
     // شروع از روز پرداخت. مدل این را عدد «مدت» می‌نوشت و دوره هرگز به سند نمی‌رسید.
+    // فقط از بخشِ خودِ همین مبلغ؛ دوره‌ای در متنِ مشترک صاحب ندارد.
     if (!periodStart && !periodEnd && type === 'expense' && movement.direction !== 'none' && paymentDate) {
-      const spokenPeriod = readServicePeriod(said, { occurredAt: paymentDate });
+      const spokenPeriod = readServicePeriod(scope.own, { occurredAt: paymentDate });
       if (spokenPeriod) { periodStart = spokenPeriod.start; periodEnd = spokenPeriod.end; }
+      else if (!scope.alone && readServicePeriod(scope.shared, { occurredAt: paymentDate })) periodUnowned = true;
+    }
+    if (periodUnowned && !periodStart && !periodEnd) {
+      toAccountant(`دورهٔ پوششی که در جمله آمده مالِ «${label}» است یا مبلغِ دیگرِ همین جمله، روشن نیست؛ کدام هزینهٔ امروز است و کدام پیش‌پرداخت، با حسابدار است.`);
+      continue;
     }
     if (!periodStart && !periodEnd && paidMonth && type === 'expense' && movement.direction !== 'none' && THIS_MONTH_WORDS.test(own + ' ' + clause)) {
       periodStart = paidMonth.from;
@@ -528,7 +638,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     }
     if (type === 'income' && inPaidMonth(periodStart) && (!periodEnd || inPaidMonth(periodEnd))) { periodStart = null; periodEnd = null; }
     const item = {
-      amount: amount.value, type, category, rawText: transcript, source, occurredAt: paymentDate,
+      // در جملهٔ چندمبلغی، متنِ ردیف بخشِ خودِ همان مبلغ است — همان قرارداد ردیف‌های
+      // مسیر قطعی. نگهبان‌هایی که متن را می‌خوانند («بیمهٔ یک‌ساله» یعنی پیش‌پرداخت)
+      // دیگر دورهٔ بیمه را به کرایهٔ حملِ کنارش نمی‌چسبانند.
+      amount: amount.value, type, category, rawText: scope.alone ? transcript : scope.own, source, occurredAt: paymentDate,
       accountId, contactId: contactId || null, contactName: counterparty?.name || '',
       linkContact: Boolean(contactId) || createContact, contactNameConfident: true,
       // «هیچ‌کدام»: تسویه فقط از مسیر سند باز (بالا)؛ این ردیف هزینه یا درآمد خودش است.
@@ -547,7 +660,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const verb = movement.direction === 'none' ? (type === 'income' ? 'طلب' : 'بدهی') : type === 'income' ? 'دریافت' : 'پرداخت';
     components.push({
       id: amount.id, amountRef: amount.id, kind: movement.direction === 'none' ? 'obligation' : 'cash',
-      amount: amount.value, item,
+      amount: amount.value, item, text: scope.alone ? null : scope.own,
       label: `${verb} ${money(amount.value)} تومان${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}`,
     });
   }

@@ -163,7 +163,8 @@ function planCase(understanding, answers, row, now = new Date()) {
     component.item = applyEngineAnswers(component, answers, today);
     if (component.kind === 'transfer') continue;
     let preview;
-    try { [preview] = previewTransactions({ transcript: row.transcript, transactions: [component.item] }); }
+    // ردیفِ یک جملهٔ چندمبلغی متنِ بخشِ خودش را دارد (`component.text`)، همان که ثبت می‌شود.
+    try { [preview] = previewTransactions({ transcript: component.text || row.transcript, transactions: [component.item] }); }
     catch (error) { preview = { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [error.message] }; }
     component.preview = { route: preview.route, lines: preview.lines || [], treatment: preview.treatment || null, eventKind: preview.eventKind || null, decisionStatus: preview.decisionStatus || null };
     // پول از جیب شریک یا کارمند: پیش‌نمایش همان سندی را نشان می‌دهد که ثبت می‌شود.
@@ -459,14 +460,14 @@ export function commitUnderstandingCase(id, { now } = {}) {
       }
       const item = { ...component.item, clientId };
       if (component.kind === 'obligation') {
-        const opened = recordUnderstoodObligation(item, row.transcript);
+        const opened = recordUnderstoodObligation(item, component.text || row.transcript);
         if (!opened) throw fail('ثبت تعهد بدون موتور تصمیم ممکن نیست.', 'UNDERSTANDING_ENGINE_OFF');
         results.push({ component: component.id, kind: 'obligation', obligationId: opened.obligationId, eventId: opened.id, status: opened.status, route: opened.route });
         continue;
       }
       const contactAnswer = Object.entries(answers).find(([key, answer]) => key.startsWith('counterparties.') && answer.valueId === 'new');
       const ids = insertTransactionRows({
-        transcript: row.transcript, transactions: [item], fromUtterance: false,
+        transcript: component.text || row.transcript, transactions: [item], fromUtterance: false,
         counterpartyResolution: contactAnswer ? 'separate' : '',
       });
       const transactionId = ids[0] || null;

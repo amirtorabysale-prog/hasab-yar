@@ -369,3 +369,86 @@ test('منفی: قبض و اجارهٔ همین ماه یا ماهِ گذشته 
     assert.ok(!result.violations.includes('amounts.a1:executory-contract'), text);
   }
 });
+
+// ---------------------------------------------------------------------------
+// ۵. دورهٔ یک مبلغ به مبلغ دیگرِ همان جمله نمی‌رسد.
+// ---------------------------------------------------------------------------
+
+const twoPayments = (first, second, extra = {}) => model({
+  amounts: [amt('a1', 'paid-now', first), amt('a2', 'paid-now', second)],
+  movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت'), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت')],
+  ...extra,
+});
+
+test('قبض یا کرایهٔ حمل کنار اجاره یا بیمهٔ دوره‌دار: فقط اجاره و بیمه پیش‌پرداخت‌اند', async () => {
+  for (const [text, first, second, prepaid, expensed, months] of [
+    ['قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون از تجارت دادیم', '۲ میلیون', 'اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون', 30_000_000, 2_000_000, 6],
+    ['قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون از تجارت دادیم', '۲ میلیون', '۳۰ میلیون', 30_000_000, 2_000_000, 6],
+    ['کرایه حمل بار ۳ میلیون دادیم و بیمه یک ساله ماشین ۱۲ میلیون هم از تجارت پرداخت کردیم', 'کرایه حمل بار ۳ میلیون', 'بیمه یک ساله ماشین ۱۲ میلیون', 12_000_000, 3_000_000, 12],
+    ['کرایه حمل بار ۳ میلیون دادیم و بیمه یک ساله ماشین ۱۲ میلیون هم از تجارت پرداخت کردیم', '۳ میلیون', '۱۲ میلیون', 12_000_000, 3_000_000, 12],
+    ['بیمه یک ساله ماشین ۱۲ میلیون و کرایه حمل بار ۳ میلیون از تجارت دادیم', '۱۲ میلیون', '۳ میلیون', 12_000_000, 3_000_000, 12],
+    ['قبض برق ۲ میلیون، اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون، از تجارت دادیم', '۲ میلیون', '۳۰ میلیون', 30_000_000, 2_000_000, 6],
+    ['۳۰ میلیون اجاره دفتر برای شش ماه آینده و ۲ میلیون قبض برق از تجارت دادیم', '۳۰ میلیون', '۲ میلیون', 30_000_000, 2_000_000, 6],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, twoPayments(first, second));
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify([item.plan?.questions, item.plan?.reasons])}`);
+      assert.equal(debitOf(posted, /پیش‌پرداخت/), prepaid, `${text}: ${JSON.stringify(posted.lines)}`);
+      assert.equal(posted.schedule.length, months, text);
+      assert.equal(posted.scheduled, prepaid, text);
+      assert.equal(creditOf(posted, /تجارت/), prepaid + expensed, `${text}: ${JSON.stringify([posted.lines, components(item)])}`);
+      assert.ok(!posted.lines.some(([account, value]) => value > 0 && /پیش‌پرداخت\s*—\s*(?:قبوض|حمل)/.test(account)), `${text}: قبض و کرایه پیش‌پرداخت نشدند`);
+    });
+  }
+});
+
+test('تاریخ پوششِ مدل فقط به مبلغی می‌رسد که عبارتش در بخش خودِ آن است', async () => {
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('قبض برق ۲ میلیون و اجاره آبان و آذر دفتر ۲۰ میلیون از تجارت دادیم',
+      twoPayments('۲ میلیون', '۲۰ میلیون', { dates: coverage('آبان', 'آذر', { month: 8 }, { month: 9 }) }));
+    assert.equal(item.status, 'ready', JSON.stringify([item.plan?.questions, item.plan?.reasons]));
+    assert.equal(debitOf(posted, /پیش‌پرداخت/), 20_000_000);
+    assert.deepEqual(posted.schedule.map((row) => row.period_key), ['1405-08', '1405-09']);
+  });
+  // ترتیب وارونه: پوشش پیش از مبلغ اول، قبض پس از «و».
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('بیمه ماشین از اول آبان تا آخر مهر سال بعد ۱۲ میلیون و کرایه حمل ۳ میلیون از تجارت دادیم',
+      twoPayments('۱۲ میلیون', '۳ میلیون', { dates: coverage('اول آبان', 'آخر مهر سال بعد', { month: 8, day: 1 }, { month: 7 }) }));
+    assert.equal(item.status, 'ready', JSON.stringify([item.plan?.questions, item.plan?.reasons]));
+    assert.equal(debitOf(posted, /پیش‌پرداخت/), 12_000_000);
+    assert.equal(posted.scheduled, 12_000_000);
+  });
+});
+
+test('دوره‌ای که در متنِ مشترکِ چند مبلغ آمده صاحب ندارد: حسابدار، نه حدس', async () => {
+  await inFreshWorkspace(async () => {
+    const { item, posted } = await understandCase('برای شش ماه آینده، اجاره ۳۰ میلیون و شارژ ۶ میلیون از تجارت دادیم', twoPayments('اجاره ۳۰ میلیون', 'شارژ ۶ میلیون'));
+    assert.equal(item.status, 'needs-accountant', JSON.stringify(item.plan?.questions));
+    assert.equal(posted, null);
+  });
+});
+
+test('منفی: مبلغِ تنها، اجزای یک کل، و اجارهٔ همین ماه کنار قبض', async () => {
+  for (const [text, said, expected] of [
+    ['قبض برق ۲ میلیون از تجارت دادیم', model({ amounts: [amt('a1', 'paid-now', '۲ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')] }), { prepaid: 0, items: 0 }],
+    ['بیمه یک ساله ماشین ۱۲ میلیون از تجارت دادیم', model({ amounts: [amt('a1', 'paid-now', '۱۲ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')] }), { prepaid: 12_000_000, items: 12 }],
+    ['اجاره همین ماه ۶ میلیون و قبض برق ۲ میلیون از تجارت دادیم', twoPayments('اجاره همین ماه ۶ میلیون', 'قبض برق ۲ میلیون'), { prepaid: 0, items: 0 }],
+    ['اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون، ۱۰ میلیون از تجارت و ۲۰ میلیون از تجارت دادیم', model({
+      amounts: [amt('a1', 'total', 'اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون'), amt('a2', 'paid-now', '۱۰ میلیون', { partOf: 'a1' }), amt('a3', 'paid-now', '۲۰ میلیون', { partOf: 'a1' })],
+      movements: [mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت'), mv('m3', 'a3', 'out', BANK, UNKNOWN, 'از تجارت')],
+    }), { prepaid: 30_000_000, items: 12 }],
+    // اجارهٔ آینده که هنوز پرداخت نشده، دوره‌اش را به قبضِ پرداخت‌شده نمی‌دهد.
+    ['اجاره شش ماه آینده رو ۳۰ میلیون ماه بعد میدیم و قبض برق ۲ میلیون از تجارت دادیم', model({
+      amounts: [amt('a1', 'paid-now', '۳۰ میلیون', { status: 'future' }), amt('a2', 'paid-now', '۲ میلیون')],
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'میدیم'), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت دادیم')],
+    }), { prepaid: 0, items: 0, paid: 2_000_000 }],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item, posted } = await understandCase(text, said);
+      assert.equal(item.status, 'ready', `${text}: ${JSON.stringify([item.plan?.questions, item.plan?.reasons])}`);
+      assert.equal(debitOf(posted, /پیش‌پرداخت/), expected.prepaid, `${text}: ${JSON.stringify(posted.lines)}`);
+      assert.equal(posted.schedule.length, expected.items, text);
+      if (expected.paid) assert.equal(creditOf(posted, /تجارت/), expected.paid, text);
+    });
+  }
+});

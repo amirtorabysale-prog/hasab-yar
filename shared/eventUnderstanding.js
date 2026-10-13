@@ -135,6 +135,8 @@ const RELATIVE_WORDS = [
 ];
 /** بندی که پرداختش هنوز نیامده: زمان آینده، قرار، یا شرط. */
 const FUTURE_CLAUSE = /فردا|(?:هفته|ماه|سال)\s*(?:بعد|آینده|دیگه|دیگر)|(?:^|\s)بعد(?:ا|اً)(?=$|\s)|قرار(?:ه|\s*است)|(?:^|\s)خواه(?:یم|ند|د)(?=$|\s)|(?:^|\s)می[\s‌]*(?:دهیم|دیم|دهند|دن|پردازیم|پردازند|ریزیم|ریزند|ریزن|گیریم|گیرند|کنیم|کنند|کنن)(?=$|[\s.،؛!؟])/;
+/** «شش ماه آینده»، «یک سال جلوتر»: طولِ دوره با شمارش، نه «ماه آینده می‌دیم». */
+const COVERAGE_LENGTH = /(?:[0-9۰-۹]+|یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|یازده|دوازده)\s*(?:ماه|سال)\s*(?:آینده|جلوتر)/g;
 const CONDITION_CLAUSE = /(?:^|\s)(?:اگر|اگه)(?=$|\s)|در\s*صورت/;
 const DONE_CLAUSE = /(?:^|\s)(?:کردیم|کردم|کرد|کردند|کردن|شد|شده|دادیم|دادم|داد|دادند|دادن|گرفتیم|گرفتم|گرفت|گرفتند|ریختیم|ریختم|ریخت|ریختند|زدیم|زدم|زد|زدند|کشیدیم|کشیدن|خریدیم|خریدم|فروختیم|فروختم|رسید|آمد|اومد)(?=$|[\s.،؛!؟])/;
 /** فعلِ سوم‌شخصِ واریز: «شرکت آفتاب ... به ملت واریز کرد» یعنی پول آمد. */
@@ -1130,7 +1132,12 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const amount = byId.get(movement.amountRef);
     if (!amount?.accepted || amount.status !== 'done' || becameObligation.has(amount.id) || amount.role === 'credit-part') continue;
     // «پس می‌گیریم»، «برمی‌گردانند»: استردادِ آینده است، نه زمانِ همین پرداخت.
-    const clause = (clauseOf(amount.evidence) || clauseOf(movement.evidence)).replace(/پس\s*می[\s‌]*(?:گیریم|گیرند|دهیم|دهند|دیم)|بر\s*می[\s‌]*گردان\S*/g, ' ');
+    // «اجاره برای شش ماه آینده»: طولِ دورهٔ پوشش است، نه زمانِ پول. در «۳۰ میلیون
+    // اجاره دفتر برای شش ماه آینده و ۲ میلیون قبض برق از تجارت دادیم» فعلِ مشترکِ
+    // آخر جمله در بندِ اجاره نیست و «ماه آینده» اجارهٔ پرداخت‌شده را آینده می‌کرد.
+    const clause = (clauseOf(amount.evidence) || clauseOf(movement.evidence))
+      .replace(/پس\s*می[\s‌]*(?:گیریم|گیرند|دهیم|دهند|دیم)|بر\s*می[\s‌]*گردان\S*/g, ' ')
+      .replace(COVERAGE_LENGTH, ' ');
     if (!clause.trim() || !FUTURE_CLAUSE.test(clause) || DONE_CLAUSE.test(clause)) continue;
     amount.status = CONDITION_CLAUSE.test(sentenceOf(amount.evidence) || clause) ? 'conditional' : 'future';
     violations.push(`amounts.${amount.id}:${amount.status}-in-speech`);
