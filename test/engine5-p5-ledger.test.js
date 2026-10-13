@@ -1132,9 +1132,13 @@ test('منفی: استرداد بیش از بخش شناسایی‌نشده رد
     const event = refundPlaceholder('بیمه آتش سوزی رو فسخ کردیم و ۱۰ میلیون برگشت داد به حساب تجارت', 10_000_000);
     const before = JSON.stringify(items(book.insurance));
     assert.throws(() => database.recordReviewedComposite(event.id, { lines: [{ accountId: book.bankLedger, debit: 10_000_000, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: 10_000_000 }], reason: 'استرداد پس از فسخ بیمه' }),
-      { code: 'REVIEW_DETAILS_REQUIRED', message: /بخش شناسایی‌نشده/ });
+      (error) => error.code === 'REVIEW_DETAILS_REQUIRED' && /بخش شناسایی‌نشده/.test(error.message) && error.question?.id === 'contract.end-date');
     assert.equal(JSON.stringify(items(book.insurance)), before);
     assert.equal(ledgerOf(book.prepaid), 9_000_000);
+    // تاریخ پایانی که ماه‌های گذشته را هم پوشش‌نیافته کند، فقط تا همان‌جا: از اول دی هنوز ۹ میلیون است.
+    assert.throws(() => database.recordReviewedComposite(event.id, { lines: [{ accountId: book.bankLedger, debit: 10_000_000, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: 10_000_000 }], reason: 'استرداد پس از فسخ بیمه', contractEndedAt: '2026-12-22T08:30:00.000Z' }),
+      { code: 'REVIEW_DETAILS_REQUIRED', message: /پوشش‌نیافته/ });
+    assert.equal(JSON.stringify(items(book.insurance)), before);
   });
 });
 
@@ -1370,6 +1374,120 @@ test('ماندهٔ با علامت غلط دیده می‌شود: پیش‌پر�
     assert.deepEqual(listed.map((item) => [item.accountId, item.kind, item.wrongSign, item.balance]).sort(), [[prepaid, 'prepaid', true, -4_000_000], [deferred, 'deferred', true, -7_000_000]].sort());
     assert.ok(listed.every((item) => /بستانکار|بدهکار/.test(item.question) && item.entries.length === 1));
     assert.throws(() => database.scheduleBalance(prepaid, { coverageText: 'از اول مهر ۱۴۰۵ به مدت ۱۲ ماه', category: 'بیمه', reason: 'آزمون علامت غلط' }), { code: 'TIMING_BALANCE_WRONG_SIGN' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// خانوادهٔ «استرداد دیررس»: شناسایی هر دقیقه اجرا می‌شود و تا پول استرداد
+// برسد، ماه‌های پس از فسخ هزینه (یا درآمد) شده‌اند. آن ماه‌ها پوششی نداشته‌اند:
+// به تاریخ استرداد برمی‌گردند (دورهٔ گذشته، شاید بسته، بازنویسی نمی‌شود). تاریخ
+// پایان از کنار فعل فسخ خوانده یا پرسیده می‌شود؛ حدس زده نمی‌شود.
+// ---------------------------------------------------------------------------
+
+const LATE_DEY = 'بیمه آتش سوزی رو از اول دی فسخ کردیم بیمه پاسارگاد ۹ میلیون حق بیمه برگشت داد به حساب تجارت';
+
+test(`استرداد پس از آنکه ماه فسخ شناسایی شد: «${LATE_DEY}» — دی برمی‌گردد، پیش‌پرداخت صفر و هزینهٔ بیمه سه ماه`, async () => {
+  const book = await contractBook('استرداد دیررس — اول دی');
+  await book.inBook(() => {
+    run(REFUND_AT);
+    assert.equal(ledgerOf(book.prepaid), 8_000_000, 'کار دقیقه‌ای ماه دی را پیش از رسیدن پول ثبت کرد');
+    const refund = insurerRefund(book, 9_000_000, LATE_DEY);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    const dey = items(book.insurance).find((item) => item.periodKey === '1405-10' && !item.key.includes(':close:'));
+    assert.equal(dey.status, 'superseded');
+    const reversal = sql().prepare("SELECT occurred_at AS at FROM journal_entries WHERE source_type='recognition-schedule' AND source_id=? AND entry_kind='reversal'").get(dey.key);
+    assert.equal(reversal?.at, REFUND_AT, 'برگشتِ دی به تاریخ استرداد');
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 3_000_000, 'مهر، آبان، آذر');
+    // برگشت همین استرداد، دی و ماه‌های بعد را هم برمی‌گرداند.
+    database.reverseEvent(refund, 'استرداد اشتباه ثبت شد');
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.prepaid), 0);
+    assert.equal(net('expense-category'), 12_000_000);
+  });
+});
+
+test('استرداد چند ماه پس از فسخ «از ۶ دی»، با دی و بهمنِ بسته: بهمن و اسفند به تاریخ استرداد برمی‌گردند', async () => {
+  const { inBook, bank } = await freshBook('استرداد دیررس — دورهٔ بسته');
+  await inBook(async () => {
+    const { resolveEventRole } = await import('../server/roleResolver.js');
+    const contract = capture(FIRE_INSURANCE).eventId;
+    run(ESFAND);
+    accounting.lockAccountingPeriod(sql(), accounting.periodForDate('2026-12-25T08:00:00.000Z'), owner.id);
+    accounting.lockAccountingPeriod(sql(), accounting.periodForDate('2027-01-25T08:00:00.000Z'), owner.id);
+    const prepaid = resolveEventRole(sql(), 'prepaid-asset', 'بیمه', {});
+    const bankLedger = resolveEventRole(sql(), 'cash', bank.id, { accountId: bank.id });
+    const text = 'بیمه آتش سوزی رو از ۶ دی فسخ کردیم بیمه پاسارگاد ۸ میلیون حق بیمه برگشت داد به حساب تجارت';
+    const event = store.recordFinancialEvent(sql(), normalizeFinancialEvent({ kind: 'review-placeholder', amount: 8_000_000, amountReferenceOnly: true, occurredAt: '2027-03-05T08:00:00.000Z', source: 'voice', evidence: text, utterance: text }),
+      { sourceEventId: 'late-locked', decision: { route: 'accountant-review', guardBlocked: true, reasons: ['ارجاع به سند اول'] }, transcript: text, rawInput: text });
+    database.recordReviewedComposite(event.id, { lines: [{ accountId: bankLedger, debit: 8_000_000, credit: 0 }, { accountId: prepaid, debit: 0, credit: 8_000_000 }], reason: 'استرداد پس از فسخ بیمه' });
+    assert.equal(ledgerOf(prepaid), 0);
+    assert.equal(net('expense-category'), 4_000_000, 'مهر تا دی');
+    assert.deepEqual(items(contract).filter((item) => item.status === 'posted').map((item) => item.periodKey), ['1405-07', '1405-08', '1405-09', '1405-10']);
+  });
+});
+
+test('آینه: مستأجر «از اول دی» تخلیه کرد و پس از ثبت درآمد دی ۳۰ میلیون پس دادیم — درآمد انتقالی صفر و درآمد اجاره ۳۰ میلیون', async () => {
+  const book = await contractBook('استرداد دیررس — مستأجر');
+  await book.inBook(() => {
+    run(REFUND_AT);
+    assert.equal(ledgerOf(book.deferred), -20_000_000);
+    tenantRefund(book, 30_000_000, 'آقای احمدی از اول دی تخلیه کرد ۳۰ میلیون اجاره جلو گرفته رو از صندوق بهش پس دادیم');
+    run(LONG_AFTER);
+    assert.equal(ledgerOf(book.deferred), 0, 'مستأجر به ما بدهکار نیست');
+    assert.equal(net('income-category'), -30_000_000, 'مهر، آبان، آذر');
+  });
+});
+
+test('استرداد دیررس بی‌تاریخ پایان: تاریخ پرسیده می‌شود؛ با جواب در گفت‌وگوی دستیار یا انتخاب صریح ثبت می‌شود', async () => {
+  const book = await contractBook('استرداد دیررس — پرسش تاریخ');
+  await book.inBook(async () => {
+    run(REFUND_AT);
+    const text = 'بیمه آتش سوزی رو فسخ کردیم بیمه پاسارگاد ۹ میلیون حق بیمه برگشت داد به حساب تجارت';
+    const event = refundPlaceholder(text, 9_000_000);
+    const lines = [{ accountId: book.bankLedger, debit: 9_000_000, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: 9_000_000 }];
+    const journals = sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n;
+    assert.throws(() => database.recordReviewedComposite(event.id, { lines, reason: 'برگشت حق بیمه پس از فسخ' }), (error) => error.question?.id === 'contract.end-date');
+    assert.equal(sql().prepare('SELECT COUNT(*) n FROM journal_entries').get().n, journals, 'هیچ سندی پیش از جواب');
+    // جواب در گفت‌وگوی دستیار.
+    const prepaidLines = [{ role: 'cash', key: null, accountId: book.bankLedger, debit: 9_000_000, credit: 0 }, { role: 'prepaid-asset', key: 'بیمه', accountId: book.prepaid, debit: 0, credit: 9_000_000 }];
+    const ask = [{ id: 'contract.end-date', text: 'قرارداد از چه تاریخی فسخ شد؟', field: null }];
+    const facts = { accountId: book.bank.id };
+    await proposeReview(sql(), event.id, { message: 'تاریخ فسخ؟', fetcher: fakeAi({ questions: ask }), facts });
+    const proposal = await proposeReview(sql(), event.id, { message: 'برگشت حق بیمه پس از فسخ', facts: { ...facts, questionAnswers: { 'contract.end-date': { value: 'اول دی' } } }, fetcher: fakeAi({ summary: 'برگشت حق بیمه', lines: prepaidLines }) });
+    database.recordReviewedComposite(event.id, { lines, reason: 'برگشت حق بیمه پس از فسخ از اول دی', proposalId: proposal.id });
+    assert.equal(ledgerOf(book.prepaid), 0);
+    // آینه با انتخاب صریح تاریخ پایان: مستأجر تخلیه کرد و پس از ثبت درآمد دی پس دادیم.
+    const tenant = refundPlaceholder('آقای احمدی تخلیه کرد ۳۰ میلیون اجاره جلو گرفته رو از صندوق بهش پس دادیم', 30_000_000);
+    const tenantLines = [{ accountId: book.deferred, debit: 30_000_000, credit: 0, analyticId: book.tenantAnalytic }, { accountId: book.cashLedger, debit: 0, credit: 30_000_000 }];
+    assert.throws(() => database.recordReviewedComposite(tenant.id, { lines: tenantLines, reason: 'پس دادن اجاره پس از تخلیه' }), (error) => error.question?.id === 'contract.end-date');
+    database.recordReviewedComposite(tenant.id, { lines: tenantLines, reason: 'پس دادن اجاره پس از تخلیه', contractEndedAt: '2026-12-22T08:30:00.000Z' });
+    run(LONG_AFTER);
+    assert.equal(net('expense-category'), 3_000_000);
+    assert.equal(ledgerOf(book.deferred), 0);
+    assert.equal(net('income-category'), -30_000_000);
+  });
+});
+
+test('منفی: تاریخی که کنار فعل فسخ نیست («بیمه‌ای که مهر خریدیم») تاریخ پایان خوانده نمی‌شود و پرسیده می‌شود', async () => {
+  const book = await contractBook('استرداد دیررس — تاریخ نامربوط');
+  await book.inBook(() => {
+    const event = refundPlaceholder('بیمه آتش سوزی که مهر خریدیم رو فسخ کردیم و ۱۰ میلیون برگشت داد به حساب تجارت', 10_000_000);
+    assert.throws(() => database.recordReviewedComposite(event.id, { lines: [{ accountId: book.bankLedger, debit: 10_000_000, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: 10_000_000 }], reason: 'برگشت حق بیمه' }),
+      (error) => error.question?.id === 'contract.end-date');
+    assert.equal(ledgerOf(book.prepaid), 9_000_000);
+  });
+});
+
+test('منفی: قراردادی که ادامه دارد بیش از بخش شناسایی‌نشده برنمی‌گرداند، حتی پس از اجرای ماه‌های بعد', async () => {
+  const book = await contractBook('استرداد دیررس — ادامه');
+  await book.inBook(() => {
+    run(ESFAND);
+    const event = refundPlaceholder('بیمه پاسارگاد ۸ میلیون از حق بیمه آتش سوزی رو به حساب تجارت برگردوند، بیمه ادامه داره', 8_000_000);
+    assert.throws(() => database.recordReviewedComposite(event.id, { lines: [{ accountId: book.bankLedger, debit: 8_000_000, credit: 0 }, { accountId: book.prepaid, debit: 0, credit: 8_000_000 }], reason: 'برگشت حق بیمه' }),
+      { code: 'REVIEW_DETAILS_REQUIRED', message: /ادامه دارد/ });
+    assert.equal(ledgerOf(book.prepaid), 6_000_000);
   });
 });
 

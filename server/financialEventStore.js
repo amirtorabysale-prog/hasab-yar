@@ -8,7 +8,7 @@ import { SCHEDULE_ITEM_STATUS, buildMonthlySchedule, readCoverageAnswers } from 
 import { readServicePeriod } from '../shared/periodSpeech.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { scoreCategories } from '../shared/categoryRules.js';
-import { persianToISO, todayPersian } from '../shared/persianDate.js';
+import { persianToISO, readJalaliExpression, readTypedDate, todayPersian } from '../shared/persianDate.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { DECISION_STATUS, decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
@@ -980,22 +980,50 @@ function ledgerBalance(database, accountId) {
  * شده (سند حسابدار، ماندهٔ بی‌سند) یا همان حسابی است که سند پرداخت/دریافتش
  * بدهکار/بستانکار کرد.
  */
-function liveContractsOn(database, accountId, excludeEventId = '') {
+function liveContractsOn(database, accountId, excludeEventId = '', { cutoff = null } = {}) {
   return database.prepare(`SELECT DISTINCT e.id,e.payload,e.journal_entry_id AS journalEntryId FROM financial_events e
     JOIN recognition_schedule_items i ON i.event_id=e.id
-    WHERE e.status='posted' AND e.id<>? AND i.status IN ('planned','blocked-closed-period')
+    WHERE e.status='posted' AND e.id<>? AND i.status IN ('planned','blocked-closed-period','posted')
       AND (i.account_id=? OR (i.account_id IS NULL AND EXISTS (SELECT 1 FROM journal_lines l WHERE l.entry_id=e.journal_entry_id AND l.account_id=?)))
     ORDER BY e.occurred_at,e.rowid`).all(String(excludeEventId || ''), accountId, accountId)
     .map((row) => {
       const event = JSON.parse(row.payload);
-      const remaining = Number(database.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM recognition_schedule_items
-        WHERE event_id=? AND status IN ('planned','blocked-closed-period')`).get(row.id).n);
+      const position = contractPosition(database, row.id, cutoff);
       const entry = row.journalEntryId ? database.prepare('SELECT document_number AS documentNumber FROM journal_entries WHERE id=?').get(row.journalEntryId) : null;
       return {
-        eventId: row.id, remaining, documentNumber: entry?.documentNumber ?? null, occurredAt: event.occurredAt, amount: event.amount,
+        eventId: row.id, remaining: position.remaining, recognisedAfterEnd: position.postedAfterTotal,
+        documentNumber: entry?.documentNumber ?? null, occurredAt: event.occurredAt, amount: event.amount,
+        servicePeriodStart: event.servicePeriodStart || null, servicePeriodEnd: event.servicePeriodEnd || null,
         category: event.category || '', counterparty: event.counterparty || '', evidence: String(event.utterance || event.evidence || '').slice(0, 200),
       };
-    });
+    })
+    .filter((item) => item.remaining > 0 || item.recognisedAfterEnd > 0);
+}
+
+/** ابتدای ماه شمسیِ یک قلم، از کلید دوره‌اش («۱۴۰۵-۱۰» → اول دی ۱۴۰۵). */
+function periodStartOf(periodKey) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(periodKey || ''));
+  return match ? persianToISO(Number(match[1]), Number(match[2]), 1) : null;
+}
+
+/**
+ * جای قرارداد در لحظهٔ استرداد: بخش شناسایی‌نشده، و ماه‌هایی که پس از پایان
+ * قرارداد (`cutoff`) شروع شده‌اند ولی پیش‌تر سند خورده‌اند.
+ *
+ * شناسایی هر دقیقه اجرا می‌شود؛ پولِ استرداد معمولاً روزها پس از فسخ می‌رسد و
+ * تا آن روز ماه‌های بعد از فسخ هزینه (یا درآمد) شده‌اند. پوششی که پس از پایان
+ * قرارداد نبوده، هزینه یا درآمد هم نیست؛ این ماه‌ها جزو بخشی‌اند که استرداد
+ * می‌تواند برگرداند. قلم پایانی و جبرانیِ استرداد قبلی جزو ماه‌های پوشش نیستند.
+ */
+function contractPosition(database, contractEventId, cutoff = null) {
+  const rows = database.prepare(`SELECT key,period_key AS periodKey,amount,status FROM recognition_schedule_items
+    WHERE event_id=? AND status IN ('planned','blocked-closed-period','posted') ORDER BY period_key,key`).all(contractEventId);
+  const remaining = rows.filter((item) => item.status !== SCHEDULE_ITEM_STATUS.POSTED).reduce((sum, item) => sum + item.amount, 0);
+  const floor = cutoff ? Date.parse(cutoff) : NaN;
+  const postedAfter = Number.isNaN(floor) ? [] : rows.filter((item) => item.status === SCHEDULE_ITEM_STATUS.POSTED
+    && !/:(?:close|restore):/.test(item.key) && Date.parse(periodStartOf(item.periodKey)) >= floor);
+  const postedAfterTotal = postedAfter.reduce((sum, item) => sum + item.amount, 0);
+  return { remaining, postedAfter, postedAfterTotal, available: remaining + postedAfterTotal };
 }
 
 /** «فسخ»، «تخلیه»، «کنسل» — قرارداد تمام شد؛ «ادامه دارد»، «تخفیف» — با مبلغ کمتر ادامه دارد. */
@@ -1011,6 +1039,60 @@ function contractEndedFrom(text) {
 }
 
 /**
+ * جواب کوتاه به سؤال «تمام شد یا ادامه دارد؟» — «تمام شد»، «فسخ شد»، «نه، ادامه
+ * دارد». جواب، سؤالِ خودش را دارد؛ فعل بی‌نام قرارداد اینجا کافی است.
+ */
+function contractEndedFromAnswer(text) {
+  const fromText = contractEndedFrom(text);
+  if (fromText !== null) return fromText;
+  const normalized = normalizePersian(text);
+  const negated = /(?:^|\s)(?:نه|خیر)(?=$|\s|[،,.])|(?:^|\s)ن(?:شد|شده|کرد|کردیم|کردند|میشه|می\s*شود)(?=$|\s|[،,.])/.test(normalized);
+  const ended = /(?:^|\s)(?:تمام|خاتمه|پایان|کنسل|لغو|باطل|فسخ|تخلیه)/.test(normalized) && !negated;
+  const continues = /ادامه|هنوز|برقرار/.test(normalized);
+  return ended === continues ? null : ended;
+}
+
+const MONTH_NAMES = 'فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند';
+const END_VERB = '(?:فسخ|تخلیه|کنسل|لغو|ابطال|خاتمه)';
+const END_DATE = `((?:(?:\\d{1,2}|اول|آخر|اخر|[آ-ی]+م)\\s+)?(?:${MONTH_NAMES})(?:\\s+ماه)?(?:\\s+(?:سال\\s+)?\\d{4})?)`;
+/** «از اول دی فسخ کردیم»، «۱۵ آذر تخلیه کرد»، «از ۶ دی به بعد کنسل شد». */
+const END_DATE_BEFORE = new RegExp(`(?:^|\\s)(?:از\\s+)?${END_DATE}\\s+(?:به\\s+بعد\\s+)?(?:(?:رو|را)\\s+)?${END_VERB}`);
+/** «فسخ کردیم از اول دی»، «تخلیه کرد در ۱۵ آذر». */
+const END_DATE_AFTER = new RegExp(`${END_VERB}\\S*\\s+(?:(?:کردیم|کرد|کردن|کردند|شد|شده|کرده)\\s+)?(?:از|در|به\\s+تاریخ|تاریخ)\\s+${END_DATE}`);
+
+/**
+ * یک تاریخ شمسی به لحظهٔ ISO؛ سالِ نگفته نزدیک‌ترین سال به تاریخ استرداد است
+ * («اول دی» برای استرداد ۶ دی همین دی است، برای استرداد فروردین دیِ پارسال).
+ */
+function nearestJalali(text, reference) {
+  const named = readJalaliExpression(text);
+  if (!named) return readTypedDate(text, { now: new Date(reference) });
+  const base = todayPersian(new Date(reference)).year + (named.yearOffset || 0);
+  const years = named.year ? [named.year] : [base - 1, base, base + 1];
+  const target = Date.parse(reference);
+  let best = null;
+  for (const year of years) {
+    let iso = null;
+    if (named.end) {
+      const next = named.month === 12 ? persianToISO(year + 1, 1, 1) : persianToISO(year, named.month + 1, 1);
+      iso = next ? new Date(Date.parse(next) - 86_400_000).toISOString() : null;
+    } else iso = persianToISO(year, named.month, named.day || 1);
+    if (iso && (!best || Math.abs(Date.parse(iso) - target) < Math.abs(Date.parse(best) - target))) best = iso;
+  }
+  return best;
+}
+
+/**
+ * تاریخ پایان قرارداد، فقط وقتی کنار فعل پایان آمده باشد. تاریخی که جای دیگری از
+ * جمله است (شروع پوشش، تاریخ خرید) تاریخ فسخ خوانده نمی‌شود.
+ */
+function contractEndDateFrom(text, reference) {
+  const normalized = normalizePersian(text);
+  const match = END_DATE_BEFORE.exec(normalized) || END_DATE_AFTER.exec(normalized);
+  return match ? nearestJalali(match[1], reference) : null;
+}
+
+/**
  * جواب‌های حسابدار دربارهٔ قرارداد: کدام قرارداد و تمام شد یا ادامه دارد.
  *
  * سؤال «کدام قرارداد؟» با شمارهٔ سند یا نام طرف یا دستهٔ همان قرارداد جواب
@@ -1022,11 +1104,13 @@ function reviewContractAnswers(database, eventId, event = {}) {
     const row = database.prepare('SELECT facts FROM accounting_review_context WHERE event_id=?').get(eventId);
     if (row) answers = JSON.parse(row.facts || '{}').questionAnswers || answers;
   }
-  const result = { reference: [], ended: [] };
+  const result = { reference: [], ended: [], endedAt: [] };
   for (const [id, answer] of Object.entries(answers || {})) {
     if (!answer || typeof answer.value !== 'string' || answer.field) continue;
     const question = normalizePersian(answer.question || '');
-    if (/contract[_.-]?(?:ended|end|status|continue)/i.test(id) || /تمام\s*شد|ادامه\s*دارد/.test(question)) result.ended.push(answer.value);
+    if (/contract[_.-]?(?:ended[_.-]?at|end[_.-]?date|cancel(?:led)?[_.-]?(?:at|date)|termination)/i.test(id)
+      || /(?:از\s*چه\s*تاریخی|چه\s*تاریخی|از\s*کی|چه\s*روزی|تاریخ).{0,30}(?:فسخ|تخلیه|پایان|تمام|کنسل|لغو)/.test(question)) result.endedAt.push(answer.value);
+    else if (/contract[_.-]?(?:ended|end|status|continue)/i.test(id) || /تمام\s*شد|ادامه\s*دارد/.test(question)) result.ended.push(answer.value);
     else if (/contract|refund[_.-]?(?:source|reference)/i.test(id) || /کدام\s*قرارداد|قرارداد\s*اصلی/.test(question)) result.reference.push(answer.value);
   }
   return result;
@@ -1063,7 +1147,7 @@ function contractQuestionError(text, id, extra = {}) {
  * - کمتر است و از متن یا جواب معلوم نیست قرارداد تمام شد یا ادامه دارد:
  *   پرسیده می‌شود (`contract.ended`)؛ نتیجهٔ این دو در دفتر فرق دارد.
  */
-export function reviewedContractReductions(database, eventId, event, lines, { contractEventId = null, contractEnded = null, reason = '' } = {}) {
+export function reviewedContractReductions(database, eventId, event, lines, { contractEventId = null, contractEnded = null, contractEndedAt = null, reason = '' } = {}) {
   const totals = new Map();
   for (const line of lines || []) {
     const kind = timingAccountKind(database, line.accountId, event);
@@ -1073,8 +1157,19 @@ export function reviewedContractReductions(database, eventId, event, lines, { co
     totals.set(line.accountId, entry);
   }
   const reductions = [];
+  const at = event.occurredAt || new Date().toISOString();
+  const text = `${event.utterance || event.evidence || ''} ${reason}`;
   for (const reduction of [...totals.values()].filter((entry) => entry.amount > 0)) {
-    const candidates = liveContractsOn(database, reduction.accountId, eventId);
+    const answers = reviewContractAnswers(database, eventId, event);
+    const said = typeof contractEnded === 'boolean' ? contractEnded
+      : [...answers.ended.map(contractEndedFromAnswer), contractEndedFrom(text)].find((value) => value !== null) ?? null;
+    // تاریخ پایان: انتخاب صریح، جواب سؤال، یا کنار فعل پایان در متن. نگفته، روز
+    // استرداد است — کمترین برگشتی که لازم است.
+    const explicitEnd = contractEndedAt && !Number.isNaN(Date.parse(contractEndedAt)) ? new Date(contractEndedAt).toISOString() : null;
+    const statedEnd = said === false ? null
+      : explicitEnd || answers.endedAt.map((value) => nearestJalali(value, at)).find(Boolean) || contractEndDateFrom(text, at);
+    const cutoff = statedEnd || at;
+    const candidates = liveContractsOn(database, reduction.accountId, eventId, { cutoff: said === false ? null : cutoff });
     const label = reduction.kind === 'deferred' ? 'درآمد انتقالی' : 'پیش‌پرداخت';
     if (!candidates.length) {
       const available = reduction.kind === 'prepaid' ? ledgerBalance(database, reduction.accountId) : -ledgerBalance(database, reduction.accountId);
@@ -1083,22 +1178,29 @@ export function reviewedContractReductions(database, eventId, event, lines, { co
       }
       continue;
     }
-    const answers = reviewContractAnswers(database, eventId, event);
     const chosen = contractEventId ? candidates.find((item) => item.eventId === contractEventId) || null
       : candidates.length === 1 ? candidates[0] : pickContract(candidates, answers.reference);
     if (contractEventId && !chosen) throw storeError('قرارداد انتخاب‌شده روی این حساب برنامهٔ زنده‌ای ندارد.', 'REVIEW_DETAILS_REQUIRED', 409);
     if (!chosen) {
       throw contractQuestionError(`این استرداد کدام قرارداد را کم می‌کند؟ چند قرارداد زنده روی همین حساب ${label} هست؛ شمارهٔ سند یا طرف قرارداد را بگو.`, 'contract.reference', { candidates });
     }
-    if (reduction.amount > chosen.remaining) {
-      throw storeError(`استرداد (${reduction.amount.toLocaleString('fa-IR')} تومان) از بخش شناسایی‌نشدهٔ قرارداد (${chosen.remaining.toLocaleString('fa-IR')} تومان) بیشتر است؛ مبلغ یا قرارداد را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+    const amount = (value) => value.toLocaleString('fa-IR');
+    if (said === false && reduction.amount > chosen.remaining) {
+      throw storeError(`استرداد (${amount(reduction.amount)} تومان) از بخش شناسایی‌نشدهٔ قرارداد (${amount(chosen.remaining)} تومان) بیشتر است؛ قراردادی که ادامه دارد بیش از این برنمی‌گرداند. مبلغ یا قرارداد را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
     }
-    const said = typeof contractEnded === 'boolean' ? contractEnded
-      : [...answers.ended, `${event.utterance || event.evidence || ''} ${reason}`].map(contractEndedFrom).find((value) => value !== null) ?? null;
+    const available = chosen.remaining + chosen.recognisedAfterEnd;
+    if (reduction.amount > available) {
+      // ماه‌هایی که پیش از روز استرداد شناسایی شده‌اند فقط وقتی برمی‌گردند که
+      // قرارداد پیش از آن‌ها تمام شده باشد؛ آن تاریخ را حدس نمی‌زنیم.
+      if (!statedEnd) {
+        throw contractQuestionError(`استرداد (${amount(reduction.amount)} تومان) از بخش شناسایی‌نشدهٔ قرارداد (${amount(chosen.remaining)} تومان) بیشتر است؛ اگر قرارداد پیش‌تر تمام شده و ماه‌های بعد از آن شناسایی شده‌اند، قرارداد از چه تاریخی تمام شد (فسخ یا تخلیه)؟`, 'contract.end-date', { candidates: [chosen] });
+      }
+      throw storeError(`استرداد (${amount(reduction.amount)} تومان) از بخش پوشش‌نیافتهٔ قرارداد از ${persianDay(statedEnd)} به بعد (${amount(available)} تومان) بیشتر است؛ مبلغ یا تاریخ پایان را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+    }
     if (said === null && reduction.amount < chosen.remaining) {
       throw contractQuestionError('قرارداد با این استرداد تمام شد (فسخ، تخلیه) یا با مبلغ کمتر ادامه دارد؟', 'contract.ended', { candidates: [chosen] });
     }
-    reductions.push({ ...reduction, contractEventId: chosen.eventId, ended: said !== false, remaining: chosen.remaining });
+    reductions.push({ ...reduction, contractEventId: chosen.eventId, ended: said !== false, remaining: chosen.remaining, cutoff: said === false ? null : cutoff, endedAt: statedEnd });
   }
   return reductions;
 }
@@ -1120,19 +1222,33 @@ function persianPeriodKey(iso, timeZone = 'Asia/Tehran') {
  *   مانده منهای استرداد شود، با همان گرد کردن برنامهٔ ماهانه (ته‌مانده روی قلم
  *   آخر).
  */
-export function reduceContractSchedule(database, contractEventId, { refund, at, ended, refundEventId, accountId = null, actor = null, timeZone = 'Asia/Tehran' } = {}) {
+export function reduceContractSchedule(database, contractEventId, { refund, at, ended, refundEventId, accountId = null, cutoff = null, actor = null, timeZone = 'Asia/Tehran' } = {}) {
   const live = database.prepare(`SELECT key,period_key AS periodKey,recognition_date AS recognitionDate,amount,status FROM recognition_schedule_items
     WHERE event_id=? AND status IN ('planned','blocked-closed-period') ORDER BY period_key,key`).all(contractEventId);
   const remaining = live.reduce((sum, item) => sum + item.amount, 0);
-  if (!(refund > 0) || refund > remaining) throw storeError('استرداد از بخش شناسایی‌نشدهٔ قرارداد بیشتر است.', 'REVIEW_DETAILS_REQUIRED', 409);
+  // ماه‌هایی که پس از پایان قرارداد شروع شده ولی پیش‌تر سند خورده‌اند — فقط
+  // برای قراردادی که تمام شد.
+  const position = ended ? contractPosition(database, contractEventId, cutoff || at) : { postedAfter: [], postedAfterTotal: 0 };
+  if (!(refund > 0) || refund > remaining + position.postedAfterTotal) throw storeError('استرداد از بخش شناسایی‌نشدهٔ قرارداد بیشتر است.', 'REVIEW_DETAILS_REQUIRED', 409);
   const supersede = database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=?");
   // وضعیت پیشینِ هر قلمی که این استرداد عوض می‌کند: برگشت استرداد همین را باز
   // می‌گرداند، نه برنامه‌ای حدسی.
   const touched = [];
+  const reversedPosted = [];
   let closing = null;
   if (ended) {
     for (const item of live) { touched.push({ key: item.key, amount: item.amount, status: item.status }); supersede.run(item.key); }
-    const left = remaining - refund;
+    // پوششی که پس از پایان نبوده، هزینه یا درآمد هم نیست: سندش به تاریخ همین
+    // استرداد معکوس می‌شود — دورهٔ گذشته (شاید بسته) بازنویسی نمی‌شود.
+    for (const item of position.postedAfter) {
+      const reversal = reverseJournalEntry(database, {
+        sourceType: 'recognition-schedule', sourceId: item.key, occurredAt: at, createdBy: actor, timeZone,
+        memo: `برگشت شناسایی ${item.periodKey} پس از پایان قرارداد`,
+      });
+      supersede.run(item.key);
+      reversedPosted.push({ key: item.key, periodKey: item.periodKey, amount: item.amount, reversalEntryId: reversal?.id || null });
+    }
+    const left = remaining + position.postedAfterTotal - refund;
     if (left > 0) {
       const periodKey = persianPeriodKey(at, timeZone);
       const locked = lockedPeriodSet(database).has(periodForDate(at, timeZone));
@@ -1154,7 +1270,10 @@ export function reduceContractSchedule(database, contractEventId, { refund, at, 
       if (amount > 0) reprice.run(amount, item.key); else supersede.run(item.key);
     });
   }
-  const detail = { refundEventId, refund, at, remainingBefore: remaining, remainingAfter: remaining - refund, ended: Boolean(ended), closingItem: closing, touched };
+  const detail = {
+    refundEventId, refund, at, cutoff: ended ? (cutoff || at) : null, remainingBefore: remaining,
+    remainingAfter: Math.max(0, remaining + position.postedAfterTotal - refund), ended: Boolean(ended), closingItem: closing, touched, reversedPosted,
+  };
   writeAudit(database, contractEventId, 'contract-reduced', detail, actor);
   return detail;
 }
@@ -1246,7 +1365,7 @@ function restoreContractSchedule(database, link, { actor = null, timeZone = 'Asi
 }
 
 /** ثبتِ بررسی‌شدهٔ گفتهٔ چندمبلغی؛ حسابدار حساب‌ها و همهٔ مبالغ را صریح انتخاب می‌کند. */
-export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran', accountantProposal = false, eventOverride = null, contractEventId = null, contractEnded = null } = {}) {
+export function postReviewedComposite(database, eventId, { lines, reason, actor = null, timeZone = 'Asia/Tehran', accountantProposal = false, eventOverride = null, contractEventId = null, contractEnded = null, contractEndedAt = null } = {}) {
   ensureFinancialEventSchema(database);
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row || row.status !== 'pending' || row.route !== ROUTES.ACCOUNTANT_REVIEW || (!accountantProposal && (row.kind !== EVENT_KINDS.REVIEW_PLACEHOLDER || row.journal_source))) {
@@ -1277,7 +1396,7 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
   // دورهٔ پوشش پیش از سند: سطر دوره‌دارِ بی‌دوره ثبت نمی‌شود.
   const timing = reviewedTimingPlan(database, row.id, event, safeLines);
   // استرداد پیش از سند: قرارداد و سرنوشتش باید معلوم باشد.
-  const reductions = reviewedContractReductions(database, row.id, event, safeLines, { contractEventId, contractEnded, reason: explanation });
+  const reductions = reviewedContractReductions(database, row.id, event, safeLines, { contractEventId, contractEnded, contractEndedAt, reason: explanation });
   const source = row.journal_source ? JSON.parse(row.journal_source) : null;
   const posted = postJournalEntry(database, {
     sourceType: source?.type || 'financial-event', sourceId: source?.id || row.id, occurredAt: event.occurredAt,
@@ -1290,7 +1409,7 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
   const reconciled = reconcileReviewedRecognition(database, row, event, timing, { actor, timeZone, journalEntryId: posted.id });
   for (const reduction of reductions) {
     const detail = reduceContractSchedule(database, reduction.contractEventId, {
-      refund: reduction.amount, at: event.occurredAt, ended: reduction.ended, refundEventId: row.id, accountId: reduction.accountId, actor, timeZone,
+      refund: reduction.amount, at: event.occurredAt, ended: reduction.ended, refundEventId: row.id, accountId: reduction.accountId, cutoff: reduction.cutoff, actor, timeZone,
     });
     writeAudit(database, row.id, 'contract-linked', { contractEventId: reduction.contractEventId, accountId: reduction.accountId, ...detail }, actor);
   }

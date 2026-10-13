@@ -147,7 +147,7 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
 }
 
 /** حسابدار سطرهای قطعی را انتخاب می‌کند؛ AI فقط شاهد پیشنهاد است. */
-export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false, contractEventId = null, contractEnded = null } = {}) {
+export function recordReviewedComposite(eventId, { lines, reason, proposalId = '', aiAccepted = false, contractEventId = null, contractEnded = null, contractEndedAt = null } = {}) {
   const database = activeWorkspaceDatabase();
   const row = database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId);
   if (!row || row.status !== 'pending') throw Object.assign(new Error('این مورد دیگر در انتظار نیست.'), { code: 'EVENT_NOT_PENDING', status: 409 });
@@ -185,9 +185,11 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
   database.exec('BEGIN IMMEDIATE');
   try {
     // استرداد قرارداد: حسابدار از میان نامزدهای سؤال `contract.reference` یکی را
-    // انتخاب می‌کند و پایان یا ادامهٔ قرارداد را می‌گوید.
+    // انتخاب می‌کند، پایان یا ادامهٔ قرارداد را می‌گوید و — وقتی ماه‌های پس از
+    // پایان پیش‌تر شناسایی شده‌اند — تاریخ پایان را (`contract.end-date`).
     const item = postReviewedComposite(database, eventId, { lines, reason, actor, timeZone: currentTimeZone(),
-      contractEventId: contractEventId ? String(contractEventId) : null, contractEnded: typeof contractEnded === 'boolean' ? contractEnded : null });
+      contractEventId: contractEventId ? String(contractEventId) : null, contractEnded: typeof contractEnded === 'boolean' ? contractEnded : null,
+      contractEndedAt: contractEndedAt && !Number.isNaN(Date.parse(contractEndedAt)) ? new Date(contractEndedAt).toISOString() : null });
     if (proposal?.state === 'proposed') recordReviewFeedback(database, eventId, proposal.id, {
       state: aiAccepted ? 'accepted' : 'rejected', reason, actor,
     });
