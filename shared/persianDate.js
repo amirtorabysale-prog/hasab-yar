@@ -59,6 +59,40 @@ export function dayOfToken(token) {
 }
 const MONTH_BY_NAME = new Map(PERSIAN_MONTHS.map(([name, index]) => [normalizePersian(name), index]));
 
+/**
+ * عددی که بعد از نام ماه آمده و سال نیست، چون واحد دارد.
+ *
+ * «پنجم مهر ۹۹ میلیون فروش داشتیم» فروش را ۱۴۹۹ ثبت می‌کرد و «اجاره دفتر از مهر
+ * تا اسفند ۶۰ میلیون» دوره را ۱۴۶۰: عدد پیش از میلیون/هزار/تومان مبلغ است، پیش از
+ * ماه/سال طول است و «۲۰ و ۵۰۰» یک عدد گفتاری است. یک‌جا نوشته شده تا تاریخ پرداخت
+ * و دورهٔ پوشش یک قاعده داشته باشند.
+ */
+export const NOT_A_YEAR = '(?![\\s\\u200c]*(?:م[یي]?ل[یي]?ون|م[یي]?ل[یي]ارد|هزار|تومان|تومن|ر[یي]ال|ماه|روز|سال|درصد|قسط|و[\\s\\u200c]*(?:\\d|صد|دو[یي]ست|س[یي]صد|چهارصد|پانصد|ششصد|هفتصد|هشتصد|نهصد|هزار)))';
+
+/**
+ * سالِ گفته‌شده بعد از ماه: باورپذیر، صریح ولی دور، یا اصلاً سال نیست.
+ *
+ * دورقمی به نزدیک‌ترین سده می‌رود («۹۹» در ۱۴۰۵ یعنی ۱۳۹۹، نه ۱۴۹۹). سالی که از ده
+ * سال پیش تا دو سال بعد از رویداد باشد `plausible` است. سالِ چهاررقمی، دورقمیِ با
+ * صفر («۰۸») یا دورقمی‌ای که تا سی سال پیش یا ده سال بعد می‌افتد، صریحاً سال است
+ * ولی دور: `plausible: false` — خوانندهٔ دوره آن را می‌پرسد و جایش سال رویداد را
+ * نمی‌نشاند. دورقمی‌ای که حتی به‌عنوان سال بی‌معناست («۴۵» یعنی ۱۴۴۵) سال نیست و
+ * `null` برمی‌گردد؛ آن عدد مبلغ گفتاری است.
+ */
+export function spokenYear(digits, referenceYear) {
+  const token = String(digits || '');
+  if (!/^(?:\d{2}|\d{4})$/.test(token)) return null;
+  let year = Number(token);
+  if (token.length === 2) {
+    year += 1400;
+    if (Math.abs(year - 100 - referenceYear) < Math.abs(year - referenceYear)) year -= 100;
+  } else if (year < 1300 || year > 1500) return null;
+  const offset = year - referenceYear;
+  if (offset >= -10 && offset <= 2) return { year, plausible: true };
+  if (token.length === 4 || token.startsWith('0') || (offset >= -30 && offset <= 10)) return { year, plausible: false };
+  return null;
+}
+
 const MONTH_LENGTHS = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29];
 
 function dayOfPersianYear(month, day) {
@@ -144,7 +178,8 @@ export function readJalaliExpression(input) {
     }
   }
   if (day != null && (day < 1 || day > 31)) day = null;
-  const yearMatch = /^\s*(?:ماه\s*)?(?:سال\s*)?(\d{4})/.exec(after);
+  // «مهر ۱۵۰۰ هزار تومان» سال ۱۵۰۰ نیست؛ همان قاعدهٔ `NOT_A_YEAR`.
+  const yearMatch = new RegExp(`^\\s*(?:ماه\\s*)?(?:سال\\s*)?(\\d{4})(?!\\d)${NOT_A_YEAR}`).exec(after);
   const year = yearMatch ? Number(yearMatch[1]) : null;
   const yearOffset = /سال\s*(?:بعد|آینده|دیگه|دیگر)/.test(text) ? 1
     : /(?:سال\s*(?:قبل|گذشته|پیش)|پارسال)/.test(text) ? -1
@@ -292,6 +327,10 @@ function isoAtTehranNoon(now, offsetDays, timeZone) {
 
 const PERSIAN_DIGITS = /^\d{1,4}$/;
 
+/** «دوم شهریور»، «۲ شهریور ۱۴۰۴»، «۵ مهر سال ۹۹» — روز، ماه و سالِ اختیاری. */
+const DAY_MONTH_SOURCE = `(?<![آ-ی])(${DAY_WORD_PATTERN}|\\d{1,2})\\s*(?:ام|م)?\\s*(?:ماه\\s*)?(${MONTH_PATTERN})(?:\\s*ماه)?(?![آ-ی])(?:\\s*(?:سال\\s*)?(\\d{4}|\\d{2})(?!\\d)${NOT_A_YEAR})?`;
+const DAY_MONTH = new RegExp(DAY_MONTH_SOURCE);
+
 const RELATIVE_WORDS = [
   [/(?:^|\s)امروز(?:\s|$)/, 0, 'امروز'],
   [/(?:^|\s)دیروز(?:\s|$)/, -1, 'دیروز'],
@@ -390,18 +429,22 @@ export function extractDateMention(input, { now = new Date(), timeZone = 'Asia/T
   // نام ماه باید مرز راست داشته باشد، وگرنه «دیگه» با «دی» تطبیق می‌خورد و
   // «یک ماه دیگه» به اول دی ماه تبدیل می‌شود. «شهریورماه» همچنان باید بخورد،
   // پس «ماه» چسبیده پیش از مرز پذیرفته می‌شود.
-  const dayMonth = text.match(new RegExp(`(?<![آ-ی])(${DAY_WORD_PATTERN}|\\d{1,2})\\s*(?:ام|م)?\\s*(?:ماه\\s*)?(${MONTH_PATTERN})(?:\\s*ماه)?(?![آ-ی])(?:\\s*(\\d{4}|\\d{2}))?`));
+  //
+  // عددِ بعد از ماه فقط وقتی سال است که واحد نداشته باشد و به‌عنوان سال معنا بدهد
+  // (`spokenYear`): «پنجم مهر ۹۹ میلیون فروش» پنجم مهرِ امسال است، نه ۱۴۹۹.
+  const dayMonth = text.match(DAY_MONTH);
   if (dayMonth) {
     const token = dayMonth[1];
     const day = PERSIAN_DIGITS.test(token) ? Number(token) : DAY_WORDS.get(token);
     const month = MONTH_BY_NAME.get(dayMonth[2]);
     if (day >= 1 && day <= 31 && month) {
       const today = persianParts(now, timeZone);
+      const said = spokenYear(dayMonth[3], today.year);
       let year = today.year;
-      if (dayMonth[3]) year = dayMonth[3].length === 4 ? Number(dayMonth[3]) : 1400 + Number(dayMonth[3]);
+      if (said) year = said.year;
       else if (preferPast && (month > today.month || (month === today.month && day > today.day))) year -= 1;
       const iso = persianToISO(year, month, day, timeZone);
-      if (iso) return { iso, label: `${day} ${dayMonth[2]} ${year}`, kind: dayMonth[3] ? 'explicit' : 'inferred-year' };
+      if (iso) return { iso, label: `${day} ${dayMonth[2]} ${year}`, kind: said ? 'explicit' : 'inferred-year' };
     }
   }
 
@@ -534,6 +577,13 @@ export function maskCoveragePhrases(input) {
 /** «سه ماه بعد تحویل میده»: زمانِ تحویل کالا، نه روز پرداخت. */
 const DELIVERY_LEAD_TIME = new RegExp(`${SPAN_NUMBER}\\s*(?:ماه|هفته|روز)\\s*(?:بعد|آینده|اینده|دیگه|دیگر)(?:\\s+\\S+)?\\s+(?:تحویل|می\\s*رس|برس|می\\s*[آا]ی?د|میاد|بیاد|ارسال|می\\s*فرست|بفرست|حمل|بار\\s*می)`, 'g');
 
+/**
+ * فعل پولی گذشته و آینده؛ همان مرزی که پارسر برای «پولی که رفته» دارد، با مرز
+ * چپ تا «قرارداد» فعل «داد» شمرده نشود.
+ */
+const PAST_MONEY_VERB = /(?<![آ-ی])(?:داد(?:یم|م|ن|ند)?|گرفت(?:یم|م)?|خرید(?:یم|م)|ریخت(?:یم|م)?|زد(?:یم|م)|پرداخت(?:یم|م))(?![آ-ی])|(?:واریز|پرداخت|کارت\s*به\s*کارت|تسویه)\s*(?:شد|کرد(?:یم|م|ن|ند)?)(?![آ-ی])/;
+const FUTURE_MONEY_VERB = /(?<![آ-ی])(?:می\s?(?:د(?:یم|م|ن|ه|ید)|ده(?:یم|م|ن|ند|د)|ریز(?:یم|م|ن|ه)|پرداز(?:یم|م|ن|ه)|کن(?:یم|م|ن|ه|ند))|خواه(?:یم|ند|د|م)\s*(?:داد|پرداخت|ریخت))(?![آ-ی])/;
+
 /** Dates belonging to coverage, an old invoice, or future cheque cashing are
  * not occurrence dates. Keep raw text intact for evidence and service parsing. */
 export function extractOccurrenceDate(input, options = {}) {
@@ -547,7 +597,10 @@ export function extractOccurrenceDate(input, options = {}) {
   text = text.replace(/(?:سفارش\s*)?(?:خدمات|خدمت|پوشش|اشتراک)\s*(?:ماه\s*(?:آینده|بعد|آتی)|سال\s*(?:آینده|بعد))/g, ' ');
   text = text.replace(/(?:موعد\s*پرداخت(?:ش)?|سررسید(?:ش)?)\s*[^،,.؛]*/g, ' ');
   text = text.replace(/(?:فردا|پس\s*فردا|هفته\s*بعد)\s*(?:نقدش|نقد|وصولش|وصول|پاسش|پاس)\s*(?:می\s*)?(?:کنه|کند|کنند|کنن|شه|شود)/g, ' ');
-  return extractDateMention(text, { ...options, preferPast: true });
+  // پولی که هنوز نرفته («اول آذر ۳۰ میلیون پرداخت می‌کنیم»): روزِ بی‌سالش همین
+  // آذرِ پیش روست، نه آذرِ پارسال. عقب بردنش سند نقدی یک سال پیش می‌ساخت.
+  const future = !PAST_MONEY_VERB.test(text) && FUTURE_MONEY_VERB.test(text);
+  return extractDateMention(text, { ...options, preferPast: !future });
 }
 
 /**
