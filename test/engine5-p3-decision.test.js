@@ -693,6 +693,47 @@ test('منفی: «فروش زدیم»، پولی که به حساب ما ریخ�
   assert.equal(row('۳ میلیون ریختیم به حساب آقای رضایی').type, 'expense');
 });
 
+test('منفی: «قرارداد/قولنامه … زدیم/بستیم»، «ضرر زدیم» و قیمتِ «N میلیونی» پرداخت نیستند و هیچ سندی نمی‌سازند', () => {
+  for (const text of [
+    // جمله‌های بازبین، عیناً.
+    'یه قرارداد بیمه یکساله ۱۲ میلیونی با بیمه ایران زدیم',
+    '۱۰۰ میلیون قرارداد زدیم با شرکت آلفا',
+    'یه قرارداد پشتیبانی یکساله ۲۴ میلیونی با شرکت آلفا زدیم',
+    'قرارداد اجاره یکساله دفتر ۱۲۰ میلیونی با آقای رضایی زدیم',
+    'اقای رضایی قرارداد اجاره یکساله ۱۲۰ میلیونی زدیم',
+    'قولنامه اجاره مغازه رو زدیم ۶۰ میلیون',
+    'قرارداد تبلیغات شش ماهه 60 میلیونی بستیم',
+    'شرکت آلفا قرارداد پشتیبانی یکساله ۲۴ میلیونی با ما بست',
+    'یه بیمه یکساله ۱۲ میلیونی زدیم',
+    '۵۰ میلیون ضرر زدیم',
+  ]) {
+    for (const item of voice(text).items) {
+      assert.notEqual(item.outcome, 'post', text);
+      assert.ok(item.outcome === 'accountant', `${text}: ${item.outcome} ${item.fact || ''}`);
+    }
+  }
+  // پرداختِ گفته‌شده کنار قرارداد همچنان پرداخت است.
+  const [paid] = voice('قرارداد اجاره شش ماهه بستیم ۳۰ میلیون دادیم').items;
+  assert.equal(paid.decision.treatment, 'prepaid-expense');
+  assert.equal(judgmentReason('قرارداد پشتیبانی یکساله ۲۴ میلیون کارت به کارت زدیم به شرکت آلفا'), null);
+});
+
+test('دفتر: «قرارداد بیمه … زدیم» با تأیید برگه سند نقدی و برنامه نمی‌سازد', async () => {
+  await inFreshWorkspace(async () => {
+    const text = 'یه قرارداد بیمه یکساله ۱۲ میلیونی با بیمه ایران زدیم';
+    const cash = database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 100_000_000 });
+    const parsed = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+    database.insertTransactions({ transcript: text, transactions: parsed.map((row) => ({ ...row, accountId: cash.id, userConfirmed: true, needsReview: false, reviewState: 'ready' })) });
+    const db = database.activeWorkspaceDatabase();
+    for (const event of db.prepare("SELECT id FROM financial_events WHERE route = 'confirm' AND status = 'pending'").all()) {
+      try { database.confirmPending(event.id); } catch { /* حسابدار */ }
+    }
+    assert.ok(!db.prepare('SELECT status FROM financial_events').all().some((event) => event.status === 'posted'));
+    assert.ok(!ledgerRows().some((row) => row.name === 'صندوق' && row.credit > 0));
+    assert.equal(scheduleTotals().n, 0);
+  }, {});
+});
+
 test('دفتر: «سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم» با یک تأیید برگه ثبت می‌شود و دوازده قسط می‌سازد', async () => {
   for (const [text, amount, months] of [UNDATED_PREPAID[0], UNDATED_PREPAID[4]]) {
     await inFreshWorkspace(async () => {

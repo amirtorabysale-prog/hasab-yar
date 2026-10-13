@@ -453,6 +453,21 @@ const MONEY_OUT_VERB = /(?:دادم|دادیم|ریختم|ریختیم|زدم|ز
  * نشد. نام بانک پیش از این از پنجره برداشته شده، پس «به حساب ملت» این‌جا
  * «به حساب» خالی است؛ «به حساب بیمه ایران» نام گیرنده را نگه می‌دارد.
  */
+/**
+ * «قرارداد زدیم»، «قولنامه زدیم»، «ضرر زدیم»، «زنگ زدیم»: «زدن» این‌جا امضا،
+ * زیان یا تماس است و هیچ پولی جابه‌جا نشده. «یه بیمه ۱۲ میلیونی زدیم» هم قیمتِ
+ * چیزی را می‌گوید، نه پولی که رفت. «زدیم» فقط با نشانهٔ پرداخت («کارت زدیم»،
+ * «واریز»، «به حساب X زدیم»، «پول») یا وقتی مبلغ خودش مفعول است («۱۸ میلیون
+ * زدیم») پرداخت است.
+ */
+const STRUCK_NOT_PAID = /(?<![آ-ی])(?:قرارداد|قولنامه|ضرر|زیان|سود|بار|زنگ|حرف|تماس|امضا|تیک|جنس|کالا)(?![آ-ی])|[\d۰-۹]\s*(?:میلیون|هزار|تومن|تومان)\s*(?:ی|ای)(?![آ-ی])|(?:میلیون|هزار|تومن|تومان)ی(?![آ-ی])/;
+const STRUCK_PAYMENT = /کارت|واریز|پول|انتقال|پایا|ساتنا|(?:به|تو|توی)\s*حساب/;
+function struckNotPaid(text) {
+  return /(?<![آ-ی])زد(?:یم|م)(?![آ-ی])/.test(text)
+    && !/(?:دادم|دادیم|ریختم|ریختیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم))/.test(text)
+    && STRUCK_NOT_PAID.test(text) && !STRUCK_PAYMENT.test(text);
+}
+
 function paidIntoOwnAccount(text) {
   if (/(?:به|تو|توی)\s*(?:بانک|صندوق|حساب(?:مون|مان|م))(?![آ-ی])/.test(text)) return true;
   const destination = /(?:(?:به|تو|توی)\s*|ریخت(?:یم|م)\s*)(?:حساب|کارت)(?![آ-ی])\s*(\S*)/.exec(text);
@@ -493,7 +508,7 @@ function explicitMoneyIn(input) {
   return THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text);
 }
 
-function classify(context, learnings = [], categoryContext = '') {
+function classify(context, learnings = [], categoryContext = '', rowText = '') {
   const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword)));
@@ -517,7 +532,7 @@ function classify(context, learnings = [], categoryContext = '') {
   // وقتی هیچ نشانهٔ دیگری نیست («فروش زدیم» درآمد است)، مقصد حسابِ خودِ دفتر
   // نیست («نقد رو ریختیم به حساب ملت» انتقال است) و فعل، صدور سند نیست.
   if (!hasIncome && !hasExpense && MONEY_OUT_VERB.test(normalizedContext) && !paidIntoOwnAccount(normalizedContext)
-    && !/فاکتور|صورت\s*حساب|سفارش|کارتخوان|پوز|تخفیف|چک/.test(normalizedContext)) {
+    && !struckNotPaid(normalizePersian(`${rowText} ${context}`)) && !/فاکتور|صورت\s*حساب|سفارش|کارتخوان|پوز|تخفیف|چک/.test(normalizedContext)) {
     type = 'expense';
     confidence = 0.93;
     typeReason = 'نوع از فعل پرداخت اول‌شخص تشخیص داده شد.';
@@ -786,7 +801,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const categoryContext = containsAny(afterAmount, categoryWords)
       ? afterAmount
       : `${beforeAmount} ${afterAmount}`.trim();
-    let classified = classify(context, learnings, categoryContext);
+    let classified = classify(context, learnings, categoryContext, text.slice(previousEnd, nextStart));
     // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
     //
     // پنجرهٔ جهت فقط متنِ کنار مبلغ را می‌بیند و «یه پولی اومده تو حساب ملی
