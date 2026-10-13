@@ -33,6 +33,7 @@ function persianMonthOf(iso) {
   return persianMonthRange(day.year, day.month);
 }
 import { judgmentReason } from './moneyPurpose.js';
+import { readsContractRemainder } from './priorSettlement.js';
 
 /**
  * پنج وضعیت.
@@ -706,6 +707,23 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
       sourceReferences: facts?.evidence ? [facts.evidence] : [],
       decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
       explanation: facts.needsJudgment,
+    });
+  }
+
+  // «باقی حق بیمه … دادیم»، «قسط دوم اجاره»: بخشی از قراردادی که پیش‌تر ثبت
+  // شده. هیچ قاعده‌ای — نه پیش‌پرداخت تازه با دورهٔ نو، نه سؤال «پوشش از کِی؟» —
+  // نباید برایش قرارداد دوم بسازد؛ از هر مسیری که آمده باشد، کارت تسویه یا
+  // حسابدار آن را به سند همان قرارداد وصل می‌کند.
+  const contractPart = ['in', 'out'].includes(facts?.moneyDirection)
+    ? readsContractRemainder(`${facts?.utterance || ''} ${facts?.evidence || ''}`) : null;
+  if (contractPart) {
+    return createDecision({
+      family: FAMILY_UNKNOWN,
+      riskLevel: RISK_LEVELS.RED,
+      sourceReferences: facts?.evidence ? [facts.evidence] : [],
+      decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+      explanation: judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`)
+        || 'باقی یا قسط یک قرارداد موجود است؛ به سند همان قرارداد وصل می‌شود.',
     });
   }
 

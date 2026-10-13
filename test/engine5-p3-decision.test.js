@@ -331,3 +331,150 @@ test('دفتر: اشتراکِ «خریدیم پیش پرداخت» در باز�
     }, {});
   }
 });
+
+// ---------------------------------------------------------------------------
+// باقی یا قسط بعدیِ قرارداد موجود: بدهی یا طلب همان قرارداد، نه پیش‌پرداخت تازه
+// ---------------------------------------------------------------------------
+
+const { readsContractRemainder, priorSettlementDirection } = await import('../shared/priorSettlement.js');
+const { detectSettleIntent, ledgerBalanceTargets } = await import('../shared/settleSpeech.js');
+const { judgmentReason } = await import('../shared/moneyPurpose.js');
+const { understandingReasons } = await import('../shared/understandingScope.js');
+const { EVENT_KINDS, normalizeFinancialEvent } = await import('../shared/financialEvent.js');
+const { routeEvent } = await import('../shared/confidenceEngine.js');
+const { recordFinancialEvent } = await import('../server/financialEventStore.js');
+
+// جملهٔ واقعی گزارش عیناً، با شکل‌های هم‌ارز: باقی/بقیه/مابقی/باقیمانده، قسط
+// دوم/دومین قسط/قسط ۲، بیمه/حق بیمه/بیمه‌نامه/اجاره/کرایه/اشتراک، رقم لاتین،
+// ی و ک عربی.
+const CONTRACT_PAID = [
+  ['باقی حق بیمه انبار ۹ میلیون رو هم از حساب تجارت دادیم', 'remainder', 9_000_000],
+  ['قسط دوم بیمه آتش سوزی ۳ میلیون از حساب تجارت دادیم', 'later-instalment', 3_000_000],
+  ['قسط دوم حق بیمه آتش سوزی ۳ میلیون پرداخت شد', 'later-instalment', 3_000_000],
+  ['دومین قسط بیمه نامه آتش سوزی رو ۳ میلیون دادیم', 'later-instalment', 3_000_000],
+  ['قسط دوم اجاره دفتر ۳ میلیون دادیم', 'later-instalment', 3_000_000],
+  ['بقیه حق بیمه ۹ میلیون رو به بیمه ایران دادیم', 'remainder', 9_000_000],
+  ['مابقی حق اشتراک یک ساله نرم افزار ۶ میلیون رو دادیم', 'remainder', 6_000_000],
+  ['باقیمانده اجاره دفتر 9 ميليون پرداخت كرديم', 'remainder', 9_000_000],
+  ['قسط 2 بیمه 3 میلیون دادیم', 'later-instalment', 3_000_000],
+  ['آخرین قسط بیمه‌نامه انبار ۳ میلیون رو کارت به کارت کردیم', 'later-instalment', 3_000_000],
+  ['بقیه پول اجاره رو ۹ میلیون دادیم', 'remainder', 9_000_000],
+];
+// آینه: مستاجر یا مشتری باقی قرارداد را به ما داد — طلب ما بسته می‌شود.
+const CONTRACT_RECEIVED = [
+  ['بقیه اجاره رو مستاجر ۹ میلیون واریز کرد', 'remainder', 9_000_000],
+  ['قسط دوم اجاره رو مستاجر ۳ میلیون واریز کرد', 'later-instalment', 3_000_000],
+  ['مابقی کرایه مغازه رو مستاجر ریخت ۹ میلیون', 'remainder', 9_000_000],
+];
+
+test('باقی یا قسط بعدیِ قرارداد، پرداختِ بدهی همان قرارداد است و کارت تسویه را باز می‌کند؛ آینه‌اش طلب را می‌بندد', () => {
+  for (const [rows, direction] of [[CONTRACT_PAID, 'payable'], [CONTRACT_RECEIVED, 'receivable']]) {
+    for (const [text, cue, amount] of rows) {
+      assert.equal(readsContractRemainder(text), cue, text);
+      assert.equal(priorSettlementDirection(text), direction, text);
+      const result = voice(text);
+      assert.equal(result.path, 'settle', text);
+      assert.equal(result.items[0].amount, amount, text);
+      // هیچ دارایی پیش‌پرداخت و هیچ دورهٔ پوشش تازه‌ای.
+      assert.ok(!(result.items[0].plan?.lines || []).some((line) => line.role === 'prepaid-asset'), text);
+      // مسیر AI هم این جمله را تسویهٔ قبلی می‌شناسد، نه رویداد تازه.
+      assert.ok(understandingReasons(text).includes('prior-settlement'), text);
+    }
+  }
+});
+
+test('قسط بیمه و اجاره قسط وام نیست؛ قسط وام بانک همچنان وام است', () => {
+  for (const [text] of [...CONTRACT_PAID, ...CONTRACT_RECEIVED]) {
+    assert.doesNotMatch(judgmentReason(text) || '', /وام/, text);
+  }
+  // قسطِ بی‌شماره یا قسط اولِ یک قرارداد: کل مبلغ و بدهی باقی در جمله نیست — حسابدار.
+  for (const text of ['قسط بیمه آتش سوزی ۳ میلیون دادیم', 'قسط اول اجاره دفتر ۳ میلیون دادیم']) {
+    assert.equal(readsContractRemainder(text), 'instalment', text);
+    assert.match(judgmentReason(text), /قرارداد/, text);
+    const item = voice(text).items[0];
+    assert.equal(item.outcome, 'accountant', text);
+    assert.equal(roles(item).length, 0, text);
+  }
+  // «قسطی میدیم» آینده است: بدهی باقی به همان طرف، نه وام و نه پرداخت امروز.
+  for (const text of ['بقیه‌اش رو قسطی میدیم', 'بیمه یک ساله انبار ۱۲ میلیون، ۳ میلیونش رو الان از حساب تجارت دادیم بقیه رو قسطی میدیم']) {
+    assert.equal(readsContractRemainder(text), null, text);
+    assert.equal(priorSettlementDirection(text), null, text);
+    assert.doesNotMatch(judgmentReason(text) || '', /اصل و سود/, text);
+  }
+  for (const text of ['قسط وام بانک ملت ۳ میلیون دادیم', 'قسط وام ۱۱ میلیون تومان دادم، ۹ میلیون اصل و ۲ میلیون سود', 'قسط تسهیلات ۵ میلیون از حساب ملت کم شد']) {
+    assert.equal(readsContractRemainder(text), null, text);
+    assert.match(judgmentReason(text), /وام/, text);
+  }
+});
+
+test('منفی: قرارداد تازه، استرداد و «بقیه» بی‌قرارداد وارد مسیر باقی قرارداد نمی‌شوند', () => {
+  for (const text of [
+    'بیمه یک ساله انبار ۱۲ میلیون دادیم',
+    'اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون',
+    'مابقی حق بیمه رو بیمه ایران برگشت داد ۵ میلیون',
+    'باقی اجاره رو موجر پس داد',
+    'بقیه ۹ میلیون رو به حساب ملت ریختیم',
+  ]) {
+    assert.equal(readsContractRemainder(text), null, text);
+    assert.notEqual(voice(text).path, 'settle', text);
+  }
+  // قرارداد تازه همان پیش‌پرداخت با برنامهٔ ماهانه می‌ماند.
+  assert.deepEqual(roles(voice('بیمه یک ساله انبار ۱۲ میلیون دادیم').items[0]).map(([role]) => role), ['prepaid-asset', 'cash']);
+});
+
+test('موتور تصمیم از هر مسیری برای باقی یا قسطِ قرارداد، دورهٔ پوشش تازه نمی‌سازد', () => {
+  const base = { moneyDirection: 'out', amount: 9_000_000, occurredAt: NOW, category: 'بیمه', servicePeriodStart: NOW, servicePeriodEnd: '2027-10-09T00:00:00.000Z' };
+  for (const [text] of CONTRACT_PAID) {
+    // ردیف «فهم رویداد» قضاوت جمله را با خود نمی‌آورد؛ خود موتور جمله را می‌خواند.
+    const decision = decide({ ...base, evidence: text, utterance: text }, { today: NOW });
+    assert.equal(decision.decisionStatus, 'needs-accountant-review', text);
+    assert.notEqual(decision.treatment, 'prepaid-expense', text);
+  }
+  const fresh = decide({ ...base, evidence: 'بیمه یک ساله انبار ۱۲ میلیون دادیم', utterance: 'بیمه یک ساله انبار ۱۲ میلیون دادیم' }, { today: NOW });
+  assert.equal(fresh.treatment, 'prepaid-expense');
+});
+
+test('دفتر: «باقی حق بیمه» بدهی بیمه‌گر را می‌بندد؛ پیش‌پرداخت دوم و برنامهٔ تازه ساخته نمی‌شود', async () => {
+  await inFreshWorkspace(async () => {
+    const db = database.activeWorkspaceDatabase();
+    database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 500_000_000 });
+    // بدهی ۹ میلیونی بیمه‌گر که حسابدار هنگام صدور بیمه‌نامه ثبت کرده است.
+    const insurer = database.saveContact({ name: 'بیمه ایران' });
+    const opened = normalizeFinancialEvent({ kind: EVENT_KINDS.PAYABLE_OPENED, amount: 9_000_000, occurredAt: NOW, counterparty: insurer.name, counterpartyId: insurer.id, category: 'بیمه', source: 'text' });
+    recordFinancialEvent(db, opened, { sourceEventId: 'review-approved:policy-inception', decision: routeEvent(opened, { components: { amountCertainty: 1, moneyDirectionCertainty: 1, dateCertainty: 1, completeness: 1, counterpartyCertainty: 1 } }) });
+    assert.equal(database.ledgerSideBalances(insurer.id).uncoveredPayable, 9_000_000);
+    const schedule = scheduleTotals().n;
+
+    for (const [text, amount] of [['قسط دوم بیمه آتش سوزی ۳ میلیون از حساب تجارت دادیم', 3_000_000], ['باقی حق بیمه انبار ۶ میلیون رو هم از حساب تجارت دادیم', 6_000_000]]) {
+      // ثبت مستقیم به‌عنوان هزینه یا پیش‌پرداخت تازه پذیرفته نمی‌شود.
+      const parsed = parseFinancialText(text, { source: 'voice', now: new Date(NOW) }).transactions;
+      assert.throws(() => database.insertTransactions({ transcript: text, transactions: parsed }), /طلب یا بدهی قبلی/, text);
+      // کارت تسویه همان بدهی دفتر کل را پیشنهاد می‌کند.
+      const draft = detectSettleIntent(text, { now: new Date(NOW) });
+      const target = ledgerBalanceTargets(draft, { contacts: database.listContacts() }).find((item) => item.contactId === insurer.id);
+      assert.ok(target, text);
+      assert.equal(target.direction, 'payable', text);
+      database.settleLedgerBalance(target.contactId, { direction: target.direction, amount, clientId: `p3-remainder-${amount}` });
+    }
+    assert.equal(database.ledgerSideBalances(insurer.id).uncoveredPayable, 0);
+    assert.equal(scheduleTotals().n, schedule);
+    assert.ok(!ledgerRows().some((row) => row.name.startsWith('پیش‌پرداخت') && row.debit > 0));
+  });
+});
+
+test('مسیر AI: باقی یا قسطِ قرارداد، هر برچسبی که مدل بزند، دورهٔ پوشش تازه نمی‌سازد', async () => {
+  for (const [text, kind, value, evidence] of [
+    ['باقی حق بیمه انبار ۹ میلیون رو هم از حساب تجارت دادیم', 'advance-paid', 9_000_000, '۹ میلیون'],
+    ['باقی حق بیمه انبار ۹ میلیون رو هم از حساب تجارت دادیم', 'expense', 9_000_000, '۹ میلیون'],
+    ['مابقی حق اشتراک یک ساله نرم افزار ۶ میلیون رو از حساب تجارت دادیم', 'advance-paid', 6_000_000, '۶ میلیون'],
+    ['قسط دوم بیمه آتش سوزی ۳ میلیون از حساب تجارت دادیم', 'expense', 3_000_000, '۳ میلیون'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 500_000_000 });
+      const item = await database.createUnderstandingCase({ text, clientId: `p3-ai-rest-${kind}-${value}` }, aiOptions(modelSaid({ kind, what: 'بیمه', value, evidence })));
+      assert.equal(item.status, 'needs-accountant', `${kind}: ${text}`);
+      assert.ok(!item.plan.components.some((component) => (component.preview?.lines || []).some((line) => line.role === 'prepaid-asset')), text);
+      assert.equal(scheduleTotals().n, 0, text);
+    });
+  }
+});

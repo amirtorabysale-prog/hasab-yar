@@ -1,5 +1,45 @@
 import { normalizePersian } from './normalize.js';
 
+/**
+ * باقی یا قسطِ قراردادی که از پیش وجود دارد.
+ *
+ * «باقی حق بیمه انبار ۹ میلیون رو هم دادیم»، «قسط دوم بیمه آتش سوزی ۳ میلیون»،
+ * «بقیه اجاره رو مستاجر واریز کرد»: قرارداد، دوره‌اش و بدهی یا طلب باقی‌اش
+ * پیش‌تر ثبت شده. این پول همان بدهی یا طلب را می‌بندد؛ ساختن دورهٔ پوشش تازه
+ * برایش، یک قرارداد را دو بار دارایی می‌کرد و بدهی بیمه‌گر را باز می‌گذاشت.
+ * «قسط» این‌جا قسط وام نیست — اصل و سودی ندارد.
+ *
+ * سه حالت:
+ * - `remainder`: باقی/بقیه/مابقی/باقیمانده‌ی یک قرارداد، همین حالا پرداخت یا دریافت شد؛
+ * - `later-instalment`: قسط دوم به بعد (یا «قسط بعدی/آخر»)؛
+ * - `instalment`: قسطِ یک قرارداد بی‌شماره یا قسط اول — آغاز قرارداد قسطی که
+ *   کل مبلغ و بدهی باقی‌اش در جمله نیست؛ جایش حسابدار است، نه پیش‌پرداخت تازه.
+ *
+ * «بقیه رو قسطی میدیم» (آینده) و «قسط وام بانک» هیچ‌کدام نیستند.
+ */
+const CONTRACT = '(?:حق\\s*(?:بیمه|اشتراک|عضویت)|بیمه\\s*نامه|بیمه|اجاره|کرایه|اشتراک|لایسنس|قرارداد|رهن)';
+const REMAINDER = new RegExp(`(?<![آ-ی])(?:باقی\\s*مانده|مابقی|الباقی|باقی|بقیه(?:\\s*(?:ی|اش|ش))?|بقیش)\\s*(?:(?!${CONTRACT})\\S+\\s*)?${CONTRACT}`);
+// همان باقی، اگر هنوز پرداخت نشده: «بقیه بیمه رو قسطی میدیم».
+const NOT_YET = /^[^،,.؛]*?(?:(?<![آ-ی])می\s*(?:دیم|دهیم|پردازیم|ریزیم|گیریم)|بعدا|بعداً|قسطی|خواهیم|(?:می\s*)?کنیم(?![آ-ی]))/;
+const LATER_INSTALMENT = /(?<![آ-ی])قسط\s*(?:دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم|دهم|یازدهم|دوازدهم|بعدی|آخر|(?:[2-9]|1[0-2]|[۲-۹]|۱[۰-۲])(?![\d۰-۹]))(?![آ-ی])|(?:دومین|سومین|چهارمین|پنجمین|ششمین|آخرین)\s*قسط/;
+const LOAN_INSTALMENT = /اصل\s*(?:وام|تسهیلات)|قسط\s*(?:\S+\s*){0,2}(?:وام|تسهیلات|بانک|لیزینگ)(?![آ-ی])|(?:وام|تسهیلات|لیزینگ)\s*(?:\S+\s*){0,3}قسط/;
+
+// «مابقی حق بیمه رو برگردوندن»: استرداد بخش مصرف‌نشده است، نه پرداخت باقی
+// قرارداد؛ مسیر استرداد آن را به قرارداد و برنامه‌اش وصل می‌کند.
+const REFUND = /برگشت|برگردوند|برگرداند|(?<![آ-ی])پس\s*(?:داد|دادن|دادند|گرفت|میده|میدن)|استرداد|عودت|مرجوع|کنسل|فسخ|لغو/;
+
+export function readsContractRemainder(input) {
+  const text = normalizePersian(input);
+  if (!text || REFUND.test(text)) return null;
+  const contract = new RegExp(CONTRACT);
+  const remainder = REMAINDER.exec(text);
+  if (remainder && !NOT_YET.test(text.slice(remainder.index + remainder[0].length))) return 'remainder';
+  if (!/قسط/.test(text) || LOAN_INSTALMENT.test(text) || !contract.test(text)) return null;
+  // «قسطی میدیم» آینده است، نه پرداخت قسط.
+  if (!/(?<![آ-ی])قسط(?!ی)/.test(text)) return null;
+  return LATER_INSTALMENT.test(text) ? 'later-instalment' : 'instalment';
+}
+
 /** پولی که بابت یک طلب یا بدهی موجود جابه‌جا شده، تعهد تازه نیست. */
 export function priorSettlementDirection(input) {
   const text = normalizePersian(input);
@@ -17,5 +57,11 @@ export function priorSettlementDirection(input) {
   const theirClaim = /طلب\s*(?:ش|اش|شون|شان|خودش|خودشون)(?![آ-ی])|طلبش|طلبشون|از\s*بدهی\s*(?:مون|مان|ما)(?![آ-ی])|بدهی(?:مون|مان)(?![آ-ی])|بدهی\s*ما(?![آ-ی])/.test(text);
   if (theirDebt && theirPayment && !ourPayment) return 'receivable';
   if (theirClaim && ourPayment && !theirPayment) return 'payable';
+  // باقی یا قسط بعدیِ قرارداد موجود: جهت را فعل می‌گوید — «دادیم/پرداخت شد»
+  // بدهی ما، «مستاجر واریز کرد» طلب ما.
+  if (['remainder', 'later-instalment'].includes(readsContractRemainder(text))) {
+    if ((paid || ourPayment) && !theirPayment) return 'payable';
+    if ((received || theirPayment) && !ourPayment) return 'receivable';
+  }
   return null;
 }
