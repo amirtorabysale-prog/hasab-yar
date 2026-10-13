@@ -228,7 +228,7 @@ const UNTIL_NOW = new RegExp(`^${GAP}(?:تا|الی)${GAP}(?:حالا|الان|�
  */
 const COMMON_WORD_MONTHS = ['تیر', 'تير', 'مهر', 'دی'];
 const DISTINCT_MONTHS = PERSIAN_MONTHS.map(([name]) => name).filter((name) => !COMMON_WORD_MONTHS.includes(name)).join('|');
-const NAMED_MONTH = new RegExp(`(?<![آ-ی])(?:بابت|مال|برا${YA}|واسه)(?![آ-ی])${GAP}(?:[^\\s\\d]+[\\s\\u200c]+){0,3}?(?:(${DISTINCT_MONTHS})(?![آ-ی])|(${COMMON_WORD_MONTHS.join('|')})${GAP}ماه)(?![^\\s]*\\d)`);
+const NAMED_MONTH = new RegExp(`(?<![آ-ی])(?:بابت|مال|برا${YA}|واسه)(?![آ-ی])${GAP}(?:[^\\s\\d]+[\\s\\u200c]+){0,3}?(?:(${DISTINCT_MONTHS})(?![آ-ی])|(${COMMON_WORD_MONTHS.join('|')})${GAP}ماه)(?![^\\s]*\\d)`, 'd');
 
 /**
  * «اجارهٔ مهر»، «شارژ ماه آبان» — ماه درست پشت نام خدمت دوره‌دار.
@@ -237,7 +237,7 @@ const NAMED_MONTH = new RegExp(`(?<![آ-ی])(?:بابت|مال|برا${YA}|وا�
  * «دی» واژهٔ روزمره نیستند. بدون این، «اجارهٔ مهر» بی‌دوره می‌ماند و برای
  * اجارهٔ همین ماه، شروع دوره پرسیده می‌شد.
  */
-const SERVICE_MONTH = new RegExp(`(?<![آ-ی])(?:اجاره|اجاره${GAP}بها|کرا${YA}ه${GAP}(?:دفتر|مغازه|انبار|خانه|خونه)|شارژ|اشتراک)(?:${GAP}${YA}(?![آ-ی])|ٔ)?${GAP}(?:ماه${GAP})?(${MONTH_NAMES})(?![آ-ی])`);
+const SERVICE_MONTH = new RegExp(`(?<![آ-ی])(?:اجاره|اجاره${GAP}بها|کرا${YA}ه${GAP}(?:دفتر|مغازه|انبار|خانه|خونه)|شارژ|اشتراک)(?:${GAP}${YA}(?![آ-ی])|ٔ)?${GAP}(?:ماه${GAP})?(${MONTH_NAMES})(?![آ-ی])`, 'd');
 
 /**
  * میان نام خدمت و ماهِ نسبی فقط کسره، مکان یا موضوع خدمت، صفت دوره‌ای و «برای/بابت»
@@ -338,11 +338,64 @@ function readStart(text, reference, baseYear, occurredAt, consumed) {
 }
 
 /** «اجارهٔ مهر»، «بابت اردیبهشت ماه» — یک ماهِ نام‌برده. */
-function singleMonth(text, baseYear) {
+function singleMonth(text, baseYear, reference) {
   const named = NAMED_MONTH.exec(text);
   const service = named ? null : SERVICE_MONTH.exec(text);
-  const month = named ? monthNumber(named[1] || named[2]) : service ? monthNumber(service[1]) : 0;
-  return month ? monthSpan(baseYear, month, month) : null;
+  const found = named || service;
+  const group = named ? (named[1] ? 1 : 2) : 1;
+  const month = found ? monthNumber(found[group]) : 0;
+  if (!month) return null;
+  const [from, to] = found.indices[group];
+  return monthList(text, { from, to: named && group === 2 ? found.index + found[0].length : to }, (baseYear * 12) + month - 1, reference, 'month');
+}
+
+/**
+ * ادامه و آغازِ فهرست ماه‌ها: «مهر و آبان و آذر»، «این ماه و ماه بعد»، «ماه بعد و
+ * ماه بعدش»، «مهر، آبان و آذر».
+ *
+ * پیش از این فقط ماه اول خوانده می‌شد: «اجاره این ماه و ماه بعد رو ۲۰ میلیون
+ * دادیم» کل ۲۰ میلیون را هزینهٔ مهر می‌کرد و «اجاره مهر و آبان و آذر» سی میلیون را.
+ * فهرستِ پیوسته یک بازه است (از ماه اول تا ماه آخر)؛ فهرستی که پیوسته نیست
+ * («مهر و آذر») خوانده نمی‌شود و پرسیده می‌شود — نه یک ماهش، نه بازهٔ حدسی.
+ */
+const LIST_SEPARATOR = `(?:${GAP}[،,]${GAP}|${GAP}و${GAP})`;
+const LIST_NEXT = new RegExp(`^(?:${GAP}ماه(?![آ-ی]))?${LIST_SEPARATOR}(?:(?:ماه${GAP})?(?<named>${MONTH_NAMES})(?![آ-ی])(?:${GAP}ماه(?![آ-ی]))?|(?<current>(?:ا${YA}ن|هم${YA}ن)${GAP}ماه|ماه${GAP}جار${YA})|ماه${GAP}(?:(?<after>بعد${YA}?ش)|(?<next>بعد${YA}?|[آا]${YA}نده|د${YA}گه|د${YA}گر)|(?<before>قبلش)|(?<previous>قبل|گذشته|پ${YA}ش)))(?![آ-ی])`);
+/** «این ماه و سه ماه آینده»: چهار ماه یا سه؟ فهرستی که با طول ادامه می‌یابد خوانده نمی‌شود. */
+const LIST_COUNTED = new RegExp(`^(?:${GAP}ماه(?![آ-ی]))?${LIST_SEPARATOR}(?:\\d{1,3}|${NUMBER_SOURCE})${GAP}(?:ماه|سال)(?![آ-ی])`);
+const LIST_PREVIOUS = new RegExp(`(?<![آ-ی])(?:ماه${GAP})?(${MONTH_NAMES})(?:${GAP}ماه)?${LIST_SEPARATOR}$`);
+
+function monthList(text, { from, to }, first, reference, basis) {
+  const months = [first];
+  // ماه‌های پیش از ماهِ پیداشده («بابت مهر، آبان»: «مهر» واژهٔ روزمره است و
+  // جست‌وجو از «آبان» شروع شده بود).
+  for (let before = LIST_PREVIOUS.exec(text.slice(0, from)); before; before = LIST_PREVIOUS.exec(text.slice(0, from))) {
+    const month = monthNumber(before[1]);
+    let abs = (Math.floor(months[0] / 12) * 12) + month - 1;
+    if (abs >= months[0]) abs -= 12;
+    months.unshift(abs);
+    from = before.index;
+  }
+  const current = (reference.year * 12) + reference.month - 1;
+  let rest = text.slice(to);
+  for (let found = LIST_NEXT.exec(rest); found; found = LIST_NEXT.exec(rest)) {
+    const { named, current: thisMonth, after, next, before } = found.groups;
+    const last = months.at(-1);
+    let abs;
+    if (named) {
+      abs = (Math.floor(last / 12) * 12) + monthNumber(named) - 1;
+      if (abs <= last) abs += 12;
+    } else if (thisMonth) abs = current;
+    else if (after) abs = last + 1;
+    else if (before) abs = last - 1;
+    else if (next) abs = current + 1;
+    else abs = current - 1;
+    months.push(abs);
+    rest = rest.slice(found[0].length);
+  }
+  if (LIST_COUNTED.test(rest)) return UNREADABLE;
+  if (months.some((abs, index) => index > 0 && abs !== months[index - 1] + 1)) return UNREADABLE;
+  const [start, end] = [months[0], months.at(-1)];
+  return spanOf(persianToISO(Math.floor(start / 12), (start % 12) + 1, 1), lastDayOf(Math.floor(end / 12), (end % 12) + 1), months.length > 1 ? 'month-list' : basis);
 }
 
 /**
@@ -356,8 +409,8 @@ function relativeSpan(text, reference, consumed = []) {
   if (month) {
     const { current, thisMonth, previous } = month.groups;
     const total = (reference.year * 12) + (reference.month - 1) + (current || thisMonth ? 0 : previous ? -1 : 1);
-    const target = (total % 12) + 1;
-    return monthSpan(Math.floor(total / 12), target, target, 'relative-month');
+    const end = month.index + month[0].length;
+    return monthList(text, { from: end, to: end }, total, reference, 'relative-month');
   }
   const year = RELATIVE_YEAR.exec(text);
   if (!year) return null;
@@ -424,7 +477,7 @@ function readPeriod(text, { occurredAt, answer, knownStart, consumed }) {
   }
 
   // شروع: یا گفته شده، یا ماهِ نام‌بردهٔ کنار طول («اجاره مهر برای شش ماه جلوتر»).
-  const named = length && !stated ? singleMonth(text, baseYear) || relativeSpan(text, reference, consumed) : null;
+  const named = length && !stated ? singleMonth(text, baseYear, reference) || relativeSpan(text, reference, consumed) : null;
   if (named === UNREADABLE) return UNREADABLE;
   // «اشتراک یک‌ساله سال آینده»: سالِ نام‌برده خودش دوره است؛ طولِ ناسازگار پرسیده می‌شود.
   if (named?.basis === 'year') return named.months === length.months ? named : null;
@@ -446,5 +499,5 @@ function readPeriod(text, { occurredAt, answer, knownStart, consumed }) {
     const end = persianPeriodEnd(occurredAt, length.months);
     return end ? { start: occurredAt, end, months: length.months, basis: 'length' } : null;
   }
-  return singleMonth(text, baseYear) || relativeSpan(text, reference, consumed);
+  return singleMonth(text, baseYear, reference) || relativeSpan(text, reference, consumed);
 }

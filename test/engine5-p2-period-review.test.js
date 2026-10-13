@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runVoice } from './helpers/voicePipeline.js';
+import { tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
+import { transactionEventDecision } from '../server/transactionEvent.js';
 import { extractOccurrenceDate, spokenYear, todayPersian } from '../shared/persianDate.js';
 import { readServicePeriod } from '../shared/periodSpeech.js';
 import { detectSettleIntent } from '../shared/settleSpeech.js';
@@ -245,3 +248,92 @@ test('ماهِ نسبی: شکل‌های هم‌ارز و نمونه‌های م
     ['ماه پیش اجاره ۱۰ میلیون دادیم', '1405/6/18'],
   ]) assert.equal(occurrence(text), paid, text);
 });
+
+// ---------------------------------------------------------------------------
+// فهرست ماه‌ها یک بازه است، نه ماه اولش
+// ---------------------------------------------------------------------------
+
+test('فهرست ماه‌ها: کل فهرست بازه است (جمله‌های بازبین)', () => {
+  for (const [text, expected] of [
+    ['اجاره این ماه و ماه بعد رو ۲۰ میلیون دادیم', ['1405/7/1', '1405/8/30']],
+    ['اجاره همین ماه و ماه بعد ۲۰ میلیون دادیم', ['1405/7/1', '1405/8/30']],
+    ['اجاره ماه بعد و ماه بعدش رو ۲۰ میلیون دادیم', ['1405/8/1', '1405/9/30']],
+    ['اجاره مهر و آبان و آذر رو ۳۰ میلیون دادیم', ['1405/7/1', '1405/9/30']],
+  ]) {
+    assert.deepEqual(period(text), expected, text);
+    const [row] = parsed(text);
+    assert.deepEqual([fa(row.servicePeriodStart), fa(row.servicePeriodEnd)], expected, `${text} — مسیر پارسر`);
+    assert.equal(row.occurredAt, undefined, `${text} — پرداخت امروز است، نه ماه بعد`);
+    const [item] = voice(text).items;
+    assert.equal(item.decision.treatment, 'prepaid-expense', text);
+  }
+});
+
+test('فهرست ماه‌ها: شکل‌های هم‌ارز و نمونه‌های منفی', () => {
+  for (const [text, expected] of [
+    ['اجاره مهر و آبان ۲۰ میلیون دادیم', ['1405/7/1', '1405/8/30']],
+    ['اجاره مهر ماه و آبان ماه ۲۰ میلیون دادیم', ['1405/7/1', '1405/8/30']],
+    ['بابت اجاره مهر، آبان و آذر ۳۰ میلیون دادیم', ['1405/7/1', '1405/9/30']],
+    ['اجاره اسفند و فروردین ۲۰ میلیون دادیم', ['1405/12/1', '1406/1/31']],
+    ['شارژ این ماه و ماه بعدش ۴ میلیون دادیم', ['1405/7/1', '1405/8/30']],
+    ['اجاره ماه قبل و این ماه ۲۰ میلیون دادیم', ['1405/6/1', '1405/7/30']],
+    ['اجاره ابان و اذر ۲۰ میلیون دادیم', ['1405/8/1', '1405/9/30']],
+    ['مستاجر اجاره این ماه و ماه بعد رو ۲۰ میلیون داد', ['1405/7/1', '1405/8/30']],
+  ]) assert.deepEqual(period(text), expected, text);
+  // فهرستِ ناپیوسته خوانده نمی‌شود: نه یک ماهش، نه بازهٔ حدسی.
+  for (const text of [
+    'اجاره مهر و آذر ۲۰ میلیون دادیم',
+    'اجاره آبان و مهر ۲۰ میلیون دادیم',
+    // «این ماه و سه ماه آینده» چهار ماه است یا سه؟ پرسیده می‌شود.
+    'اجاره این ماه و دو ماه بعد ۲۰ میلیون دادیم',
+    'اجاره این ماه و سه ماه آینده ۴۰ میلیون دادیم',
+  ]) assert.equal(period(text), null, text);
+  assert.equal(voice('اجاره مهر و آذر ۲۰ میلیون دادیم').items[0].fact, 'servicePeriodStart');
+  // «و» که ماه نمی‌آورد فهرست نیست.
+  assert.deepEqual(period('اجاره مهر و آب و برق ۱۲ میلیون دادیم'), ['1405/7/1', '1405/7/30']);
+  assert.deepEqual(period('اجاره مهر ۱۰ میلیون دادیم'), ['1405/7/1', '1405/7/30']);
+});
+
+// ===== دفتر =====
+
+process.env.DATABASE_PATH = tempDatabase('engine5-p2-period-review');
+process.env.ADMIN_USERNAME = 'period-review-owner';
+process.env.ADMIN_PASSWORD = 'period-review-strong-password-5521';
+const database = await import('../server/db.js');
+const store = await import('../server/financialEventStore.js');
+database.ensureAdmin();
+const owner = database.authenticateUser('period-review-owner', 'period-review-strong-password-5521');
+const workspace = database.createWorkspace(owner.id, { name: 'دفتر بازبینی دوره', profileType: 'business' });
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id }, callback);
+const db = () => database.activeWorkspaceDatabase();
+
+let sequence = 0;
+/** همان راهی که ردیف صوتی تا صف می‌رود: پارسر، تصمیم، رویداد منتظر. */
+function captured(text) {
+  const [row] = parsed(text);
+  const draft = transactionEventDecision({ ...row, occurredAt: row.occurredAt || NOW, accountId: 'cash' }, { transcript: text, policy: { engineV2: true } });
+  sequence += 1;
+  return store.recordFinancialEvent(db(), draft.event, {
+    sourceEventId: `p2-period-review:${sequence}`, decision: draft.decision, actor: owner.id, accountingDecision: draft.accountingDecision,
+  });
+}
+const periodKeys = (id) => store.scheduleForEvent(db(), id).map((item) => [item.periodKey, item.amount]);
+const answer = (id, body) => store.answerEventQuestion(db(), id, { ...body, actor: owner.id });
+
+test('آماده‌سازی دفتر: موتور روشن', () => inWorkspace(() => {
+  database.installChartTemplate();
+  database.saveAutomationPolicy({ ...database.automationPolicy(), engineV2: true, understandingMode: 'active', understandingScope: 'all' });
+  database.saveAccount({ name: 'جاری تجارت', kind: 'bank', bankId: 'tejarat', openingBalance: 500_000_000 });
+}));
+
+test('دفتر: فهرست ماه‌ها برنامهٔ ماه‌به‌ماه می‌سازد، نه هزینهٔ یک‌جا', () => inWorkspace(() => {
+  for (const [text, keys] of [
+    ['اجاره این ماه و ماه بعد رو ۲۰ میلیون دادیم', [['1405-07', 10_000_000], ['1405-08', 10_000_000]]],
+    ['اجاره ماه بعد و ماه بعدش رو ۲۰ میلیون دادیم', [['1405-08', 10_000_000], ['1405-09', 10_000_000]]],
+    ['اجاره مهر و آبان و آذر رو ۳۰ میلیون دادیم', [['1405-07', 10_000_000], ['1405-08', 10_000_000], ['1405-09', 10_000_000]]],
+  ]) {
+    const event = captured(text);
+    assert.equal(store.decisionForEvent(db(), event.id).treatment, 'prepaid-expense', text);
+    assert.deepEqual(periodKeys(event.id), keys, text);
+  }
+}));
