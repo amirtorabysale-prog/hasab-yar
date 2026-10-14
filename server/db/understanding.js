@@ -10,10 +10,12 @@ import { postAccountTransferJournal } from '../accounting.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { understandText, understandingProvider } from '../eventUnderstandingAi.js';
 import { resolveUnderstanding } from '../understandingResolve.js';
-import { buildUnderstandingPlan } from '../../shared/understandingPlan.js';
+import { buildUnderstandingPlan, periodEndFrom } from '../../shared/understandingPlan.js';
 import { inUnderstandingScope, understandingReasons } from '../../shared/understandingScope.js';
 import { applyAnswer } from '../../shared/questionAnswer.js';
 import { FACT_QUESTIONS } from '../../shared/factRequirements.js';
+import { readServicePeriod } from '../../shared/periodSpeech.js';
+import { classifyCategory } from '../../shared/categoryRules.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
 
@@ -90,19 +92,43 @@ const touch = (id, fields) => {
 // نقشه: فهم + پاسخ‌ها + تطبیق با دفتر + پیش‌نمایش موتور
 // ---------------------------------------------------------------------------
 
-/** پاسخ سؤال موتور («بابت چه بود؟»، «مقیاس مبلغ؟») روی ردیف همان جزء. */
-function applyEngineAnswers(component, answers, today) {
+/**
+ * پاسخ سؤال موتور («بابت چه بود؟»، «مقیاس مبلغ؟») روی ردیف همان جزء.
+ *
+ * مرجعِ «از همین ماه» و «از اول ماه بعد» و سالِ تاریخِ تایپ‌شده، تاریخِ پرداختِ خودِ
+ * ردیف است — همان مرجعِ مسیر قطعی (`answerEvent`). ساعتِ دیواری جای آن نمی‌نشیند:
+ * بیمهٔ ۱۵ شهریور با «از همین ماه» در مسیر قطعی از شهریور شروع می‌شد و این‌جا از مهر،
+ * و ثبتِ چند روز بعد دوره را دوباره جابه‌جا می‌کرد (موتور ۵، مهر ۱۴۰۵).
+ *
+ * سؤالِ متنیِ موتور (طرف حساب، …) مقدارِ تایپ‌شده را در `value` می‌فرستد؛ همان متنِ
+ * آزاد است. پاسخی که پذیرفته نمی‌شود: اگر تازه است (`strict`) خطا برمی‌گردد و چیزی
+ * ذخیره نمی‌شود؛ اگر از قبل مانده، کنار می‌رود (`rejected`) و سؤالش دوباره پرسیده
+ * می‌شود — پرونده هرگز بی‌نقشه نمی‌ماند.
+ */
+function applyEngineAnswers(component, answers, today, { strict = new Set(), rejected = new Set() } = {}) {
   let item = { ...component.item };
   const prefix = `engine.${component.id}.`;
+  const reference = item.occurredAt || today;
   for (const [key, answer] of Object.entries(answers)) {
     if (!key.startsWith(prefix)) continue;
     const fact = key.slice(prefix.length);
-    const patch = applyAnswer({ ...item, occurredAt: item.occurredAt || today }, { fact, value: answer.value, freeText: answer.freeText || '' }, { today });
+    const freeText = answer.freeText || (answer.picker === 'text' && typeof answer.value === 'string' ? answer.value.trim() : '');
+    let patch;
+    try { patch = applyAnswer({ ...item, occurredAt: reference }, { fact, value: answer.value, freeText }, { today: reference }); }
+    catch (error) {
+      if (strict.has(key) || !String(error?.code || '').startsWith('ANSWER_')) throw error;
+      rejected.add(key);
+      continue;
+    }
     for (const [field, value] of Object.entries(patch)) {
       if (field === 'cashAccountId') item.accountId = value;
       else if (field === 'counterparty') item = { ...item, contactName: value, linkContact: true, contactNameConfident: true };
       else item[field] = value;
     }
+  }
+  // «بیمه به مدت یک سال»: طول گفته شده بود و فقط آغاز پرسیده شد؛ پایان از همان طول.
+  if (component.durationMonths && item.servicePeriodStart && !item.servicePeriodEnd) {
+    item.servicePeriodEnd = periodEndFrom(item.servicePeriodStart, component.durationMonths);
   }
   return item;
 }
@@ -116,7 +142,8 @@ const ENGINE_PICKER = { 'free-input': 'text', options: 'options' };
  * بین پیش‌نمایش و ثبت سند دیگری بدهیِ همان شخص را تسویه کرده باشد، نقشه همان
  * لحظه عوض می‌شود.
  */
-function planCase(understanding, answers, row, now = new Date()) {
+function planCase(understanding, answers, row, now = new Date(), { strict = new Set() } = {}) {
+  const rejected = new Set();
   const resolution = resolveUnderstanding(understanding);
   // سندهای بازِ هر طرف حسابی که در نقشه ممکن است لازم شود: هم‌نامِ قطعی، و
   // شخصی که ثبت‌کننده انتخاب کرده.
@@ -160,10 +187,11 @@ function planCase(understanding, answers, row, now = new Date()) {
       continue;
     }
     if (!component.item) continue;
-    component.item = applyEngineAnswers(component, answers, today);
+    component.item = applyEngineAnswers(component, answers, today, { strict, rejected });
     if (component.kind === 'transfer') continue;
     let preview;
-    try { [preview] = previewTransactions({ transcript: row.transcript, transactions: [component.item] }); }
+    // ردیفِ یک جملهٔ چندمبلغی متنِ بخشِ خودش را دارد (`component.text`)، همان که ثبت می‌شود.
+    try { [preview] = previewTransactions({ transcript: component.text || row.transcript, transactions: [component.item] }); }
     catch (error) { preview = { route: ROUTES.ACCOUNTANT_REVIEW, reasons: [error.message] }; }
     component.preview = { route: preview.route, lines: preview.lines || [], treatment: preview.treatment || null, eventKind: preview.eventKind || null, decisionStatus: preview.decisionStatus || null };
     // پول از جیب شریک یا کارمند: پیش‌نمایش همان سندی را نشان می‌دهد که ثبت می‌شود.
@@ -172,12 +200,27 @@ function planCase(understanding, answers, row, now = new Date()) {
       component.preview.lines = component.preview.lines.map((line) => (line.role === 'cash' ? { ...line, role, key: component.item.fundedBy.name || null } : line));
       component.paidBy = { name: component.item.fundedBy.name || null, kind: component.item.fundedBy.kind };
     }
-    if (preview.question && !answers[`engine.${component.id}.${preview.question.fact}`]) {
-      const definition = FACT_QUESTIONS[preview.question.fact];
+    // ودیعه‌ای که جمله نگفته برمی‌گردد یا مصرف می‌شود: اول همین پرسیده می‌شود، هر
+    // دسته‌ای که داشته باشد. موتور این سؤال را فقط برای اجاره می‌پرسد و برای «سپردهٔ
+    // قرارداد» یا «تضمین» شروع دورهٔ پوشش می‌خواست — سؤال غلط از رویداد درست.
+    const refundUnsaid = component.item.paymentPurpose === 'deposit' && typeof component.item.refundable !== 'boolean'
+      && !answers[`engine.${component.id}.refundable`];
+    // پیش‌دریافتِ اجاره یا خدمتِ دوره‌دار بی‌دوره: موتور آن را «پیش‌دریافت از مشتری»
+    // بی‌جدول می‌بندد و هرگز درآمد نمی‌شود. آینهٔ پیش‌پرداخت — دوره پرسیده می‌شود.
+    const periodFact = !component.item.servicePeriodStart ? 'servicePeriodStart' : 'servicePeriodEnd';
+    const periodUnsaid = component.timeBound && component.item.receiptPurpose === 'advance'
+      && !(component.item.servicePeriodStart && component.item.servicePeriodEnd);
+    const engineQuestion = refundUnsaid
+      ? { fact: 'refundable', text: FACT_QUESTIONS.refundable.text, options: FACT_QUESTIONS.refundable.options }
+      : periodUnsaid ? { fact: periodFact, text: FACT_QUESTIONS[periodFact].text, options: FACT_QUESTIONS[periodFact].options }
+        : preview.question;
+    const engineKey = engineQuestion ? `engine.${component.id}.${engineQuestion.fact}` : null;
+    if (engineQuestion && (!answers[engineKey] || rejected.has(engineKey))) {
+      const definition = FACT_QUESTIONS[engineQuestion.fact];
       plan.questions.push({
-        id: `engine.${component.id}.${preview.question.fact}`, kind: 'information', text: preview.question.text,
+        id: `engine.${component.id}.${engineQuestion.fact}`, kind: 'information', text: engineQuestion.text,
         picker: ENGINE_PICKER[definition?.kind] || 'options',
-        options: (preview.question.options || []).map((option) => ({ value: option.value, label: option.label, freeInput: Boolean(option.freeInput) })),
+        options: (engineQuestion.options || []).map((option) => ({ value: option.value, label: option.label, freeInput: Boolean(option.freeInput) })),
       });
     } else if (preview.route === ROUTES.ACCOUNTANT_REVIEW) {
       plan.reasons.push(...(preview.reasons?.length ? preview.reasons : ['موتور قاعده این جزء را به حسابدار می‌فرستد.']));
@@ -374,6 +417,11 @@ export async function answerUnderstandingCase(id, incoming = {}, options = {}) {
       question: question.text, picker: question.picker, reread, answeredAt: new Date().toISOString(), by: currentWorkspace()?.userId || null,
     };
   }
+  // همه یا هیچ: نقشه با پاسخ‌های تازه پیش از هر نوشتنی ساخته می‌شود. پاسخی که موتور
+  // نمی‌پذیرد («آخر فروردین» برای پایان دوره) همین‌جا ۴۰۰ می‌شود و نه پاسخ ذخیره
+  // می‌شود، نه نسخهٔ بی‌نقشه‌ای که پرونده را تا ابد قفل کند.
+  const current = latestVersion(id);
+  if (!needsReread && current) planCase(json(current.understanding, null), answers, row, options.now, { strict: new Set(Object.keys(incoming || {})) });
   touch(id, { answers: JSON.stringify(answers) });
   audit('answer', 'understanding-case', id, { fields: Object.keys(incoming || {}) });
   if (needsReread) {
@@ -451,14 +499,14 @@ export function commitUnderstandingCase(id, { now } = {}) {
       }
       const item = { ...component.item, clientId };
       if (component.kind === 'obligation') {
-        const opened = recordUnderstoodObligation(item, row.transcript);
+        const opened = recordUnderstoodObligation(item, component.text || row.transcript);
         if (!opened) throw fail('ثبت تعهد بدون موتور تصمیم ممکن نیست.', 'UNDERSTANDING_ENGINE_OFF');
         results.push({ component: component.id, kind: 'obligation', obligationId: opened.obligationId, eventId: opened.id, status: opened.status, route: opened.route });
         continue;
       }
       const contactAnswer = Object.entries(answers).find(([key, answer]) => key.startsWith('counterparties.') && answer.valueId === 'new');
       const ids = insertTransactionRows({
-        transcript: row.transcript, transactions: [item], fromUtterance: false,
+        transcript: component.text || row.transcript, transactions: [item], fromUtterance: false,
         counterpartyResolution: contactAnswer ? 'separate' : '',
       });
       const transactionId = ids[0] || null;
@@ -483,6 +531,42 @@ export function commitUnderstandingCase(id, { now } = {}) {
  * مبلغ مرجع بزرگ‌ترین مبلغِ سنجیده‌شده است و فقط برای نمایش؛ اگر هیچ مبلغی
  * سنجیده نشده بود، پرونده در صف درخواست‌های بی‌مبلغ می‌نشیند — مبلغی ساخته نمی‌شود.
  */
+/**
+ * واقعیت‌هایی که متن و فهم همین حالا می‌دانند، روی ردیفِ صف حسابدار.
+ *
+ * «اجاره یک ساله دفتر رو با چک ۱۲۰ میلیون به آقای رضایی دادیم» برای چک به حسابدار
+ * می‌رود، ولی دوره، طرف حساب و سررسیدش در خود جمله است. ردیفِ بی‌دوره، بررسیِ AI و
+ * حسابدار را با دورهٔ [خالی، خالی] تنها می‌گذاشت و پیش‌پرداختی که ثبت می‌شد هرگز
+ * جدولِ هزینه نمی‌گرفت (موتور ۵). دوره فقط وقتی کپی می‌شود که جمله یک مبلغ دارد؛
+ * دورهٔ یک جملهٔ چندمبلغی صاحبِ روشنی ندارد و حدس زده نمی‌شود.
+ */
+function placeholderFacts(understanding, transcript, now) {
+  const accepted = (understanding?.amounts || []).filter((amount) => amount.accepted && amount.status !== 'context' && Number.isSafeInteger(amount.value) && amount.value > 0);
+  const groups = new Set(accepted.filter((amount) => !['unit-price', 'installment', 'prior-balance'].includes(amount.role)).map((amount) => amount.partOf || amount.id));
+  const date = (roles) => (understanding?.dates || []).find((item) => item.accepted && roles.includes(item.role) && item.iso)?.iso || null;
+  const occurredAt = date(['payment', 'occurrence']) || now;
+  const incoming = (understanding?.movements || []).some((movement) => movement.direction === 'in')
+    || ['sale', 'income', 'advance-received', 'loan-received', 'capital-in'].includes(understanding?.event?.kind);
+  const counterparty = (understanding?.counterparties || []).find((item) => item.name && item.role !== 'bank')?.name || null;
+  let servicePeriodStart = null;
+  let servicePeriodEnd = null;
+  if (groups.size === 1) {
+    servicePeriodStart = date(['coverage-start']);
+    servicePeriodEnd = date(['coverage-end']);
+    if (!servicePeriodStart && !servicePeriodEnd) {
+      const spoken = readServicePeriod(transcript, { occurredAt });
+      if (spoken) ({ start: servicePeriodStart, end: servicePeriodEnd } = spoken);
+    }
+  }
+  const described = [understanding?.subject?.what, transcript].filter(Boolean).join(' ');
+  const category = classifyCategory(described, incoming ? 'income' : 'expense');
+  return {
+    occurredAt, servicePeriodStart, servicePeriodEnd, dueAt: date(['due']),
+    ...(counterparty ? { counterparty } : {}),
+    ...(category.matched ? { category: category.category } : {}),
+  };
+}
+
 export function sendUnderstandingToAccountant(id) {
   ensureUnderstandingSchema();
   const row = caseRow(id);
@@ -497,7 +581,8 @@ export function sendUnderstandingToAccountant(id) {
   let ref;
   if (amounts.length) {
     const event = normalizeFinancialEvent({
-      kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: Math.max(...amounts), amountReferenceOnly: true, occurredAt: new Date().toISOString(),
+      kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: Math.max(...amounts), amountReferenceOnly: true,
+      ...placeholderFacts(understanding, row.transcript, new Date().toISOString()),
       source: row.source === 'voice' ? 'voice' : 'text', evidence: row.transcript, utterance: row.transcript, description: summary,
     });
     const recorded = recordFinancialEvent(db, event, {

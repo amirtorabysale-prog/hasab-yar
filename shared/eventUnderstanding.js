@@ -24,13 +24,14 @@
  *
  * این ماژول وابستگی شبکه یا دیتابیس ندارد و در مرورگر هم اجرا می‌شود.
  */
-import { extractAmounts } from './parser.js';
+import { extractAmounts, withoutRateAmounts } from './parser.js';
 import { normalizePersian } from './normalize.js';
 import { extractDateMention, persianToISO, readJalaliExpression, todayPersian } from './persianDate.js';
 import { FORBIDDEN_FACT_FIELDS } from './aiFactContract.js';
 import { detectBank } from './banks.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
 import { mentionsPersonalMoney } from './partnerPaidSpeech.js';
+import { readServicePeriod } from './periodSpeech.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
@@ -99,9 +100,20 @@ const PAST_DATE_ROLES = new Set(['payment', 'occurrence', 'invoice']);
  * حسابدار رفت. نوع رویداد حدس مدل است؛ وقتی حدسش مسیر را عوض می‌کند، باید
  * دست‌کم یک نشانهٔ صریح در خود جمله داشته باشد.
  */
+/**
+ * «قسط» به‌عنوان اسم، بی‌نامِ قراردادی کنارش: «قسط ماشین»، «قسط این ماه»، «قسط
+ * ملت». «قسط دوم بیمه»، «قسط اجاره» قسطِ قرارداد است (CONTRACT_REMAINDER در
+ * طرح)؛ «قسطی خریدیم» و «پیش‌قسط» خریدِ اقساطی است، نه بازپرداخت.
+ */
+const LOAN_INSTALMENT = /(?<![آ-ی])(?<!پیش\s?)(?:قسط|اقساط)(?:ش|شو|شون|ها|های|هاش|هاشو|و)?(?![آ-ی])(?!\s*(?:\S+\s+)?(?:حق\s*)?(?:بیمه|اجاره|کرایه|اشتراک|لایسنس|قرارداد|پشتیبانی))/;
+
 const KIND_CUES = Object.freeze({
   'loan-received': /وام|تسهیلات|قرض/,
-  'loan-repayment': /وام|تسهیلات|قسط/,
+  // «قسط ماشین ۵ میلیون رو دادیم»: قسط بی‌نام بانک هم نشانهٔ بازپرداخت است؛ اگر
+  // نشانه تنگ شود، پولی که از بانک رفته «بی‌سند» یا هزینهٔ حدسی می‌شود. قسطِ
+  // قرارداد («قسط دوم بیمه/اجاره») بیرون است و طرح با CONTRACT_REMAINDER آن را به
+  // حسابدار می‌دهد، بی‌آنکه دلیلش «وام» گفته شود.
+  'loan-repayment': new RegExp(`وام|تسهیلات|لیزینگ|${LOAN_INSTALMENT.source}`),
   payroll: /حقوق|دستمزد|لیست\s*بیمه|کارکنان|پرسنل/,
   correction: /اشتباه|اصلاح|تصحیح|غلط/,
   refund: /برگشت|مرجوع|استرداد|عودت|پس\s*(?:دادیم|گرفتیم|دادن|داد)/,
@@ -134,6 +146,10 @@ const RELATIVE_WORDS = [
 ];
 /** بندی که پرداختش هنوز نیامده: زمان آینده، قرار، یا شرط. */
 const FUTURE_CLAUSE = /فردا|(?:هفته|ماه|سال)\s*(?:بعد|آینده|دیگه|دیگر)|(?:^|\s)بعد(?:ا|اً)(?=$|\s)|قرار(?:ه|\s*است)|(?:^|\s)خواه(?:یم|ند|د)(?=$|\s)|(?:^|\s)می[\s‌]*(?:دهیم|دیم|دهند|دن|پردازیم|پردازند|ریزیم|ریزند|ریزن|گیریم|گیرند|کنیم|کنند|کنن)(?=$|[\s.،؛!؟])/;
+/** «شش ماه آینده»، «یک سال جلوتر»: طولِ دوره با شمارش، نه «ماه آینده می‌دیم». */
+// عددِ طول با مرزِ واژه و عددهای مرکب: «سی ماه آینده»، «بیست و چهار ماه جلوتر».
+const LENGTH_WORD = '(?:دوازده|یازده|سیزده|چهارده|پانزده|پونزده|شانزده|شونزده|هیفده|هفده|هیجده|هجده|نوزده|بیست|پنجاه|هفتاد|هشتاد|چهار|پنج|شیش|شصت|چهل|هفت|هشت|نود|یک|یه|دو|سه|شش|نه|ده|سی|صد)';
+const COVERAGE_LENGTH = new RegExp(`(?<![آ-ی])(?:[0-9۰-۹]+|${LENGTH_WORD}(?:\\s+و\\s+${LENGTH_WORD})*)(?![آ-ی])\\s*(?:ماه|سال)\\s*(?:آینده|جلوتر)`, 'g');
 const CONDITION_CLAUSE = /(?:^|\s)(?:اگر|اگه)(?=$|\s)|در\s*صورت/;
 const DONE_CLAUSE = /(?:^|\s)(?:کردیم|کردم|کرد|کردند|کردن|شد|شده|دادیم|دادم|داد|دادند|دادن|گرفتیم|گرفتم|گرفت|گرفتند|ریختیم|ریختم|ریخت|ریختند|زدیم|زدم|زد|زدند|کشیدیم|کشیدن|خریدیم|خریدم|فروختیم|فروختم|رسید|آمد|اومد)(?=$|[\s.،؛!؟])/;
 /** فعلِ سوم‌شخصِ واریز: «شرکت آفتاب ... به ملت واریز کرد» یعنی پول آمد. */
@@ -346,6 +362,91 @@ function readEvidenceAmounts(evidence) {
  * ساخته نمی‌شود.
  */
 const MODEL_UNITS = [1, 1_000, 1_000_000, 1_000_000_000];
+
+/** واژهٔ نرخِ دوره کنار یک مبلغ: «ماهی ۱ میلیون»، «۵ میلیون در ماه». */
+const PERIOD_RATE_BEFORE = /(?:ماهیانه|ماهانه|(?<![آ-ی])ماهی(?:\s*ای)?|هر\s*ماهه?|در\s*ماه|سالانه|سالیانه|(?<![آ-ی])سالی(?:\s*ای)?|هر\s*ساله?|در\s*سال|روزانه|(?<![آ-ی])روزی|هر\s*روز|هفتگی|هر\s*هفته)\s*(?:مبلغ\s*)?$/;
+const PERIOD_RATE_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:(?:در|هر|برای\s*هر|به\s*ازای\s*هر)\s*(?:ماه|سال|روز|هفته)ه?(?![آ-ی])|(?:ماهیانه|ماهانه|سالانه|سالیانه|روزانه|هفتگی)(?![آ-ی]))/;
+const OWN_PAYMENT_VERB = /(?<![آ-ی])(?:دادیم|دادم|داد|دادن|پرداخت|واریز|ریختیم|ریختم|ریخت|زدیم|زدم|گرفتیم|گرفتم|کارت\s*به\s*کارت)/;
+const LOAN_WORD = /وام|تسهیلات|قرض/;
+
+/**
+ * نرخِ دوره کنار کل، پرداخت نیست؛ نرخی که فعل پرداختِ خودش را دارد، هست.
+ *
+ * گزارش کاربر (۱۸ مهر ۱۴۰۵): «بیمهٔ یک‌ساله ۱۲ میلیون … ماهیانه ۱ میلیون». مسیر
+ * قطعی «ماهیانه ۱ میلیون» را با `withoutRateAmounts` کنار می‌گذارد، ولی مسیر AI
+ * برچسب مدل را می‌پذیرفت: نرخِ «سایر/پرداخت‌شده» پرداخت دوم می‌شد (۱۳ میلیون
+ * پیش‌پرداخت با ۲۴ قسط)، و نرخِ «پرداخت‌شده» کنار کل به کل وصل می‌شد و خودِ ۱۲
+ * میلیون از ثبت می‌افتاد. وارونه‌اش هم بود: «ودیعه ۵۰ میلیون دادیم و اجارهٔ
+ * ماهانه ۵ میلیون هم دادیم» با برچسب «نرخ» یا «قسط» پرداخت ۵ میلیونی را بی‌صدا
+ * دور می‌ریخت و بانک ۵ میلیون کم می‌آمد.
+ *
+ * قاعده همان قاعدهٔ مسیر قطعی است، روی خودِ جمله، نه برچسب مدل:
+ * - مبلغی که `withoutRateAmounts` نرخ می‌داند و مبلغ انجام‌شدهٔ دیگری کنارش هست،
+ *   نرخِ زمینه است — هر جابه‌جایی که مدل رویش گذاشته باشد.
+ * - مبلغی که مدل «نرخ» یا «قسط» خوانده ولی واژهٔ نرخ دارد و فعل پرداختِ خودش را
+ *   در بند خودش (فعلِ آخرِ جمله فقط با «هم» یا وقتی مبلغ قبلی فعل خودش را دارد)،
+ *   پرداخت است. قسطِ وام بیرون از این قاعده است؛ اصل و سودش با حسابدار است.
+ */
+const RATE_TOTAL_CUE = /(?<![آ-ی])(?:کل|کلش|کلشو|جمع|جمعا|جمعاً|مجموع|مجموعا|مجموعاً|یکجا|یک\s*جا|روی\s*هم|همه|همش|همه\s*اش)(?![آ-ی])/;
+const LIST_JOIN = /^\s*(?:تومان|تومن|ریال)?\s*(?:رو|را)?\s*و\s/;
+
+function guardPeriodRates(amounts, movements, text, violations, ask = () => {}) {
+  const read = extractAmounts(text);
+  if (read.spans.length < 2) return;
+  const keptStarts = new Set(withoutRateAmounts(read.text, read.spans).map((span) => span.start));
+  const spanOf = (amount) => {
+    const same = read.spans.filter((span) => span.amount === amount.value || span.amount === amount.value * 10);
+    if (same.length <= 1) return same[0] || null;
+    const key = normalizePersian(amount.evidence || '').trim();
+    const at = key ? read.text.indexOf(key) : -1;
+    return at < 0 ? null : same.find((span) => span.start >= at && span.end <= at + key.length) || null;
+  };
+  const placed = amounts.filter((amount) => amount.accepted).map((amount) => ({ amount, span: spanOf(amount) })).filter((item) => item.span);
+  const isRate = (span) => !keptStarts.has(span.start);
+  const index = (span) => read.spans.findIndex((item) => item.start === span.start);
+  const ownClause = (span) => read.text.slice(span.end, read.spans[index(span) + 1]?.start ?? read.text.length).split(/[.،,؛;\n]/)[0];
+  // کلی که پرداخت را می‌برد: جابه‌جایی یا فعل پرداختِ خودش را دارد. «قرارداد
+  // یک ساله ۱۲۰ میلیون بستیم، ماهی ۱۰ میلیون، اجارهٔ این ماه رو دادیم»: ۱۲۰
+  // میلیون ارزش قرارداد است و پولی با آن جابه‌جا نشده؛ پرداختِ واقعی همان ۱۰
+  // میلیون است و نباید به نفع کلِ پرداخت‌نشده کنار برود.
+  const carries = (other) => movements.some((item) => item?.amountRef === other.amount.id) || OWN_PAYMENT_VERB.test(ownClause(other.span));
+  for (const { amount, span } of placed) {
+    if (!isRate(span) || amount.status !== 'done') continue;
+    const totals = placed.filter((other) => other.amount !== amount && other.amount.status === 'done' && !isRate(other.span) && carries(other));
+    if (!totals.length) continue;
+    // «اجاره ماهانه ۱۰ میلیون و قبض برق ۲ میلیون رو دادیم»: مبلغی که با «و»
+    // به قلم بعدی وصل است و فعلِ آخر را با آن شریک است، قلمِ فهرست است، نه نرخِ
+    // کل — مگر واژهٔ کل («کل شش ماه ۳۰ میلیون») یا مضربِ درستِ نرخ بودنِ کل آن
+    // را نرخ کند. مضرب بی‌واژهٔ کل حدس است؛ داوری با حسابدار.
+    const next = read.spans[index(span) + 1];
+    const gap = next ? read.text.slice(span.end, next.start) : '';
+    if (next && LIST_JOIN.test(gap) && !RATE_TOTAL_CUE.test(gap)) {
+      const multiple = totals.some((other) => other.amount.value > amount.value && other.amount.value % amount.value === 0);
+      if (multiple) {
+        ask(`amounts.${amount.id}.rate`, 'judgment', `«${amount.evidence}» نرخِ دوره‌ایِ مبلغ دیگر است یا پرداختی جدا؟ با حسابدار.`);
+        violations.push(`amounts.${amount.id}:rate-or-item`);
+      }
+      continue;
+    }
+    Object.assign(amount, { role: 'unit-price', status: 'context', partOf: null });
+    violations.push(`amounts.${amount.id}:rate-not-payment`);
+  }
+  for (const { amount, span } of placed) {
+    if (!['unit-price', 'installment'].includes(amount.role) || isRate(span)) continue;
+    const at = index(span);
+    const previous = read.spans[at - 1];
+    const next = read.spans[at + 1];
+    const cue = PERIOD_RATE_BEFORE.test(read.text.slice(Math.max(0, span.start - 24), span.start)) || PERIOD_RATE_AFTER.test(read.text.slice(span.end, span.end + 30));
+    const clause = read.text.slice(span.end, next?.start ?? read.text.length).split(/[.،,؛;\n]/)[0];
+    const leading = read.text.slice(previous?.end ?? 0, span.start);
+    const ownVerb = OWN_PAYMENT_VERB.test(clause)
+      && (!previous || OWN_PAYMENT_VERB.test(leading) || /(?<![آ-ی])هم(?![آ-ی])/.test(clause));
+    if (!cue || !ownVerb || LOAN_WORD.test(`${leading} ${clause}`)) continue;
+    const movement = movements.find((item) => item?.amountRef === amount.id);
+    Object.assign(amount, { role: movement?.direction === 'in' ? 'received-now' : 'paid-now', status: 'done' });
+    violations.push(`amounts.${amount.id}:rate-with-own-verb`);
+  }
+}
 function verifyExplicitAmount(amount, evidence, unitHint = null) {
   const claimed = Number(amount.value);
   const reads = readEvidenceAmounts(evidence);
@@ -388,8 +489,14 @@ function relativeIso(relative, now, timeZone) {
 /**
  * سالِ نگفته از نقش تاریخ فهمیده می‌شود: پرداخت و وقوع گذشته‌اند، سررسید و
  * پایان پوشش آینده. «۲۰ آذر» برای سررسید چک یعنی آذرِ پیش رو، نه آذرِ پارسال.
+ *
+ * پایانِ پوششی که آغازش هم گفته شده، به آغازش بسته است نه به امروز (`rollEnd`
+ * خاموش): «اجارهٔ مرداد» که مهر پرداخت شود، مرداد تا مردادِ همین سال است و
+ * گذشته؛ پیش‌تر پایانش به مردادِ سال بعد می‌رفت و اجارهٔ یک ماهِ گذشته
+ * پیش‌پرداختِ ۱۳ ماهه می‌شد (موتور ۵، مهر ۱۴۰۵). پایانی که پیش از آغاز بیفتد،
+ * پایین‌تر با همان آغاز به سال بعد می‌رود.
  */
-function jalaliIso({ year, month, day }, role, now, timeZone) {
+function jalaliIso({ year, month, day }, role, now, timeZone, { rollEnd = true } = {}) {
   if (!Number.isInteger(month) || month < 1 || month > 12) return null;
   if (day != null && (!Number.isInteger(day) || day < 1 || day > 31)) return null;
   const today = todayPersian(now, timeZone);
@@ -407,7 +514,7 @@ function jalaliIso({ year, month, day }, role, now, timeZone) {
   if (!thisYear) return null;
   const future = Date.parse(thisYear) > now.getTime() + 43_200_000;
   if (PAST_DATE_ROLES.has(role) && future) return atDay(today.year - 1);
-  if (!PAST_DATE_ROLES.has(role) && !future && ['due', 'coverage-end', 'delivery', 'installment-start'].includes(role)
+  if (!PAST_DATE_ROLES.has(role) && !future && ['due', ...(rollEnd ? ['coverage-end'] : []), 'delivery', 'installment-start'].includes(role)
     && Date.parse(thisYear) < now.getTime() - 43_200_000 * 60) return atDay(today.year + 1);
   return thisYear;
 }
@@ -421,7 +528,7 @@ const dayKey = (iso, timeZone) => {
  * تاریخ، از سه منبع: «امروز/دیروز»، اجزای شمسی، و خواندنِ قطعیِ خودِ عبارت.
  * اگر دو منبع با هم نخوانند تاریخ پذیرفته نمی‌شود و سؤال می‌شود.
  */
-function resolveDate(date, { now, timeZone }) {
+function resolveDate(date, { now, timeZone, rollEnd = true }) {
   // «سود سپردهٔ این ماه»، «قبض گاز این ماه»: ماهِ جاری، بی‌روز. روز پرداختش همان
   // پیش‌فرضِ امروز است. پوششی که در همین ماه تمام می‌شود چیزی را به دورهٔ بعد
   // نمی‌برد، پس دورهٔ پوشش نیست و پرسیده هم نمی‌شود. آزمون زنده: دو بار «دقیقاً
@@ -446,7 +553,7 @@ function resolveDate(date, { now, timeZone }) {
     const year = spoken.year ?? (spoken.yearOffset != null ? today.year + spoken.yearOffset : null);
     const iso = year != null
       ? (end ? lastDay(year) : persianToISO(year, spoken.month, spoken.day ?? 1, timeZone))
-      : jalaliIso({ year: null, month: spoken.month, day: end ? null : (spoken.day ?? 1) }, end ? 'coverage-end' : date.role, now, timeZone);
+      : jalaliIso({ year: null, month: spoken.month, day: end ? null : (spoken.day ?? 1) }, end ? 'coverage-end' : date.role, now, timeZone, { rollEnd: rollEnd || date.role !== 'coverage-end' });
     return { iso, issue: iso ? null : 'unresolved' };
   }
   // «دیروز» با برچسبِ «امروز»: واژهٔ خودِ عبارت حرف آخر است (گزارش بازبین، مهر ۱۴۰۵).
@@ -454,7 +561,7 @@ function resolveDate(date, { now, timeZone }) {
   const saidRelative = RELATIVE_WORDS.find(([pattern]) => pattern.test(expressed))?.[1] || null;
   const relative = saidRelative || date.relative;
   const fromRelative = relative ? relativeIso(relative, now, timeZone) : null;
-  const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone) : null;
+  const jalali = date.jalali && Number.isInteger(date.jalali.month) ? jalaliIso(date.jalali, date.role, now, timeZone, { rollEnd }) : null;
   const mention = date.expression ? extractDateMention(date.expression, { now, timeZone, preferPast: PAST_DATE_ROLES.has(date.role) }) : null;
   const candidates = [fromRelative, jalali].filter(Boolean);
   // عبارت بی‌سال («اول آبان») از خواندن قطعی سالِ حدسی می‌گیرد؛ فقط ماه و روز
@@ -583,6 +690,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       }
     }
   }
+  guardPeriodRates(amounts, raw.movements, text, violations, ask);
   // یک عددِ گفته‌شده، حداکثر یک مبلغ قابل ثبت.
   //
   // مدل واقعی «هشتاد میلیون … نسیه خریدیم» را دو مبلغ کرد: کل ۸۰ و بخش نسیهٔ ۸۰،
@@ -759,6 +867,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   }
 
   // --- تاریخ‌ها --------------------------------------------------------------
+  const startSaid = raw.dates.slice(0, 8).some((item) => item?.role === 'coverage-start' && found(cleanLabel(item.expression, 120), textKey));
   const dates = raw.dates.slice(0, 8).map((item, index) => {
     const date = {
       id: cleanLabel(item.id, 20) || `d${index + 1}`, role: pick(item.role, DATE_ROLES, 'other'),
@@ -771,7 +880,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       iso: null, accepted: false, issue: null,
     };
     if (!found(date.expression, textKey)) { date.issue = 'evidence-not-found'; return date; }
-    const resolved = resolveDate(date, { now, timeZone });
+    const resolved = resolveDate(date, { now, timeZone, rollEnd: !startSaid });
     return { ...date, iso: resolved.iso, accepted: Boolean(resolved.iso), issue: resolved.issue };
   });
   // «از اول مهر تا آخر شهریور»: پایانِ بی‌سالی که پیش از آغاز می‌افتد، سالِ بعد
@@ -830,6 +939,14 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   if (KIND_CUES[eventKind] && !KIND_CUES[eventKind].test(spoken)) {
     violations.push(`event:${eventKind}-without-cue`);
     eventKind = amounts.some((item) => item.role === 'prior-balance') ? 'settlement' : 'other';
+  }
+  // «قسط ماشین ۵ میلیون رو دادیم» با برچسب «هزینه» یا «سایر»: قسط اصل و سود دارد
+  // و ممکن است بدهیِ خرید اقساطی را ببندد. هزینهٔ حدسی نه، «بی‌سند» هم نه — پول
+  // از بانک رفته؛ تفکیکش با حسابدار. قسطِ قرارداد («قسط اجاره/بیمه») بیرون است.
+  if (['expense', 'other', 'purchase'].includes(eventKind) && LOAN_INSTALMENT.test(spoken)
+    && amounts.some((item) => item.accepted && ['done', 'context'].includes(item.status) && !['prior-balance', 'unit-price'].includes(item.role))) {
+    ask('event.kind', 'judgment', 'قسط اصل و سود دارد یا بدهیِ خرید اقساطی را می‌بندد؛ تفکیکش با حسابدار است.');
+    violations.push(`event:${eventKind}-is-instalment`);
   }
   if (eventKind !== 'correction' && BOOK_CORRECTION.test(spoken)) {
     violations.push(`event:${eventKind}-is-correction`);
@@ -965,13 +1082,26 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // پول — و هیچ سندی ساخته نشد؛ بدهی به ادارهٔ برق گم شد. همان قاعدهٔ قطعیِ مسیر
   // فعلی (`readUnpaidSignal`) این‌جا هم داور است، و سفارش، پیش‌فاکتور یا قرار
   // آینده («قرار است») هرگز بدهی نمی‌سازد.
-  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته)|(?:دریافت|واریز)\s*ن(?:شده|کرده|کردیم))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
+  // سوم‌شخص هم: «مستاجر اجاره رو هنوز نداده» همان «هنوز نگرفتیم» است؛ بی‌این،
+  // مبلغ انجام‌شده می‌ماند و «پول به کدام حساب آمد؟» برای پولی که نیامده پرسیده می‌شد.
+  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته|داده|دادن|دادند|ریخته|ریختن|ریختند)|(?:دریافت|واریز|پرداخت)\s*ن(?:شده|کرده|کردیم|کردن|کردند))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
   // «تموم کردیم و تحویل دادیم؛ قراره بدن»: «قرار» دربارهٔ پول است و طلب امروز هست
   // (آزمون زنده V15). «قرار» فقط وقتی چیزی را آینده می‌کند که تحویلی گفته نشده باشد.
   const deliveredInSpeech = /تحویل\s*(?:دادیم|دادم|گرفتیم|گرفتم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|انجام\s*(?:دادیم|دادم|شد)/.test(spoken)
     && !/(?:نه|هنوز)\s*تحویل|تحویل\s*ن(?:دادیم|داده|گرفتیم|گرفته|شده)/.test(spoken);
   const notYetReal = /سفارش|پیش\s*فاکتور/.test(spoken) || (/قرار\s*(?:است|بود)|قراره/.test(spoken) && !deliveredInSpeech) || subject.delivered === 'no';
   const accrues = ['expense', 'purchase', 'asset-purchase', 'sale', 'income'].includes(eventKind) && !notYetReal;
+  // «اجارهٔ ۶ ماه آینده ۳۰ میلیون شد ولی هنوز پرداخت نکردیم»: قراردادِ اجرانشده.
+  // خدمتی که دوره‌اش هنوز نیامده و پولش هم نرفته، امروز نه هزینه است نه بدهی؛
+  // تبدیلش به «بدهیِ پرداخت‌نشده» شش ماه اجارهٔ آینده را امروز هزینه می‌کرد
+  // (موتور ۵). دوره‌ای که از ماهِ جاری جلوتر می‌رود — گفته‌شده یا از تاریخ پوشش —
+  // بدهیِ خودکار نمی‌سازد و با حسابدار است؛ همان کاری که مسیر قطعی می‌کند.
+  const today = todayPersian(now, timeZone);
+  const thisMonthEnd = Date.parse(persianMonthEnd(today.year, today.month, timeZone) || '') || Infinity;
+  const spokenPeriod = readServicePeriod(text, { occurredAt: new Date(now).toISOString() });
+  const futureCoverage = (spokenPeriod && Date.parse(spokenPeriod.end) > thisMonthEnd)
+    || dates.some((date) => date.accepted && ['coverage-start', 'coverage-end'].includes(date.role) && Date.parse(date.iso) > thisMonthEnd);
+  const executory = new Set();
   const becameObligation = new Set();
   for (const condition of conditions.filter((item) => item.kind === 'negation')) {
     for (const ref of condition.affects) {
@@ -982,6 +1112,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       // جهت از نوع رویداد: مدل در «هنوز پولی نگرفتیم» جابه‌جایی را «خروج» نوشت.
       const direction = ['sale', 'income'].includes(eventKind) ? 'in' : 'out';
       if (!unpaidHere[direction]) continue;
+      if (futureCoverage) { executory.add(target.id); continue; }
       target.status = 'done';
       for (const item of own) { item.direction = 'none'; item.amountRef = target.id; }
       if (!own.length) movements.push({ id: `${target.id}-unpaid`, amountRef: target.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: condition.evidence });
@@ -995,7 +1126,8 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   if (unpaidHere.out && !becameObligation.size && !['sale', 'income'].includes(eventKind) && (accrues || (eventKind === 'obligation' && !notYetReal))) {
     const candidates = amounts.filter((item) => item.accepted && !isRetracted(item.id) && ['total', 'other'].includes(item.role) && ['done', 'future'].includes(item.status));
     const othersDone = amounts.some((item) => item.accepted && !isRetracted(item.id) && item.status === 'done' && !candidates.includes(item));
-    if (candidates.length === 1 && !othersDone) {
+    if (candidates.length === 1 && !othersDone && futureCoverage) executory.add(candidates[0].id);
+    else if (candidates.length === 1 && !othersDone) {
       const [target] = candidates;
       target.status = 'done';
       const own = movements.filter((item) => item.amountRef === target.id);
@@ -1005,15 +1137,58 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       violations.push(`amounts.${target.id}:unpaid-obligation`);
     }
   }
+  for (const id of executory) {
+    // پولی هم جابه‌جا نشده: هیچ سطر نقدی، هیچ سؤال «از کدام حساب».
+    byId.get(id).status = 'future';
+    for (const movement of movements.filter((item) => item.amountRef === id)) movement.direction = 'none';
+    violations.push(`amounts.${id}:executory-contract`);
+    ask(`amounts.${id}.executory`, 'judgment', `«${byId.get(id)?.evidence || id}» برای دورهٔ آینده است و هنوز پرداخت نشده؛ قراردادِ اجرانشده امروز هزینه یا بدهی نمی‌سازد و ثبتش با حسابدار است.`);
+  }
   // «اجارهٔ شش ماه آینده را ... پرداخت کردیم»: «آینده» دربارهٔ دورهٔ اجاره است، نه
   // پول. مبلغی که مدل «آینده» نامید ولی جابه‌جایی‌اش با فعلِ انجام‌شده آمده، انجام
   // شده است. آزمون زنده (V10): هیچ سندی ساخته نشد.
+  //
+  // فعل فقط در شاهدِ جابه‌جایی نیست: مدل شاهد را «از تجارت» نوشت و فعلِ «پرداخت
+  // کردیم» در دنبالهٔ بندِ خودِ مبلغ ماند؛ پرداخت ۳۰ میلیونی گم می‌شد (موتور ۵).
+  // دنبالهٔ بند، از پایان شاهدِ مبلغ تا مرز بعدی است؛ «بقیه رو ماه بعد میدیم» فعل
+  // انجام‌شده‌ای ندارد و «۴ میلیون دادیم»ِ پیش از آن به آن نمی‌رسد.
+  //
+  // دنباله به مبلغِ پولیِ بعدی هم ختم می‌شود: «اجاره آبان ۱۰ میلیون سررسیدش ماه
+  // بعده و قبض برق ۲ میلیون رو دادیم» — «دادیم» فعلِ قبض است، نه اجاره؛ وگرنه
+  // برای اجارهٔ پرداخت‌نشده سطر نقدی ساخته می‌شد (بازبین موتور ۵).
+  //
+  // فعلی که فقط بعد از مبلغِ بعدی آمده، فعلِ مشترکِ فهرست است و به این مبلغ هم
+  // می‌رسد — مگر بندِ خودِ مبلغ بگوید هنوز پرداخت نشده («سررسیدش»، «مونده»،
+  // «قرار است») که برچسب «آینده» می‌ماند؛ یا نشانهٔ آینده‌ای دارد که ممکن است
+  // دربارهٔ دورهٔ خدمت باشد نه پول («برای ماه بعد») که پرسیده می‌شود.
+  const tailOf = (evidence) => {
+    const key = normalizePersian(evidence || '').trim();
+    const clause = clauseOf(evidence);
+    const at = key ? clause.indexOf(key) : -1;
+    if (at < 0) return { own: '', shared: '' };
+    const read = extractAmounts(clause.slice(at + key.length));
+    const next = readEvidenceAmounts(read.text).findIndex((item) => item.cue);
+    const money = read.spans.filter((span) => !span.bareScale)[next];
+    return { own: next < 0 || !money ? read.text : read.text.slice(0, money.start), shared: read.text };
+  };
+  const STILL_OWED = /سررسید|(?<![آ-ی])(?:مونده|مانده|بدهکاریم|بدهکاره|نداد|ندادیم|نپرداخت|نریختیم)/;
   const hedged = new Set(conditions.filter((item) => ['negation', 'condition', 'promise'].includes(item.kind)).flatMap((item) => item.affects));
   for (const movement of movements.filter((item) => ['in', 'out', 'transfer'].includes(item.direction))) {
     const amount = byId.get(movement.amountRef);
     if (!amount?.accepted || amount.status !== 'future' || STATUS_BY_ROLE[amount.role] || hedged.has(amount.id) || becameObligation.has(amount.id)) continue;
     const said = normalizePersian(movement.evidence || '');
-    if (!said || !foundLoosely(movement.evidence, textKey) || !DONE_MONEY_VERB.test(said) || NOT_YET.test(said)) continue;
+    const tail = tailOf(amount.evidence);
+    const doneHere = said && foundLoosely(movement.evidence, textKey) && DONE_MONEY_VERB.test(said) && !NOT_YET.test(said);
+    const doneOwn = DONE_MONEY_VERB.test(tail.own) && !NOT_YET.test(tail.own);
+    const doneShared = DONE_MONEY_VERB.test(tail.shared) && !NOT_YET.test(tail.shared);
+    if (!doneHere && !doneOwn && !doneShared) continue;
+    if (!doneHere && !doneOwn) {
+      if (STILL_OWED.test(tail.own) || NOT_YET.test(tail.own)) continue;
+      if (FUTURE_CLAUSE.test(tail.own)) {
+        ask(`movements.${movement.id}.done`, 'information', `«${amount.evidence}» واقعاً پرداخت یا دریافت شده یا هنوز نه؟`, ['انجام شده', 'هنوز انجام نشده']);
+        violations.push(`amounts.${amount.id}:done-or-future`);
+      }
+    }
     amount.status = 'done';
     violations.push(`amounts.${amount.id}:done-in-speech`);
   }
@@ -1024,7 +1199,12 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const amount = byId.get(movement.amountRef);
     if (!amount?.accepted || amount.status !== 'done' || becameObligation.has(amount.id) || amount.role === 'credit-part') continue;
     // «پس می‌گیریم»، «برمی‌گردانند»: استردادِ آینده است، نه زمانِ همین پرداخت.
-    const clause = (clauseOf(amount.evidence) || clauseOf(movement.evidence)).replace(/پس\s*می[\s‌]*(?:گیریم|گیرند|دهیم|دهند|دیم)|بر\s*می[\s‌]*گردان\S*/g, ' ');
+    // «اجاره برای شش ماه آینده»: طولِ دورهٔ پوشش است، نه زمانِ پول. در «۳۰ میلیون
+    // اجاره دفتر برای شش ماه آینده و ۲ میلیون قبض برق از تجارت دادیم» فعلِ مشترکِ
+    // آخر جمله در بندِ اجاره نیست و «ماه آینده» اجارهٔ پرداخت‌شده را آینده می‌کرد.
+    const clause = (clauseOf(amount.evidence) || clauseOf(movement.evidence))
+      .replace(/پس\s*می[\s‌]*(?:گیریم|گیرند|دهیم|دهند|دیم)|بر\s*می[\s‌]*گردان\S*/g, ' ')
+      .replace(COVERAGE_LENGTH, ' ');
     if (!clause.trim() || !FUTURE_CLAUSE.test(clause) || DONE_CLAUSE.test(clause)) continue;
     amount.status = CONDITION_CLAUSE.test(sentenceOf(amount.evidence) || clause) ? 'conditional' : 'future';
     violations.push(`amounts.${amount.id}:${amount.status}-in-speech`);
