@@ -889,3 +889,91 @@ test('رسید با «مدت پوشش یکساله» یا «شش ماهه» پی
   database.confirmReceipt(bill.id, {});
   assert.equal(kindBalance('expense-category'), 2_000_000);
 }));
+
+// ---------------------------------------------------------------------------
+// مدتی که دورهٔ پوشش نیست: گارانتی کالا، شرط پرداخت و مدت چک.
+// ---------------------------------------------------------------------------
+
+const { bookedServiceFacts: bookedFacts, readDocumentService: readService } = await import('../shared/documentReading.js');
+
+test('گارانتی کالا، شرط پرداخت و مدت چک دورهٔ پوشش نمی‌سازند؛ خدمت دوره‌دار با همین شرط‌ها می‌سازد', () => {
+  for (const said of ['لپ تاپ با گارانتی یکساله', 'خرید لپ تاپ گارانتی یکساله', 'خرید پرینتر با گارانتی ۱۸ ماهه', 'یخچال با گارانتی و پشتیبانی ۱۸ ماهه',
+    'برنج تسویه سه ماه آینده', 'خرید کالا تسویه سه ماهه', 'خرید کالا اقساط شش ماهه', 'قرارداد فروش یکساله چای', 'انتقال به آقای رضایی بابت یکساله',
+    'اجاره دفتر رو با چک شش ماهه ۵ میلیونی به آقای رضایی دادیم', 'یه چک دو ماهه ۱۰ میلیونی بابت بیمه به بیمه ایران دادیم']) {
+    for (const direction of ['payable', 'receivable']) {
+      assert.equal(readService(said, { direction, occurredAt: ISSUED }).servicePeriodEnd, null, `${direction}: ${said}`);
+    }
+    assert.equal(bookedFacts(said, { type: 'expense', occurredAt: ISSUED }).servicePeriodEnd, undefined, said);
+  }
+  for (const [said, end] of [
+    ['حق بیمه یکساله انبار تسویه سه ماه بعد', '2027-10-09'],
+    ['اجاره یکساله دفتر پرداخت طی شش ماه', '2027-10-09'],
+    ['اجاره شش ماه آینده رو با چک دو ماهه ۳۰ میلیون دادیم', '2027-04-06'],
+    ['قرارداد پشتیبانی یکساله', '2027-10-09'],
+    ['اشتراک یکساله تسویه سه ماهه', '2027-10-09'],
+  ]) {
+    assert.equal(readService(said, { direction: 'payable', occurredAt: ISSUED }).servicePeriodEnd?.slice(0, 10), end, said);
+    assert.equal(bookedFacts(said, { type: 'expense', occurredAt: ISSUED }).servicePeriodEnd?.slice(0, 10), end, said);
+  }
+});
+
+for (const mode of ['engine-on', 'engine-off']) {
+  test(`کالای گارانتی‌دار و خرید نسیه با سند پایه همان هزینه یا فروش قبلی است؛ خدمت با شرط پرداخت پیش‌پرداخت (${mode})`, () => inWorkspace(freshWorkspace(`گارانتی ${mode}`), () => {
+    if (mode === 'engine-on') engineOn();
+    const debitKinds = (entry) => lines(entry).map(([kind]) => kind);
+    for (const [documentType, items, notes, expected, months] of [
+      ['purchase', [{ title: 'لپ تاپ با گارانتی یکساله', unitPrice: 40_000_000 }], '', 'expense-category', 0],
+      ['purchase', [{ title: 'برنج', unitPrice: 20_000_000 }], 'تسویه سه ماه آینده', 'expense-category', 0],
+      ['sales', [{ title: 'یخچال با گارانتی و پشتیبانی ۱۸ ماهه', unitPrice: 30_000_000 }], '', 'income-category', 0],
+      ['sales', [{ title: 'چای', unitPrice: 30_000_000 }], 'قرارداد فروش یکساله چای', 'income-category', 0],
+      ['purchase', [{ title: 'حق بیمه یکساله انبار', unitPrice: 12_000_000 }], 'تسویه سه ماه بعد', 'prepaid-asset', 12],
+      ['purchase', [{ title: 'اجاره یکساله دفتر', unitPrice: 120_000_000 }], 'پرداخت طی شش ماه', 'prepaid-asset', 12],
+      ['sales', [{ title: 'قرارداد پشتیبانی یکساله', unitPrice: 24_000_000 }], '', 'deferred-revenue', 12],
+    ]) {
+      const invoice = database.createInvoice({ documentType, customerName: 'شرکت پارس', items, notes, issueNow: true, issuedAt: ISSUED });
+      assert.equal(invoice.status, 'sent', items[0].title);
+      const entry = invoiceJournal(invoice);
+      const kinds = lines(entry).map(([kind]) => kind);
+      assert.ok(kinds.includes(expected), `${items[0].title} ${notes}: ${JSON.stringify(lines(entry))}`);
+      const [event] = invoiceEvents(invoice);
+      assert.equal(event ? schedule(event.id).count : 0, months, items[0].title);
+    }
+    // چک: کالای گارانتی‌دار هزینه است؛ مدت خودِ چک دورهٔ اجاره نیست.
+    const laptop = voiceCheque('یه چک ۴۰ میلیونی بابت لپ تاپ با گارانتی یکساله به شرکت پارس دادیم');
+    assert.deepEqual(debitKinds(laptop.journalEntryId), ['expense-category', 'cheque-payable']);
+    const rentYear = voiceCheque('اجاره یک ساله دفتر رو با چک شش ماهه ۱۲۰ میلیون به آقای رضایی دادیم');
+    assert.deepEqual(schedule(rentYear.eventId), { count: 12, total: 120_000_000 });
+    const tenorOnly = voiceCheque('اجاره دفتر رو با چک شش ماهه ۵ میلیونی به آقای رضایی دادیم');
+    assert.ok(!tenorOnly.eventId || schedule(tenorOnly.eventId).count !== 6, 'مدت چک شش ماه پوشش اجاره نیست');
+    // طلب و بدهی.
+    const owed = voiceObligation('لپ تاپ با گارانتی یکساله ۴۰ میلیون به شرکت پارس بدهکاریم');
+    const opened = openingOf(owed);
+    assert.deepEqual(debitKinds(opened.journalEntryId), ['expense-category', 'vendor-payable']);
+    assert.equal(schedule(opened.id).count, 0);
+    const insured = database.saveObligation({ title: 'بیمه یک ساله انبار', amount: 12_000_000, direction: 'payable', contactName: 'بیمه ایران', note: 'تسویه سه ماه بعد' });
+    assert.deepEqual(schedule(openingOf(insured).id), { count: 12, total: 12_000_000 });
+  }));
+}
+
+test('ردیف صورت‌حساب و رسید: کالای گارانتی‌دار و خرید اقساطی پیش‌پرداخت نمی‌شوند', () => inWorkspace(freshWorkspace('گارانتی صورت‌حساب'), () => {
+  engineOn();
+  const account = database.saveAccount({ name: 'جاری ملت گارانتی', kind: 'bank', openingBalance: 500_000_000 });
+  const rows = [['خرید لپ تاپ گارانتی یکساله', 40_000_000, 'ملزومات اداری'], ['خرید کالا تسویه سه ماهه', 20_000_000, 'مواد و کالا'],
+    ['خرید پرینتر با گارانتی ۱۸ ماهه', 15_000_000, 'ملزومات اداری'], ['انتقال به آقای رضایی بابت یکساله', 10_000_000, 'سایر هزینه‌ها']];
+  const imported = statementLines(account, rows.map(([text, amount]) => [text, amount]));
+  rows.forEach(([text, , category], index) => {
+    database.createTransactionFromStatementLine(imported[index].id, { category });
+    const event = eventOfRow(`statement-line:${imported[index].id}`);
+    if (event) assert.equal(schedule(event.id).count, 0, text);
+  });
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  const cash = database.saveAccount({ name: 'صندوق گارانتی', kind: 'cash', openingBalance: 500_000_000 });
+  const receipt = database.saveReceipt({ buffer: Buffer.from('laptop'), fileName: 'l.jpg', mimeType: 'image/jpeg', amount: 40_000_000, type: 'expense', category: 'ملزومات اداری',
+    accountId: cash.id, occurredAt: ISSUED, status: 'ready', ocrText: 'فاکتور لپ تاپ ایسوس با گارانتی ۱۸ ماهه' });
+  database.confirmReceipt(receipt.id, {});
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  // مثبت: همان مسیر با خدمتِ دوره‌دار و شرط پرداخت هنوز پیش‌پرداخت است.
+  const insured = statementLines(account, [['حق بیمه یکساله انبار تسویه سه ماه بعد', 12_000_000]]);
+  database.createTransactionFromStatementLine(insured[0].id, { category: 'بیمه' });
+  assert.deepEqual(schedule(eventOfRow(`statement-line:${insured[0].id}`).id), { count: 12, total: 12_000_000 });
+}));

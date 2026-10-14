@@ -4,6 +4,7 @@ import { readServicePeriod } from './periodSpeech.js';
 import { saysRefundable } from './moneyPurpose.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
+import { GOODS_CATEGORIES, namesTimeBoundService, withoutNonCoveragePeriods } from './serviceCoverageSpeech.js';
 
 /**
  * خدمت دوره‌دار روی سندِ پایه — چک، طلب و بدهی، فاکتور، قاعدهٔ تکرار.
@@ -27,7 +28,8 @@ const RENT = /(?<![آ-ی])(?:اجاره|اجارهٔ|اجاره‌ی|کرایه\
 const INSURANCE = /(?<![آ-ی])(?:بیمه|بیمع|حق\s*بیمه)(?![آ-ی])/;
 const NOT_A_PREMIUM = /ت[اأ]مین\s*اجتماع|لیست\s*بیمه|بیمه\s*(?:پرسنل|کارگر|کارکنان|بیکاری)|سهم\s*(?:کارفرما|کارگر)|خسارت|غرامت/;
 const SOFTWARE = /(?<![آ-ی])(?:اشتراک|لایسنس|لاینسس|نرم\s*افزار|هاست|هاستینگ|سرور|دامنه|آنتی\s*ویروس|آبونمان|سرویس\s*ابری)(?![آ-ی])/;
-const SERVICE_INCOME = /(?<![آ-ی])(?:اشتراک|لایسنس|پشتیبانی|نگهداری|سرویس|خدمات|قرارداد|مشاوره|آموزش|هاست|هاستینگ)(?![آ-ی])/;
+// «قرارداد» به‌تنهایی خدمت نیست: «قرارداد فروش یکساله چای» فروش کالاست.
+const SERVICE_INCOME = /(?<![آ-ی])(?:اشتراک|لایسنس|پشتیبانی|نگهداری|سرویس|خدمات|مشاوره|آموزش|هاست|هاستینگ)(?![آ-ی])/;
 
 /**
  * دستهٔ سند از روی متنش.
@@ -39,15 +41,18 @@ const SERVICE_INCOME = /(?<![آ-ی])(?:اشتراک|لایسنس|پشتیبان�
 export function documentCategory(input, direction) {
   const text = normalizePersian(input);
   if (!text) return null;
+  // نام خدمت از متنی خوانده می‌شود که گارانتی و شرط پرداخت از آن کنار رفته:
+  // «یخچال با گارانتی و پشتیبانی ۱۸ ماهه» فروش یخچال است، نه خدمات پشتیبانی.
+  const named = withoutNonCoveragePeriods(text);
   if (direction === 'receivable') {
-    if (has(RENT, text)) return 'درآمد اجاره';
-    if (has(SERVICE_INCOME, text)) return 'خدمات';
+    if (has(RENT, named)) return 'درآمد اجاره';
+    if (has(SERVICE_INCOME, named)) return 'خدمات';
     const read = classifyCategory(text, 'income');
     return read.matched === false || read.confidence <= 0.5 ? null : read.category;
   }
-  if (has(INSURANCE, text) && !has(NOT_A_PREMIUM, text)) return 'بیمه';
-  if (has(RENT, text)) return 'اجاره';
-  if (has(SOFTWARE, text)) return 'نرم‌افزار و اشتراک';
+  if (has(INSURANCE, named) && !has(NOT_A_PREMIUM, text)) return 'بیمه';
+  if (has(RENT, named)) return 'اجاره';
+  if (has(SOFTWARE, named)) return 'نرم‌افزار و اشتراک';
   const read = classifyCategory(text, 'expense');
   return read.matched === false || read.confidence <= 0.5 ? null : read.category;
 }
@@ -77,7 +82,7 @@ export function readDocumentService(input, { direction, occurredAt, category = n
   const resolvedCategory = sideCategory(category, direction) || documentCategory(text, direction);
   const period = servicePeriodStart && servicePeriodEnd
     ? { start: servicePeriodStart, end: servicePeriodEnd }
-    : (text && occurredAt ? readServicePeriod(text, { occurredAt }) : null);
+    : (text && occurredAt && coversService(text, resolvedCategory) ? readServicePeriod(withoutNonCoveragePeriods(text), { occurredAt }) : null);
   return {
     category: resolvedCategory,
     servicePeriodStart: period?.start || null,
@@ -90,6 +95,21 @@ export function readDocumentService(input, { direction, occurredAt, category = n
 export function isTimeBoundCategory(category) {
   const name = String(category || '').trim();
   return TIME_BOUND_SERVICE_CATEGORIES.includes(name) || name === 'درآمد اجاره';
+}
+
+/**
+ * آیا مدتی که متن گفته می‌تواند دورهٔ پوشش باشد؟
+ *
+ * فقط برای خدمت دوره‌دار: دستهٔ دوره‌دار (اجاره، بیمه، اشتراک، درآمد اجاره)، یا
+ * دسته‌ای غیرکالایی که متنش نام خدمتی را می‌برد. «لپ تاپ با گارانتی یکساله»،
+ * «برنج — تسویه سه ماه آینده»، «چای — تسویه شش ماه بعد» و «قرارداد فروش یکساله
+ * چای» کالا یا شرط پرداخت‌اند و دوره‌ای نمی‌سازند؛ مدتِ تنها کافی نیست.
+ */
+export function coversService(input, category = null) {
+  const name = String(category || '').trim();
+  if (isTimeBoundCategory(name)) return true;
+  if (GOODS_CATEGORIES.includes(name)) return false;
+  return namesTimeBoundService(input);
 }
 
 /**
@@ -109,7 +129,8 @@ export function bookedServiceFacts(input, { type, category = null, occurredAt = 
   const expense = type === 'expense';
   const rentIncome = type === 'income' && ['اجاره', 'درآمد اجاره'].includes(String(category || '').trim());
   if (!expense && !rentIncome) return {};
-  const period = readServicePeriod(text, { occurredAt });
+  // «خرید کالا تسویه سه ماهه» یا «لپ تاپ گارانتی یکساله» دوره ندارند؛ فقط خدمت دوره‌دار.
+  const period = coversService(text, category) ? readServicePeriod(withoutNonCoveragePeriods(text), { occurredAt }) : null;
   return {
     ...(period?.start && period?.end ? { servicePeriodStart: period.start, servicePeriodEnd: period.end } : {}),
     ...(expense && readPrepaymentMention(text) === true ? { prepaymentSignal: true } : {}),
