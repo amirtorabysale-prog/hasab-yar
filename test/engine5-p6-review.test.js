@@ -837,3 +837,24 @@ test('ماهیت بیمه: برگشت پول از تأمین اجتماعی پر
     assert.equal(review.sql.prepare('SELECT insurance_paid_at AS paid FROM payroll_runs').get().paid, null, `${text}: لیست پرداخت‌نشده می‌ماند`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی: «حقوق کارگرا با بیمه درمان ۴۰ میلیون» حقوق است؛ نام بردن از یک
+// بیمه‌نامه کنار حقوق، سؤال خالص/ناخالص را حذف نمی‌کند.
+// ---------------------------------------------------------------------------
+
+test('دستیار حسابدار: حقوقی که کنارش بیمهٔ درمان یا حوادث آمده، همچنان سؤال خالص/ناخالص می‌گیرد و حدس نمی‌زند', async () => {
+  for (const text of [
+    'حقوق کارگرا با بیمه درمان ۴۰ میلیون واریز شد',
+    'دستمزد کارگرها همراه بیمه حوادث ۲۰ میلیون دادیم',
+    'حقوقشون با بیمه عمر ۳۰ میلیون ریختیم',
+  ]) {
+    const review = await reviewOf(text);
+    assert.ok(review.proposal.questions.some((question) => question.id === 'payroll.gross-or-net'), `${text}: ${JSON.stringify(review.proposal.questions)}`);
+    assert.equal(review.modelCalled, false, text);
+    assert.equal(review.canPost, false, text);
+  }
+  // منفی: حق بیمهٔ بیمه‌نامهٔ کارکنان بی واژهٔ حقوق، سؤال حقوق نمی‌گیرد.
+  const premium = await reviewOf('بیمه حوادث کارگران دوازده ماهه ۶ میلیون پرداخت شد');
+  assert.ok(!premium.proposal.questions.some((question) => question.id === 'payroll.gross-or-net'));
+});

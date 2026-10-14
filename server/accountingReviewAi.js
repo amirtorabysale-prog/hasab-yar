@@ -15,6 +15,7 @@ import { fixedAssetReviewProposal, payrollReviewQuestion } from '../shared/revie
 import { ROLES } from '../shared/accountingRules.js';
 import { ensureFinancialEventSchema, decisionForEvent } from './financialEventStore.js';
 import { insuranceNature } from '../shared/insuranceNature.js';
+import { normalizePersian } from '../shared/normalize.js';
 import { availableReviewedBalance } from './reviewCashBasis.js';
 
 const roles = new Set([...Object.values(ROLES),'inventory-asset']);
@@ -136,7 +137,8 @@ async function proposeReviewOnce(database, eventId, { fetcher = fetch, message =
   const ruled=(originalTradeFacts && fixedAssetReviewProposal({text:captured,amount:row.amount,decision:decisionForEvent(database,eventId),answers:context.questionAnswers || {},kind:event.kind}))
     // حق بیمهٔ بیمه‌نامهٔ کارکنان («بیمه حوادث کارگران دوازده ماهه») حقوق نیست،
     // حتی وقتی دسته‌اش «حقوق و دستمزد» خورده؛ پرسیدن خالص یا ناخالص سؤال غلط است.
-    || (!insurancePremium(captured) && payrollReviewQuestion({category:event.category,answers:context.questionAnswers || {}}));
+    // ولی «حقوق کارگرا با بیمه درمان ۴۰ میلیون» حقوق است و همان سؤال را می‌خواهد.
+    || (!premiumOnly(captured) && payrollReviewQuestion({category:event.category,answers:context.questionAnswers || {}}));
   const localProposal=unsupported || ruled || (originalTradeFacts && (
     taxPenaltyProposal(captured,row.amount,context) ||
     (!event.amountReferenceOnly && simpleReviewCashProposal(captured,row.amount,{advanceRole:advanceRoleFor(database,event)})) ||
@@ -258,6 +260,16 @@ const inFlight=new WeakMap();
 function insurancePremium(text) {
   const nature=insuranceNature(text);
   return nature.premium && !nature.payrollList && !nature.claim;
+}
+
+/**
+ * واژهٔ حقوق و مزد به‌عنوان یک کلمه، با پسوندهای جمع و ملکی: «حقوق»، «حقوقا»،
+ * «حقوقشون»، «دستمزد»، «مزد». «حقوقی» (شخص حقوقی) و «کارمزد» نیستند.
+ */
+const SALARY_NOUN=/(?<![آ-ی])(?:حقوق|دستمزد|مزد)(?:ا|ها|های|ش|شون|شان|مون|مان|تون|تان)?(?![آ-ی])/;
+/** فقط حق بیمهٔ یک بیمه‌نامه، بی‌آنکه حقوق یا مزدی هم در همان جمله پرداخت شده باشد. */
+function premiumOnly(text) {
+  return insurancePremium(text) && !SALARY_NOUN.test(normalizePersian(String(text || '')).replace(/\s+/g,' '));
 }
 
 /**
