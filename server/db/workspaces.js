@@ -161,6 +161,18 @@ export function allWorkspaces() {
   return controlDb.prepare('SELECT id,name,profile_type AS profileType,created_at AS createdAt FROM workspaces ORDER BY created_at').all();
 }
 
+/**
+ * دفترهایی که کار زمان‌بندی‌شده رویشان سند می‌زند: قاعدهٔ تکرار و شناسایی ماهانه.
+ *
+ * دفتر بایگانی‌شده بسته است: کسی نمی‌بیندش و داده‌اش باید همان بماند که بود تا
+ * اگر برگشت، همان دفتر برگردد. کار دقیقه‌ای اگر رویش اجرا شود، هر ماه تراکنش تکرار و
+ * سند شناسایی تازه در دفتری می‌سازد که هیچ‌کس سراغش نمی‌آید.
+ */
+export function activeWorkspaces() {
+  return controlDb.prepare(`SELECT id,name,profile_type AS profileType,created_at AS createdAt FROM workspaces
+    WHERE archived_at IS NULL ORDER BY created_at`).all();
+}
+
 export function revokeWorkspaceSessions(workspaceId, exceptUserId = '') {
   const members = controlDb.prepare('SELECT user_id AS userId FROM workspace_members WHERE workspace_id=?').all(workspaceId);
   const remove = controlDb.prepare('DELETE FROM sessions WHERE user_id=?');

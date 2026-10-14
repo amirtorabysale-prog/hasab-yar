@@ -211,7 +211,8 @@ export function describeEvent(event) {
   const who = event.counterparty ? ` ${event.counterparty}` : '';
   const what = event.category ? ` بابت ${event.category}` : '';
   switch (event.kind) {
-    case EVENT_KINDS.CASH_EXPENSE: return `پرداخت${what}`;
+    // ودیعه دستهٔ «اجاره» دارد (سرفصلش همان است)، ولی پرداختش اجاره نیست.
+    case EVENT_KINDS.CASH_EXPENSE: return event.paymentPurpose === 'deposit' ? `پرداخت ودیعه${event.refundable === true ? ' (قابل استرداد)' : ''}` : `پرداخت${what}`;
     case EVENT_KINDS.CASH_INCOME: return `دریافت${what}`;
     case EVENT_KINDS.RECEIVABLE_OPENED: return `طلب از${who || ' طرف حساب'}`;
     case EVENT_KINDS.PAYABLE_OPENED: return `بدهی به${who || ' طرف حساب'}`;

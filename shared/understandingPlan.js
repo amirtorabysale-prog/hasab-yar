@@ -26,7 +26,7 @@ import { normalizePersian } from './normalize.js';
 import { persianMonthRange, persianToISO, todayPersian } from './persianDate.js';
 import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
-import { saysRefundable } from './moneyPurpose.js';
+import { mentionsPropertyDeposit, saysRefundable } from './moneyPurpose.js';
 import { evidenceKey } from './eventUnderstanding.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
@@ -723,8 +723,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // نگاه به کل جمله فقط وقتی است که شاهدِ خودِ مبلغ ماهیتی نگفته: در «۳۰ میلیون
     // رهن و ۶ میلیون اجاره مهر» برچسب «ودیعه» روی ۶ میلیونِ اجاره، رهنِ مبلغ دیگر
     // را قرض می‌گرفت و اجارهٔ مهر هرگز هزینه نمی‌شد.
-    const refundableHere = REFUNDABLE_WORDS.test(own)
-      || (amount.role === 'deposit' && REFUNDABLE_WORDS.test(said) && !ADVANCE_WORDS.test(own) && !classifyCategory(own, 'expense').matched);
+    // «پول پیش»ِ ملک همان ودیعه است (`mentionsPropertyDeposit`، مشترک با مسیر قطعی).
+    const depositWord = (part) => REFUNDABLE_WORDS.test(part) || mentionsPropertyDeposit(part);
+    const refundableHere = depositWord(own)
+      || (amount.role === 'deposit' && depositWord(said) && !ADVANCE_WORDS.test(own) && !classifyCategory(own, 'expense').matched);
     if (type === 'expense' && movement.direction !== 'none' && DEPOSIT_AND_SERVICE.test(own)) {
       toAccountant(`«${label}» هم ودیعه است و هم اجاره یا هزینهٔ دوره؛ سهم هر کدام گفته نشده و تفکیکش با حسابدار است.`);
       continue;
@@ -733,9 +735,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       toAccountant(`«${label}» ودیعه یا رهن است، نه درآمد: یا بدهیِ برگشت‌پذیر به پرداخت‌کننده است یا ودیعهٔ قبلیِ ما که برگشته؛ ثبتش در حساب ودیعه با حسابدار است.`);
       continue;
     }
-    // ودیعه یعنی پولی که برمی‌گردد؛ اینکه برمی‌گردد یا مصرف می‌شود را جمله باید
-    // بگوید («آخر قرارداد پس می‌گیریم»)، همان قاعدهٔ مسیر قطعی (`saysRefundable`).
-    // وگرنه استرداد پرسیده می‌شود — نامِ «ودیعه» یا «رهن» به‌تنهایی جواب نیست.
+    // اینکه پول برمی‌گردد یا مصرف می‌شود، همان قاعدهٔ مسیر قطعی است (`saysRefundable`):
+    // «آخر قرارداد پس می‌گیریم»، یا نامِ ودیعه، رهن و پول پیشِ ملک (تصمیم مالک محصول،
+    // ۲۲ مهر ۱۴۰۵). «سپرده» و «تضمین» و ودیعه‌ای که از اجاره کم می‌شود همچنان پرسیده
+    // می‌شوند. برچسب «ودیعه»ی مدل بی این واژه‌ها در شاهدِ خودِ مبلغ، ودیعه نمی‌سازد.
     const returns = saysRefundable(clause || own);
     const advanceHere = ADVANCE_WORDS.test(own) || (ADVANCE_WORDS.test(clause) && !REFUNDABLE_WORDS.test(clause))
       || (ADVANCE_WORDS.test(said) && !REFUNDABLE_WORDS.test(said) && amounts.filter((item) => item.accepted && item.status === 'done' && !retracted.has(item.id)).length === 1);

@@ -373,20 +373,21 @@ const parsedRows = (text) => parse(text).map((row) => ({
 }));
 
 test('دو پرداخت در یک جمله: دوره، دسته و شاهدِ ودیعه به ردیف دیگر نشت نمی‌کند', () => {
-  // ۱. اجارهٔ شش‌ماهه پیش‌پرداخت؛ ودیعه استرداد را می‌پرسد، نه شروع دوره.
+  // ۱. اجارهٔ شش‌ماهه پیش‌پرداخت؛ ودیعه ودیعهٔ قابل استرداد است و فقط نامِ
+  // صاحبخانهٔ ناگفته پرسیده می‌شود، نه شروع دوره (تصمیم مالک محصول، ۲۲ مهر ۱۴۰۵).
   let rows = parsedRows('اجاره شش ماهه ۳۰ میلیون دادیم، ودیعه هم ۵۰ میلیون دادیم');
   assert.deepEqual(rows.map((row) => [row.amount, row.period]), [[30_000_000, 6], [50_000_000, null]]);
   assert.doesNotMatch(rows[0].rawText, /ودیعه/);
   assert.match(rows[1].rawText, /ودیعه/);
   let items = voice('اجاره شش ماهه ۳۰ میلیون دادیم، ودیعه هم ۵۰ میلیون دادیم').items;
   assert.deepEqual(lines(items[0]), [[ROLES.PREPAID_ASSET, 30_000_000], [ROLES.CASH, 30_000_000]]);
-  assert.deepEqual([items[1].outcome, items[1].fact], ['ask', 'refundable']);
+  assert.deepEqual([items[1].outcome, items[1].fact], ['ask', 'counterparty']);
 
   // ۲. ودیعه اول، اجارهٔ ماهانه دوم.
   items = voice('ودیعه ۵۰ میلیون دادیم و اجاره ماهانه ۵ میلیون هم دادیم').items;
-  assert.deepEqual(items.map((item) => [item.amount, item.outcome === 'ask' ? item.fact : item.outcome]), [[50_000_000, 'refundable'], [5_000_000, 'servicePeriodStart']]);
+  assert.deepEqual(items.map((item) => [item.amount, item.outcome === 'ask' ? item.fact : item.outcome]), [[50_000_000, 'counterparty'], [5_000_000, 'servicePeriodStart']]);
   items = voice('اجاره ماهانه ۵ میلیون و ودیعه ۵۰ میلیون دادیم').items;
-  assert.deepEqual(items.map((item) => [item.amount, item.outcome === 'ask' ? item.fact : item.outcome]), [[5_000_000, 'servicePeriodStart'], [50_000_000, 'refundable']]);
+  assert.deepEqual(items.map((item) => [item.amount, item.outcome === 'ask' ? item.fact : item.outcome]), [[5_000_000, 'servicePeriodStart'], [50_000_000, 'counterparty']]);
 
   // ۳. اجارهٔ مهر و بیمهٔ یک‌ساله: بیمه هزینهٔ یک‌جا نمی‌شود و اجاره «بیمه» نمی‌شود.
   rows = parsedRows('اجاره مهر ۱۰ میلیون دادیم و بیمه یکساله ۱۲ میلیون هم پرداخت کردیم');

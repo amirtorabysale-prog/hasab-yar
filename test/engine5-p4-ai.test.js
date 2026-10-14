@@ -197,7 +197,7 @@ test('برچسب رویدادِ «ودیعه» بی‌واژهٔ ودیعه: ب�
   }
 });
 
-test('رهن و اجارهٔ مهر در یک جمله: اجارهٔ مهر هزینهٔ دوره است، رهن استردادش پرسیده می‌شود', async () => {
+test('رهن و اجارهٔ مهر در یک جمله: اجارهٔ مهر هزینهٔ دوره است، رهن بی‌سؤال ودیعهٔ قابل استرداد', async () => {
   await inFreshWorkspace(async () => {
     const { item } = await understandCase('۳۰ میلیون رهن و ۶ میلیون اجاره مهر به آقای رضایی از تجارت دادیم', model({
       event: { kind: 'deposit', description: '', status: 'done' },
@@ -205,7 +205,8 @@ test('رهن و اجارهٔ مهر در یک جمله: اجارهٔ مهر هز
       movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت'), mv('m2', 'a2', 'out', BANK, UNKNOWN, 'از تجارت')],
       counterparties: party('آقای رضایی'),
     }), { commit: false });
-    assert.deepEqual(questionIds(item), ['engine.a1.refundable']);
+    assert.deepEqual(questionIds(item), []);
+    assert.equal(components(item).find((c) => c.amount === 30_000_000).treatment, 'refundable-deposit');
     assert.equal(components(item).find((c) => c.amount === 6_000_000).treatment, 'period-expense');
   });
 });
@@ -224,11 +225,23 @@ test('یک مبلغ برای ودیعه و اجاره با هم: سهم‌ها �
   }
 });
 
-test('ودیعه/رهن/سپرده بی‌واژهٔ برگشت، استرداد را می‌پرسد؛ با «پس می‌گیریم» نه', async () => {
+test('ودیعه، رهن و پول پیش بی‌سؤال ودیعهٔ قابل استرداد؛ سپرده و ودیعه‌ای که از اجاره کم می‌شود استرداد را می‌پرسند', async () => {
+  // تصمیم مالک محصول (۲۲ مهر ۱۴۰۵): نامِ ودیعهٔ ملک خودش یعنی پولی که برمی‌گردد.
   for (const [text, evidence, name] of [
     ['ودیعه اجاره دفتر ۵۰ میلیون به آقای رضایی از تجارت دادیم', 'ودیعه اجاره دفتر ۵۰ میلیون', 'آقای رضایی'],
     ['رهن دفتر ۱۰۰ میلیون به آقای رضایی از تجارت دادیم', 'رهن دفتر ۱۰۰ میلیون', 'آقای رضایی'],
+    ['پول پیش مغازه ۸۰ میلیون به آقای رضایی از تجارت دادیم', 'پول پیش مغازه ۸۰ میلیون', 'آقای رضایی'],
+    ['وديعه دفتر 50 ميليون به آقای رضایی از تجارت دادیم', 'وديعه دفتر 50 ميليون', 'آقای رضایی'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const { item } = await understandCase(text, depositModel(evidence, 'deposit', { counterparties: party(name) }), { commit: false });
+      assert.deepEqual(questionIds(item), [], text);
+      assert.equal(components(item)[0].treatment, 'refundable-deposit', text);
+    });
+  }
+  for (const [text, evidence, name] of [
     ['سپرده ۲۰ میلیون بابت قرارداد پیمانکاری به شرکت آلفا از تجارت دادیم', 'سپرده ۲۰ میلیون', 'شرکت آلفا'],
+    ['ودیعه ۲۰ میلیون به آقای رضایی از تجارت دادیم که از اجاره ماهانه کم میشه', 'ودیعه ۲۰ میلیون', 'آقای رضایی'],
   ]) {
     await inFreshWorkspace(async () => {
       const first = await understandCase(text, depositModel(evidence, 'deposit', { counterparties: party(name) }), { commit: false });
@@ -623,7 +636,7 @@ test('پاسخِ خرابی که از پیش ذخیره شده پرونده را
 
 test('طرف حسابِ تایپ‌شده در سؤال متنیِ موتور پذیرفته می‌شود: ودیعه، پیش‌پرداخت خرید، مساعده', async () => {
   for (const [text, kind, evidence, role, answersFor] of [
-    ['ودیعه اجاره دفتر ۵۰ میلیون از تجارت دادیم', 'deposit', 'ودیعه اجاره دفتر ۵۰ میلیون', 'deposit', [{ 'engine.a1.refundable': { value: true } }]],
+    ['ودیعه اجاره دفتر ۵۰ میلیون از تجارت دادیم', 'deposit', 'ودیعه اجاره دفتر ۵۰ میلیون', 'deposit', []],
     ['پیش پرداخت خرید کالا ۲۰ میلیون از تجارت دادیم', 'advance-paid', '۲۰ میلیون', 'paid-now', []],
     ['مساعده ۵ میلیون از تجارت دادیم', 'advance-paid', 'مساعده ۵ میلیون', 'paid-now', []],
   ]) {

@@ -39,6 +39,16 @@ test('بایگانی دفتر را از فهرست برمی‌دارد، داد�
   assert.ok(main.id);
 });
 
+test('کار دقیقه‌ای (تکرار و شناسایی ماهانه) دفتر بایگانی‌شده را اجرا نمی‌کند؛ پس از بازگرداندن دوباره اجرا می‌کند', () => {
+  const closed = database.createWorkspace(owner.id, { name: 'دفتر بسته', profileType: 'business' });
+  assert.ok(database.activeWorkspaces().some((item) => item.id === closed.id));
+  database.archiveWorkspace(owner.id, closed.id);
+  assert.equal(database.activeWorkspaces().some((item) => item.id === closed.id), false, 'دفتر بایگانی در فهرست کار زمان‌بندی‌شده نیست');
+  assert.ok(database.allWorkspaces().some((item) => item.id === closed.id), 'داده و ردیف دفتر سر جایش است');
+  database.restoreArchivedWorkspace(owner.id, closed.id);
+  assert.ok(database.activeWorkspaces().some((item) => item.id === closed.id));
+});
+
 test('نام دفتر عوض می‌شود؛ فقط مالک؛ آخرین دفتر فعال بایگانی نمی‌شود', () => {
   const workspaces = database.listUserWorkspaces(owner.id);
   const target = workspaces.find((item) => item.name === 'دفتر اضافه');

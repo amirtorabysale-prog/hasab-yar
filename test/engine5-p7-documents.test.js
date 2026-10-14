@@ -288,9 +288,17 @@ test('چک دریافتی مستاجر برای اجارهٔ آینده پیش�
   assert.ok(kindBalance('income-category') < 0, 'سهم ماه جاری شناسایی شد');
 }));
 
-test('ودیعه و رهن با چک: پرسش استرداد؛ ودیعهٔ مستاجر به حسابدار؛ هرگز هزینه یا درآمد', () => inWorkspace(freshWorkspace('چک ودیعه'), () => {
+test('ودیعه و رهن با چک: ودیعهٔ قابل استرداد بی‌سؤال؛ ودیعه‌ای که از اجاره کم می‌شود پرسیده می‌شود؛ ودیعهٔ مستاجر به حسابدار؛ هرگز هزینه یا درآمد', () => inWorkspace(freshWorkspace('چک ودیعه'), () => {
   engineOn();
-  for (const text of ['ودیعه اجاره دفتر رو یه چک ۵۰ میلیونی به آقای رضایی دادیم', 'رهن مغازه رو با چک ۲۰۰ میلیونی به آقای رضایی دادیم']) {
+  // تصمیم مالک محصول (۲۲ مهر ۱۴۰۵): نامِ ودیعه و رهن خودش یعنی پولی که برمی‌گردد.
+  for (const text of ['ودیعه اجاره دفتر رو یه چک ۵۰ میلیونی به آقای رضایی دادیم', 'رهن مغازه رو با چک ۲۰۰ میلیونی به آقای رضایی دادیم', 'پول پیش مغازه رو با چک ۸۰ میلیونی به آقای رضایی دادیم']) {
+    const cheque = voiceCheque(text);
+    assert.ok(!cheque.pendingQuestion, `${text}: ${cheque.pendingQuestion}`);
+    const journalEntryId = cheque.journalEntryId || database.approveEvent(cheque.eventId).journalEntryId;
+    assert.deepEqual(lines(journalEntryId), [['refundable-deposit', intent(text).amount], ['cheque-payable', intent(text).amount]], text);
+    assert.equal(database.clearCheque(cheque.id, { account: 'cash' }).status, 'cleared');
+  }
+  for (const text of ['ودیعه اجاره دفتر رو یه چک ۲۰ میلیونی به آقای رضایی دادیم که از اجاره ماهانه کم میشه']) {
     const cheque = voiceCheque(text);
     assert.equal(cheque.journalEntryId, null, text);
     assert.match(cheque.pendingQuestion, /استرداد/, text);

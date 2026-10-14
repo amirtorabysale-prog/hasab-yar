@@ -326,10 +326,13 @@ test('کارت امروز: سؤال دورهٔ پوشش با گزینه‌های
 });
 
 test('کارت امروز: هر سؤال موتور — قابل استرداد، کاربرد خرید، بابت پرداخت و بابت دریافت — همین‌جا جواب می‌گیرد', () => {
-  const deposit = answerThroughToday(capture('ودیعه اجاره دفتر ۵۰ میلیون دادیم'), [{ value: true }, { freeText: 'آقای کریمی' }]);
-  assert.deepEqual(deposit.asked, ['refundable', 'counterparty']);
+  // ودیعه بی‌سؤال استرداد است؛ فقط صاحبخانهٔ ناگفته پرسیده می‌شود (۲۲ مهر ۱۴۰۵).
+  const deposit = answerThroughToday(capture('ودیعه اجاره دفتر ۵۰ میلیون دادیم'), [{ freeText: 'آقای کریمی' }]);
+  assert.deepEqual(deposit.asked, ['counterparty']);
   assert.equal(deposit.schedule.n, 0, 'ودیعهٔ قابل استرداد برنامهٔ هزینه ندارد');
   assert.doesNotMatch(deposit.lines[0][1], /هزینه|اجاره$/, JSON.stringify(deposit.lines));
+  // سؤال استرداد هنوز هست، برای ودیعه‌ای که از اجاره کم می‌شود.
+  assert.deepEqual(answerThroughToday(capture('ودیعه ۲۰ میلیون دادیم که از اجاره ماهانه کم میشه'), [{ value: true }]).asked, ['refundable']);
   assert.deepEqual(answerThroughToday(capture('لپ تاپ ۸۰ میلیون خریدیم'), [{ value: 'current-consumption' }]).asked, ['intendedUse']);
   assert.deepEqual(answerThroughToday(capture('۵۰ میلیون به آقای رضایی دادیم'), [{ value: 'advance' }]).asked, ['paymentPurpose']);
   assert.deepEqual(answerThroughToday(capture('اقای کریمی ۲۰ میلیون داد'), [{ value: 'sale' }]).asked, ['receiptPurpose']);

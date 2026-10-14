@@ -6,7 +6,7 @@ import multer from 'multer';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
+  accountingTransferBatchFile, accountingTransferOverview, activeWorkspaceDatabase, activeWorkspaces, addWorkspaceMember, adjustStock, allWorkspaces, answerCollaborationRequest, answerFinancialQuestion, authenticateUser, beginProviderUsage, changePassword, claimAccountingTransferBatchDownload, clearLoginFailures, closeBankReconciliation, closeDay, commercialStatus, createAccountingTransferBatch, createAccountingTransferValidation, createCollaborationRequest, createInvoice, createSession, createTransactionFromStatementLine, createWorkspace, deleteContact,
   deleteAutomationRule, deleteInvoice, deleteLearning, deleteObligation, deleteReceipt, deleteRecurringRule, deleteSession, deleteTransaction,
   ensureAdmin, financialDnaOverview, financialOverview, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, getReconciliationImport, getSettings, inventoryOverview,
   correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
@@ -1259,11 +1259,12 @@ app.use((error, _request, response, _next) => {
  * پیش‌پرداخت تا ابد دارایی و درآمد انتقالی تا ابد بدهی می‌ماند. اجرای خودکار
  * حدس نیست: هر رویداد وقتی ثبت شده که کاربر یا حسابدار تأییدش کرده، اجرا فقط
  * قلمِ سررسیدرسیدهٔ رویداد ثبت‌شده را می‌زند، تکرارش سند دوم نمی‌سازد و در دورهٔ
- * بسته چیزی نمی‌نشاند. هر دفتر جدا: خطای یکی، بقیه را نگه نمی‌دارد.
+ * بسته چیزی نمی‌نشاند. هر دفتر جدا: خطای یکی، بقیه را نگه نمی‌دارد. دفتر بایگانی‌شده
+ * اجرا نمی‌شود؛ داده‌اش همان می‌ماند که هنگام بستن بود.
  */
 function runRecurringJob() {
   let workspaces = [];
-  try { workspaces = allWorkspaces(); }
+  try { workspaces = activeWorkspaces(); }
   catch (error) { console.error('Recurring job could not list workspaces:', error); return; }
   for (const workspace of workspaces) {
     try { runInWorkspace(workspace.id, { role: 'owner' }, () => materializeRecurringRules()); }

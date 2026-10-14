@@ -13,6 +13,7 @@ import { readPettyCash } from './pettyCashSpeech.js';
 import { normalizePersian } from './normalize.js';
 import { detectPartnerFundedSpend } from './partnerPaidSpeech.js';
 import { isContractInstalment, readsContractRemainder } from './priorSettlement.js';
+import { moneyReturned } from './refundSpeech.js';
 
 // همهٔ الگوهای این فایل روی متن یکدست‌شده اجرا می‌شوند: «کهنهٔ» با همزه، ی و ک
 // عربی و نیم‌فاصله هر کدام یک الگو را بی‌صدا از کار می‌انداختند.
@@ -67,7 +68,44 @@ export function paymentPurposeFromSpeech(input) {
   if (!text) return null;
   if (EMPLOYEE_ADVANCE.test(text)) return 'employee-advance';
   if (OWNER_DRAWING.test(text)) return 'owner-drawing';
+  // «۳۰ میلیون پول پیش مغازه رو دادیم» سؤال «بابت چه بود؟» می‌گرفت.
+  if (paidPropertyDeposit(text)) return 'deposit';
   return null;
+}
+
+/**
+ * ودیعه، رهن و «پول پیش»ِ ملک — پولی که به حکم نامش برمی‌گردد.
+ *
+ * در عرف اجارهٔ ایران ودیعه و رهن و پول پیش یک چیزند: پولی که موجر نگه
+ * می‌دارد و آخر قرارداد پس می‌دهد. پرسیدن «قابل استرداد است یا مصرف می‌شود؟»
+ * از کسی که همین حالا گفته «ودیعه»، سؤالی است که جوابش در جمله بود؛ و برگه‌ای
+ * که آن را «پرداخت بابت اجاره» می‌خواند، همان خطایی است که مالک محصول دید
+ * («سیستم هنوز ودیعه رو به‌عنوان اجاره تشخیص می‌ده»، مهر ۱۴۰۵).
+ *
+ * «سپرده»، «تضمین» و «حسن انجام کار» این‌جا نیستند: سپرده نامِ حساب بانکی هم
+ * هست و ضمانت‌نامه گاهی پولی جابه‌جا نمی‌کند؛ آن‌ها همان سؤال را می‌گیرند.
+ * «رهنی»، «رهنما» و «رهنمود» رهن نیستند. «پول پیش» فقط کنار نشانهٔ ملک یا اجاره
+ * ودیعه است؛ «پول پیش ما مونده» نگه‌داری پول است.
+ */
+const DEPOSIT_NAME = new RegExp(`(?<![آ-ی])(?:ودیع(?:[هة]|ش)|رهن(?:ش|شو|و|رو)?(?![آ-ی]))`);
+const PROPERTY_ADVANCE = new RegExp(`(?<![آ-ی])پول${GAP}پیش(?![آ-ی])(?!${GAP}(?:ما|من|شما|اون|او|ایشون|خودم|خودمون|حسابدار|شریک|بانک)(?![آ-ی]))`);
+const PROPERTY_CONTEXT = /اجاره|کرایه|مغازه|خونه|خانه|دفتر|انبار|سوله|کارگاه|واحد|ملک|آپارتمان|موجر|مستاجر|مستأجر/;
+/** ودیعه‌ای که بخشی از اجاره می‌شود: «از اجاره کم می‌شه»، «تبدیل به اجاره». */
+const DEPOSIT_CONSUMED = /(?:کم|کسر|تبدیل|جای)[^.،؛\n]{0,25}اجاره|اجاره[^.،؛\n]{0,25}(?:کم|کسر|تبدیل)/;
+
+/** نام ودیعهٔ ملک در جمله، هر جهتی که پول رفته باشد. */
+export function mentionsPropertyDeposit(input) {
+  const text = clean(input);
+  return DEPOSIT_NAME.test(text) || (PROPERTY_ADVANCE.test(text) && PROPERTY_CONTEXT.test(text));
+}
+
+/**
+ * ودیعهٔ تازه — نه برگشتش («صاحبخونه ودیعه رو پس داد» برگشت قرارداد است و
+ * مسیر خودش را دارد) و نه ودیعه‌ای که به اجاره تبدیل یا از آن کم می‌شود.
+ */
+function paidPropertyDeposit(input) {
+  const text = clean(input);
+  return mentionsPropertyDeposit(text) && !moneyReturned(text) && !DEPOSIT_CONSUMED.test(text);
 }
 
 /**
@@ -197,5 +235,7 @@ const RETURNS = new RegExp(`پس${GAP}می${GAP}(?:گیریم|گیرم|دن|ده
 export function saysRefundable(input) {
   const text = clean(input);
   if (/غیر\s*قابل\s*استرداد|قابل\s*استرداد\s*نیست/.test(text)) return false;
-  return RETURNS.test(text) ? true : null;
+  if (RETURNS.test(text)) return true;
+  // ودیعه و رهن و پول پیشِ ملک به حکم نامشان برمی‌گردند (`paidPropertyDeposit`).
+  return paidPropertyDeposit(text) ? true : null;
 }
