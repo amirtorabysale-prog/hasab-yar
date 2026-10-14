@@ -15,6 +15,8 @@ import { EVENT_KINDS, normalizeFinancialEvent } from './financialEvent.js';
 import { EVENT_NATURES, readEventNature } from './eventNature.js';
 import { detectBank } from './banks.js';
 import { isTimeBoundCategory, readDocumentService } from './documentReading.js';
+import { readServicePeriod } from './periodSpeech.js';
+import { coverageText } from './serviceCoverageSpeech.js';
 
 /**
  * نیت گفته را تشخیص می‌دهد.
@@ -206,11 +208,16 @@ const NOT_A_RECIPIENT = '(?:ما|من|تاریخ|مبلغ|ارزش|عنوان|م
  * چک دریافتی نمی‌سازند و مثل قبل به حسابدار می‌روند. «مدیرعامل شرکت پارس» و
  * «مستاجرمون/مشتریمون» خودی نیستند.
  */
+// «مدیر مالی/داخلی/اداری/فروش»، «معاونم»، «مسئول خرید»، «انباردار»، «کارپرداز»
+// و خانوادهٔ صاحب کار («پسرم»، «داداشم»، «بابام») هم خودی‌اند: «مدیر مالی چک ۱۲۰
+// میلیونی اجاره یکساله دفتر رو داد» اجارهٔ دفتر خودمان است، نه درآمد.
+const INSIDER_ROLE = '(?:مدیر(?:\\s*عامل)?(?:\\s+(?:مالی|داخلی|اداری|فروش|خرید|تولید|بازرگانی|فنی|انبار|دفتر|پروژه|کارخانه|کارگاه|منابع\\s*انسانی|عملیات|اجرایی|بخش))?|مدیرعامل|معاون|مسئول|مسوول|مسول|سرپرست|انباردار|انبار\\s*دار|کارپرداز|کار\\s*پرداز|تدارکات(?:\\s*چی)?|آبدارچی|راننده|نگهبان|شریک|سهامدار|سهام\\s*دار|صاحب\\s*شرکت|رئیس|رییس|حسابدار|کارمند|منشی|کارگر|پرسنل|همکار|تنخواه\\s*دار|خودم|خودمون|خودمان)';
+const INSIDER_FAMILY = '(?:برادر|داداش|پدر|بابا|مادر|مامان|همسر|خانم|شوهر|پسر|دختر|خواهر|آبجی)(?:م|مون|مان)';
 const INSIDER_GIVER = new RegExp(
-  '(?<![آ-ی])(?:مدیر\\s*عامل|مدیرعامل|شریک|سهامدار|سهام\\s*دار|صاحب\\s*شرکت|رئیس|رییس|حسابدار|کارمند|منشی|کارگر|پرسنل|همکار|تنخواه\\s*دار|خودم|خودمون|خودمان|برادرم|پدرم|مادرم|همسرم|خانمم)'
-  + '(?:\\s*(?:ه|ها|ا|ان))?(?:\\s*(?:مون|مان|م|ش|امون))?(?![آ-ی])'
+  `(?<![آ-ی])(?:${INSIDER_FAMILY}|${INSIDER_ROLE}(?:\\s*(?:ه|ها|ا|ان))?(?:\\s*(?:مون|مان|م|ش|امون))?)(?![آ-ی])`
   // «مدیرعامل شرکت پارس»: مدیر طرف مقابل است، نه خودیِ ما.
-  + '(?!\\s*(?:شرکت|فروشگاه|کارخانه|موسسه|مؤسسه|بیمه|بانک)\\s+(?!چک|یه|یک|از|رو|را|بهمون|به(?![آ-ی]))[آ-ی])',
+  // «مدیر مالی شرکت پارس»: یک واژهٔ وصف میان نقش و «شرکت» هم همان است.
+  + '(?!(?:\\s+[آ-ی]+)?\\s*(?:شرکت|فروشگاه|کارخانه|موسسه|مؤسسه|بیمه|بانک)\\s+(?!چک|یه|یک|از|رو|را|بهمون|به(?![آ-ی]))[آ-ی])',
 );
 const RETURNED_CHEQUE = new RegExp([
   '(?:برگشت|پس|عودت|مرجوع)\\s*(?:ش\\s*)?(?:داد|دادن|دادند|زد|زدن|فرستاد|فرستادن)(?![آ-ی])',
@@ -219,8 +226,15 @@ const RETURNED_CHEQUE = new RegExp([
   '(?<![آ-ی])چک\\s*(?:\\S+\\s+){0,3}?(?:(?:ما|من)\\s*(?:رو|را|و)|مارو|مارا|منو)(?![آ-ی])',
   'چک(?:مون|مان)(?![آ-ی])',
 ].join('|'));
+// دهندهٔ بیرونیِ نام‌برده: شخص، شرکت، یا نقشی که به ما پول می‌دهد.
+const OUTSIDE_GIVER = /(?<![آ-ی])(?:آقای|اقای|آقا|خانم|جناب|شرکت|فروشگاه|موسسه|مؤسسه|کارخانه|مستاجر|مستأجر|مشتری|خریدار|کارفرما|بدهکار|طرف\s*حساب|بیمه\s+(?:ایران|آسیا|اسیا|البرز|دانا|پارسیان|کوثر|سامان|ملت|رازی|معلم|سینا|تعاون|نوین|پاسارگاد|میهن|آرمان|حافظ|کارآفرین|سرمد|تجارت|متقابل|دی|ما))(?![آ-ی])/;
+// چیزی که ما می‌پردازیم: حق‌بیمه، اشتراک و لایسنس، و اجارهٔ جای خودمان.
+const OUR_PAID_SERVICE = /(?<![آ-ی])(?:بیمه|بیمع|اشتراک|لایسنس|لاینسس|نرم\s*افزار|هاست|هاستینگ|آبونمان|(?:اجاره|کرایه)(?:\s*(?:ی|ٔ))?\s+(?:(?:\S+\s+){0,2}?)(?:دفتر|انبار|کارگاه|کارخانه|سوله|دفترمون|انبارمون|کارگاهمون))(?![آ-ی])/;
 function chequeGivenToUs(part) {
   if (INSIDER_GIVER.test(part) || RETURNED_CHEQUE.test(part)) return false;
+  // «… چک ۲۰ میلیونی بیمه یکساله رو داد» بی دهندهٔ بیرونی: چکی که برای هزینهٔ
+  // خودمان دست به دست شده، نه درآمد. جهت حدس زده نمی‌شود و به حسابدار می‌رود.
+  if (!OUTSIDE_GIVER.test(part) && OUR_PAID_SERVICE.test(part) && !/(?:به\s*(?:ما|من)|بهمون|بهم|بمون|بما)(?![آ-ی])/.test(part)) return false;
   if (/(?:به\s*(?:ما|من)|بهمون|بهم|بمون|بما)\s*(?:\S+\s+){0,2}داد(?:ن|ند|ه)?(?![آ-ی])/.test(part)) return true;
   return /(?<![آ-ی])داد(?:ن|ند)?(?![آ-ی])/.test(part)
     && !new RegExp(`(?<![آ-ی])به\\s+(?!${NOT_A_RECIPIENT})\\S+`).test(part);
@@ -248,6 +262,79 @@ function withoutSeriesCountAfter(text) {
   return text.replace(SERIES_COUNT_AFTER, '$1').replace(CHEQUE_TENOR_AFTER, '$1');
 }
 
+// «۶۰ میلیون یه چک داد»: «یه/یک» حرف تعریفِ چک است، نه عدد؛ پارسر آن را به
+// مبلغ پیش از خودش می‌چسباند و ۶۰٬۰۰۱٬۰۰۰ می‌خواند.
+const CHEQUE_ARTICLE = /(?<![آ-ی\d])(?:یه|یک)\s+(?=چک(?![آ-ی]))/g;
+function withoutChequeArticle(text) {
+  return text.replace(CHEQUE_ARTICLE, '');
+}
+
+const AMOUNT_NUMBER_WORDS = 'یک|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه|ده|یازده|دوازده|سیزده|چهارده|پانزده|پونزده|شانزده|شونزده|هفده|هیفده|هجده|هیجده|نوزده|بیست|سی|چهل|پنجاه|شصت|هفتاد|هشتاد|نود|صد|یکصد|دویست|سیصد|چهارصد|پانصد|پونصد|ششصد|هفتصد|هشتصد|نهصد';
+const NUMBER_TOKEN = `(?:\\d+(?:[.,/]\\d+)?|(?:${AMOUNT_NUMBER_WORDS}))`;
+const AMOUNT_SCALE = '(?:میلیارد|میلیون|ملیون|هزار|تومن|تومان)';
+const TENS = /^(?:بیست|سی|چهل|پنجاه|شصت|هفتاد|هشتاد|نود)$/;
+const UNITS = /^(?:یک|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه)$/;
+const HUNDREDS = /^(?:صد|یکصد|دویست|سیصد|چهارصد|پانصد|پونصد|ششصد|هفتصد|هشتصد|نهصد)$/;
+/** «بیست و پنج»، «صد و بیست»: یک عدد مرکب، نه دو مبلغ. */
+function compoundNumber(left, right) {
+  if (/\d/.test(left) || /\d/.test(right)) return false;
+  if (TENS.test(left)) return UNITS.test(right);
+  if (HUNDREDS.test(left)) return !HUNDREDS.test(right);
+  return false;
+}
+// «۱۰ و ۲۰ میلیونی»، «یکی ۱۰ یکی ۲۰ میلیونی»: چند عدد با یک مقیاس مشترک.
+const SHARED_SCALE_LIST = new RegExp(`(?<![آ-ی\\d])((?:یکی(?:ش|شون)?\\s+)?${NUMBER_TOKEN}(?:\\s+(?:و\\s+)?(?:(?:و|یکی(?:ش|شون)?)\\s+)${NUMBER_TOKEN})+)(?![آ-ی\\d])\\s*(${AMOUNT_SCALE})(?:\\s*(?:تومن|تومان))?ی?(?![آ-ی])`);
+const ADJECTIVE_AMOUNT = new RegExp(`${AMOUNT_SCALE}ی(?![آ-ی])`, 'g');
+
+/**
+ * مبلغ‌های جداگانهٔ برگ‌های یک سری: «دو تا چک ۱۰ و ۲۰ میلیونی»، «۱۰ میلیونی و
+ * ۲۰ میلیونی»، «یکی ۱۰ یکی ۲۰ میلیونی». هر برگ مبلغ خودش را دارد و جمع، جمعِ
+ * همین‌هاست — ضرب در شمار نیست. «۵ میلیون و ۵۰۰ هزاری» و «بیست و پنج میلیونی»
+ * یک مبلغ‌اند و `null` برمی‌گردد.
+ */
+function listedChequeAmounts(clause) {
+  const text = clause.replace(SERIES_COUNT, 'چک').replace(SERIES_BARE_BEFORE, 'چک');
+  const shared = SHARED_SCALE_LIST.exec(text);
+  if (shared) {
+    const separators = shared[1].match(/(?<![آ-ی])(?:و|یکی(?:ش|شون)?)(?![آ-ی])/g) || [];
+    const tokens = shared[1].match(new RegExp(`(?<![آ-ی\\d])${NUMBER_TOKEN}(?![آ-ی\\d])`, 'g')) || [];
+    const listedByEach = separators.some((word) => word.startsWith('یکی'));
+    if (tokens.length >= 2 && (listedByEach || !tokens.some((token, index) => index && compoundNumber(tokens[index - 1], token)))) {
+      return tokens.map((token) => spokenAmount(`${token} ${shared[2]}`));
+    }
+  }
+  const adjectives = [...text.matchAll(ADJECTIVE_AMOUNT)];
+  if (adjectives.length < 2) return null;
+  const amounts = [];
+  let from = 0;
+  for (const match of adjectives) {
+    const end = match.index + match[0].length;
+    amounts.push(spokenAmount(text.slice(from, end).replace(/^[\s،,]*(?:و|یکی(?:ش|شون)?)\s+/, '')));
+    from = end;
+  }
+  return amounts;
+}
+
+// «ماهی ۱۰ میلیون»، «سالی ۱۲ میلیون»: نرخ، نه جمع.
+const RATE_AMOUNT = new RegExp(`(?<![آ-ی])(ماهی|ماهیانه|ماهانه|هر\\s*ماه(?:ه)?|سالی|سالانه|سالیانه|هر\\s*سال|هفته\\s*ای|هفتگی|هر\\s*هفته|روزی|روزانه|هر\\s*روز)\\s+(${NUMBER_TOKEN}(?:\\s+و\\s+${NUMBER_TOKEN})*\\s*${AMOUNT_SCALE}?(?:\\s*(?:تومن|تومان))?ی?)(?![آ-ی])`, 'g');
+
+/**
+ * تنها مبلغ جمله نرخ است و جمله دوره‌ای بلندتر از واحد نرخ گفته: «اجاره شش ماه
+ * آینده رو ماهی ۱۰ میلیون … چک داد». جمع (۶۰؟) را جمله نگفته و نرخ جای جمع
+ * نمی‌نشیند؛ مبلغ پرسیده می‌شود. نرخِ تنها بی‌دورهٔ بلندتر («اجاره ماهی ۱۰ میلیون
+ * رو چک دادیم») همان مبلغ یک دوره است.
+ */
+function rateStandsForTotal(text, spoken, now) {
+  const rates = [...text.matchAll(RATE_AMOUNT)];
+  if (!rates.length || !spoken) return false;
+  if (!rates.some((match) => spokenAmount(match[2]) === spoken)) return false;
+  if (spokenAmount(text.replace(RATE_AMOUNT, ' ')) >= 1_000) return false;
+  const period = readServicePeriod(coverageText(text.replace(RATE_AMOUNT, ' ')), { occurredAt: now.toISOString() });
+  if (!period?.months) return false;
+  const unitMonths = Math.min(...rates.map((match) => (/سال/.test(match[1]) ? 12 : /ماه/.test(match[1]) ? 1 : 0)));
+  return period.months > unitMonths;
+}
+
 export function chequeSeriesCount(input) {
   const text = normalizePersian(input);
   const match = SERIES_COUNT.exec(text) || SERIES_COUNT_AFTER.exec(text)?.slice(1) || SERIES_BARE_BEFORE.exec(text);
@@ -265,7 +352,7 @@ export function chequeSeriesCount(input) {
  * پرسیده شود.
  */
 function seriesAmounts(text, count, spoken) {
-  if (/جمعا|جمعاً|مجموعا|مجموعاً|در\s*مجموع|روی\s*هم|کلا|کلاً|کل\s*مبلغ/.test(text)) {
+  if (/جمعا|جمعاً|مجموعا|مجموعاً|در\s*مجموع|روی\s*هم|کلا|کلاً|کل\s*مبلغ|(?<![آ-ی])(?:به\s*)?جمع(?:ش|شون|\s*کل)?(?![آ-ی])/.test(text)) {
     return spoken % count === 0 ? { total: spoken, per: spoken / count } : { total: spoken, per: null };
   }
   if (/(?:میلیون|ملیون|هزار|تومن|تومان)ی(?![آ-ی])/.test(text)) return { total: spoken * count, per: spoken };
@@ -407,7 +494,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   if (/ضمانت|تضمین|وثیقه|نه\s*تاریخ\s*داره|در\s*وجه\s*کسی|دستت\s*باشه/.test(text)) return null;
 
   // «چک ۱۰ میلیونی ۱۲ تا»: شمار برگ‌ها جزو مبلغ خوانده نمی‌شود.
-  const countless = withoutSeriesCountAfter(text);
+  const countless = withoutChequeArticle(withoutSeriesCountAfter(text));
   const amountInput = countless === text ? input : countless;
   const amount = spokenAmount(amountInput);
   const contactName = extractContactName(input, { allowBare: obligationContext });
@@ -495,7 +582,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   const direction = receivable && payable ? null : receivable ? 'receivable' : 'payable';
   // «یه چک ۵۵ میلیونی… دادیم»: مبلغ چک همان عددی است که در جملهٔ خودِ چک آمده،
   // حتی وقتی جمله عددهای دیگری (بهای کالا، درصد) هم دارد.
-  const chequeAmounts = isCheque && chequeClause ? parseFinancialText(withoutSeriesCountAfter(chequeClause), { source: 'voice' }).transactions.map((item) => Number(item.amount) || 0).filter(Boolean) : [];
+  const chequeAmounts = isCheque && chequeClause ? parseFinancialText(withoutChequeArticle(withoutSeriesCountAfter(chequeClause)), { source: 'voice' }).transactions.map((item) => Number(item.amount) || 0).filter(Boolean) : [];
   const ownAmount = chequeAmounts.length === 1 ? chequeAmounts[0] : 0;
   const severalAmounts = !ownAmount && hasSeveralAmounts(amountInput);
   const spoken = ownAmount || amount;
@@ -505,9 +592,16 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   // نمی‌شود چون سررسید هر برگ را جمله نگفته (سرور به حسابدار می‌فرستد). وقتی
   // معلوم نیست مبلغ گفته‌شده مال هر برگ است یا جمع، مبلغ پرسیده می‌شود.
   const series = isCheque ? chequeSeriesCount(chequeClause || text) : 0;
-  const seriesRead = series && spoken ? seriesAmounts(chequeClause || text, series, spoken) : null;
+  // «دو تا چک ۱۰ و ۲۰ میلیونی»: برگ‌ها مبلغ‌های جدا دارند؛ جمع، جمعِ همان‌هاست
+  // و هرگز ضرب در شمار نمی‌شود. شمارِ نابرابر با مبلغ‌ها پرسیده می‌شود.
+  const listed = series ? listedChequeAmounts(withoutChequeArticle(chequeClause || text)) : null;
+  const listedTotal = listed && listed.every((value) => value >= 1_000) ? listed.reduce((sum, value) => sum + value, 0) : 0;
+  const listedRead = listed ? (listedTotal && listed.length === series ? { total: listedTotal, per: listed.every((value) => value === listed[0]) ? listed[0] : null } : null) : undefined;
+  const seriesRead = listedRead !== undefined ? listedRead : (series && spoken ? seriesAmounts(chequeClause || text, series, spoken) : null);
   const seriesUnclear = Boolean(series) && !seriesRead;
-  const finalAmount = seriesRead ? seriesRead.total : spoken;
+  // «ماهی ۱۰ میلیون» کنار «شش ماه آینده» نرخ است، نه جمع.
+  const rateOnly = !seriesRead && rateStandsForTotal(withoutChequeArticle(text), spoken, now);
+  const finalAmount = seriesRead ? seriesRead.total : rateOnly ? 0 : spoken;
   return {
     intent: isCheque ? 'cheque' : 'obligation',
     direction,
@@ -516,6 +610,8 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
     // مبلغ خالی یعنی «هنوز گفته نشده»، نه صفر؛ کارت تأیید تا نوشتنش پیش نمی‌رود.
     needsAmount: !finalAmount || severalAmounts || seriesUnclear,
     ...(severalAmounts ? { amountHint: amount } : {}),
+    ...(listed && !listedRead && listedTotal ? { amountHint: listedTotal } : {}),
+    ...(rateOnly ? { amountHint: spoken, rateAmount: spoken } : {}),
     ...(series ? { chequeCount: series, ...(seriesRead ? { perChequeAmount: seriesRead.per } : {}) } : {}),
     // چک خرید یا فروش با ارزش افزوده: کل مبلغ چک بهای کالا یا درآمد نیست.
     ...(isCheque && /ارزش\s*افزوده|مالیات\s*بر\s*ارزش/.test(text) ? { vatMentioned: true } : {}),
