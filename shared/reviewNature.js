@@ -18,7 +18,11 @@ export function reviewNature(text) {
   // «حقوقی» یا «لیست قیمت» در جمله، لیست حقوق نمی‌سازد.
   const insurance=insuranceNature(t);
   const insuranceSettlement=insurance.payrollList && insurance.paid;
-  const prepaid=(/پیش پرداخت/.test(t) || (insurance.insurance && (insurance.coverage || /12 ماه|دوازده ماه/.test(t)) && !insurance.payrollList && !insurance.claim)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
+  // نگهبان «منفعت آینده» فقط با طول صریح چندماهه روشن می‌شود، نه با هر نشانهٔ
+  // دوره: «از اول مهر تا آخر مهر» پوشش همین ماه و هزینهٔ همین ماه است، و
+  // «سالانه» کنار مبلغ می‌تواند نرخ باشد. مصرف‌شده یا نشدن دوره را موتور با
+  // تاریخ‌های پوشش تصمیم می‌گیرد؛ متن به‌تنهایی آن را نمی‌داند.
+  const prepaid=(/پیش پرداخت/.test(t) || (insurance.insurance && /یک ساله|یکساله|12 ماه|دوازده ماه/.test(t) && !insurance.payrollList && !insurance.claim)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
   const advance=/پیش دریافت/.test(t) || /(?:خدمات|خدماتی|خدمت).*هنوز.*انجام نشده/.test(t) && /دریافت|واریز/.test(t);
   const deposit=/ودیعه|سپرده/.test(t) && /استرداد|قابل برگشت|پس می/.test(t);
   const intangible=/حق استفاده|حق امتیاز|علامت تجاری/.test(t) && /خرید|پرداخت/.test(t);

@@ -642,3 +642,54 @@ test('ماهیت عودت: فقط پولی که برگشت، نه وعدهٔ ب�
     'ودیعه ۵۰ میلیون به آقای کریمی دادیم که پس میده', 'ودیعه قابل استرداد ۵۰ میلیون پرداخت شد', 'پول ودیعه برمیگرده', 'چک مشتری برگشت خورد', 'بیمه یک ساله ۱۲ میلیون پرداخت شد',
   ]) assert.equal(reviewNature(text).refund, false, text);
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی: نگهبان «منفعت آینده» فقط با طول صریح چندماهه — پوشش همین ماه یا
+// «سالانه» کنار مبلغ، ثبت را گیر نمی‌اندازد.
+// ---------------------------------------------------------------------------
+
+/** گفته از کارت ثبت با صندوق؛ مسیر، دلیل‌های صف و نتیجهٔ تأیید. */
+function captureOf(text) {
+  const run = freshWorkspace();
+  return run(() => {
+    const cash = database.saveAccount({ name: 'صندوق', kind: 'cash', openingBalance: 500_000_000 });
+    const transactions = parseFinancialText(text, { source: 'voice', now: TODAY }).transactions
+      .map((item) => ({ ...item, accountId: cash.id, occurredAt: item.occurredAt || TODAY.toISOString() }));
+    database.insertTransactions({ transcript: text, transactions, allowDuplicates: true });
+    const sql = database.activeWorkspaceDatabase();
+    const event = sql.prepare('SELECT id,route,status FROM financial_events ORDER BY rowid DESC').get();
+    const reasons = database.reviewQueue().items.find((entry) => entry.id === event.id)?.confidence?.reasons || [];
+    let approveError = null;
+    if (event.status === 'pending') { try { database.approveEvent(event.id); } catch (error) { approveError = error.code; } }
+    const status = sql.prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status;
+    return { route: event.route, reasons, approveError, status, decision: database.eventDecision(event.id).decision };
+  });
+}
+const FUTURE_BENEFIT = /پرداخت برای منفعت آینده هزینه جاری نیست/;
+
+test('نگهبان منفعت آینده: پوشش همین ماه و «سالانه» کنار مبلغ، ثبت را متوقف نمی‌کنند؛ طول چندماههٔ صریح همچنان پیش‌پرداخت است', () => {
+  // پوشش مهر، پرداخت در مهر: هزینهٔ همین ماه؛ موتور period-expense می‌گوید و ثبت می‌شود.
+  const inMonth = captureOf('بیمه ماشین از اول مهر تا آخر مهر ۲ میلیون دادیم');
+  assert.equal(inMonth.decision.treatment, 'period-expense');
+  assert.ok(!inMonth.reasons.some((reason) => FUTURE_BENEFIT.test(reason)), JSON.stringify(inMonth.reasons));
+  assert.equal(inMonth.approveError, null);
+  assert.equal(inMonth.status, 'posted');
+  // «سالانه» کنار مبلغ: نگهبان متنی روشن نمی‌شود؛ تصمیم دوره با موتور است.
+  const yearly = captureOf('بیمه کالای انبار سالانه ۱۲ میلیون پرداخت کردیم');
+  assert.ok(!yearly.reasons.some((reason) => FUTURE_BENEFIT.test(reason)), JSON.stringify(yearly.reasons));
+  for (const text of [
+    'بیمه ماشین از اول مهر تا آخر مهر ۲ میلیون دادیم',
+    'بیمه کالای انبار سالانه ۱۲ میلیون پرداخت کردیم',
+    'بیمه ماشین از اول فروردین تا آخر شهریور ۶ میلیون دادیم',
+    'پوشش بیمه دفتر ۳ میلیون پرداخت شد',
+  ]) assert.equal(reviewNature(text).prepaid, false, text);
+  // مثبت: طول صریح سالانه و دوازده‌ماهه، از جمله حق بیمهٔ کارکنان.
+  for (const text of [
+    'بیمه انبار یک ساله ۱۲ میلیون پرداخت کردیم', 'بیمه تکمیلی کارکنان یکساله ۲۴ میلیون پرداخت کردیم',
+    'بیمه حوادث کارگران دوازده ماهه ۶ میلیون پرداخت شد', 'بیمه آتش سوزی 12 ماه 9 میلیون دادیم', 'پیش پرداخت اجاره ۳۰ میلیون دادیم',
+  ]) assert.equal(reviewNature(text).prepaid, true, text);
+  // یک‌ساله که موتور پیش‌پرداخت تصمیم می‌گیرد، همچنان بی‌مانع ثبت می‌شود.
+  const annual = captureOf('بیمه انبار یک ساله ۱۲ میلیون پرداخت کردیم');
+  assert.equal(annual.decision.treatment, 'prepaid-expense');
+  assert.equal(annual.status, 'posted');
+});
