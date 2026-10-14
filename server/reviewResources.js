@@ -11,7 +11,7 @@ const fail=message=>Object.assign(new Error(message),{code:'REVIEW_DETAILS_REQUI
 /** No writes in preview. Applied only inside the journal's approval transaction. */
 export function prepareReviewResources(database,event,proposal,{evidence='',facts={},messages=[],apply=false}={}) {
   const result={event:{...event},newCounterparty:null,inventoryItems:[],blockers:[]};
-  result.event.reviewSupplierAdvance=isReviewSupplierAdvance([evidence,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body)].join(' '),proposal.lines);
+  result.event.reviewSupplierAdvance=isReviewSupplierAdvance([evidence,...messages.filter(m=>m.speaker==='accountant').map(m=>m.body)].join(' '),proposal.lines,event);
   if((result.event.reviewSupplierAdvance || proposal.lines.some(l=>partyRoles.has(l.role))) && !event.counterpartyId) {
     const accountantText=messages.filter(m=>m.speaker==='accountant').map(m=>m.body).join(' ');
     // A grounded correction must win over the truncated capture candidate.

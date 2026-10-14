@@ -7,6 +7,7 @@ import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
 import { ROUTE_LABELS } from '../../../shared/confidenceEngine.js';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
 
 const ROUTE_STYLE = {
   'accountant-review': 'border-expense/40 bg-expense/5 text-expense',
@@ -21,16 +22,6 @@ const ROUTE_STYLE = {
  * گرفتن تاریخچهٔ همه، هم کند است و هم چیزی است که حسابدار فقط برای موارد
  * مشکوک می‌خواهد.
  */
-/**
- * کارت سؤال — وقتی موتور یک واقعیت لازم را ندارد.
- *
- * گزینه، هرجا که جواب شمردنی باشد. کاربری که روی «از اول ماه بعد» می‌زند هیچ
- * جمله‌ای برای تفسیر باقی نمی‌گذارد، و جواب از همان اول به مورد درست چسبیده
- * است چون روی کارت خودش زده شده.
- *
- * هر بار فقط یک سؤال. فرم یعنی کاربر باید همه را با هم بداند، و کسی که یکی را
- * نمی‌داند کل کار را رها می‌کند.
- */
 function OriginalTranscript({text}) {
   return <section aria-label="متن اصلی گفتهٔ کاربر" className="mt-3 rounded-lg border border-line bg-paper p-3">
     <p className="text-xs font-extrabold text-ink">متن اصلی گفتهٔ کاربر</p>
@@ -38,39 +29,6 @@ function OriginalTranscript({text}) {
     {text ? <blockquote dir="auto" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-7 text-ink">{text}</blockquote>
       : <p className="mt-2 text-xs text-muted">متن اصلی برای این مورد ذخیره نشده است.</p>}
   </section>;
-}
-
-function QuestionCard({ question, busy, onAnswer }) {
-  const [text, setText] = useState('');
-  const [freeFor, setFreeFor] = useState(null);
-
-  return <div className="mt-2 rounded-[10px] border border-accent/40 bg-accent/5 p-3">
-    <p className="text-[12px] font-extrabold text-ink">{question.text}</p>
-    {question.kind === 'options'
-      ? <div className="mt-2 flex flex-wrap gap-1.5">
-          {question.options.map((option) => <button
-            key={String(option.value)}
-            disabled={busy}
-            onClick={() => (option.freeInput ? setFreeFor(option) : onAnswer({ fact: question.fact, value: option.value }))}
-            className="tap rounded-lg border border-line bg-paper px-3 py-1 text-[12px] font-bold disabled:opacity-40">
-            {option.label}
-          </button>)}
-        </div>
-      : <div className="mt-2 flex gap-1.5">
-          <input value={text} onChange={(event) => setText(event.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
-          <button disabled={busy || !text.trim()} onClick={() => onAnswer({ fact: question.fact, freeText: text.trim() })}
-            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">ثبت پاسخ</button>
-        </div>}
-
-    {/* گزینهٔ «خودم می‌گویم» یک مقدار نیست؛ ورودی آزاد می‌خواهد. */}
-    {freeFor && <div className="mt-2 flex gap-1.5">
-      <input value={text} onChange={(event) => setText(event.target.value)} placeholder={freeFor.label}
-        className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
-      <button disabled={busy || !text.trim()} onClick={() => onAnswer({ fact: question.fact, value: freeFor.value, freeText: text.trim() })}
-        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">ثبت پاسخ</button>
-    </div>}
-  </div>;
 }
 
 function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
@@ -216,7 +174,10 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
     {item.event?.kind === 'review-placeholder' && <ReviewedCompositeEditor item={item} ai={ai} onSaved={onAnswered} notify={notify} />}
 
     {/* سؤال بالاتر از جزئیات می‌نشیند: تا جوابش نیامده، بقیه‌اش موضوعیت ندارد. */}
-    {decision?.decision?.question && <QuestionCard question={decision.decision.question} busy={busy} onAnswer={answer} />}
+    {/* کلید: تصمیم + واقعیت پرسیده‌شده. ردیف با item.id کلید می‌خورد و بعد از
+        جواب «شروع دوره» همان می‌ماند؛ بی‌این کلید متن تایپ‌شده برای «پایان دوره»
+        هم فرستاده می‌شد. */}
+    {decision?.decision?.question && <DecisionQuestionCard key={questionCardKey(decision.decision.id || item.decisionId, decision.decision.question)} question={decision.decision.question} busy={busy} onAnswer={answer} />}
 
     {/* برنامهٔ تخصیص، وقتی ساخته شده — همان چیزی که ثابت می‌کند مبلغ یک‌جا هزینه نشد. */}
     {decision?.schedule?.length > 0 && <p className="mt-1.5 text-[11px] text-muted">

@@ -15,7 +15,7 @@
 
 import {
   ECONOMIC_FAMILIES, FAMILY_DEFAULT_RISK, FAMILY_UNKNOWN, RISK_LEVELS, TIME_BOUND_SERVICE_CATEGORIES,
-  classifyFamily, isEconomicFamily, isTimeBoundService,
+  awaitsSupplierGoods, classifyFamily, isEconomicFamily, isPrepaidServiceCandidate, isTimeBoundService, signalsGoodsDeliveryLater,
 } from './economicFamily.js';
 import {
   FACT_KEYS, FACT_LABELS, TREATMENTS, isFactPresent, missingFactsFor, nextQuestionFor, requiredFactsFor,
@@ -33,6 +33,7 @@ function persianMonthOf(iso) {
   return persianMonthRange(day.year, day.month);
 }
 import { judgmentReason } from './moneyPurpose.js';
+import { readsContractRemainder } from './priorSettlement.js';
 
 /**
  * پنج وضعیت.
@@ -129,6 +130,31 @@ export function decisionAuthorizesPosting(decision) {
 }
 
 /**
+ * سندِ پایه‌ای که پولی جابه‌جا نمی‌کند و طرفش ماییم یا طرف مقابل.
+ *
+ * چکی که بابت طلب یا بدهی قبلی است فقط شکل تعهد را عوض می‌کند و برآوردی
+ * («برآورد شد») قضاوت حسابدار است؛ هیچ‌کدام خدمت تازه نیستند.
+ */
+function onAccount(facts, side) {
+  if (facts?.moneyDirection !== 'none' || isFactPresent(facts?.estimateBasis)) return false;
+  if (facts?.chequeAgainst === 'receivable') return false;
+  return facts?.obligationDirection === side || facts?.chequeDirection === side;
+}
+
+/** دوره‌ای که از ماهِ خودِ سند جلوتر می‌رود — یعنی چیزی را به ماه‌های بعد می‌برد. */
+function coverageRunsPastMonth(facts) {
+  const end = facts?.servicePeriodEnd;
+  if (!isFactPresent(facts?.servicePeriodStart) || !isFactPresent(end) || !facts?.occurredAt) return false;
+  const month = persianMonthOf(facts.occurredAt);
+  return Boolean(month) && new Date(end).getTime() > new Date(month.to).getTime();
+}
+
+/** دستهٔ درآمدی که خودش دوره‌دار است: اجاره‌ای که می‌گیریم. */
+const TIME_BOUND_INCOME_CATEGORIES = Object.freeze(['درآمد اجاره']);
+const DEPOSIT_WORDS = /ودیعه|رهن|قرض\s*الحسنه|سپرده|تضمین|حسن\s*انجام/;
+const policyByKey = (key) => DEFAULT_POLICIES.find((policy) => policy.policyKey === key);
+
+/**
  * قاعده‌ها، به‌صورت داده.
  *
  * چرا قاعده لازم است و طبقه‌بند کافی نیست: طبقه‌بند می‌گوید «این ایجاد دارایی
@@ -144,6 +170,70 @@ export function decisionAuthorizesPosting(decision) {
  * فعلاً فقط ذخیره می‌شود تا تصمیم بدون نسخه ساخته نشود.
  */
 export const DEFAULT_POLICIES = Object.freeze([
+  /**
+   * خدمت دوره‌دار روی سندِ پایه‌ای که پولی جابه‌جا نمی‌کند — چک پرداختی، بدهی،
+   * فاکتور خرید.
+   *
+   * «اجارهٔ یک‌ساله دفتر رو با چک ۱۲۰ میلیون دادیم» همان پیش‌پرداختی است که با
+   * نقد می‌شد؛ ابزار پرداخت ماهیت را عوض نمی‌کند. بی‌این قاعده چک پرداختی اصلاً
+   * قاعده نداشت و بدهیِ «اشتراک یک‌ساله» زیر قاعدهٔ هزینهٔ تعهدی کل مبلغ را
+   * همین ماه هزینه می‌کرد. پس همان حل‌وفصلِ پیش‌پرداخت خدمت اجرا می‌شود: دورهٔ
+   * آینده → پیش‌پرداخت با شناسایی ماهانه؛ دورهٔ گذشته یا همین ماه → هزینهٔ دوره؛
+   * ودیعه → سؤال استرداد؛ دورهٔ نامعلوم → سؤال، نه حدس. طرف بستانکار را قاعدهٔ
+   * سند از نوع رویداد می‌گیرد (اسناد پرداختنی یا حساب پرداختنی)، نه صندوق.
+   *
+   * قبضِ مصرف‌شده («قبض برق شهریور هنوز پرداخت نشده») اینجا نمی‌رسد: نه دستهٔ
+   * دوره‌دار دارد و نه دوره‌ای که از ماه سند بگذرد؛ همان هزینهٔ تعهدی می‌ماند.
+   */
+  Object.freeze({
+    policyKey: 'prepaid-service-on-account',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.LIABILITY_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.PREPAID_EXPENSE, TREATMENTS.PERIOD_EXPENSE, TREATMENTS.REFUNDABLE_DEPOSIT]),
+    appliesTo(facts) {
+      if (!onAccount(facts, 'payable')) return false;
+      if (isTimeBoundService(facts) || facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
+      return coverageRunsPastMonth(facts);
+    },
+    resolve(facts, context) { return policyByKey('prepaid-service').resolve(facts, context); },
+  }),
+  /**
+   * آینه‌اش: خدمت دوره‌دار روی چک دریافتی، طلب یا فاکتور فروش — پیش‌دریافت.
+   *
+   * «چک ۶۰ میلیونی اجارهٔ شش ماه آینده رو از مستاجر گرفتیم» شش ماه درآمد آینده
+   * است، نه فروش امروز. درآمد ماه‌به‌ماه شناسایی می‌شود و تا آن موقع درآمد
+   * انتقالی (بدهی) است. ودیعهٔ مستاجر هرگز درآمد نیست و حسابش با حسابدار است؛
+   * دورهٔ نامعلوم پرسیده می‌شود. فروش کالا و خدمتِ بی‌دوره اینجا نمی‌رسند.
+   */
+  Object.freeze({
+    policyKey: 'deferred-revenue-on-account',
+    version: '1.0.0',
+    family: ECONOMIC_FAMILIES.RECEIVABLE_CREATION,
+    riskLevel: RISK_LEVELS.YELLOW,
+    supportedTreatments: Object.freeze([TREATMENTS.DEFERRED_REVENUE, TREATMENTS.RECOGNIZED_REVENUE]),
+    appliesTo(facts) {
+      if (!onAccount(facts, 'receivable') || isFactPresent(facts?.deliveryDate)) return false;
+      // «بابت فروش تازه یا طلب قبلی؟» پیش از هر چیز؛ آن را قاعدهٔ چک دریافتی می‌پرسد.
+      if (facts?.chequeDirection === 'receivable' && facts?.chequeAgainst !== 'income') return false;
+      if (TIME_BOUND_INCOME_CATEGORIES.includes(String(facts?.category || '').trim()) || isTimeBoundService(facts)) return true;
+      if (facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
+      return coverageRunsPastMonth(facts);
+    },
+    resolve(facts, { today }) {
+      const said = `${facts?.evidence || ''} ${facts?.utterance || ''}`;
+      if (facts?.refundable === true || facts?.paymentPurpose === 'deposit' || (DEPOSIT_WORDS.test(said) && facts?.refundable !== false)) {
+        return { treatment: TREATMENTS.REFUNDABLE_DEPOSIT, reviewNote: 'ودیعه یا سپرده‌ای که گرفته‌ایم بدهی ماست، نه درآمد؛ حساب ودیعهٔ دریافتی و شرط استردادش را حسابدار تعیین می‌کند.' };
+      }
+      const start = facts?.servicePeriodStart;
+      const end = facts?.servicePeriodEnd;
+      if (!isFactPresent(start) || !isFactPresent(end)) return { treatment: TREATMENTS.DEFERRED_REVENUE };
+      const immediate = { treatment: TREATMENTS.RECOGNIZED_REVENUE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts.occurredAt || null };
+      if (new Date(end).getTime() <= new Date(today).getTime()) return immediate;
+      if (!coverageRunsPastMonth(facts)) return immediate;
+      return { treatment: TREATMENTS.DEFERRED_REVENUE, recognitionMethod: RECOGNITION_METHODS.MONTHLY_STRAIGHT_LINE, recognitionDate: start };
+    },
+  }),
   /**
    * خرید نسیهٔ کالا.
    *
@@ -314,7 +404,10 @@ export const DEFAULT_POLICIES = Object.freeze([
     supportedTreatments: Object.freeze([TREATMENTS.CUSTOMER_ADVANCE, TREATMENTS.DEFERRED_REVENUE]),
     appliesTo() { return true; },
     resolve(facts) {
-      const hasPeriod = isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
+      // «سه ماه بعد تحویل می‌دیم» زمانِ تحویل کالای ماست، نه دورهٔ خدمتی که
+      // ماه‌به‌ماه انجام شود؛ آن پول پیش‌دریافت فروش است تا کالا تحویل شود.
+      const hasPeriod = isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd)
+        && !signalsGoodsDeliveryLater(facts);
       return hasPeriod
         ? {
           treatment: TREATMENTS.DEFERRED_REVENUE,
@@ -379,9 +472,16 @@ export const DEFAULT_POLICIES = Object.freeze([
     riskLevel: RISK_LEVELS.YELLOW,
     supportedTreatments: Object.freeze([TREATMENTS.SUPPLIER_ADVANCE]),
     appliesTo(facts) {
-      // خدمت دوره‌دار سیاست خودش را دارد و آنجا قاعدهٔ ثبت هم هست.
-      return (facts?.prepaymentSignal === true || facts?.paymentPurpose === 'advance')
-        && !TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim());
+      // خدمت دوره‌دار سیاست خودش را دارد و آنجا قاعدهٔ ثبت هم هست — چه از روی
+      // دسته، چه از روی دورهٔ صریحی که جمله گفته. «پیش پرداخت قرارداد پشتیبانی
+      // یکساله» پیش‌پرداخت خدمت است؛ واژهٔ «پیش پرداخت» در هر دو هست و انتخاب
+      // را واقعیت‌ها می‌کنند، نه ترتیب این فهرست.
+      if (TIME_BOUND_SERVICE_CATEGORIES.includes(String(facts?.category || '').trim())) return false;
+      if (isPrepaidServiceCandidate(facts)) return false;
+      if (facts?.prepaymentSignal === true || facts?.paymentPurpose === 'advance') return true;
+      // پول کالایی که «سه ماه بعد تحویل میده»: کالا هنوز نرسیده، پس طلب از
+      // تأمین‌کننده است — با هر واژه‌ای که گفته شده باشد.
+      return awaitsSupplierGoods(facts) && ['', 'goods'].includes(String(facts?.paymentPurpose || ''));
     },
     resolve() { return { treatment: TREATMENTS.SUPPLIER_ADVANCE }; },
   }),
@@ -442,9 +542,10 @@ export const DEFAULT_POLICIES = Object.freeze([
      * وقتی دوره صریح است، دیگر نیازی به حدس از روی دسته نیست.
      */
     appliesTo(facts) {
-      if (isTimeBoundService(facts)) return true;
       if (facts?.refundable === true || facts?.paymentPurpose === 'deposit') return true;
-      return isFactPresent(facts?.servicePeriodStart) && isFactPresent(facts?.servicePeriodEnd);
+      // «سه ماه بعد تحویل میده» زمانِ رسیدن کالاست، نه دورهٔ خدمت؛ آن پول
+      // پیش‌پرداخت خرید است و ماه‌به‌ماه هزینه نمی‌شود.
+      return isPrepaidServiceCandidate(facts);
     },
     /**
      * دوره‌ای که کاملاً گذشته، دارایی نمی‌سازد.
@@ -529,8 +630,9 @@ export const DEFAULT_POLICIES = Object.freeze([
     riskLevel: RISK_LEVELS.YELLOW,
     supportedTreatments: Object.freeze([TREATMENTS.PERIOD_EXPENSE, TREATMENTS.INVENTORY_PURCHASE]),
     appliesTo(facts) {
+      // کالایی که هنوز نرسیده، موجودی یا دارایی نیست؛ پیش‌پرداخت خرید است.
       return ['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)
-        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts)
+        && facts?.prepaymentSignal !== true && !isTimeBoundService(facts) && !awaitsSupplierGoods(facts)
         && !isFactPresent(facts?.servicePeriodStart) && !isFactPresent(facts?.servicePeriodEnd);
     },
     resolve(facts) {
@@ -697,6 +799,26 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
     });
   }
 
+  // «باقی حق بیمه … دادیم»، «قسط دوم اجاره»: بخشی از قراردادی که پیش‌تر ثبت
+  // شده. هیچ قاعده‌ای — نه پیش‌پرداخت تازه با دورهٔ نو، نه سؤال «پوشش از کِی؟» —
+  // نباید برایش قرارداد دوم بسازد؛ از هر مسیری که آمده باشد، کارت تسویه یا
+  // حسابدار آن را به سند همان قرارداد وصل می‌کند.
+  // جملهٔ چندپرداختی: نشانه فقط مال ردیفی است که مبلغش در همان تکه است.
+  // گفتهٔ کامل بر شاهد مقدم است؛ شاهدِ ردیف پارسر در جملهٔ چندمبلغی تکهٔ کنار
+  // مبلغ است و می‌تواند نیمی از تکهٔ ردیف بعدی را داشته باشد.
+  const contractPart = ['in', 'out'].includes(facts?.moneyDirection)
+    ? readsContractRemainder(facts?.utterance || facts?.evidence || '', { amount: facts?.amount }) : null;
+  if (contractPart) {
+    return createDecision({
+      family: FAMILY_UNKNOWN,
+      riskLevel: RISK_LEVELS.RED,
+      sourceReferences: facts?.evidence ? [facts.evidence] : [],
+      decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW,
+      explanation: judgmentReason(facts?.utterance || facts?.evidence || '', { amount: facts?.amount })
+        || 'باقی یا قسط یک قرارداد موجود است؛ به سند همان قرارداد وصل می‌شود.',
+    });
+  }
+
   const classified = classifyFamily(facts);
   const family = classified.family;
   const riskLevel = FAMILY_DEFAULT_RISK[family] || RISK_LEVELS.RED;
@@ -733,7 +855,7 @@ export function decide(input = {}, { policies = DEFAULT_POLICIES, today = null, 
     }
     // جمله‌ای که خودش نشانهٔ قضاوت دارد — «چطور ثبت کنیم؟»، محمولهٔ وارداتی،
     // شریک، تسویهٔ قبلی — سؤال گزینه‌ای نمی‌گیرد؛ هیچ گزینه‌ای درستش نیست.
-    const judged = judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`)
+    const judged = judgmentReason(`${facts?.utterance || ''} ${facts?.evidence || ''}`, { amount: facts?.amount })
       || (purchaseNeedsJudgment(facts) ? 'جمله نشانه‌ای دارد که ساده دیدنش را ناامن می‌کند؛ حسابدار ماهیتش را تعیین می‌کند.' : null);
     if (judged) {
       return createDecision({ family, riskLevel, sourceReferences, decisionStatus: DECISION_STATUS.NEEDS_ACCOUNTANT_REVIEW, explanation: judged });

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { PersianDateInput, digitsOnly } from '../../components/common.jsx';
 import { formatAmount, persianDate } from '../../lib/format.js';
+import { RecognitionNote } from '../../components/RecognitionNote.jsx';
 
 /**
  * برگهٔ پروندهٔ «فهم رویداد».
@@ -115,6 +116,7 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
               {component.preview?.lines?.length > 0 && <span className="mt-1 block text-[11px] text-muted">
                 {component.preview.lines.map((line, index) => <span key={index} className="ml-2 inline-block">{line.debit ? 'بدهکار' : 'بستانکار'} {LINE_ROLES[line.role] || line.role} <span className="numbers">{formatAmount(line.debit || line.credit)}</span></span>)}
               </span>}
+              <RecognitionNote recognition={component.preview?.recognition} servicePeriod={component.preview?.servicePeriod} decided={component.preview?.decisionStatus === 'decided'} />
             </li>)}
           </ul>
         </div>}
@@ -138,6 +140,12 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
         {draft.status === 'ready' && <button disabled={busy} onClick={commit} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال ثبت…' : 'ثبت'}</button>}
         {plan?.questions.length > 0 && <button disabled={busy || !answered} onClick={submitAnswers} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? '…' : 'ثبت پاسخ‌ها'}</button>}
         {draft.status === 'needs-accountant' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">ارسال به حسابدار</button>}
+        {/* «نمی‌دانم» هم یک پاسخ است. کسی که دورهٔ پوشش، طرف حساب یا بابت پول را
+            نمی‌داند نباید ناچار شود حدس بزند (پیش‌پرداخت یک‌ساله را یک‌جا هزینه
+            کند) یا انصراف دهد (پولی که رفته، ثبت نشود). همان «مطمئن نیستم» کارت
+            امروز: پرونده با متن کامل به صف حسابدار می‌رود و هیچ سند یا ردیف نقدی
+            ساخته نمی‌شود. */}
+        {draft.status === 'needs-answers' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده با متن کامل به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg border border-line bg-surface text-[13px] font-bold disabled:opacity-40">نمی‌دانم — به حسابدار بسپار</button>}
         <button disabled={busy || extracting} onClick={async () => { if (draft.id && !['posted', 'sent-to-accountant', 'dismissed'].includes(draft.status)) await api.dismissUnderstandingCase(draft.id).catch(() => {}); close(); }}
           className="tap col-span-2 rounded-lg border border-line font-bold">{['posted', 'sent-to-accountant'].includes(draft.status) ? 'بستن' : 'انصراف — چیزی ثبت نشود'}</button>
       </div>

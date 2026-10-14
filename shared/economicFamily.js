@@ -1,4 +1,5 @@
 import { isRoutineExpense } from './purchasePurpose.js';
+import { isNotInsurancePremium } from './insuranceNature.js';
 
 /**
  * خانوادهٔ اقتصادی — ماهیت رویداد، نه شکل تراکنش.
@@ -166,15 +167,185 @@ export const TIME_BOUND_SERVICE_CATEGORIES = Object.freeze(['بیمه', 'اجا�
  * بیمهٔ تأمین اجتماعی پرسنل، بدهیِ حقوق است که تسویه می‌شود؛ و پولی که شرکت
  * بیمه بابت خسارت می‌دهد، اصلاً پرداخت ما نیست. هر دو دستهٔ «بیمه» می‌گیرند و
  * تا امروز سؤال «دورهٔ پوشش از کی تا کی؟» می‌گرفتند — سؤال غلط از رویداد درست.
+ * قاعده با دستیار بررسی حسابدار یکی است (`shared/insuranceNature.js`).
  */
-const NOT_A_PREMIUM = /ت[اأ]مین\s*اجتماع|لیست\s*بیمه|بیمه\s*(?:پرسنل|کارگر|کارکنان|بیکاری)|سهم\s*(?:کارفرما|کارگر)|خسارت|غرامت/;
-
 export function isTimeBoundService(facts) {
   const category = String(facts?.category || '').trim();
   if (!TIME_BOUND_SERVICE_CATEGORIES.includes(category)) return false;
   // کل گفته هم دیده می‌شود: «انبار آتش گرفت… شرکت بیمه بیست و پنج میلیونش رو
   // واریز کرد» دو ردیف دارد و «خسارت» فقط در تکهٔ ردیف اول است.
-  return !(category === 'بیمه' && NOT_A_PREMIUM.test(`${facts?.evidence || ''} ${facts?.utterance || ''}`));
+  return !(category === 'بیمه' && isNotInsurancePremium(`${facts?.evidence || ''} ${facts?.utterance || ''}`));
+}
+
+/**
+ * دورهٔ پوششی که خودِ گفته ساخته — هم آغاز و هم پایان.
+ *
+ * «قرارداد تبلیغات شش ماهه»، «شارژ ساختمان شش ماه جلوتر»: دسته در فهرست خدمت
+ * دوره‌دار نیست، ولی جمله دوره را گفته. این تنها جایی است که این شرط نوشته
+ * می‌شود تا پیش‌پرداخت خرید، پیش‌پرداخت خدمت و خرید کالا هر سه یک قاعده بخوانند.
+ */
+export function hasExplicitServicePeriod(facts) {
+  return has(facts, 'servicePeriodStart') && has(facts, 'servicePeriodEnd');
+}
+
+const foldText = (text) => String(text || '').replace(/[‌‏]/g, ' ').replace(/ي/g, 'ی').replace(/ك/g, 'ک');
+
+/**
+ * کالایی که هنوز تحویل نشده.
+ *
+ * «۳۰ میلیون به تولیدی دادیم برای پارچه که سه ماه بعد تحویل میده»: «سه ماه بعد»
+ * زمانِ رسیدن کالاست، نه دورهٔ مصرف یک خدمت. پارچه و ورق و دستگاه ماه‌به‌ماه
+ * هزینه نمی‌شوند؛ پول رفته و تا کالا نرسد، طلبی از تأمین‌کننده است
+ * (پیش‌پرداخت خرید). وارونه‌اش هم همین است: «سه ماه بعد تحویل می‌دیم» یعنی
+ * پیش‌دریافت از مشتری، نه درآمدی که ماه‌به‌ماه شناسایی شود.
+ *
+ * صیغهٔ فعل می‌گوید کالا را چه کسی می‌دهد: «تحویل میده/میدن/نداده» و «تحویل
+ * می‌گیریم/نگرفتیم» یعنی تأمین‌کننده به ما (پیش‌پرداخت خرید)؛ «تحویل
+ * میدیم/نداده‌ایم/ارسال می‌کنیم» یعنی ما به مشتری (پیش‌دریافت)؛ مجهول («تحویل
+ * داده میشه»، «ارسال خواهد شد»، «ارسال نشده») و فعل رسیدن («میرسه»، «میاد»)
+ * طرف را نمی‌گویند. این‌ها هرگز جای هم نمی‌نشینند: «پیش دریافت … کالایی که
+ * هنوز تحویل نداده‌ایم» پیش‌پرداخت به تأمین‌کننده نیست.
+ *
+ * ولی فعل به‌تنهایی نمی‌گوید *چه چیزی* تحویل می‌شود. «فاکتورش رو هفته بعد ارسال
+ * میکنن»، «گزارش ماهانه رو براشون میفرستیم»، «نصابش فردا میاد» و «حسابدار فردا
+ * میاد» نه کالا را می‌گویند و نه زمانِ رسیدنِ چیزی را که پولش داده شده؛ خواندنشان
+ * به‌عنوان تحویل کالا، برنامهٔ ماهانهٔ یک خدمت را می‌برید و پیش‌دریافت خدمت را
+ * پیش‌دریافت فروش می‌کرد. پس واژهٔ پیش از فعل (پس از کنار گذاشتن زمان‌ها و «رو»)
+ * خوانده می‌شود:
+ * - کالا («پارچه رو»، «ورق،»، «دستگاه که …») → تحویل کالا؛
+ * - سند، پول، خدمت یا کلید («فاکتورش»، «گزارش»، «پولش»، «پشتیبانی») → نه؛
+ * - آدم («نصابش»، «حسابدار»، «آقای رضایی») کنار فعل رسیدن یا با «رو» → نه؛ کنار
+ *   فعل تحویل بی «رو» کنندهٔ کار است و کالا از جای دیگر جمله خوانده می‌شود؛
+ * - هیچ («… واریز کردیم سه ماه بعد میاد»، «تحویلش میده») → فاعل یا مفعولِ
+ *   ناگفته؛ فقط وقتی جمله از کالا یا خرید گفته باشد کالاست.
+ */
+const DELIVERY = '(?:تحویل|ارسال)(?:ش|شون|شو|شان)?';
+const VERB_FORMS = [
+  // مجهول: «تحویل داده میشه/می‌شود/خواهد شد»، «ارسال نشده».
+  ['unknown', new RegExp(`(?<![آ-ی])(?:تحویل|ارسال)\\s*(?:داده\\s*)?(?:(?:می\\s*|ب)?(?:شه|شود|شن|شوند)|خواهد\\s*شد|خواهند\\s*شد|نشده|نشد|نمیشه|نمی\\s*شود)(?![آ-ی])`, 'g'), 'transitive'],
+  ['us', new RegExp(`(?<![آ-ی])${DELIVERY}\\s*(?:(?:نمی\\s*|می\\s*|ب|ن)?(?:دیم|دهیم|دم|دهم|کنیم|کنم)|(?:نداده|نکرده)\\s*(?:ایم|ام)|ندادیم|ندادم|نکردیم)(?![آ-ی])|(?<![آ-ی])(?:می\\s*|ب)(?:فرستیم|فرستم)(?![آ-ی])`, 'g'), 'transitive'],
+  ['supplier', new RegExp(`(?<![آ-ی])${DELIVERY}\\s*(?:(?:نمی\\s*|می\\s*|ب|ن)?(?:ده|دن|دهد|دهند|گیریم|گیرم|کنه|کنن|کند|کنند)|نداده(?!\\s*(?:ایم|ام))|ندادن|ندادند|نگرفتیم|نگرفتم|نکرده(?!\\s*(?:ایم|ام))|نکردن|نکردند)(?![آ-ی])`, 'g'), 'transitive'],
+  ['unknown', /(?<![آ-ی])(?:(?:می\s*|ب)(?:ارن|اره|آرن|آره|فرسته|فرستن))(?![آ-ی])/g, 'transitive'],
+  ['unknown', /(?<![آ-ی])(?:(?:می\s*|ب)(?:رسه|رسن|رسد|رسند|اد|ان|آید|آیند|یاد|یان)|نرسیده|نیومده|نیامده)(?![آ-ی])/g, 'arrival'],
+];
+const GOODS_CONTEXT = /خرید|سفارش|کالا|جنس|اجناس|مواد|دستگاه|ماشین\s*آلات|تجهیزات|قطعه|قطعات|پارچه|ورق|آهن|میلگرد|محموله|مصالح|تولیدی/;
+// کالا به‌عنوان اسم — نه «خرید» و «سفارش» که فعل یا اسمِ کارند.
+const GOODS_NOUN = /(?<![آ-ی])(?:کالا|جنس|اجناس|مواد|ماشین\s*آلات|تجهیزات|قطعه|قطعات|پارچه|ورق|آهن|تیرآهن|میلگرد|محموله|دستگاه|مصالح|سیمان)(?:ها|های|هایی|ی|یی|ش|اش|شون|شان|مون)?(?![آ-ی])/;
+// «بیمع» تایپ بی‌دقتِ «بیمه» است؛ بی‌آن «پیش پرداخت بیمع انبار» با دستهٔ «مواد و کالا» کالا خوانده می‌شد.
+const SERVICE_NOUN = /(?<![آ-ی])(?:پشتیبانی|نگهداری|سرویس|خدمات|تبلیغات|تبلیغ|اشتراک|لایسنس|بیمه|بیمع|اجاره|کرایه|رهن|شارژ|هاست|هاستینگ|سرور|دامنه|آموزش|مشاوره|حسابرسی|نظافت|نگهبانی|اینترنت|آبونمان|عضویت)(?![آ-ی])/;
+const SUFFIX = '(?:ش|اش|شو|شون|شان|مون|مان|ها|های|ای|ی)?';
+const NOT_GOODS_HEAD = new RegExp(`^(?:فاکتور|صورتحساب|حساب|رسید|گزارش|قرارداد|لایسنس|کد|کلید|نامه|مدارک|مدرک|سند|ایمیل|لینک|فایل|رمز|پسورد|چک|پول|مبلغ|وجه|بقیه|باقی|مابقی|قسط|جواب|نتیجه|نقشه|طرح|پروژه|خدمات|سرویس|پشتیبانی|اشتراک)${SUFFIX}$`);
+const PERSON_HEAD = new RegExp(`^(?:نصاب|حسابدار|تکنسین|کارشناس|مامور|مأمور|پیک|مهندس|استاد|کارگر|مشاور|وکیل|بازرس|نماینده|ویزیتور|بازاریاب|مدیر|همکار|سرویسکار|تعمیرکار|مشتری|ناظر|آقا|خانم)${SUFFIX}$`);
+const PERSON_TITLE = /^(?:آقای|اقای|آقا|اقا|خانم|دکتر|مهندس|حاج|حاجی|شرکت|تولیدی|فروشگاه)$/;
+const OBJECT_MARK = /^(?:رو|را|و)$/;
+const FILLER = /^(?:رو|را|هم|هنوز|بعدا|بعداً|فردا|پس|امروز|امشب|ماهانه|ماهیانه|ماهی|هفتگی|هفته|ماه|ماهه|روز|سال|بعد|بعدش|بعدی|آینده|اینده|دیگه|دیگر|اول|اوایل|آخر|اواخر|وسط|نیمه|تا|ظرف|طی|حدود|حداکثر|حداقل|یک|یه|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|نه|ده|یازده|دوازده|پانزده|بیست|سی|[\d۰-۹]+|فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|ابان|آذر|اذر|دی|بهمن|اسفند|براشون|برامون|براش|برام|بهمون|بهشون|به|ما|برای|واسه|واسمون|ها|های|خودش|خودشون)$/;
+const BOUNDARY_WORD = /^(?:ولی|اما|و|ولیکن|بعدشم)$/;
+const PUNCTUATION = /[،,.؛;:!?؟]+$/;
+
+/**
+ * چه چیزی تحویل می‌شود: `goods`، `other` (سند، پول، خدمت، آدم) یا `implicit`
+ * (فاعل یا مفعولِ ناگفته).
+ */
+function deliveredThing(before, mode) {
+  const words = before.trim().split(/\s+/).filter(Boolean);
+  let marked = false;
+  let i = words.length - 1;
+  for (; i >= 0; i -= 1) {
+    const word = words[i].replace(PUNCTUATION, '');
+    if (!word) return 'implicit';
+    if (OBJECT_MARK.test(word) && word !== 'و') marked = true;
+    if (!FILLER.test(word)) break;
+    if (word !== words[i]) return 'implicit';
+  }
+  if (i < 0) return 'implicit';
+  const head = words[i].replace(PUNCTUATION, '');
+  const previous = (words[i - 1] || '').replace(PUNCTUATION, '');
+  if (BOUNDARY_WORD.test(head)) return 'implicit';
+  if (head === 'که') {
+    // «برای پارچه که …»، «کالایی که …»: موصول به اسمِ پیش از خودش برمی‌گردد.
+    const antecedent = previous;
+    if (GOODS_NOUN.test(antecedent) || GOODS_NOUN.test(`${(words[i - 2] || '')} ${antecedent}`)) return 'goods';
+    if (NOT_GOODS_HEAD.test(antecedent) || PERSON_HEAD.test(antecedent) || SERVICE_NOUN.test(antecedent)) return 'other';
+    return 'implicit';
+  }
+  if (NOT_GOODS_HEAD.test(head) || SERVICE_NOUN.test(head)) return 'other';
+  const person = PERSON_HEAD.test(head) || PERSON_TITLE.test(previous);
+  if (person) {
+    // «نصابش فردا میاد»، «نصاب رو میفرستن»: آدم، نه کالا. «از آقای رضایی
+    // تحویل می‌گیریم»، «تولیدی نوری تحویل میده»: کنندهٔ کار؛ کالا جای دیگری است.
+    const source = (words[PERSON_TITLE.test(previous) ? i - 2 : i - 1] || '') === 'از';
+    return mode === 'arrival' || (marked && !source) ? 'other' : 'implicit';
+  }
+  if (GOODS_NOUN.test(head) || GOODS_NOUN.test(`${previous} ${head}`)) return 'goods';
+  return 'implicit';
+}
+
+/** کالایی که بعداً تحویل می‌شود، و از طرف چه کسی: `supplier`، `us`، `unknown` یا `null`. */
+export function goodsDeliveryLater(facts) {
+  const text = foldText(facts?.evidence || facts?.utterance || '');
+  if (!text) return null;
+  const goodsSaid = GOODS_CONTEXT.test(text);
+  const serviceSaid = SERVICE_NOUN.test(text);
+  const found = [];
+  for (const [side, pattern, mode] of VERB_FORMS) {
+    for (const match of text.matchAll(pattern)) {
+      const thing = deliveredThing(text.slice(0, match.index), mode);
+      if (thing === 'other') continue;
+      // مفعول ناگفته فقط وقتی کالاست که جمله از کالا یا خرید گفته باشد؛ تحویلِ ما
+      // («سه ماه بعد تحویلش میدیم») هم، مگر جمله فقط از خدمت بگوید.
+      if (thing === 'implicit' && !goodsSaid && (side !== 'us' || serviceSaid)) continue;
+      found.push({ side, index: match.index });
+    }
+  }
+  if (!found.length) return null;
+  if (found.some((item) => item.side === 'us')) return 'us';
+  if (found.some((item) => item.side === 'supplier')) return 'supplier';
+  return 'unknown';
+}
+
+/** هر تحویل کالای بعدی — دورهٔ گفته‌شده زمان تحویل است، نه دورهٔ خدمت. */
+export function signalsGoodsDeliveryLater(facts) {
+  return goodsDeliveryLater(facts) !== null;
+}
+
+/** کالایی که تأمین‌کننده بعداً به ما می‌دهد: پولی که رفته، طلب از اوست. */
+export function awaitsSupplierGoods(facts) {
+  return ['supplier', 'unknown'].includes(goodsDeliveryLater(facts));
+}
+
+/**
+ * موضوع پول کالاست یا خدمت؟
+ *
+ * «پیش پرداخت خرید آهن شش ماه آینده»، «علی الحساب خرید مواد اولیه سه ماه
+ * آینده»، «بیعانه خرید پارچه شش ماهه»: دوره‌ای گفته شده، ولی آهن و پارچه ماه‌به‌ماه
+ * مصرف نمی‌شوند؛ پول رفته و تا کالا نرسد طلب از تأمین‌کننده است. «پشتیبانی
+ * دستگاه»، «بیمه انبار کالا» و «نگهداری تجهیزات» برعکس خدمت‌اند: اسمِ سرِ گروه
+ * (اولی) موضوع است و کالا فقط وصف آن. بی هیچ اسمی، «خرید»، هدف تولید یا فروش و
+ * دستهٔ «مواد و کالا» کالا را می‌گویند.
+ */
+export function namesGoodsSubject(facts) {
+  const text = foldText(`${facts?.evidence || ''} ${facts?.utterance || ''}`);
+  const goods = GOODS_NOUN.exec(text);
+  const service = SERVICE_NOUN.exec(text);
+  if (goods && service) return goods.index < service.index;
+  if (goods) return true;
+  if (service) return false;
+  return /خرید|سفارش/.test(text) || ['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)
+    || String(facts?.category || '').trim() === 'مواد و کالا';
+}
+
+/**
+ * پیش‌پرداخت خدمت یا پیش‌پرداخت خرید؟ — با واقعیت‌ها، نه با ترتیب قاعده‌ها.
+ *
+ * هر دو قاعده «ایجاد دارایی»اند و هم‌نسخه؛ اگر هر دو بگیرند، اولیِ فهرست برنده
+ * می‌شد و «پیش پرداخت قرارداد پشتیبانی یکساله» پیش‌پرداخت خریدی می‌شد که هرگز
+ * هزینه نمی‌شود. خدمت دوره‌دار یعنی دستهٔ دوره‌دار، یا دورهٔ صریحی که نه زمان
+ * تحویل کالاست و نه دورهٔ خرید کالا («خرید آهن شش ماه آینده»). واژهٔ «پیش
+ * پرداخت» این را عوض نمی‌کند: پیش‌پرداخت بودن را هر دو دارند.
+ */
+export function isPrepaidServiceCandidate(facts) {
+  if (isTimeBoundService(facts)) return true;
+  return hasExplicitServicePeriod(facts) && !signalsGoodsDeliveryLater(facts) && !namesGoodsSubject(facts);
 }
 
 /**
@@ -196,6 +367,8 @@ function signalsFutureBenefit(facts) {
   if (['resale', 'production', 'long-term-use'].includes(facts?.intendedUse)) return true;
   // «پیش‌پیش»، «بیعانه»، «علی‌الحساب»: پول رفته و هنوز هیچ چیزی مصرف نشده.
   if (facts?.prepaymentSignal === true) return true;
+  // پول کالایی که هنوز نرسیده: طلب از تأمین‌کننده، نه هزینه.
+  if (awaitsSupplierGoods(facts)) return true;
   return isTimeBoundService(facts);
 }
 

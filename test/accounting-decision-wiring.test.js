@@ -210,10 +210,12 @@ test('سناریوی ۱ — جواب کاربر، دارایی می‌سازد �
     const captured = pendingPrepaid('demo:1');
     assert.equal(captured.status, 'pending', 'تا جواب نیامده سندی زده نمی‌شود');
 
-    // «از همین ماه» بعد «یک سال» — همان دو کلیکی که کاربر می‌کند.
+    // «از همین ماه» بعد «یک سال» — همان دو کلیکی که کاربر می‌کند. جمله خودش
+    // «یک‌ساله» گفته، پس جواب شروع پایان را هم می‌سازد و «تا کِی؟» دوباره پرسیده
+    // نمی‌شود؛ کلیک دوم همان پایان را تأیید می‌کند.
     const first = store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodStart', value: 'this-month', actor: owner.id, today: OCCURRED });
-    assert.equal(first.decision.decisionStatus, DECISION_STATUS.NEEDS_USER_INPUT);
-    assert.equal(first.decision.question.fact, 'servicePeriodEnd', 'سؤال بعدی باید پایان دوره باشد');
+    assert.equal(first.decision.decisionStatus, DECISION_STATUS.DECIDED, 'طولِ گفته‌شده، پایان را می‌سازد');
+    assert.equal(first.decision.question, null, 'سؤال پایان دوره نباید پرسیده شود');
 
     const second = store.answerEventQuestion(db(), captured.id, { fact: 'servicePeriodEnd', value: 'one-year', actor: owner.id, today: OCCURRED });
     assert.equal(second.decision.decisionStatus, DECISION_STATUS.DECIDED);

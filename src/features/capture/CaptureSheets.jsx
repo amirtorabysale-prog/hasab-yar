@@ -1,5 +1,6 @@
 import TransactionJourney from '../activity/TransactionJourney.jsx';
 import { PersianDateInput } from '../../components/common.jsx';
+import { RecognitionNote } from '../../components/RecognitionNote.jsx';
 import { api } from '../../lib/api.js';
 import { Check, ChevronLeft, CircleAlert, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -110,7 +111,9 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
       reviewReasons: entry.reviewReasons || [],
     };
   });
-  const missingPaymentDate = (entry) => Boolean(entry.servicePeriodStart && !entry.occurredAt);
+  // فقط وقتی شروع پوشش گفته شده و تاریخ پرداخت نه (پارسر `paymentDateUnknown`
+  // می‌گذارد). دورهٔ فقط‌مدت از همان امروزِ پرداخت شروع می‌شود و پرسیدنی ندارد.
+  const missingPaymentDate = (entry) => Boolean(entry.paymentDateUnknown && !entry.occurredAt);
   const finish = () => missingPaymentDate(item) ? undefined : index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
   const statusCards = [
     ['ready', 'آماده ارسال', summary.ready, 'border-income/30 bg-income/5 text-income'],
@@ -149,6 +152,8 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
           ) : <div className="flex items-center justify-center gap-2"><span className="numbers text-4xl font-extrabold tracking-[-.02em]">{formatAmount(item.amount)}</span><Pencil size={16} className="text-muted" /></div>}
           <span className="mt-1 block text-[13px] text-muted">تومان</span>
         </button>
+        {/* دوره و برنامهٔ ماهانه از همان پیش‌نمایش سرور که ثبت می‌سازد. */}
+        {previewReady && <RecognitionNote recognition={preflight.previews[index]?.recognition} servicePeriod={preflight.previews[index]?.servicePeriod} decided={preflight.previews[index]?.decisionStatus === 'decided'} />}
 
         <div className="space-y-2">
           <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-white' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-white' : 'border-line bg-surface'}`}>هزینه</button></div></div>
@@ -223,7 +228,9 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
                 : 'معلوم نیست این خرج از کدام تنخواه بوده؛ خودت از فهرست بالا انتخاب کن.'}
             </p>
           </div>}
-          {missingPaymentDate(item) && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
+          {/* پرچم پایدار، نه «تاریخ هنوز خالی است»: ورودی با هر کلید ثبت می‌کند و با
+              نخستین تاریخ ناقص («1405/07/1») جمع می‌شد و روز ۱۸ را ۱ ثبت می‌کرد. */}
+          {item.paymentDateUnknown && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm">تاریخ واقعی پرداخت
             <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>
             <PersianDateInput value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
           </label>}

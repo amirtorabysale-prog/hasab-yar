@@ -12,11 +12,11 @@ import {
   correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition,
-  pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry, releaseHeldItem,
+  pendingConfirmations, confirmPending, handOverPending, answerPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
-  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
+  bounceCheque, cancelCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
   answerUnderstandingCase, commitUnderstandingCase, createUnderstandingCase, dismissUnderstandingCase, getUnderstandingCase, legacySnapshot,
   listUnderstandingCases, retryUnderstandingCase, scheduleShadowUnderstanding, sendUnderstandingToAccountant, understandingReport,
   closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling,
@@ -492,7 +492,14 @@ app.get('/api/accounting/journal/worklist', (request, response, next) => {
   try { return response.json(journalWorklistOverview(request.query)); } catch (error) { return next(error); }
 });
 app.post('/api/accounting/journal/:id/approval', (request, response, next) => {
-  try { return response.json(submitJournalApproval(request.params.id, request.body?.state, request.body?.reason || '')); }
+  try {
+    const result = submitJournalApproval(request.params.id, request.body?.state, request.body?.reason || '');
+    // سند دستیِ تأییدشده‌ای که پیش‌پرداخت یا درآمد انتقالی ساخت و برنامه ندارد،
+    // همین‌جا سؤال دوره را برمی‌گرداند — نه یک سال بعد در تراز.
+    if (result?.to !== 'approved') return response.json(result);
+    const unscheduled = unscheduledBalancesForEntry(request.params.id);
+    return response.json(unscheduled.length ? { ...result, unscheduledTimingBalances: unscheduled } : result);
+  }
   catch (error) { return next(error); }
 });
 app.get('/api/accounting/templates', (_request, response, next) => {
@@ -508,9 +515,15 @@ app.delete('/api/accounting/templates/:id', (request, response) => response.stat
 app.get('/api/accounting/periods', (_request, response) => response.json({ items: accountingPeriods(activeWorkspaceDatabase()), currentPeriod: periodForDate(new Date(), getSettings().timezone) }));
 app.post('/api/accounting/periods/:period/lock', (request, response, next) => {
   try {
+    // شناسایی‌های سررسیدرسیده پیش از بستن ثبت می‌شوند؛ وگرنه بستن دوره آن‌ها را
+    // پشت در می‌گذاشت و هزینه یا درآمد همان ماه بی‌صدا از دست می‌رفت.
+    runRecognition();
     const item = lockAccountingPeriod(activeWorkspaceDatabase(), request.params.period, request.user.id);
     recordAudit('lock', 'accounting_period', request.params.period, {});
-    return response.json({ item });
+    // ماندهٔ دوره‌دارِ بی‌برنامه بستن را رد نمی‌کند — دوره‌اش معلوم نیست که بگوییم
+    // در این ماه سهمی داشت — ولی بی‌صدا هم نمی‌ماند.
+    const unscheduled = unscheduledBalances().items;
+    return response.json(unscheduled.length ? { item, unscheduledTimingBalances: unscheduled } : { item });
   } catch (error) { return next(error); }
 });
 app.post('/api/accounting/periods/:period/reopen', (request, response, next) => {
@@ -592,6 +605,9 @@ app.post('/api/cheques/:id/clear', (request, response, next) => {
 });
 app.post('/api/cheques/:id/bounce', (request, response, next) => {
   try { return response.json({ item: bounceCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/cheques/:id/cancel', (request, response, next) => {
+  try { return response.json({ item: cancelCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
 });
 
 // لیست حقوق: فایل دفتر، سند، و تسویهٔ سه بدهیِ جدا.
@@ -676,6 +692,10 @@ app.post('/api/confirmations/:id/confirm', (request, response, next) => {
 app.post('/api/confirmations/:id/handover', (request, response, next) => {
   try { return response.json({ item: handOverPending(request.params.id) }); } catch (error) { return next(error); }
 });
+// جواب به سؤال موتور (دورهٔ پوشش، قابل استرداد، بابت پول) از همان کارت امروز.
+app.post('/api/confirmations/:id/answer', (request, response, next) => {
+  try { return response.json({ item: answerPending(request.params.id, { fact: request.body?.fact, value: request.body?.value, freeText: request.body?.freeText }) }); } catch (error) { return next(error); }
+});
 app.get('/api/automation-policy', (_request, response, next) => {
   try { return response.json({ policy: automationPolicy(), defaults: DEFAULT_AUTOMATION_POLICY }); } catch (error) { return next(error); }
 });
@@ -722,6 +742,24 @@ app.get('/api/financial-events/:id/audit', (request, response, next) => {
 });
 app.post('/api/financial-events/run-recognition', (_request, response, next) => {
   try { return response.json(runRecognition()); } catch (error) { return next(error); }
+});
+// اقلام شناسایی‌ای که دورهٔ بسته جلویشان را گرفته، و ثبت جبرانیِ تأییدشدهٔ حسابدار.
+app.get('/api/financial-events/blocked-recognition', (_request, response, next) => {
+  try { return response.json(blockedRecognition()); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/recognition-items/:key/catch-up', (request, response, next) => {
+  try { return response.status(201).json(catchUpRecognition(request.params.key, String(request.body?.reason || '').slice(0, 500))); } catch (error) { return next(error); }
+});
+// قلمی که تور ایمنیِ مانده نگه داشته، با دلیل حسابدار کنار می‌رود.
+app.post('/api/financial-events/recognition-items/:key/release', (request, response, next) => {
+  try { return response.json(releaseHeldItem(request.params.key, String(request.body?.reason || '').slice(0, 500))); } catch (error) { return next(error); }
+});
+// ماندهٔ پیش‌پرداخت و درآمد انتقالیِ بی‌برنامه، و جواب حسابدار به سؤال دوره‌اش.
+app.get('/api/financial-events/unscheduled-balances', (_request, response, next) => {
+  try { return response.json(unscheduledBalances()); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/unscheduled-balances/:accountId/schedule', (request, response, next) => {
+  try { return response.status(201).json(scheduleBalance(request.params.accountId, request.body || {})); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/:id/decision', (request, response, next) => {
   try { return response.json(eventDecision(request.params.id)); } catch (error) { return next(error); }
@@ -1206,14 +1244,33 @@ app.use((error, _request, response, _next) => {
     ...(error.provider ? { provider: error.provider } : {}),
     ...(error.requiresAction ? { requiresAction: true } : {}),
     ...(error.details ? { details: error.details } : {}),
+    // سؤالی که ثبت را نگه داشته (دورهٔ پوشش، کدام قرارداد، پایان یا ادامه) و
+    // نامزدهایش، تا رابط همان را بپرسد نه پیام خام را.
+    ...(error.question ? { question: error.question } : {}),
+    ...(error.candidates ? { candidates: error.candidates } : {}),
   });
 });
 
+/**
+ * کار دقیقه‌ای دفتر: قاعده‌های تکرارشونده و شناسایی ماهانهٔ پیش‌پرداخت و درآمد
+ * انتقالی.
+ *
+ * شناسایی تا امروز فقط یک مسیر HTTP داشت که هیچ صفحه‌ای صدایش نمی‌زد؛ یعنی
+ * پیش‌پرداخت تا ابد دارایی و درآمد انتقالی تا ابد بدهی می‌ماند. اجرای خودکار
+ * حدس نیست: هر رویداد وقتی ثبت شده که کاربر یا حسابدار تأییدش کرده، اجرا فقط
+ * قلمِ سررسیدرسیدهٔ رویداد ثبت‌شده را می‌زند، تکرارش سند دوم نمی‌سازد و در دورهٔ
+ * بسته چیزی نمی‌نشاند. هر دفتر جدا: خطای یکی، بقیه را نگه نمی‌دارد.
+ */
 function runRecurringJob() {
-  try {
-    for (const workspace of allWorkspaces()) runInWorkspace(workspace.id, { role: 'owner' }, () => materializeRecurringRules());
+  let workspaces = [];
+  try { workspaces = allWorkspaces(); }
+  catch (error) { console.error('Recurring job could not list workspaces:', error); return; }
+  for (const workspace of workspaces) {
+    try { runInWorkspace(workspace.id, { role: 'owner' }, () => materializeRecurringRules()); }
+    catch (error) { console.error(`Recurring materialization failed for workspace ${workspace.id}:`, error); }
+    try { runInWorkspace(workspace.id, { role: 'owner' }, () => runRecognition()); }
+    catch (error) { console.error(`Recognition run failed for workspace ${workspace.id}:`, error); }
   }
-  catch (error) { console.error('Recurring materialization failed:', error); }
 }
 
 runRecurringJob();

@@ -380,6 +380,7 @@ export const api = {
   confirmations: () => request('/api/confirmations'),
   confirmPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({}) }),
   handOverPending: (id) => request(`/api/confirmations/${encodeURIComponent(id)}/handover`, { method: 'POST', body: JSON.stringify({}) }),
+  answerPending: (id, answer) => request(`/api/confirmations/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify(answer || {}) }),
   // صف بررسی حسابدار: رویدادهایی که موتور اطمینان ثبتشان را متوقف کرده است.
   reviewQueue: (limit = 50) => request(`/api/financial-events/review-queue?limit=${encodeURIComponent(limit)}`),
   journalReviewHistory: (id) => request(`/api/accounting/journal/${encodeURIComponent(id)}/review-history`),
@@ -394,6 +395,14 @@ export const api = {
   approveEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
   reverseEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) }),
   rejectEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  // شناسایی ماهانهٔ پیش‌پرداخت و درآمد انتقالی: اجرای اقلام سررسیدرسیده، اقلامی
+  // که دورهٔ بسته جلویشان را گرفته، و ثبت جبرانیِ تأییدشدهٔ حسابدار.
+  runRecognition: () => request('/api/financial-events/run-recognition', { method: 'POST', body: '{}' }),
+  blockedRecognition: () => request('/api/financial-events/blocked-recognition'),
+  catchUpRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/catch-up`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  releaseHeldRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/release`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  unscheduledBalances: () => request('/api/financial-events/unscheduled-balances'),
+  scheduleBalance: (accountId, input) => request(`/api/financial-events/unscheduled-balances/${encodeURIComponent(accountId)}/schedule`, { method: 'POST', body: JSON.stringify(input || {}) }),
   journalTemplates: () => request('/api/accounting/templates'),
   saveJournalTemplate: (payload) => request(payload.id ? `/api/accounting/templates/${encodeURIComponent(payload.id)}` : '/api/accounting/templates', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),
   deleteJournalTemplate: (id) => request(`/api/accounting/templates/${encodeURIComponent(id)}`, { method: 'DELETE' }),

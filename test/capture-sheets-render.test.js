@@ -26,7 +26,15 @@ test('capture sheets render saved decisions and unresolved bank honestly', async
     const covered={...item,category:'نرم‌افزار و اشتراک',servicePeriodStart:'2026-11-01',occurredAt:'2026-10-07'};
     const dated=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'امروز پرداخت؛ بهره‌برداری ماه آینده',transactions:[covered]}}));
     assert.doesNotMatch(dated,/تاریخ واقعی پرداخت/);
-    const missing=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'شروع پوشش ماه آینده',transactions:[{...covered,occurredAt:null}]}}));
+    // شروع پوشش گفته شده و تاریخ پرداخت نه: پارسر `paymentDateUnknown` می‌گذارد.
+    const missing=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'شروع پوشش ماه آینده',transactions:[{...covered,occurredAt:null,paymentDateUnknown:true}]}}));
     assert.match(missing,/تاریخ واقعی پرداخت/);
+    assert.match(missing,/disabled=""[^>]*>.*تأیید و ارسال/);
+    // تاریخ نیمه‌تایپ‌شده («1405/07/1») ورودی را جمع نمی‌کند؛ کاربر روز را کامل می‌نویسد.
+    const typing=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'شروع پوشش ماه آینده',transactions:[{...covered,occurredAt:'2026-09-23',paymentDateUnknown:true}]}}));
+    assert.match(typing,/تاریخ واقعی پرداخت/);
+    // «بیمه یک ساله … دادیم»: دورهٔ فقط‌مدت از امروزِ پرداخت شروع می‌شود؛ پرسشی نیست.
+    const durationOnly=renderToStaticMarkup(React.createElement(ConfirmationSheet,{...props,result:{transcript:'بیمه یک ساله مغازه ۱۲ میلیون دادیم',transactions:[{...covered,occurredAt:null}]}}));
+    assert.doesNotMatch(durationOnly,/تاریخ واقعی پرداخت/);
   } finally { await vite.close(); }
 });

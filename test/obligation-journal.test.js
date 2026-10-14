@@ -59,13 +59,19 @@ test('بدهی باز هم سند می‌خورد و سمت مقابلش پرد�
   });
 });
 
-// ویرایش نباید سند دوم بسازد؛ شناسهٔ منبع یکتاست.
-test('ویرایش تعهد سند دوم نمی‌سازد', () => {
+// ویرایش عنوان سند تازه نمی‌سازد؛ ویرایش مبلغ سند قبلی را برمی‌گرداند و سند
+// تازه می‌زند، تا فهرست و دفتر کل یک عدد بگویند. (پیش از این، این آزمون همان
+// خطا را قفل کرده بود: فهرست ۱٫۵ میلیون و دفتر ۱ میلیون.)
+test('ویرایش تعهد: عنوان سند نمی‌سازد، مبلغ سند را برمی‌گرداند و تازه می‌زند', () => {
   inPrimary(() => {
     const item = database.saveObligation({ title: 'طلب ویرایشی', amount: 1_000_000, direction: 'receivable' });
     const before = accounting.listJournal(db(), { limit: 300 }).items.length;
-    database.saveObligation({ id: item.id, title: 'طلب ویرایشی', amount: 1_500_000, direction: 'receivable' });
-    assert.equal(accounting.listJournal(db(), { limit: 300 }).items.length, before, 'ویرایش نباید سند تازه بزند');
+    database.saveObligation({ id: item.id, title: 'طلب ویرایشی تازه', amount: 1_000_000, direction: 'receivable' });
+    assert.equal(accounting.listJournal(db(), { limit: 300 }).items.length, before, 'ویرایش عنوان نباید سند تازه بزند');
+    const edited = database.saveObligation({ id: item.id, title: 'طلب ویرایشی', amount: 1_500_000, direction: 'receivable' });
+    assert.equal(accounting.listJournal(db(), { limit: 300 }).items.length, before + 2, 'برگشت سند قبلی و سند تازه');
+    assert.equal(edited.remaining, 1_500_000);
+    assert.equal(edited.journalStatus, 'posted');
     balanced();
   });
 });

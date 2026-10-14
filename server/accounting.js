@@ -518,7 +518,17 @@ export function reverseTransactionJournal(database, transactionId, occurredAt, {
   });
 }
 
-export function postInvoiceJournal(database, invoice, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+/**
+ * سند صدور فاکتور.
+ *
+ * `deferrals` سهمی از ردیف‌های خدمت است که موتور تصمیم به حساب دیگری برده:
+ * حق‌بیمه یا لایسنس یک‌ساله در فاکتور خرید «پیش‌پرداخت» است و اشتراک
+ * دوازده‌ماههٔ فروخته‌شده «درآمد انتقالی»؛ هر دو ماه‌به‌ماه با برنامهٔ شناسایی
+ * به هزینه و درآمد می‌روند. پیش از این کل مبلغ همان روز صدور به حساب دستهٔ
+ * فاکتور می‌نشست. حساب طرف (پرداختنی/دریافتنی)، مالیات و موجودی عوض نمی‌شوند:
+ * تاریخ فاکتور نقطهٔ مالیات و تعهد است، نه تاریخ شناسایی هزینه یا درآمد.
+ */
+export function postInvoiceJournal(database, invoice, { createdBy = null, timeZone = 'Asia/Tehran', deferrals = [] } = {}) {
   ensureAccountingSchema(database);
   const amount = Math.round(Number(invoice.total));
   if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ فاکتور معتبر نیست.');
@@ -535,6 +545,12 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
   const tax = Math.max(0, Math.round(Number(invoice.tax) || 0));
   const netAmount = amount - tax;
   if (netAmount < 0) throw accountingError('مالیات فاکتور از مبلغ نهایی بیشتر است.', 'INVOICE_TAX_INVALID');
+  const deferralLines = (Array.isArray(deferrals) ? deferrals : []).map((line) => {
+    const value = Math.round(Number(line?.amount));
+    if (!line?.accountId || !Number.isSafeInteger(value) || value <= 0) throw accountingError('سهم ردیف خدمت فاکتور معتبر نیست.', 'INVOICE_DEFERRAL_INVALID');
+    return { accountId: line.accountId, amount: value, analyticId: line.analyticId || null, description: line.description || null };
+  });
+  const deferredTotal = deferralLines.reduce((sum, line) => sum + line.amount, 0);
   let lines;
   if (documentType === 'purchase') {
     const inventoryLines = (invoice.items || []).filter((item) => item.productId && Number(item.inventoryCost) > 0).map((item) => {
@@ -545,10 +561,16 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
     const inventoryTotal = inventoryLines.reduce((sum, line) => sum + line.debit, 0);
     const serviceBase = netAmount - inventoryTotal;
     if (serviceBase < 0) throw accountingError('ارزش موجودی ردیف‌های خرید از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_INVENTORY_VALUE_INVALID');
-    lines = [...inventoryLines, ...(serviceBase > 0 ? [{ accountId: category, debit: serviceBase }] : []),
+    const categoryBase = serviceBase - deferredTotal;
+    if (categoryBase < 0) throw accountingError('سهم پیش‌پرداخت ردیف‌های خدمت از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_DEFERRAL_INVALID');
+    lines = [...inventoryLines, ...(categoryBase > 0 ? [{ accountId: category, debit: categoryBase }] : []),
+      ...deferralLines.map(({ amount: value, ...line }) => ({ ...line, debit: value })),
       ...(tax > 0 ? [{ accountId: inputTaxLedgerAccount(database), debit: tax }] : []), { accountId: counterparty, credit: amount, analyticId: counterpartyAnalytic }];
   } else {
-    lines = [{ accountId: counterparty, debit: amount, analyticId: counterpartyAnalytic }, ...(netAmount > 0 ? [{ accountId: category, credit: netAmount }] : []),
+    const categoryBase = netAmount - deferredTotal;
+    if (categoryBase < 0) throw accountingError('سهم درآمد انتقالی ردیف‌های خدمت از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_DEFERRAL_INVALID');
+    lines = [{ accountId: counterparty, debit: amount, analyticId: counterpartyAnalytic }, ...(categoryBase > 0 ? [{ accountId: category, credit: categoryBase }] : []),
+      ...deferralLines.map(({ amount: value, ...line }) => ({ ...line, credit: value })),
       ...(tax > 0 ? [{ accountId: outputTaxLedgerAccount(database), credit: tax }] : [])];
   }
   return insertJournal(database, {
@@ -1303,11 +1325,51 @@ export function accountingPeriods(database) {
     reopened_at AS reopenedAt,reopen_reason AS reopenReason FROM accounting_periods ORDER BY period DESC`).all();
 }
 
+/**
+ * اقلام شناسایی رویدادهای ثبت‌شده که تا پایان این دوره باید سند می‌خوردند و
+ * هنوز نخورده‌اند — در همین دوره یا دوره‌های باز پیش از آن.
+ *
+ * تاریخ سند هر قلم، دیرترِ تاریخ قلم و تاریخ پرداخت است؛ همان قاعدهٔ اجرای
+ * شناسایی. اینجا مستقیم خوانده می‌شود چون لایهٔ رویداد خودش به این فایل وابسته
+ * است.
+ */
+function unpostedRecognitionThrough(database, period, timeZone = 'Asia/Tehran') {
+  const exists = database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recognition_schedule_items'").get();
+  if (!exists) return [];
+  const locked = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'").all().map((row) => row.period));
+  return database.prepare(`SELECT i.key,i.period_key AS periodKey,i.recognition_date AS recognitionDate,
+      json_extract(e.payload,'$.occurredAt') AS occurredAt,
+      EXISTS (SELECT 1 FROM financial_event_audit a WHERE a.event_id=i.event_id AND a.stage='recognition-held-balance'
+        AND json_extract(a.detail,'$.key')=i.key) AS held
+    FROM recognition_schedule_items i JOIN financial_events e ON e.id=i.event_id
+    WHERE i.status='planned' AND e.status='posted' AND i.recognition_date IS NOT NULL`).all()
+    .map((row) => {
+      const floor = row.occurredAt && new Date(row.occurredAt) > new Date(row.recognitionDate) ? row.occurredAt : row.recognitionDate;
+      return { ...row, period: periodForDate(floor, timeZone) };
+    })
+    .filter((row) => row.period <= period && !locked.has(row.period));
+}
+
 export function lockAccountingPeriod(database, period, userId) {
   ensureAccountingSchema(database);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(period))) throw accountingError('دوره باید به شکل YYYY-MM باشد.');
   const balance = trialBalance(database);
   if (!balance.balanced) throw accountingError('دفتر کل نامتوازن است و دوره قابل بستن نیست.', 'TRIAL_BALANCE_UNBALANCED', 409);
+  // دوره‌ای که شناسایی پیش‌پرداخت یا درآمد انتقالی‌اش هنوز سند نخورده، بسته
+  // نمی‌شود: بستنش آن قلم‌ها را پشت دورهٔ بسته می‌گذاشت و هزینه یا درآمد همان
+  // ماه بی‌صدا از سود و زیانش جا می‌ماند.
+  const pending = unpostedRecognitionThrough(database, String(period));
+  const unposted = pending.filter((row) => !row.held);
+  if (unposted.length) {
+    const months = [...new Set(unposted.map((row) => row.periodKey))].slice(0, 6).join('، ');
+    throw Object.assign(accountingError(`${unposted.length} قلم شناسایی پیش‌پرداخت یا درآمد انتقالی (${months}) تا پایان این دوره هنوز سند نخورده؛ پیش از بستن، شناسایی ماهانه را اجرا کن.`, 'RECOGNITION_DUE_BEFORE_LOCK', 409), { details: { items: unposted.length } });
+  }
+  // قلمی که ماندهٔ حسابش کمتر از آن بود (استرداد بیرون از برنامه) با اجرای دوباره
+  // ثبت نمی‌شود؛ پیام همان را می‌گوید تا حسابدار تکلیفش را روشن کند.
+  if (pending.length) {
+    const months = [...new Set(pending.map((row) => row.periodKey))].slice(0, 6).join('، ');
+    throw Object.assign(accountingError(`${pending.length} قلم شناسایی (${months}) چون ماندهٔ حساب پیش‌پرداخت یا درآمد انتقالی از آن کمتر است نگه داشته شده؛ پیش از بستن، در صف حسابدار تکلیفشان را روشن کن.`, 'RECOGNITION_HELD_BEFORE_LOCK', 409), { details: { items: pending.length } });
+  }
   database.prepare(`INSERT INTO accounting_periods (period,status,locked_by,locked_at) VALUES (?,'locked',?,CURRENT_TIMESTAMP)
     ON CONFLICT(period) DO UPDATE SET status='locked',locked_by=excluded.locked_by,locked_at=CURRENT_TIMESTAMP`).run(period, userId || null);
   return accountingPeriods(database).find((item) => item.period === period);
