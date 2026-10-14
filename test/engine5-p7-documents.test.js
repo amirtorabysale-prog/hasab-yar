@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { tempDatabase } from './helpers/tempPath.js';
 import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 import { chequeSeriesCount, detectVoiceIntent, maskCoveragePhrases } from '../shared/voiceIntent.js';
+import { runVoice } from './helpers/voicePipeline.js';
 
 /**
  * موتور ۵ — بستهٔ «سندهای پایهٔ دیگر»: چک، فاکتور، طلب و بدهی، قاعدهٔ تکرار،
@@ -95,6 +96,33 @@ test('چکی که طرف مقابل با فعل سوم‌شخص به ما داد
   ]) assert.equal(intent(text)?.direction, 'payable', text);
   // میان دو نفر دیگر: جهتی برای ما ندارد، حدس زده نمی‌شود.
   assert.equal(intent('آقای احمدی یه چک ۵ میلیونی به آقای رضایی داد'), null);
+  // طرف بیرونی با نقش یا ضمیر ملکی همچنان دهندهٔ چک است.
+  for (const text of [
+    'مدیرعامل شرکت پارس یه چک ۲۰ میلیونی داد',
+    'مستاجرمون یه چک ۶۰ میلیونی داد',
+    'مشتریمون یه چک ۵ میلیونی داد',
+  ]) assert.equal(intent(text)?.direction, 'receivable', text);
+});
+
+test('چکی که خودیِ شرکت داد، یا برگشتِ چک خودمان، چک دریافتی نیست و به حسابدار می‌رود', () => {
+  for (const text of [
+    // جمله‌های بازبین، عیناً.
+    'مدیرعامل از حساب شخصیش چک ۲۰ میلیونی اجاره مهر رو داد',
+    'حسابدارمون چک ۲۰ میلیونی اجاره رو داد',
+    'شریکم چک ۲۰ میلیونی اجاره دفتر رو داد',
+    'کارمندمون یه چک ۵ میلیونی برای تعمیرات داد',
+    'آقای احمدی چک ۵ میلیونی ما رو برگشت داد',
+    'آقای رضایی چک ۱۰ میلیونی مارو پس داد',
+    // خانواده: «به ما داد» از خودی، فاصلهٔ «مدیر عامل»، عودت، «چکمون»، منشی.
+    'مدیر عامل یه چک ۲۰ میلیونی بهمون داد',
+    'آقای رضایی چکمون رو عودت داد',
+    'منشی شرکت چک ۵ میلیونی رو داد',
+    'سهامدارمون یه چک ۵۰ میلیونی داد',
+  ]) {
+    assert.equal(intent(text), null, text);
+    const routed = runVoice(text, { now: NOW });
+    assert.equal(routed.items.every((item) => item.outcome === 'accountant'), true, `${text} → ${routed.path}`);
+  }
 });
 
 // ---------------------------------------------------------------------------
