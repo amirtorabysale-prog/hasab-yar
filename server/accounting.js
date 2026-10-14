@@ -518,7 +518,17 @@ export function reverseTransactionJournal(database, transactionId, occurredAt, {
   });
 }
 
-export function postInvoiceJournal(database, invoice, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
+/**
+ * سند صدور فاکتور.
+ *
+ * `deferrals` سهمی از ردیف‌های خدمت است که موتور تصمیم به حساب دیگری برده:
+ * حق‌بیمه یا لایسنس یک‌ساله در فاکتور خرید «پیش‌پرداخت» است و اشتراک
+ * دوازده‌ماههٔ فروخته‌شده «درآمد انتقالی»؛ هر دو ماه‌به‌ماه با برنامهٔ شناسایی
+ * به هزینه و درآمد می‌روند. پیش از این کل مبلغ همان روز صدور به حساب دستهٔ
+ * فاکتور می‌نشست. حساب طرف (پرداختنی/دریافتنی)، مالیات و موجودی عوض نمی‌شوند:
+ * تاریخ فاکتور نقطهٔ مالیات و تعهد است، نه تاریخ شناسایی هزینه یا درآمد.
+ */
+export function postInvoiceJournal(database, invoice, { createdBy = null, timeZone = 'Asia/Tehran', deferrals = [] } = {}) {
   ensureAccountingSchema(database);
   const amount = Math.round(Number(invoice.total));
   if (!Number.isSafeInteger(amount) || amount <= 0) throw accountingError('مبلغ فاکتور معتبر نیست.');
@@ -535,6 +545,12 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
   const tax = Math.max(0, Math.round(Number(invoice.tax) || 0));
   const netAmount = amount - tax;
   if (netAmount < 0) throw accountingError('مالیات فاکتور از مبلغ نهایی بیشتر است.', 'INVOICE_TAX_INVALID');
+  const deferralLines = (Array.isArray(deferrals) ? deferrals : []).map((line) => {
+    const value = Math.round(Number(line?.amount));
+    if (!line?.accountId || !Number.isSafeInteger(value) || value <= 0) throw accountingError('سهم ردیف خدمت فاکتور معتبر نیست.', 'INVOICE_DEFERRAL_INVALID');
+    return { accountId: line.accountId, amount: value, analyticId: line.analyticId || null, description: line.description || null };
+  });
+  const deferredTotal = deferralLines.reduce((sum, line) => sum + line.amount, 0);
   let lines;
   if (documentType === 'purchase') {
     const inventoryLines = (invoice.items || []).filter((item) => item.productId && Number(item.inventoryCost) > 0).map((item) => {
@@ -545,10 +561,16 @@ export function postInvoiceJournal(database, invoice, { createdBy = null, timeZo
     const inventoryTotal = inventoryLines.reduce((sum, line) => sum + line.debit, 0);
     const serviceBase = netAmount - inventoryTotal;
     if (serviceBase < 0) throw accountingError('ارزش موجودی ردیف‌های خرید از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_INVENTORY_VALUE_INVALID');
-    lines = [...inventoryLines, ...(serviceBase > 0 ? [{ accountId: category, debit: serviceBase }] : []),
+    const categoryBase = serviceBase - deferredTotal;
+    if (categoryBase < 0) throw accountingError('سهم پیش‌پرداخت ردیف‌های خدمت از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_DEFERRAL_INVALID');
+    lines = [...inventoryLines, ...(categoryBase > 0 ? [{ accountId: category, debit: categoryBase }] : []),
+      ...deferralLines.map(({ amount: value, ...line }) => ({ ...line, debit: value })),
       ...(tax > 0 ? [{ accountId: inputTaxLedgerAccount(database), debit: tax }] : []), { accountId: counterparty, credit: amount, analyticId: counterpartyAnalytic }];
   } else {
-    lines = [{ accountId: counterparty, debit: amount, analyticId: counterpartyAnalytic }, ...(netAmount > 0 ? [{ accountId: category, credit: netAmount }] : []),
+    const categoryBase = netAmount - deferredTotal;
+    if (categoryBase < 0) throw accountingError('سهم درآمد انتقالی ردیف‌های خدمت از مبلغ خالص فاکتور بیشتر است.', 'INVOICE_DEFERRAL_INVALID');
+    lines = [{ accountId: counterparty, debit: amount, analyticId: counterpartyAnalytic }, ...(categoryBase > 0 ? [{ accountId: category, credit: categoryBase }] : []),
+      ...deferralLines.map(({ amount: value, ...line }) => ({ ...line, credit: value })),
       ...(tax > 0 ? [{ accountId: outputTaxLedgerAccount(database), credit: tax }] : [])];
   }
   return insertJournal(database, {

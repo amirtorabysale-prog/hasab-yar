@@ -438,3 +438,197 @@ test('ویرایش و حذف طلب/بدهی سند را هم عوض می‌کن
   const open = database.saveObligation({ title: 'بدهی باز', contactId: vendor.id, amount: 2_000_000, direction: 'payable' });
   assert.equal(database.saveObligation({ id: open.id, title: 'بدهی باز', contactId: vendor.id, amount: 2_000_000, direction: 'payable', status: 'cancelled' }).status, 'open');
 }));
+
+// ---------------------------------------------------------------------------
+// خوشهٔ invoice-path-bypasses-engine — فاکتور همان ماهیت پرداخت نقدی را دارد.
+// ---------------------------------------------------------------------------
+
+const { invoiceDraftPayload } = await import('../shared/voiceIntent.js');
+const store = await import('../server/financialEventStore.js');
+const ISSUED = '2026-10-10T08:30:00.000Z';
+const invoiceJournal = (invoice) => activeWorkspaceDatabase().prepare(`SELECT id FROM journal_entries
+  WHERE source_type='invoice' AND source_id=? AND entry_kind='normal' ORDER BY revision DESC LIMIT 1`).get(invoice.id)?.id;
+const invoiceEvents = (invoice) => activeWorkspaceDatabase().prepare(`SELECT fe.id,fe.status,fe.journal_entry_id AS journalEntryId
+  FROM financial_events fe JOIN invoice_items ii ON fe.source_event_id='invoice-line:' || ii.id WHERE ii.invoice_id=?`).all(invoice.id);
+const accountNameOf = (entryId, kind) => activeWorkspaceDatabase().prepare(`SELECT a.name FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id
+  WHERE l.entry_id=? AND a.source_kind=?`).get(entryId, kind)?.name;
+/** همان payload کارت فاکتور در App.jsx. */
+const voiceInvoice = (text) => {
+  const found = intent(text);
+  assert.equal(found?.intent, 'invoice', text);
+  const payload = invoiceDraftPayload(found);
+  return { found, payload, item: database.createInvoice({ ...payload, documentType: found.documentType, customerName: found.contactName || '', ...(payload.issueNow ? { issuedAt: ISSUED } : {}) }) };
+};
+
+for (const mode of ['engine-on', 'engine-off']) {
+  test(`فاکتور خرید بیمه، لایسنس و اجارهٔ شش‌ماهه پیش‌پرداخت با برنامهٔ ماهانه است (${mode})`, () => inWorkspace(freshWorkspace(`فاکتور خرید ${mode}`), () => {
+    if (mode === 'engine-on') engineOn();
+    for (const [category, items, amount, months, prepaid, contact] of [
+      ['بیمه', [{ title: 'حق بیمه آتش سوزی یکساله انبار', unitPrice: 12_000_000 }], 12_000_000, 12, 'پیش‌پرداخت — بیمه', 'بیمه ایران'],
+      ['نرم‌افزار و اشتراک', [{ title: 'لایسنس یک ساله نرم افزار حسابداری (مهر ۱۴۰۵ تا شهریور ۱۴۰۶)', unitPrice: 24_000_000 }], 24_000_000, 12, 'پیش‌پرداخت — نرم‌افزار و اشتراک', 'شرکت نرم افزاری'],
+      ['اجاره', [{ title: 'اجاره شش ماهه دفتر', quantity: 6, unitPrice: 5_000_000 }], 30_000_000, 6, 'پیش‌پرداخت — اجاره', 'آقای رضایی'],
+    ]) {
+      const invoice = database.createInvoice({ documentType: 'purchase', category, customerName: contact, items, issueNow: true, issuedAt: ISSUED });
+      assert.equal(invoice.status, 'sent', category);
+      const entry = invoiceJournal(invoice);
+      assert.deepEqual(lines(entry), [['prepaid-asset', amount], ['vendor-payable', amount]], category);
+      assert.equal(accountNameOf(entry, 'prepaid-asset'), prepaid);
+      const [event] = invoiceEvents(invoice);
+      assert.equal(event.status, 'posted');
+      assert.equal(event.journalEntryId, entry);
+      assert.deepEqual(schedule(event.id), { count: months, total: amount }, category);
+      // پرداخت فقط حساب پرداختنی را با بانک می‌بندد؛ هزینه‌ای نمی‌سازد.
+      database.recordInvoicePayment(invoice.id, { account: 'cash', occurredAt: ISSUED });
+    }
+    assert.equal(kindBalance('expense-category'), 0, 'هیچ هزینهٔ یک‌جایی ساخته نشد');
+    assert.equal(kindBalance('vendor-payable'), 0);
+    // شناسایی ماه‌به‌ماه همان حساب پیش‌پرداخت را خالی می‌کند.
+    const before = kindBalance('prepaid-asset');
+    const run = store.postDueRecognitionItems(activeWorkspaceDatabase(), { today: '2026-12-25T00:00:00.000Z' });
+    assert.ok(run.posted >= 3, JSON.stringify(run));
+    assert.equal(kindBalance('expense-category') + kindBalance('prepaid-asset'), before);
+  }));
+}
+
+test('فاکتور خرید با مالیات: مالیات و حساب پرداختنی همان قبلی؛ فقط سهم خدمت پیش‌پرداخت است', () => inWorkspace(freshWorkspace('فاکتور مالیات'), () => {
+  const invoice = database.createInvoice({ documentType: 'purchase', category: 'بیمه', customerName: 'بیمه ایران', tax: 1_080_000,
+    items: [{ title: 'حق بیمه آتش سوزی یکساله انبار', unitPrice: 12_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(invoice)), [['prepaid-asset', 12_000_000], ['system', 1_080_000], ['vendor-payable', 13_080_000]]);
+  assert.equal(accountNameOf(invoiceJournal(invoice), 'system'), 'اعتبار مالیات و عوارض خرید');
+  assert.deepEqual(schedule(invoiceEvents(invoice)[0].id), { count: 12, total: 12_000_000 });
+  assert.equal(kindBalance('expense-category'), 0);
+}));
+
+test('فاکتور فروش اشتراک یا پشتیبانی دوازده‌ماهه درآمد انتقالی است، نه فروش امروز', () => inWorkspace(freshWorkspace('فاکتور فروش'), () => {
+  const form = database.createInvoice({ documentType: 'sales', category: 'خدمات', customerName: 'شرکت آلفا',
+    items: [{ title: 'اشتراک دوازده ماهه نرم افزار (مهر ۱۴۰۵ تا شهریور ۱۴۰۶)', unitPrice: 36_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(form)), [['customer-receivable', 36_000_000], ['deferred-revenue', 36_000_000]]);
+  assert.deepEqual(schedule(invoiceEvents(form)[0].id), { count: 12, total: 36_000_000 });
+  // جمله‌های کاربر، عیناً — با «صادر کن» و «صادرش کن».
+  for (const [text, amount, contact] of [
+    ['فاکتور فروش قرارداد پشتیبانی یک ساله ۲۴ میلیون برای شرکت بتا صادر کن', 24_000_000, 'شرکت بتا'],
+    ['فاکتور فروش اشتراک دوازده ماهه نرم افزار ۳۶ میلیون به شرکت آلفا صادر کن', 36_000_000, 'شرکت آلفا'],
+    ['فاکتور فروش اشتراک دوازده ماهه نرم افزار ۳۶ میلیون به شرکت آلفا صادرش کن', 36_000_000, 'شرکت آلفا'],
+  ]) {
+    const { found, item } = voiceInvoice(text);
+    assert.equal(found.contactName, contact, `فعل صدور جزو نام نیست: ${text}`);
+    assert.equal(item.status, 'sent', text);
+    const entry = invoiceJournal(item);
+    assert.deepEqual(lines(entry), [['customer-receivable', amount], ['deferred-revenue', amount]], text);
+    assert.equal(accountNameOf(entry, 'customer-receivable'), `حساب دریافتنی — ${contact}`);
+    assert.deepEqual(schedule(invoiceEvents(item)[0].id), { count: 12, total: amount }, text);
+  }
+  assert.equal(kindBalance('income-category'), 0, 'هیچ درآمد یک‌جایی ساخته نشد');
+  // وصول فقط حساب دریافتنی را می‌بندد؛ درآمد همچنان ماه‌به‌ماه است.
+  database.recordInvoicePayment(form.id, { account: 'cash', occurredAt: ISSUED });
+  assert.equal(kindBalance('income-category'), 0);
+}));
+
+test('پیش‌نویس صوتی فاکتور خرید دستهٔ خدمت را از گفته می‌گیرد و صدورش پیش‌پرداخت است', () => inWorkspace(freshWorkspace('فاکتور صوتی خرید'), () => {
+  for (const [text, category, amount, months] of [
+    ['فاکتور خرید لایسنس یک ساله ۲۴ میلیون از شرکت نرم افزاری', 'نرم‌افزار و اشتراک', 24_000_000, 12],
+    ['فاکتور خرید بیمه یک ساله انبار ۱۲ میلیون از بیمه ایران', 'بیمه', 12_000_000, 12],
+    ['فاکتور خرید اجاره شش ماهه دفتر ۳۰ میلیون', 'اجاره', 30_000_000, 6],
+    // تایپ بی‌دقت و رقم لاتین.
+    ['فاکتور خريد بيمه يکساله انبار 12 میلیون از بیمه ایران', 'بیمه', 12_000_000, 12],
+  ]) {
+    const { payload, item } = voiceInvoice(text);
+    assert.equal(payload.category, category, text);
+    assert.equal(item.status, 'draft', text);
+    assert.equal(item.category, category, text);
+    const issued = database.issueInvoice(item.id, { issuedAt: ISSUED });
+    const entry = invoiceJournal(issued);
+    assert.deepEqual(lines(entry), [['prepaid-asset', amount], ['vendor-payable', amount]], text);
+    assert.deepEqual(schedule(invoiceEvents(issued)[0].id), { count: months, total: amount }, text);
+  }
+  assert.equal(kindBalance('expense-category'), 0);
+  // فاکتور کالا همان پیش‌فرض قبلی است.
+  const goods = voiceInvoice('فاکتور فروش ۱۰ کیسه سیمان ۵ میلیون به آقای کریمی');
+  assert.equal(goods.payload.category, undefined);
+  assert.equal(goods.item.category, 'فروش');
+}));
+
+test('دورهٔ پوشش نامعلوم پرسیده می‌شود؛ هزینه یا درآمد یک‌جا ساخته نمی‌شود', () => inWorkspace(freshWorkspace('فاکتور بی‌دوره'), () => {
+  // فرم با «همین حالا صادر کن»: پیش‌نویس می‌ماند و سؤال برمی‌گردد.
+  const form = database.createInvoice({ documentType: 'purchase', category: 'اجاره', customerName: 'آقای رضایی',
+    items: [{ title: 'اجاره دفتر', unitPrice: 5_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.equal(form.status, 'draft');
+  assert.match(form.pendingQuestion, /دورهٔ پوشش/);
+  assert.equal(invoiceJournal(form), undefined);
+  // صدور بی‌جواب ۴۰۹ است، نه هزینهٔ یک‌جا.
+  assert.throws(() => database.issueInvoice(form.id, { issuedAt: ISSUED }), (error) => error.status === 409 && error.code === 'INVOICE_SERVICE_QUESTION');
+  assert.equal(database.getInvoice(form.id).status, 'draft');
+  // جوابِ دوره همراه صدور: آبان تا دی → سه ماه پیش‌پرداخت.
+  const issued = database.issueInvoice(form.id, { issuedAt: ISSUED, servicePeriodStart: '2026-10-23T00:00:00.000Z', servicePeriodEnd: '2027-01-19T00:00:00.000Z' });
+  assert.equal(issued.status, 'sent');
+  assert.deepEqual(lines(invoiceJournal(issued)), [['prepaid-asset', 5_000_000], ['vendor-payable', 5_000_000]]);
+  assert.equal(schedule(invoiceEvents(issued)[0].id).total, 5_000_000);
+  // صوت با «صادر کن» همان: پیش‌نویس با سؤال.
+  const { item: spoken } = voiceInvoice('فاکتور خرید اجاره دفتر ۵ میلیون از آقای رضایی صادر کن');
+  assert.equal(spoken.status, 'draft');
+  assert.ok(spoken.pendingQuestion);
+  // فاکتور فروش اشتراک بی‌دوره هم می‌پرسد (دستهٔ دوره‌دار درآمد: اجارهٔ مستاجر).
+  const tenant = database.createInvoice({ documentType: 'sales', category: 'اجاره', customerName: 'آقای احمدی',
+    items: [{ title: 'اجاره مغازه', unitPrice: 8_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.equal(tenant.status, 'draft');
+  assert.equal(kindBalance('expense-category'), 0);
+  assert.equal(kindBalance('income-category'), 0);
+  // دورهٔ صریحِ فرم روی پیش‌نویس می‌ماند و صدور بعدی همان را می‌خواند.
+  const draft = database.createInvoice({ documentType: 'purchase', category: 'نرم‌افزار و اشتراک', customerName: 'شرکت پارس',
+    items: [{ title: 'اشتراک نرم افزار', unitPrice: 12_000_000 }], servicePeriodStart: '2026-10-23T00:00:00.000Z', servicePeriodEnd: '2027-10-22T00:00:00.000Z' });
+  const later = database.issueInvoice(draft.id, { issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(later)), [['prepaid-asset', 12_000_000], ['vendor-payable', 12_000_000]]);
+  assert.equal(schedule(invoiceEvents(later)[0].id).count, 12);
+}));
+
+test('دورهٔ گذشته یا همین ماه هزینه و درآمد همان دوره است؛ منفی‌ها همان سند قبلی‌اند', () => inWorkspace(freshWorkspace('فاکتور منفی'), () => {
+  const rentThisMonth = database.createInvoice({ documentType: 'purchase', category: 'اجاره', customerName: 'آقای رضایی',
+    items: [{ title: 'اجاره مهر دفتر', unitPrice: 5_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(rentThisMonth)), [['expense-category', 5_000_000], ['vendor-payable', 5_000_000]]);
+  assert.equal(invoiceEvents(rentThisMonth).length, 0);
+  const elapsed = database.createInvoice({ documentType: 'purchase', category: 'بیمه', customerName: 'بیمه ایران',
+    items: [{ title: 'حق بیمه یکساله انبار', unitPrice: 12_000_000 }], issueNow: true, issuedAt: ISSUED,
+    servicePeriodStart: '2025-09-23T00:00:00.000Z', servicePeriodEnd: '2026-09-22T00:00:00.000Z' });
+  assert.deepEqual(lines(invoiceJournal(elapsed)), [['expense-category', 12_000_000], ['vendor-payable', 12_000_000]]);
+  // فاکتور کالا، بیمهٔ تأمین اجتماعی، «سرور» بی‌دوره و فروش کالا: بی‌سؤال، مثل قبل.
+  const goods = database.createInvoice({ documentType: 'purchase', customerName: 'پخش البرز', items: [{ title: 'چای', quantity: 10, unitPrice: 50_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(goods)), [['expense-category', 500_000], ['vendor-payable', 500_000]]);
+  assert.equal(accountNameOf(invoiceJournal(goods), 'expense-category'), 'مواد و کالا');
+  const social = database.createInvoice({ documentType: 'purchase', category: 'بیمه', customerName: 'سازمان تامین اجتماعی',
+    items: [{ title: 'بیمه تامین اجتماعی مهر', unitPrice: 7_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.equal(social.status, 'sent');
+  assert.deepEqual(lines(invoiceJournal(social)), [['expense-category', 7_000_000], ['vendor-payable', 7_000_000]]);
+  const server = database.createInvoice({ documentType: 'purchase', customerName: 'شرکت سخت افزار', items: [{ title: 'سرور اچ پی', unitPrice: 90_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.equal(server.status, 'sent');
+  const sale = database.createInvoice({ documentType: 'sales', customerName: 'آقای کریمی', items: [{ title: 'چای', quantity: 10, unitPrice: 50_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(sale)), [['customer-receivable', 500_000], ['income-category', 500_000]]);
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  assert.equal(kindBalance('deferred-revenue'), 0);
+}));
+
+test('فاکتور چندردیفی: فقط ردیف خدمت دوره‌دار پیش‌پرداخت است؛ دستهٔ پیش‌فرض جای دستهٔ ردیف را می‌دهد', () => inWorkspace(freshWorkspace('فاکتور چندردیفی'), () => {
+  const invoice = database.createInvoice({ documentType: 'purchase', customerName: 'بیمه ایران', note: 'یکساله',
+    items: [{ title: 'چای', quantity: 10, unitPrice: 50_000 }, { title: 'حق بیمه آتش سوزی یکساله انبار', unitPrice: 12_000_000 }], issueNow: true, issuedAt: ISSUED });
+  const entry = invoiceJournal(invoice);
+  assert.deepEqual(lines(entry), [['prepaid-asset', 12_000_000], ['expense-category', 500_000], ['vendor-payable', 12_500_000]]);
+  assert.equal(accountNameOf(entry, 'prepaid-asset'), 'پیش‌پرداخت — بیمه');
+  assert.equal(invoiceEvents(invoice).length, 1);
+}));
+
+test('ابطال فاکتور خدمت: پیش‌پرداخت، شناسایی‌های گذشته و برنامهٔ آینده با هم برمی‌گردند', () => inWorkspace(freshWorkspace('ابطال فاکتور'), () => {
+  const invoice = database.createInvoice({ documentType: 'purchase', category: 'بیمه', customerName: 'بیمه ایران',
+    items: [{ title: 'حق بیمه آتش سوزی یکساله انبار', unitPrice: 12_000_000 }], issueNow: true, issuedAt: ISSUED });
+  const [event] = invoiceEvents(invoice);
+  const run = store.postDueRecognitionItems(activeWorkspaceDatabase(), { today: '2026-12-25T00:00:00.000Z' });
+  assert.ok(run.posted >= 1);
+  assert.ok(kindBalance('expense-category') > 0);
+  assert.equal(database.deleteInvoice(invoice.id), true);
+  assert.equal(kindBalance('expense-category'), 0);
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  assert.equal(kindBalance('vendor-payable'), 0);
+  assert.deepEqual(schedule(event.id), { count: 0, total: 0 });
+  assert.equal(activeWorkspaceDatabase().prepare('SELECT status FROM financial_events WHERE id=?').get(event.id).status, 'reversed');
+  // اجرای بعدی شناسایی از فاکتور ابطال‌شده چیزی نمی‌سازد.
+  store.postDueRecognitionItems(activeWorkspaceDatabase(), { today: '2027-12-25T00:00:00.000Z' });
+  assert.equal(kindBalance('expense-category'), 0);
+}));

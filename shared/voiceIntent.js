@@ -14,6 +14,7 @@ import { detectTaxMention, parseInvoiceLines, wantsImmediateIssue } from './invo
 import { EVENT_KINDS, normalizeFinancialEvent } from './financialEvent.js';
 import { EVENT_NATURES, readEventNature } from './eventNature.js';
 import { detectBank } from './banks.js';
+import { isTimeBoundCategory, readDocumentService } from './documentReading.js';
 
 /**
  * نیت گفته را تشخیص می‌دهد.
@@ -366,7 +367,7 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
       intent: 'invoice',
       documentType,
       amount,
-      contactName,
+      contactName: withoutIssueVerb(contactName),
       title: documentType === 'purchase' ? 'خرید' : 'فروش',
       occurredAt: extractDateMention(input, { now, preferPast: true })?.iso || null,
       // ردیف‌ها فقط وقتی ساخته می‌شوند که جمله نرخ واحد را صریح گفته باشد؛
@@ -480,8 +481,39 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
  * تاریخ گفته‌شده عمداً روی سند نمی‌نشیند؛ تاریخ فاکتور هنگام صدور تعیین می‌شود و
  * نشاندن تاریخِ حرف روی پیش‌نویسِ ناتمام فقط یک عدد بی‌پشتوانه می‌ساخت.
  */
+// «فاکتور فروش … به شرکت آلفا صادرش کن»: فعل صدور جزو نام طرف حساب نیست؛ بدون
+// این، حساب «دریافتنی — شرکت آلفا صادرش کن» ساخته می‌شد.
+const ISSUE_VERB_TAIL = /\s+(?:رو\s+|را\s+)?(?:صادر|نهایی|قطعی|ثبت)\s*(?:ش|اش)?\s*(?:کن|بکن|کنید|بکنید|بشه|کنش|شود)?\s*$/;
+function withoutIssueVerb(name) {
+  if (!name) return name;
+  const cleaned = String(name).replace(ISSUE_VERB_TAIL, '').trim();
+  return cleaned || name;
+}
+
+/**
+ * دستهٔ پیش‌نویس فاکتور از خودِ گفته.
+ *
+ * «فاکتور خرید لایسنس یک ساله» نرم‌افزار و اشتراک است، «… بیمه یک ساله انبار»
+ * بیمه و «… اجاره شش ماهه دفتر» اجاره — نه پیش‌فرضِ «مواد و کالا»ی سرور که
+ * صدور را یک‌جا هزینه می‌کرد. فقط وقتی دسته فرستاده می‌شود که خدمت دوره‌دار است
+ * (یا خدمتی که دوره‌اش گفته شده)؛ فاکتور کالا همان پیش‌فرض قبلی را می‌گیرد.
+ */
+export function invoiceCategoryFromSpeech(intent = {}, { now = new Date() } = {}) {
+  const documentType = intent.documentType === 'purchase' ? 'purchase' : 'sales';
+  const said = String(intent.transcript || '').trim();
+  if (!said) return null;
+  const read = readDocumentService(said, {
+    direction: documentType === 'purchase' ? 'payable' : 'receivable',
+    occurredAt: intent.occurredAt || new Date(now).toISOString(),
+  });
+  if (!read.category) return null;
+  if (isTimeBoundCategory(read.category)) return read.category;
+  return read.servicePeriodStart && read.servicePeriodEnd && ['خدمات', 'نرم‌افزار و اشتراک'].includes(read.category) ? read.category : null;
+}
+
 export function invoiceDraftPayload(intent = {}, { taxRateId = null } = {}) {
   const documentType = intent.documentType === 'purchase' ? 'purchase' : 'sales';
+  const category = invoiceCategoryFromSpeech(intent);
   const spoken = Array.isArray(intent.lines) ? intent.lines : [];
   // ردیف‌های گفته‌شده بر مبلغ کل مقدم‌اند: کاربر خودش تعداد و نرخ واحد را گفته،
   // پس جمعشان همان چیزی است که خواسته.
@@ -507,6 +539,7 @@ export function invoiceDraftPayload(intent = {}, { taxRateId = null } = {}) {
     documentType,
     customerName: intent.contactName || '',
     note: String(intent.transcript || '').slice(0, 300),
+    ...(category ? { category } : {}),
     // صدور فقط وقتی که کاربر صریح خواسته باشد و روی کارت تأیید هم بماند.
     issueNow: intent.issueNow === true,
     ...(intent.issueNow === true && intent.occurredAt ? { issuedAt: intent.occurredAt } : {}),
@@ -601,7 +634,7 @@ export function intentToFinancialEvent(intent, { now = new Date(), accountId = '
     return normalizeFinancialEvent({
       ...shared,
       kind: intent.documentType === 'purchase' ? EVENT_KINDS.PURCHASE_INVOICE : EVENT_KINDS.SALES_INVOICE,
-      category: intent.documentType === 'purchase' ? 'مواد و کالا' : 'فروش',
+      category: invoiceCategoryFromSpeech(intent) || (intent.documentType === 'purchase' ? 'مواد و کالا' : 'فروش'),
     });
   }
   return null;
