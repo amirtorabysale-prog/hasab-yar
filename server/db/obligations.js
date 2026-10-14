@@ -91,13 +91,38 @@ export function saveObligation(values = {}) {
  * بخشی‌اش تسویه شده، اول باید تسویه‌هایش برگردد. وضعیت از بدنهٔ درخواست
  * خوانده نمی‌شود: فقط تسویه و حذف آن را عوض می‌کنند.
  */
+/**
+ * عنوان و یادداشت تعهد دسته و دورهٔ پوششِ سندش را می‌سازند («اشتراک یک ساله نرم
+ * افزار — پوشش مهر تا شهریور» پیش‌پرداخت است، «بدهی به شرکت پارس» سایر هزینه‌ها).
+ * ویرایشی که خواندنِ آن‌ها را عوض کند — یا دستهٔ صریح تازه بیاورد — سند را هم عوض
+ * می‌کند؛ وگرنه پیش‌پرداخت و برنامهٔ دوازده‌ماهه زیر عنوان «خرید جنس» می‌ماند.
+ */
+function serviceReadingChanged(id, existing, values) {
+  const at = new Date(values.occurredAt || existing.occurred_at || existing.created_at || Date.now());
+  const when = Number.isNaN(at.getTime()) ? new Date().toISOString() : at.toISOString();
+  const read = (title, note, category, direction) => readDocumentService(
+    [title, note].map((part) => String(part || '').trim()).filter(Boolean).join(' — '),
+    { direction, occurredAt: when, category },
+  );
+  const opened = openingEvent(id);
+  let stored = null;
+  try { stored = opened ? JSON.parse(db.prepare('SELECT payload FROM financial_events WHERE id=?').get(opened.id)?.payload || 'null') : null; } catch { stored = null; }
+  const before = read(existing.title, existing.note, null, existing.direction);
+  const after = read(values.title, values.note, values.category || null, values.direction);
+  if (values.category && stored?.category && values.category !== stored.category) return true;
+  return before.category !== after.category || before.servicePeriodStart !== after.servicePeriodStart
+    || before.servicePeriodEnd !== after.servicePeriodEnd || before.refundable !== after.refundable;
+}
+
 function updateObligation(id, values) {
   const existing = db.prepare('SELECT * FROM obligations WHERE id=?').get(id);
   if (!existing) throw Object.assign(invalidInput('این طلب یا بدهی پیدا نشد.'), { status: 404, code: 'OBLIGATION_MISSING' });
   if (existing.status === 'cancelled') throw Object.assign(invalidInput('این طلب یا بدهی حذف شده و قابل ویرایش نیست.'), { status: 409, code: 'OBLIGATION_CANCELLED' });
   const occurredAt = values.occurredAt === undefined ? existing.occurred_at : (values.occurredAt || null);
+  const note = values.note === undefined ? existing.note : values.note;
   const ledgerChanged = values.amount !== existing.amount || values.direction !== existing.direction
-    || (values.contactId || null) !== (existing.contact_id || null) || (occurredAt || null) !== (existing.occurred_at || null);
+    || (values.contactId || null) !== (existing.contact_id || null) || (occurredAt || null) !== (existing.occurred_at || null)
+    || serviceReadingChanged(id, existing, { ...values, note, occurredAt });
   const paid = Number(existing.paid_amount) || 0;
   if (ledgerChanged && paid > 0) {
     throw Object.assign(invalidInput('بخشی از این طلب یا بدهی تسویه شده؛ برای تغییر مبلغ، جهت یا طرف حساب اول تسویه‌هایش را برگردان.'), { status: 409, code: 'OBLIGATION_PARTLY_SETTLED' });
@@ -112,7 +137,7 @@ function updateObligation(id, values) {
       withdrawOpening(id, 'ویرایش طلب/بدهی');
       postObligationOpened(id, {
         amount: values.amount, direction: values.direction, title: values.title, contactId: values.contactId || null,
-        occurredAt, note: values.note === undefined ? existing.note : values.note, category: values.category,
+        occurredAt, note, category: values.category,
       }, { sourceEventId: `obligation:${id}#r${openingRevision(id)}`, withinTransaction: true });
     }
     db.exec('COMMIT');

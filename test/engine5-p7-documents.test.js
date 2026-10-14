@@ -1228,3 +1228,32 @@ test('موتور خاموش: «اجاره ۶ ماه دفتر رو جلوتر د�
   database.materializeRecurringRules(new Date('2027-05-02T10:00:00.000Z'));
   assert.equal(recurringRows(office.id).length, 1, 'اردیبهشت پس از پایانِ شش ماه است و «اجاره مهر» فقط مهر را می‌گیرد');
 }));
+
+for (const mode of ['engine-on', 'engine-off']) {
+  test(`ویرایش عنوان یا یادداشتِ طلب/بدهی که دسته یا دوره را عوض می‌کند، سند را هم عوض می‌کند (${mode})`, () => inWorkspace(freshWorkspace(`ویرایش عنوان تعهد ${mode}`), () => {
+    if (mode === 'engine-on') engineOn();
+    const debitOf = (obligation) => lines(openingOf(obligation).journalEntryId);
+    // بدهی ساده ← اشتراک یکساله با دورهٔ یادداشت: پیش‌پرداخت با برنامهٔ دوازده‌ماهه.
+    const plain = database.saveObligation({ title: 'بدهی به شرکت پارس', amount: 24_000_000, direction: 'payable', contactName: 'شرکت پارس', note: '' });
+    assert.deepEqual(debitOf(plain), [['expense-category', 24_000_000], ['vendor-payable', 24_000_000]]);
+    database.saveObligation({ id: plain.id, title: 'اشتراک یک ساله نرم افزار', amount: 24_000_000, direction: 'payable', contactName: 'شرکت پارس', note: 'پوشش مهر ۱۴۰۵ تا شهریور ۱۴۰۶' });
+    assert.deepEqual(debitOf(plain), [['prepaid-asset', 24_000_000], ['vendor-payable', 24_000_000]]);
+    assert.deepEqual(schedule(openingOf(plain).id), { count: 12, total: 24_000_000 });
+    // وارونه: اشتراک ← خرید جنس؛ پیش‌پرداخت و برنامه برمی‌گردند.
+    const software = database.saveObligation({ title: 'اشتراک یک ساله نرم افزار', amount: 24_000_000, direction: 'payable', contactName: 'شرکت پارس', note: '' });
+    const firstEvent = openingOf(software).id;
+    database.saveObligation({ id: software.id, title: 'خرید جنس', amount: 24_000_000, direction: 'payable', contactName: 'شرکت پارس', note: '' });
+    assert.notEqual(openingOf(software).id, firstEvent);
+    assert.deepEqual(debitOf(software), [['expense-category', 24_000_000], ['vendor-payable', 24_000_000]]);
+    assert.equal(schedule(openingOf(software).id).count, 0);
+    // آینه: طلب بی‌شرح ← اجارهٔ شش ماه آیندهٔ مستاجر: پیش‌دریافت.
+    const tenant = database.saveObligation({ title: 'طلب از آقای احمدی', amount: 60_000_000, direction: 'receivable', contactName: 'آقای احمدی', note: '' });
+    database.saveObligation({ id: tenant.id, title: 'اجاره شش ماه آینده مغازه', amount: 60_000_000, direction: 'receivable', contactName: 'آقای احمدی', note: '' });
+    assert.deepEqual(debitOf(tenant), [['customer-receivable', 60_000_000], ['deferred-revenue', 60_000_000]]);
+    assert.equal(kindBalance('prepaid-asset'), 24_000_000);
+    // منفی: ویرایش عنوانی که دسته و دوره را عوض نمی‌کند سند تازه نمی‌زند.
+    const kept = openingOf(software).id;
+    database.saveObligation({ id: software.id, title: 'خرید جنس از پارس', amount: 24_000_000, direction: 'payable', contactName: 'شرکت پارس', note: 'فاکتور ۱۲' });
+    assert.equal(openingOf(software).id, kept);
+  }));
+}
