@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applyInvoiceInventory, reverseInvoiceInventory } from '../inventory.js';
 import { assertAccountingPeriodOpen, periodForDate, postInvoiceJournal, postInvoicePaymentJournal, reverseInvoiceJournal, reverseJournalEntry } from '../accounting.js';
-import { audit, cleanAmount, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
+import { activeWorkspaceDatabase, audit, cleanAmount, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { calculateInvoiceTax } from '../tax.js';
 import { contactIdForName } from './contacts.js';
 import { insertTransactionRows } from './transactions.js';
@@ -38,10 +38,15 @@ const GENERIC_CATEGORY = Object.freeze({ purchase: 'مواد و کالا', sales
 // خرید سخت‌افزار باشد؛ فقط وقتی دوره‌ای گفته شده باشد خدمت حساب می‌شوند.
 const SERVICE_WITHOUT_PERIOD = new Set(['اجاره', 'بیمه', 'درآمد اجاره']);
 
+const serviceColumnsChecked = new WeakSet();
 function ensureInvoiceServiceColumns() {
-  for (const column of ['service_period_start TEXT', 'service_period_end TEXT']) {
-    try { db.exec(`ALTER TABLE invoices ADD COLUMN ${column}`); } catch { /* ستون از قبل هست */ }
+  const database = activeWorkspaceDatabase();
+  if (serviceColumnsChecked.has(database)) return;
+  const columns = new Set(database.prepare('PRAGMA table_info(invoices)').all().map((column) => column.name));
+  for (const [name, type] of [['service_period_start', 'TEXT'], ['service_period_end', 'TEXT']]) {
+    if (!columns.has(name)) database.exec(`ALTER TABLE invoices ADD COLUMN ${name} ${type}`);
   }
+  serviceColumnsChecked.add(database);
 }
 
 const isServiceItem = (documentType, item) => (documentType === 'purchase'

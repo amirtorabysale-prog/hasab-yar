@@ -632,3 +632,121 @@ test('ابطال فاکتور خدمت: پیش‌پرداخت، شناسایی�
   store.postDueRecognitionItems(activeWorkspaceDatabase(), { today: '2027-12-25T00:00:00.000Z' });
   assert.equal(kindBalance('expense-category'), 0);
 }));
+
+// ---------------------------------------------------------------------------
+// خوشهٔ recurring-rule-period-unaware — قاعدهٔ تکرار ماه خودش را می‌شناسد و
+// ماهی را که پیش‌پرداخت پوشش داده دوباره هزینه نمی‌کند.
+// ---------------------------------------------------------------------------
+
+const { parseFinancialText } = await import('../shared/parser.js');
+const recurringRows = (ruleId) => activeWorkspaceDatabase().prepare(`SELECT t.id,t.amount,t.occurred_at AS occurredAt,t.journal_deferred AS deferred
+  FROM transactions t WHERE t.client_id LIKE ? AND t.status<>'deleted' ORDER BY t.occurred_at`).all(`recurring:${ruleId}:%`);
+const ruleOf = (id) => database.listRecurringRules().find((rule) => rule.id === id);
+const saveRule = (values) => database.saveRecurringRule({ type: 'expense', dayOfMonth: 1, nextDueAt: '2026-11-01T09:00:00.000Z', ...values });
+/** پیش‌پرداخت نقدی از جملهٔ واقعی کاربر، با موتور روشن. */
+const voicePrepaid = (said) => {
+  const parsed = parseFinancialText(said, { source: 'voice', now: NOW }).transactions;
+  database.insertTransactions({ transcript: said, transactions: parsed.map((item) => ({ ...item, occurredAt: NOW.toISOString(), userConfirmed: true })) });
+  const event = activeWorkspaceDatabase().prepare('SELECT id,status FROM financial_events ORDER BY rowid DESC LIMIT 1').get();
+  if (event.status !== 'posted') database.approveEvent(event.id);
+  return activeWorkspaceDatabase().prepare('SELECT id,status FROM financial_events WHERE id=?').get(event.id);
+};
+
+test('قاعدهٔ اجاره، بیمه و اشتراک ماه خودش را پوشش می‌دهد و بی‌سؤال هزینهٔ همان ماه است', () => inWorkspace(freshWorkspace('قاعدهٔ بی‌سؤال'), () => {
+  engineOn();
+  const rules = [
+    saveRule({ title: 'اجاره دفتر', amount: 5_000_000, category: 'اجاره' }),
+    saveRule({ title: 'بیمه ماهانه انبار', amount: 1_000_000, category: 'بیمه' }),
+    saveRule({ title: 'اشتراک نرم افزار', amount: 2_000_000, category: 'نرم‌افزار و اشتراک' }),
+  ];
+  for (const at of ['2026-11-02T10:00:00.000Z', '2026-12-02T10:00:00.000Z', '2027-01-02T10:00:00.000Z']) database.materializeRecurringRules(new Date(at));
+  for (const rule of rules) {
+    const rows = recurringRows(rule.id);
+    assert.equal(rows.length, 3, rule.title);
+    assert.ok(rows.every((row) => row.deferred === 0), `${rule.title}: هیچ ماهی منتظر سؤال دوره نماند`);
+  }
+  const pending = activeWorkspaceDatabase().prepare("SELECT COUNT(*) AS n FROM financial_events WHERE status='pending'").get().n;
+  assert.equal(pending, 0);
+  assert.equal(kindBalance('expense-category'), 3 * 8_000_000);
+  assert.equal(kindBalance('prepaid-asset'), 0);
+}));
+
+for (const mode of ['engine-on', 'engine-off']) {
+  test(`پیش‌پرداخت اجاره کنار قاعدهٔ اجارهٔ ماهانه: ردیف نقدی ساخته نمی‌شود و پرسیده می‌شود (${mode})`, () => inWorkspace(freshWorkspace(`قاعده و پیش‌پرداخت ${mode}`), () => {
+    if (mode === 'engine-on') engineOn();
+    const rule = saveRule({ title: 'اجاره دفتر', amount: 5_000_000, category: 'اجاره' });
+    // پیش‌پرداخت با فاکتور خرید (مسیر سند، مستقل از موتور) — شش ماه از آبان.
+    database.createInvoice({ documentType: 'purchase', category: 'اجاره', customerName: 'آقای رضایی', items: [{ title: 'اجاره شش ماهه دفتر', quantity: 6, unitPrice: 5_000_000 }],
+      issueNow: true, issuedAt: ISSUED, servicePeriodStart: '2026-10-22T20:30:00.000Z', servicePeriodEnd: '2027-04-20T20:29:59.999Z' });
+    const created = database.materializeRecurringRules(new Date('2026-11-02T10:00:00.000Z'));
+    assert.equal(created, 0);
+    assert.deepEqual(recurringRows(rule.id), []);
+    const held = database.materializeRecurringRules.lastHeld;
+    assert.deepEqual(held.map((item) => [item.ruleId, item.reason, item.periodKey]), [[rule.id, 'covered-by-prepaid', '1405-08']]);
+    assert.equal(ruleOf(rule.id).nextDueAt, '2026-11-01T09:00:00.000Z', 'سررسید سر جایش ماند');
+    assert.match(ruleOf(rule.id).hold.question, /پیش‌پرداخت/);
+    // «همان قرارداد است»: این ماه رد می‌شود، بی‌ردیف نقدی.
+    database.saveRecurringRule({ id: rule.id, coveredMonth: 'skip' });
+    assert.equal(ruleOf(rule.id).hold, null);
+    assert.equal(ruleOf(rule.id).nextDueAt.slice(0, 10), '2026-12-01');
+    assert.deepEqual(recurringRows(rule.id), []);
+    // ماه بعد دوباره پوشش دارد و دوباره پرسیده می‌شود؛ «جداست، ثبتش کن» همان ماه را ثبت می‌کند.
+    database.materializeRecurringRules(new Date('2026-12-02T10:00:00.000Z'));
+    assert.equal(ruleOf(rule.id).hold.periodKey, '1405-09');
+    database.saveRecurringRule({ id: rule.id, coveredMonth: 'post' });
+    assert.equal(recurringRows(rule.id).length, 1);
+    assert.equal(ruleOf(rule.id).hold, null);
+    // «توقف قاعده».
+    database.materializeRecurringRules(new Date('2027-01-02T10:00:00.000Z'));
+    assert.equal(ruleOf(rule.id).hold.periodKey, '1405-10');
+    database.saveRecurringRule({ id: rule.id, coveredMonth: 'pause' });
+    assert.equal(ruleOf(rule.id).active, 0);
+    assert.throws(() => database.saveRecurringRule({ id: rule.id, coveredMonth: 'skip' }), (error) => error.code === 'RECURRING_NOT_HELD');
+  }));
+}
+
+test('جملهٔ واقعی کاربر: «اجاره ۶ ماه دفتر رو جلوتر دادیم» و قاعدهٔ اجاره — هزینهٔ آبان یک بار', () => inWorkspace(freshWorkspace('قاعده و پیش‌پرداخت صوتی'), () => {
+  engineOn();
+  const rule = saveRule({ title: 'اجاره دفتر', amount: 5_000_000, category: 'اجاره' });
+  const prepaid = voicePrepaid('اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون، ماهی ۵ میلیون');
+  assert.equal(prepaid.status, 'posted');
+  assert.ok(schedule(prepaid.id).count >= 6);
+  const cashBefore = kindBalance('operational-account');
+  database.materializeRecurringRules(new Date('2026-11-02T10:00:00.000Z'));
+  assert.deepEqual(recurringRows(rule.id), [], 'خروج نقدیِ خیالی ساخته نشد');
+  assert.equal(kindBalance('operational-account'), cashBefore);
+  assert.equal(ruleOf(rule.id).hold.reason, 'covered-by-prepaid');
+}));
+
+test('بیمه و اشتراک پیش‌پرداخت‌شده با چک یا فاکتور هم قاعدهٔ هم‌دسته را نگه می‌دارند؛ آینه: پیش‌دریافت اجارهٔ مستاجر', () => inWorkspace(freshWorkspace('قاعده خانواده'), () => {
+  const insurance = saveRule({ title: 'بیمه انبار', amount: 1_000_000, category: 'بیمه' });
+  const software = saveRule({ title: 'اشتراک نرم افزار', amount: 2_000_000, category: 'نرم‌افزار و اشتراک' });
+  const tenant = saveRule({ title: 'اجاره مغازه از مستاجر', amount: 10_000_000, type: 'income', category: 'اجاره' });
+  voiceCheque('بیمه آتش سوزی یکساله رو با چک ۱۲ میلیون به بیمه ایران دادیم', { counterpartyName: 'بیمه ایران' });
+  database.createInvoice({ documentType: 'purchase', category: 'نرم‌افزار و اشتراک', customerName: 'شرکت پارس',
+    items: [{ title: 'اشتراک یک ساله نرم افزار', unitPrice: 24_000_000 }], issueNow: true, issuedAt: ISSUED });
+  database.createInvoice({ documentType: 'sales', category: 'اجاره', customerName: 'آقای احمدی',
+    items: [{ title: 'اجاره شش ماه آینده مغازه', unitPrice: 60_000_000 }], issueNow: true, issuedAt: ISSUED });
+  database.materializeRecurringRules(new Date('2026-11-02T10:00:00.000Z'));
+  for (const rule of [insurance, software, tenant]) {
+    assert.deepEqual(recurringRows(rule.id), [], rule.title);
+    assert.equal(ruleOf(rule.id).hold?.reason, 'covered-by-prepaid', rule.title);
+  }
+}));
+
+test('منفی‌ها: قاعدهٔ قبض کنار پیش‌پرداخت اجاره، و اجارهٔ ماهِ بعد از پایان پیش‌پرداخت، ثبت می‌شوند', () => inWorkspace(freshWorkspace('قاعده منفی'), () => {
+  engineOn();
+  const bill = saveRule({ title: 'قبض برق', amount: 3_000_000, category: 'قبوض' });
+  const rent = saveRule({ title: 'اجاره دفتر', amount: 5_000_000, category: 'اجاره', nextDueAt: '2027-01-01T09:00:00.000Z' });
+  // پیش‌پرداخت دو ماهه: آبان و آذر.
+  database.createInvoice({ documentType: 'purchase', category: 'اجاره', customerName: 'آقای رضایی', items: [{ title: 'اجاره دو ماهه دفتر', quantity: 2, unitPrice: 5_000_000 }],
+    issueNow: true, issuedAt: ISSUED, servicePeriodStart: '2026-10-22T20:30:00.000Z', servicePeriodEnd: '2026-12-21T20:29:59.999Z' });
+  database.materializeRecurringRules(new Date('2026-11-02T10:00:00.000Z'));
+  assert.equal(recurringRows(bill.id).length, 1, 'قبض پیش‌پرداخت اجاره نیست');
+  assert.equal(ruleOf(bill.id).hold, null);
+  database.materializeRecurringRules(new Date('2027-01-02T10:00:00.000Z'));
+  const rows = recurringRows(rent.id);
+  assert.equal(rows.length, 1, 'دی پس از پایان پیش‌پرداخت است');
+  assert.equal(rows[0].deferred, 0, 'هزینهٔ همان ماه، بی‌سؤال');
+  assert.equal(ruleOf(rent.id).hold, null);
+}));
