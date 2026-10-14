@@ -1,6 +1,8 @@
 import { taxPenaltyFacts, isTaxPenaltyCategory } from './reviewTaxPenalty.js';
 import { conditionalWaiver, conditionalPaymentProposal } from './reviewSettlement.js';
 import { normalizePersian } from './normalize.js';
+import { insuranceNature } from './insuranceNature.js';
+import { moneyReturned, returnRecorded } from './refundSpeech.js';
 
 // Recognition and settlement are different events. These constraints do not
 // derive dates, counterparties, tax rates or evidence from model output.
@@ -12,17 +14,30 @@ export function reviewNature(text) {
   // فعل‌های رسمی تنها، رابطهٔ شریک «نامشخص» خوانده می‌شد (آزمون زندهٔ مهر ۱۴۰۵).
   const partner=/شریک|سهامدار|سهام دار/.test(t) && /واریز|انتقال|پرداخت|برداشت|ریخت|کارت به کارت|داد(?![آ-ی])|دادن/.test(t);
   const capital=/افزایش سرمایه|آورده (?:قطعی|سرمایه)|ثبت سرمایه/.test(t) && !/بدون|هنوز|نیست|نشده/.test(t);
-  const insuranceSettlement=/بیمه/.test(t) && /حقوق|کارکنان|کارگر|تامین اجتماعی|لیست/.test(t) && /پرداخت|تسویه|واریز/.test(t);
-  const prepaid=(/پیش پرداخت/.test(t) || (/بیمه/.test(t) && /یک ساله|یکساله|12 ماه|دوازده ماه/.test(t) && !insuranceSettlement)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
+  // همان قاعدهٔ موتور (`shared/insuranceNature.js`): «بیمهٔ تکمیلی کارکنان یک
+  // ساله» حق بیمهٔ یک بیمه‌نامه است و پیش‌پرداخت، نه لیست تأمین اجتماعی؛ و
+  // «حقوقی» یا «لیست قیمت» در جمله، لیست حقوق نمی‌سازد.
+  const insurance=insuranceNature(t);
+  const insuranceSettlement=insurance.payrollList && insurance.paid;
+  // نگهبان «منفعت آینده» فقط با طول صریح چندماهه روشن می‌شود، نه با هر نشانهٔ
+  // دوره: «از اول مهر تا آخر مهر» پوشش همین ماه و هزینهٔ همین ماه است، و
+  // «سالانه» کنار مبلغ می‌تواند نرخ باشد. مصرف‌شده یا نشدن دوره را موتور با
+  // تاریخ‌های پوشش تصمیم می‌گیرد؛ متن به‌تنهایی آن را نمی‌داند.
+  const prepaid=(/پیش پرداخت/.test(t) || (insurance.insurance && /یک ساله|یکساله|12 ماه|دوازده ماه/.test(t) && !insurance.payrollList && !insurance.claim)) && !/استهلاک|شناسایی هزینه|انتقال به هزینه|مصرف پیش پرداخت/.test(t);
   const advance=/پیش دریافت/.test(t) || /(?:خدمات|خدماتی|خدمت).*هنوز.*انجام نشده/.test(t) && /دریافت|واریز/.test(t);
   const deposit=/ودیعه|سپرده/.test(t) && /استرداد|قابل برگشت|پس می/.test(t);
   const intangible=/حق استفاده|حق امتیاز|علامت تجاری/.test(t) && /خرید|پرداخت/.test(t);
   const leasehold=/استیجاری|اجاره ای/.test(t) && /نصب|بهسازی|احداث/.test(t) && /عمر|چند سال|چهار سال/.test(t);
-  const advanceRefund=advance && /پس داد|بازپرداخت|عودت/.test(t);
+  // «پیش‌دریافت گرفتیم که اگه زودتر بره عودت داده میشه» دریافت است، نه عودت.
+  const advanceRefund=advance && returnRecorded(t);
+  // برگشت پولی که واقعاً جابه‌جا شد — فقط فعل گذشته (`shared/refundSpeech.js`).
+  // «پس میده»، «برمی‌گرده»، «قابل استرداد» و «موقع تخلیه پس داده میشه» هنوز
+  // پولی جابه‌جا نکرده‌اند؛ «چک برگشت خورد» عودت نیست.
+  const refund=moneyReturned(t);
   const writtenOffRecovery=/طلب|مطالبات/.test(t) && /سوخت شده|حذف شده|حذف.*دفاتر|از دفاتر حذف/.test(t) && /دریافت|وصول|برگشت/.test(t);
   const principal=/اصل وام/.test(t);
   const settlement=/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
-  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,writtenOffRecovery,principal,settlement};
+  return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,refund,writtenOffRecovery,principal,settlement};
 }
 
 export function reviewNatureViolations(text, lines=[], facts={}) {

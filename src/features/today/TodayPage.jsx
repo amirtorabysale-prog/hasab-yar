@@ -6,6 +6,7 @@ import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits }
 import { describeVoiceAvailability, pointerReleaseAction, voicePathLabel } from '../../lib/voiceStatus.js';
 import { liveSpeechSupported } from '../../lib/liveSpeech.js';
 import { profileDefinition } from '../../../shared/product.js';
+import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
 
 export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple', aiForAll = null, onToggleAiForAll }) {
   const profileType = data.settings.profileType || 'business';
@@ -127,16 +128,39 @@ function PendingQuestionCard({ notify, refresh, reloadKey = 0 }) {
     setBusy(false);
   };
 
+  // جواب سؤال موتور (دورهٔ پوشش، قابل استرداد، بابت پول). سند نمی‌زند؛ بعد از
+  // آخرین جواب، همین کارت «بله» را نشان می‌دهد.
+  const answerAsk = async (payload) => {
+    setBusy(true);
+    try {
+      const { item } = await api.answerPending(question.id, payload);
+      notify(item?.route && item.route !== 'confirm' ? 'جواب ثبت شد و مورد به حسابدار سپرده شد.' : item?.ask ? 'جواب ثبت شد.' : 'جواب ثبت شد؛ حالا تأیید کن.');
+      await load();
+      await refresh?.();
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
+  return <PendingQuestionView question={question} more={items.length - 1} busy={busy} onYes={() => answer('yes')} onHandover={() => answer('handover')} onAnswer={answerAsk} />;
+}
+
+/**
+ * نمای کارت پرسش. تا سؤالی باز است «بله» حتماً رد می‌شود؛ پس دیده نمی‌شود.
+ * «مطمئن نیستم» همیشه هست: کسی که دوره را نمی‌داند حدس نمی‌زند، می‌سپارد.
+ */
+export function PendingQuestionView({ question, more = 0, busy = false, onYes, onHandover, onAnswer }) {
+  const ask = question.ask || null;
   return <section className="rounded-[12px] border-r-4 border-accent bg-warn-bg px-4 py-3.5" aria-label="یک پرسش">
     <p className="text-[11px] font-extrabold text-accent">یک سؤال کوتاه</p>
     <h2 className="mt-1 text-[16px] font-extrabold">{toPersianDigits(question.question)}</h2>
-    {question.hint && <p className="mt-1 text-[12px] leading-6 text-muted">{question.hint}</p>}
+    {!ask && question.hint && <p className="mt-1 text-[12px] leading-6 text-muted">{question.hint}</p>}
     {question.evidence && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{question.evidence}»</blockquote>}
-    <div className="mt-3 grid grid-cols-[2fr_1fr] gap-2">
-      <button disabled={busy} onClick={() => answer('yes')} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">بله، درست است</button>
-      <button disabled={busy} onClick={() => answer('handover')} className="tap rounded-lg border border-line bg-surface text-[13px] font-bold disabled:opacity-40">مطمئن نیستم</button>
+    {ask && <DecisionQuestionCard key={questionCardKey(question.id, ask)} question={ask} busy={busy} onAnswer={onAnswer} />}
+    <div className={`mt-3 grid gap-2 ${ask ? 'grid-cols-1' : 'grid-cols-[2fr_1fr]'}`}>
+      {!ask && <button disabled={busy} onClick={onYes} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">بله، درست است</button>}
+      <button disabled={busy} onClick={onHandover} className="tap rounded-lg border border-line bg-surface text-[13px] font-bold disabled:opacity-40">مطمئن نیستم</button>
     </div>
-    {items.length > 1 && <p className="mt-2 text-[11px] text-muted">{toPersianDigits(items.length - 1)} مورد دیگر بعد از این پرسیده می‌شود.</p>}
+    {more > 0 && <p className="mt-2 text-[11px] text-muted">{toPersianDigits(more)} مورد دیگر بعد از این پرسیده می‌شود.</p>}
   </section>;
 }
 

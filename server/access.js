@@ -33,7 +33,7 @@ export function minimumRoleForRequest(method, path) {
   if (/^\/financial-events\/[^/]+\/(approve|reverse|reject)$/.test(normalizedPath)) return 'accountant';
   // پاسخ کاربر به پرسش خودش هم سند می‌سازد، پس رتبه‌اش همان است. تفاوتش با
   // مسیر بالا در تجربه است نه در اختیار: اینجا در محیط ساده هم باز می‌ماند.
-  if (/^\/confirmations\/[^/]+\/(confirm|handover)$/.test(normalizedPath)) return 'accountant';
+  if (/^\/confirmations\/[^/]+\/(confirm|handover|answer)$/.test(normalizedPath)) return 'accountant';
   if (normalizedPath.startsWith('/workspace/members')) return 'owner';
   if (normalizedPath.startsWith('/accounting/periods/')) return 'owner';
   // کنترل و تأیید سند کار حسابدار ارشد است، نه کمک‌حسابداری که ثبت می‌زند.

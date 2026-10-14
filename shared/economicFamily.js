@@ -1,4 +1,5 @@
 import { isRoutineExpense } from './purchasePurpose.js';
+import { isNotInsurancePremium } from './insuranceNature.js';
 
 /**
  * خانوادهٔ اقتصادی — ماهیت رویداد، نه شکل تراکنش.
@@ -166,15 +167,14 @@ export const TIME_BOUND_SERVICE_CATEGORIES = Object.freeze(['بیمه', 'اجا�
  * بیمهٔ تأمین اجتماعی پرسنل، بدهیِ حقوق است که تسویه می‌شود؛ و پولی که شرکت
  * بیمه بابت خسارت می‌دهد، اصلاً پرداخت ما نیست. هر دو دستهٔ «بیمه» می‌گیرند و
  * تا امروز سؤال «دورهٔ پوشش از کی تا کی؟» می‌گرفتند — سؤال غلط از رویداد درست.
+ * قاعده با دستیار بررسی حسابدار یکی است (`shared/insuranceNature.js`).
  */
-const NOT_A_PREMIUM = /ت[اأ]مین\s*اجتماع|لیست\s*بیمه|بیمه\s*(?:پرسنل|کارگر|کارکنان|بیکاری)|سهم\s*(?:کارفرما|کارگر)|خسارت|غرامت/;
-
 export function isTimeBoundService(facts) {
   const category = String(facts?.category || '').trim();
   if (!TIME_BOUND_SERVICE_CATEGORIES.includes(category)) return false;
   // کل گفته هم دیده می‌شود: «انبار آتش گرفت… شرکت بیمه بیست و پنج میلیونش رو
   // واریز کرد» دو ردیف دارد و «خسارت» فقط در تکهٔ ردیف اول است.
-  return !(category === 'بیمه' && NOT_A_PREMIUM.test(`${facts?.evidence || ''} ${facts?.utterance || ''}`));
+  return !(category === 'بیمه' && isNotInsurancePremium(`${facts?.evidence || ''} ${facts?.utterance || ''}`));
 }
 
 /**

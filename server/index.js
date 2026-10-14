@@ -13,7 +13,7 @@ import {
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
   submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry, releaseHeldItem,
-  pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
+  pendingConfirmations, confirmPending, handOverPending, answerPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
   bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
@@ -688,6 +688,10 @@ app.post('/api/confirmations/:id/confirm', (request, response, next) => {
 });
 app.post('/api/confirmations/:id/handover', (request, response, next) => {
   try { return response.json({ item: handOverPending(request.params.id) }); } catch (error) { return next(error); }
+});
+// جواب به سؤال موتور (دورهٔ پوشش، قابل استرداد، بابت پول) از همان کارت امروز.
+app.post('/api/confirmations/:id/answer', (request, response, next) => {
+  try { return response.json({ item: answerPending(request.params.id, { fact: request.body?.fact, value: request.body?.value, freeText: request.body?.freeText }) }); } catch (error) { return next(error); }
 });
 app.get('/api/automation-policy', (_request, response, next) => {
   try { return response.json({ policy: automationPolicy(), defaults: DEFAULT_AUTOMATION_POLICY }); } catch (error) { return next(error); }

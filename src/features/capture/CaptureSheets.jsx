@@ -1,5 +1,6 @@
 import TransactionJourney from '../activity/TransactionJourney.jsx';
 import { PersianDateInput } from '../../components/common.jsx';
+import { RecognitionNote } from '../../components/RecognitionNote.jsx';
 import { api } from '../../lib/api.js';
 import { Check, ChevronLeft, CircleAlert, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -151,6 +152,8 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
           ) : <div className="flex items-center justify-center gap-2"><span className="numbers text-4xl font-extrabold tracking-[-.02em]">{formatAmount(item.amount)}</span><Pencil size={16} className="text-muted" /></div>}
           <span className="mt-1 block text-[13px] text-muted">تومان</span>
         </button>
+        {/* دوره و برنامهٔ ماهانه از همان پیش‌نمایش سرور که ثبت می‌سازد. */}
+        {previewReady && <RecognitionNote recognition={preflight.previews[index]?.recognition} servicePeriod={preflight.previews[index]?.servicePeriod} decided={preflight.previews[index]?.decisionStatus === 'decided'} />}
 
         <div className="space-y-2">
           <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-white' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-white' : 'border-line bg-surface'}`}>هزینه</button></div></div>

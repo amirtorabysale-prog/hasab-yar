@@ -21,6 +21,7 @@ import { settlementFor, transactionJournalPoster } from './transactions.js';
 import { automationPolicy } from './settings.js';
 import { openDocumentsFor } from './counterpartyCard.js';
 import { vatGuardContext } from '../tax.js';
+import { checkConfirmationAnswer, confirmationAsk, confirmationHint } from '../confirmationAnswer.js';
 import { ensureReviewAiSchema, latestReviewProposal, proposeReview, proposalIsCurrent, recordReviewFeedback } from '../accountingReviewAi.js';
 
 // ---------------------------------------------------------------------------
@@ -215,18 +216,39 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
  * فقط اعتمادش را از دست می‌دهد.
  */
 export function pendingConfirmations(limit = 5) {
-  const items = listReviewQueue(activeWorkspaceDatabase(), { limit, route: 'confirm' });
+  const database = activeWorkspaceDatabase();
+  const items = listReviewQueue(database, { limit, route: 'confirm' });
   return {
-    items: items.map((item) => ({
-      id: item.id,
-      question: item.confidence?.summary || describeEvent(item.event),
-      // یک دلیل، به زبان ساده. فهرست دلایل، پرسش را به بازجویی تبدیل می‌کند.
-      hint: item.confidence?.reasons?.[0] || '',
-      amount: item.amount,
-      occurredAt: item.occurredAt,
-      evidence: String(item.event?.evidence || '').slice(0, 300),
-    })),
+    items: items.map((item) => {
+      // سؤال زندهٔ موتور، نه متنی که لحظهٔ ثبت یخ زد: بدونش «بله» تا جواب نیامده
+      // حتماً رد می‌شد و کارت راهی برای جواب نداشت.
+      const ask = confirmationAsk(decisionForEvent(database, item.id));
+      return {
+        id: item.id,
+        question: item.confidence?.summary || describeEvent(item.event),
+        // یک دلیل، به زبان ساده. فهرست دلایل، پرسش را به بازجویی تبدیل می‌کند.
+        hint: confirmationHint(item.confidence?.reasons, ask),
+        ask,
+        amount: item.amount,
+        occurredAt: item.occurredAt,
+        evidence: String(item.event?.evidence || '').slice(0, 300),
+      };
+    }),
   };
+}
+
+/**
+ * جواب صاحب کسب‌وکار به سؤال کارت امروز — همان `answerEvent` صف حسابدار، از
+ * مسیری که در تجربهٔ ساده هم باز است. جواب سند نمی‌زند؛ تصمیم و برنامه تازه
+ * می‌شوند و ثبت همچنان با «بله» است.
+ */
+export function answerPending(eventId, answer = {}) {
+  const database = activeWorkspaceDatabase();
+  const row = database.prepare('SELECT id,status,route FROM financial_events WHERE id=?').get(String(eventId || ''));
+  const checked = checkConfirmationAnswer(row, decisionForEvent(database, row?.id), answer);
+  const item = answerEvent(row.id, checked);
+  const ask = item.route === 'confirm' ? confirmationAsk(item.decision) : null;
+  return { id: item.id, route: item.route, ask, hint: confirmationHint(item.confidence?.reasons, ask) };
 }
 
 /** «بله، درست است» — همان تأیید، با همان مسیر سند. */

@@ -23,6 +23,7 @@ import { decide } from '../../shared/accountingDecision.js';
 import { planJournal } from '../../shared/accountingRules.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
+import { recognitionPreview, servicePeriodPreview } from '../../shared/recognitionPreview.js';
 
 export function getToday() {
   const today = localDay();
@@ -921,6 +922,8 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
       // سطرهای پیشنهادی فقط برای نمایش؛ ثبت واقعی همان مسیر همیشگی است.
       lines: decision?.decisionStatus === 'decided' ? safePlanLines(draft.event, decision) : [],
       treatment: decision?.treatment || null, family: decision?.family || null,
+      // دوره و برنامهٔ ماهانه‌ای که ثبت خواهد ساخت؛ برگهٔ تأیید بدون آن فقط سطر اول را نشان می‌داد.
+      recognition: recognitionPreview(draft.event, decision), servicePeriod: servicePeriodPreview(draft.event),
     };
   });
 }
