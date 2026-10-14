@@ -1257,3 +1257,42 @@ for (const mode of ['engine-on', 'engine-off']) {
     assert.equal(openingOf(software).id, kept);
   }));
 }
+
+// ---------------------------------------------------------------------------
+// پیش‌پرداخت خرید و بیعانهٔ فروش با چک: همان ماهیتِ مسیر نقدی.
+// ---------------------------------------------------------------------------
+
+for (const mode of ['engine-on', 'engine-off']) {
+  test(`پیش‌پرداخت به تأمین‌کننده و بیعانهٔ مشتری با چک دارایی/بدهی است، نه هزینه یا فروش (${mode})`, () => inWorkspace(freshWorkspace(`پیش‌پرداخت چکی ${mode}`), () => {
+    if (mode === 'engine-on') engineOn();
+    for (const [text, amount, debitKind, creditKind] of [
+      // جملهٔ بازبین عیناً.
+      ['پیش پرداخت خرید کالا رو با چک ۵۰ میلیونی به شرکت پارس دادیم', 50_000_000, 'prepaid-asset', 'cheque-payable'],
+      ['بابت پیش پرداخت خرید مواد اولیه یه چک ۳۰ میلیونی به شرکت پارس پلاست دادیم', 30_000_000, 'prepaid-asset', 'cheque-payable'],
+      ['یه چک ۱۰ میلیونی علی الحساب خرید جنس به شرکت پارس دادیم', 10_000_000, 'prepaid-asset', 'cheque-payable'],
+      ['آقای احمدی بیعانه خرید رو یه چک ۲۰ میلیونی داد', 20_000_000, 'cheque-receivable', 'customer-advance'],
+      ['از آقای احمدی بابت پیش پرداخت سفارش چک ۲۰ میلیونی گرفتیم', 20_000_000, 'cheque-receivable', 'customer-advance'],
+    ]) {
+      const cheque = voiceCheque(text, { counterpartyName: intent(text).contactName || 'شرکت پارس' });
+      assert.ok(cheque.journalEntryId, text);
+      assert.deepEqual(lines(cheque.journalEntryId), [[debitKind, amount], [creditKind, amount]], text);
+      assert.equal(decisionOf(cheque.eventId).treatment, debitKind === 'prepaid-asset' ? 'supplier-advance' : 'customer-advance', text);
+    }
+    assert.equal(kindBalance('expense-category'), 0, 'هزینهٔ حدسی ساخته نشد');
+    assert.equal(kindBalance('income-category'), 0, 'فروش حدسی ساخته نشد');
+    assert.equal(kindBalance('inventory-unsplit'), 0, 'کالایی هنوز نرسیده');
+    // وصول چک پیش‌پرداخت فقط اسناد پرداختنی را با بانک می‌بندد.
+    const first = database.listCheques({ status: 'open', direction: 'payable' }).find((cheque) => cheque.amount === 50_000_000);
+    database.clearCheque(first.id, { account: 'cash' });
+    assert.equal(kindBalance('prepaid-asset'), 90_000_000);
+    // منفی‌ها: خرید کالا با چک، چک فروش، و پیش‌پرداخت اجاره (مسیر خدمت دوره‌دار).
+    const goods = voiceCheque('چک دادیم برای خرید مواد اولیه ۴۰ میلیون به شرکت پارس پلاست');
+    assert.deepEqual(lines(goods.journalEntryId), [['inventory-unsplit', 40_000_000], ['cheque-payable', 40_000_000]]);
+    const sale = voiceCheque('یه چک ۵ میلیونی بابت فروش کالا از آقای احمدی گرفتیم', { counterpartyName: 'احمدی' });
+    assert.deepEqual(lines(sale.journalEntryId), [['cheque-receivable', 5_000_000], ['income-category', 5_000_000]]);
+    const rent = voiceCheque('پیش پرداخت اجاره یکساله دفتر رو با چک ۱۲۰ میلیونی به آقای رضایی دادیم');
+    assert.deepEqual(schedule(rent.eventId), { count: 12, total: 120_000_000 });
+    const rentNoPeriod = voiceCheque('پیش پرداخت اجاره دفتر رو با چک ۱۰ میلیونی به آقای رضایی دادیم');
+    assert.ok(rentNoPeriod.pendingQuestion, 'دورهٔ اجاره پرسیده می‌شود، نه پیش‌پرداخت خرید');
+  }));
+}

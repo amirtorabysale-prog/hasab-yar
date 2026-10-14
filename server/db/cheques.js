@@ -19,7 +19,8 @@ import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEven
 import { purchasePurposeFromSpeech } from '../../shared/purchasePurpose.js';
 import { DECISION_STATUS } from '../../shared/accountingDecision.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
-import { ENGINE_POSTED_TREATMENTS, documentRouting, documentServiceDecision, readDocumentService } from '../../shared/documentService.js';
+import { ADVANCE_TREATMENTS, ENGINE_POSTED_TREATMENTS, documentAdvanceDecision, documentRouting, documentServiceDecision, readDocumentService } from '../../shared/documentService.js';
+import { readPrepaymentMention } from '../../shared/prepaymentSpeech.js';
 
 export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
@@ -144,7 +145,8 @@ export function recordCheque(values = {}) {
   // «چک دادیم برای خرید مواد اولیه» موجودی می‌خرد، نه هزینهٔ این ماه. همان
   // خواندن هدف خرید که خرید نقدی دارد؛ بی‌نشانه، رفتار قبلی می‌ماند.
   const intendedUse = values.intendedUse || (direction === 'payable' && against === 'income' ? purchasePurposeFromSpeech(values.note) : null);
-  const inventory = direction === 'payable' && against === 'income' && ['resale', 'production'].includes(intendedUse);
+  // «پیش پرداخت خرید مواد اولیه با چک»: کالا هنوز نرسیده؛ پیش‌پرداخت است، نه موجودی.
+  const inventory = direction === 'payable' && against === 'income' && ['resale', 'production'].includes(intendedUse) && !readPrepaymentMention(evidence);
   let category = String(values.category || '').trim().slice(0, 80);
   if (against === 'income' && !inventory) {
     // «بابت چه؟» از خودِ سند خوانده می‌شود، با همان خواننده‌ای که پرداخت نقدی
@@ -155,13 +157,15 @@ export function recordCheque(values = {}) {
       servicePeriodStart: values.servicePeriodStart, servicePeriodEnd: values.servicePeriodEnd, refundable: values.refundable,
     });
     const event = chequeEvent(party, service);
-    const decision = documentServiceDecision(event);
+    // پیش‌پرداخت خرید یا بیعانه با چک: پیش‌پرداخت به تأمین‌کننده یا پیش‌دریافت،
+    // نه هزینه یا فروشِ امروز — همان که مسیر نقدی می‌سازد.
+    const decision = documentServiceDecision(event) || documentAdvanceDecision(event);
     if (decision) {
       const routing = documentRouting(decision);
       if (routing.route === ROUTES.ACCOUNTANT_REVIEW) {
         return queueChequeForAccountant(db_, party, { prefix: 'service-cheque', category: service.category, reason: routing.reasons[0], event, accountingDecision: decision });
       }
-      if (decision.decisionStatus !== DECISION_STATUS.DECIDED || ENGINE_POSTED_TREATMENTS.includes(decision.treatment)) {
+      if (decision.decisionStatus !== DECISION_STATUS.DECIDED || ENGINE_POSTED_TREATMENTS.includes(decision.treatment) || ADVANCE_TREATMENTS.includes(decision.treatment)) {
         return recordEngineCheque(db_, party, { event, decision, routing });
       }
     }
@@ -218,6 +222,8 @@ function chequeEvent({ values, direction, amount, occurredAt, evidence, contactI
     servicePeriodStart: service.servicePeriodStart || null, servicePeriodEnd: service.servicePeriodEnd || null,
     refundable: typeof service.refundable === 'boolean' ? service.refundable : null,
     chequeAgainst: against || null,
+    // «پیش پرداخت»، «بیعانه»، «علی‌الحساب» در شرح چک: ماهیت پیش‌پرداخت است.
+    ...(against === 'income' && readPrepaymentMention(evidence) ? { prepaymentSignal: true } : {}),
     source: values.source === 'voice' ? 'voice' : 'text',
     evidence: evidence || null, utterance: evidence || null,
   });

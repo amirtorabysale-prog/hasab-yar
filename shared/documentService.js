@@ -3,6 +3,7 @@ import { factsFromEvent } from './eventFacts.js';
 import { TREATMENTS } from './factRequirements.js';
 import { ROUTES } from './confidenceEngine.js';
 import { isTimeBoundService } from './economicFamily.js';
+import { EVENT_KINDS } from './financialEvent.js';
 import { isTimeBoundCategory } from './documentReading.js';
 import { persianMonthRange, todayPersian } from './persianDate.js';
 
@@ -54,6 +55,30 @@ function runsPastDocumentMonth(event) {
   const day = todayPersian(at);
   const month = persianMonthRange(day.year, day.month);
   return end.getTime() > new Date(month.to).getTime();
+}
+
+const ADVANCE_POLICIES = Object.freeze(['supplier-advance', 'advance-received']);
+/** برخوردهای پیش‌پرداخت/پیش‌دریافتِ غیرخدمتی که چک با نقشهٔ موتور ثبت می‌کند. */
+export const ADVANCE_TREATMENTS = Object.freeze([TREATMENTS.SUPPLIER_ADVANCE, TREATMENTS.CUSTOMER_ADVANCE, TREATMENTS.DEFERRED_REVENUE]);
+const CASH_TWIN = Object.freeze({ [EVENT_KINDS.CHEQUE_ISSUED]: EVENT_KINDS.CASH_EXPENSE, [EVENT_KINDS.CHEQUE_RECEIVED]: EVENT_KINDS.CASH_INCOME });
+
+/**
+ * پیش‌پرداخت خرید یا بیعانهٔ فروش که با چک داده یا گرفته شده.
+ *
+ * «پیش پرداخت خرید کالا رو با چک ۵۰ میلیونی به شرکت پارس دادیم» همان پیش‌پرداخت
+ * به تأمین‌کننده است که با نقد می‌شد — دارایی، نه «مواد و کالا»ی امروز؛ «بیعانهٔ
+ * خرید رو مشتری با چک داد» پیش‌دریافت است، نه فروش. ماهیت از همتای نقدیِ همان
+ * رویداد خوانده می‌شود (موتور برای چک سیاست پیش‌پرداخت ندارد) و فقط وقتی پذیرفته
+ * می‌شود که همان سیاست پیش‌پرداخت/پیش‌دریافت را بدهد؛ سطر نقدی‌اش را `applyFunding`
+ * به اسناد پرداختنی یا دریافتنی می‌دهد. چک بابت طلب قبلی و چک بی‌نشانهٔ پیش‌پرداخت
+ * دست نمی‌خورند (`null`).
+ */
+export function documentAdvanceDecision(event, { today = null } = {}) {
+  const twin = CASH_TWIN[event?.kind];
+  if (!twin || event?.prepaymentSignal !== true || event?.chequeAgainst !== 'income') return null;
+  // حساب پولیِ همتای نقدی خودِ چک است (سطرش به اسناد می‌رود)، نه صندوقی که بپرسیم.
+  const decision = decide(factsFromEvent({ ...event, kind: twin, accountId: event.accountId || 'cheque' }), { today: today || new Date().toISOString() });
+  return ADVANCE_POLICIES.includes(decision.policyKey) ? decision : null;
 }
 
 /**
