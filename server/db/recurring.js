@@ -3,7 +3,7 @@ import { activeWorkspaceDatabase, audit, cleanAmount, db, invalidInput } from '.
 import { insertTransactionRows } from './transactions.js';
 import { ensureFinancialEventSchema } from '../financialEventStore.js';
 import { persianMonthRange, todayPersian } from '../../shared/persianDate.js';
-import { isTimeBoundCategory } from '../../shared/documentReading.js';
+import { bookedServiceFacts, isTimeBoundCategory } from '../../shared/documentReading.js';
 import { TREATMENTS } from '../../shared/factRequirements.js';
 
 /**
@@ -59,7 +59,7 @@ function coverageMatch(rule) {
 }
 
 /** پیش‌پرداخت یا پیش‌دریافتِ ثبت‌شده‌ای که همین ماه را پوشش می‌دهد. */
-function coveringSchedule(rule, periodKey) {
+function coveringSchedule(rule, periodKey, month = null) {
   const match = coverageMatch(rule);
   if (!match) return null;
   ensureFinancialEventSchema(activeWorkspaceDatabase());
@@ -68,11 +68,45 @@ function coveringSchedule(rule, periodKey) {
     WHERE fe.status='posted' AND rsi.period_key=? AND rsi.status IN ('planned','posted')
       AND json_extract(fe.payload,'$.category') IN (${match.categories.map(() => '?').join(',')})
       AND (SELECT d.treatment FROM accounting_decisions d WHERE d.event_id=fe.id ORDER BY d.created_at DESC,d.rowid DESC LIMIT 1)=?
-    ORDER BY fe.occurred_at DESC LIMIT 1`).get(periodKey, ...match.categories, match.treatment) || null;
+    ORDER BY fe.occurred_at DESC LIMIT 1`).get(periodKey, ...match.categories, match.treatment)
+    || (month ? coveringTransaction(rule, match, month) : null);
+}
+
+/**
+ * ردیف ثبت‌شده‌ای که دورهٔ گفته‌شده‌اش همین ماه را می‌گیرد — بی‌برنامهٔ شناسایی.
+ *
+ * با موتور خاموش (پیش‌فرض) «اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون» یک ردیف
+ * هزینهٔ اجاره است و برنامه‌ای نمی‌سازد؛ قاعدهٔ اجارهٔ ماهانه کنارش هر ماه یک
+ * خروج نقدی دیگر می‌ساخت. دوره از متن خودِ ردیف (نسبت به تاریخش) خوانده می‌شود،
+ * همان خواننده‌ای که صورت‌حساب و رسید دارند.
+ */
+function coveringTransaction(rule, match, month) {
+  const categories = match.categories;
+  const from = new Date(new Date(month.from).getTime() - 3 * 366 * 86_400_000).toISOString();
+  const rows = db.prepare(`SELECT id,amount,type,category,raw_text AS rawText,occurred_at AS occurredAt FROM transactions
+    WHERE status!='deleted' AND type=? AND category IN (${categories.map(() => '?').join(',')})
+      AND (client_id IS NULL OR client_id NOT LIKE 'recurring:%') AND occurred_at<=? AND occurred_at>=?
+    ORDER BY occurred_at DESC LIMIT 60`).all(rule.type, ...categories, month.to, from);
+  const start = new Date(month.from).getTime();
+  const end = new Date(month.to).getTime();
+  for (const row of rows) {
+    const facts = bookedServiceFacts(row.rawText, { type: row.type, category: row.category, occurredAt: row.occurredAt });
+    if (!facts.servicePeriodStart || !facts.servicePeriodEnd) continue;
+    // همپوشانیِ واقعی با ماه سررسید، نه فقط یک روزِ مرزی.
+    const overlap = Math.min(end, new Date(facts.servicePeriodEnd).getTime()) - Math.max(start, new Date(facts.servicePeriodStart).getTime());
+    if (overlap >= 7 * 86_400_000 || overlap >= (end - start) / 2) {
+      return { transactionId: row.id, periodKey: month.month, amount: row.amount, fromTransaction: true };
+    }
+  }
+  return null;
 }
 
 function coveredQuestion(rule, periodKey, covering) {
   const side = rule.type === 'income' ? 'پیش‌دریافتِ' : 'پیش‌پرداختِ';
+  if (covering.fromTransaction) {
+    return `ماه ${periodKey} را ${side} ثبت‌شده‌ای (ردیف ${Number(covering.amount).toLocaleString('fa-IR')} تومانی که دوره‌اش این ماه را می‌گیرد) پوشش می‌دهد؛ `
+      + `ثبت دوره‌ای «${rule.title}» برای این ماه وارد نشد. اگر همان قرارداد است این ماه را رد کن یا قاعده را متوقف کن؛ اگر جداست، ثبتش کن.`;
+  }
   return `ماه ${periodKey} را ${side} ثبت‌شده‌ای (${Number(covering.amount).toLocaleString('fa-IR')} تومان در همین ماه) پوشش می‌دهد؛ `
     + `ثبت دوره‌ای «${rule.title}» برای این ماه وارد نشد. اگر همان قرارداد است این ماه را رد کن یا قاعده را متوقف کن؛ اگر جداست، ثبتش کن.`;
 }
@@ -121,11 +155,12 @@ export function materializeRecurringRules(now = new Date()) {
         const clientId = `recurring:${item.id}:${nextDue.slice(0, 10)}`;
         const existed = db.prepare('SELECT id FROM transactions WHERE client_id=?').get(clientId);
         const month = dueMonth(nextDue);
-        const covering = !existed && month && hold?.allowPeriodKey !== month.month ? coveringSchedule(item, month.month) : null;
+        const covering = !existed && month && hold?.allowPeriodKey !== month.month ? coveringSchedule(item, month.month, month) : null;
         if (covering) {
           const question = coveredQuestion(item, month.month, covering);
-          heldNow = { reason: 'covered-by-prepaid', periodKey: month.month, dueAt: nextDue, eventId: covering.eventId, question };
-          held.push({ ruleId: item.id, title: item.title, amount: item.amount, reason: 'covered-by-prepaid', eventId: covering.eventId, periodKey: month.month, question });
+          const source = covering.transactionId ? { transactionId: covering.transactionId } : { eventId: covering.eventId };
+          heldNow = { reason: 'covered-by-prepaid', periodKey: month.month, dueAt: nextDue, ...source, question };
+          held.push({ ruleId: item.id, title: item.title, amount: item.amount, reason: 'covered-by-prepaid', ...source, periodKey: month.month, question });
           break;
         }
         // اجاره، بیمه یا اشتراکِ ماهانهٔ قاعده مال همان ماه سررسید است.

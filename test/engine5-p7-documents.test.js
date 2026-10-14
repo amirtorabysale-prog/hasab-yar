@@ -1182,3 +1182,49 @@ test('ابطال چک: سند ثبت برمی‌گردد یا رویداد من�
   assert.deepEqual({ ...database.chequeSummary().openPayable }, { count: 0, total: 0 });
   assert.throws(() => database.cancelCheque(plain.id), (error) => error.code === 'CHEQUE_NOT_OPEN');
 }));
+
+// ---------------------------------------------------------------------------
+// قاعدهٔ تکرار با موتور خاموش (پیش‌فرض): ردیفِ پیش‌پرداختِ بی‌برنامه هم ماه را می‌گیرد.
+// ---------------------------------------------------------------------------
+
+test('موتور خاموش: «اجاره ۶ ماه دفتر رو جلوتر دادیم» کنار قاعدهٔ اجاره خروج نقدی دوم نمی‌سازد؛ خانواده و منفی‌ها', () => inWorkspace(freshWorkspace('قاعده موتور خاموش'), () => {
+  const rent = saveRule({ title: 'اجاره دفتر', amount: 5_000_000, category: 'اجاره' });
+  // جملهٔ کاربر، عیناً، از مسیر صدا.
+  voicePrepaid('اجاره ۶ ماه دفتر رو جلوتر دادیم ۳۰ میلیون، ماهی ۵ میلیون');
+  const expenseBefore = kindBalance('expense-category');
+  database.materializeRecurringRules(new Date('2026-12-05T10:00:00.000Z'));
+  assert.deepEqual(recurringRows(rent.id), [], 'آبان و آذر را پیش‌پرداخت گرفته');
+  assert.equal(kindBalance('expense-category'), expenseBefore);
+  const hold = ruleOf(rent.id).hold;
+  assert.equal(hold.reason, 'covered-by-prepaid');
+  assert.equal(hold.periodKey, '1405-08');
+  assert.ok(hold.transactionId);
+  // «همان قرارداد است»: این ماه رد می‌شود و ماه بعد دوباره پرسیده می‌شود.
+  database.saveRecurringRule({ id: rent.id, coveredMonth: 'skip' });
+  database.materializeRecurringRules(new Date('2026-12-05T10:00:00.000Z'));
+  assert.deepEqual(recurringRows(rent.id), []);
+  assert.equal(ruleOf(rent.id).hold.periodKey, '1405-09');
+
+  // بیمه و آینهٔ درآمد اجاره از فرم (دسته را کاربر انتخاب کرده).
+  const insurance = saveRule({ title: 'بیمه انبار', amount: 1_000_000, category: 'بیمه' });
+  const tenant = saveRule({ title: 'اجاره مغازه', amount: 10_000_000, category: 'درآمد اجاره', type: 'income' });
+  database.insertTransactions({ transcript: 'فرم', transactions: [
+    { clientId: 'form-insurance', amount: 12_000_000, type: 'expense', category: 'بیمه', rawText: 'حق بیمه یکساله آتش سوزی انبار', occurredAt: NOW.toISOString(), source: 'text', userConfirmed: true },
+    { clientId: 'form-tenant', amount: 60_000_000, type: 'income', category: 'درآمد اجاره', rawText: 'اجاره شش ماه آینده مغازه از مستاجر', occurredAt: NOW.toISOString(), source: 'text', userConfirmed: true },
+  ] });
+  database.materializeRecurringRules(new Date('2026-11-02T10:00:00.000Z'));
+  assert.deepEqual(recurringRows(insurance.id), []);
+  assert.deepEqual(recurringRows(tenant.id), []);
+  assert.equal(ruleOf(tenant.id).hold.reason, 'covered-by-prepaid');
+
+  // منفی‌ها: اجارهٔ همین ماه، قبض، و ماهِ بعد از پایان دوره ثبت می‌شوند.
+  const office = saveRule({ title: 'اجاره انبار', amount: 4_000_000, category: 'اجاره', nextDueAt: '2027-05-01T09:00:00.000Z' });
+  const bill = saveRule({ title: 'قبض برق', amount: 3_000_000, category: 'قبوض' });
+  database.insertTransactions({ transcript: 'فرم', transactions: [
+    { clientId: 'form-month', amount: 5_000_000, type: 'expense', category: 'اجاره', rawText: 'اجاره مهر انبار', occurredAt: NOW.toISOString(), source: 'text', userConfirmed: true },
+  ] });
+  database.materializeRecurringRules(new Date('2026-11-02T10:00:00.000Z'));
+  assert.equal(recurringRows(bill.id).length, 1, 'قبض پیش‌پرداخت اجاره نیست');
+  database.materializeRecurringRules(new Date('2027-05-02T10:00:00.000Z'));
+  assert.equal(recurringRows(office.id).length, 1, 'اردیبهشت پس از پایانِ شش ماه است و «اجاره مهر» فقط مهر را می‌گیرد');
+}));
