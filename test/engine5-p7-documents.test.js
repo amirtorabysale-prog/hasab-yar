@@ -750,3 +750,75 @@ test('منفی‌ها: قاعدهٔ قبض کنار پیش‌پرداخت اجا
   assert.equal(rows[0].deferred, 0, 'هزینهٔ همان ماه، بی‌سؤال');
   assert.equal(ruleOf(rent.id).hold, null);
 }));
+
+// ---------------------------------------------------------------------------
+// خوشهٔ statement-receipt-no-period — دورهٔ گفته‌شده در شرح بانک یا رسید
+// دوباره پرسیده نمی‌شود.
+// ---------------------------------------------------------------------------
+
+const eventOfRow = (clientId) => activeWorkspaceDatabase().prepare(`SELECT fe.id,fe.status,fe.journal_entry_id AS journalEntryId
+  FROM financial_events fe JOIN transactions t ON json_extract(fe.journal_source,'$.id')=t.id WHERE t.client_id=?
+  ORDER BY fe.rowid DESC LIMIT 1`).get(clientId);
+const statementLines = (account, rows) => database.importBankStatement({
+  buffer: Buffer.from(['date,description,credit,debit,balance', ...rows.map(([description, amount, direction = 'expense']) => (direction === 'income'
+    ? `2026-10-10,${description},${amount},,0` : `2026-10-10,${description},,${amount},0`))].join('\n')),
+  fileName: `statement-${rows.length}.csv`, accountId: account.id,
+}).lines;
+
+test('ردیف صورت‌حساب بانک با دورهٔ گفته‌شده پیش‌پرداخت است، بی‌سؤال؛ منفی‌ها همان قبلی', () => inWorkspace(freshWorkspace('صورت‌حساب دوره'), () => {
+  engineOn();
+  const account = database.saveAccount({ name: 'جاری ملت', kind: 'bank', openingBalance: 500_000_000 });
+  const rows = [
+    ['حق بیمه آتش سوزی یکساله انبار', 12_000_000, 'بیمه', 12],
+    ['اجاره ۶ ماهه دفتر مهر تا اسفند', 30_000_000, 'اجاره', 6],
+    ['اشتراک یک ساله نرم افزار', 24_000_000, 'نرم‌افزار و اشتراک', 12],
+    // رقم لاتین و تایپ بی‌دقت.
+    ['حق بيمه آتش سوزي 12 ماهه انبار', 6_000_000, 'بیمه', 12],
+  ];
+  const lines_ = statementLines(account, rows.map(([text, amount]) => [text, amount]));
+  rows.forEach(([text, amount, category, months], index) => {
+    database.createTransactionFromStatementLine(lines_[index].id, { category });
+    const event = eventOfRow(`statement-line:${lines_[index].id}`);
+    assert.equal(event?.status, 'posted', text);
+    assert.deepEqual(lines(event.journalEntryId), [['prepaid-asset', amount], ['operational-account', amount]], text);
+    assert.deepEqual(schedule(event.id), { count: months, total: amount }, text);
+  });
+  assert.equal(kindBalance('expense-category'), 0);
+  // منفی‌ها: «پیش پرداخت» بی‌دوره هنوز می‌پرسد؛ قبض و اجارهٔ همین ماه هزینهٔ دوره‌اند؛
+  // «قسط ۶ ماهه وام» دورهٔ خدمت نیست.
+  const negatives = statementLines(account, [['پیش پرداخت اجاره دفتر', 10_000_000], ['قبض برق مهر', 3_000_000], ['اجاره مهر دفتر', 5_000_000], ['قسط ۶ ماهه وام', 7_000_000]]);
+  database.createTransactionFromStatementLine(negatives[0].id, { category: 'اجاره' });
+  assert.equal(eventOfRow(`statement-line:${negatives[0].id}`).status, 'pending', 'دوره گفته نشده؛ پرسیده می‌شود');
+  database.createTransactionFromStatementLine(negatives[1].id, { category: 'قبوض' });
+  database.createTransactionFromStatementLine(negatives[2].id, { category: 'اجاره' });
+  assert.equal(kindBalance('expense-category'), 8_000_000);
+  database.createTransactionFromStatementLine(negatives[3].id, { category: 'سایر هزینه‌ها' });
+  assert.equal(kindBalance('prepaid-asset'), 12_000_000 + 30_000_000 + 24_000_000 + 6_000_000);
+  // آینه: پیش‌دریافت اجارهٔ مستاجر درآمد امروز نمی‌شود.
+  const tenant = statementLines(account, [['اجاره شش ماه آینده مغازه از مستاجر', 60_000_000, 'income']]);
+  database.createTransactionFromStatementLine(tenant[0].id, { category: 'اجاره' });
+  assert.equal(kindBalance('income-category'), 0);
+}));
+
+test('رسید با «مدت پوشش یکساله» یا «شش ماهه» پیش‌پرداخت است، بی‌سؤال', () => inWorkspace(freshWorkspace('رسید دوره'), () => {
+  engineOn();
+  const account = database.saveAccount({ name: 'صندوق رسید', kind: 'cash', openingBalance: 500_000_000 });
+  for (const [ocrText, amount, category, months] of [
+    ['رسید پرداخت حق بیمه آتش سوزی انبار مدت پوشش یکساله از 1405/07/18 تا 1406/07/17', 12_000_000, 'بیمه', 12],
+    ['قرارداد اجاره دفتر شش ماهه مهر تا اسفند 1405 مبلغ پرداختی', 30_000_000, 'اجاره', 6],
+    ['فاکتور اشتراک سالانه نرم افزار ۱۲ ماهه', 24_000_000, 'نرم‌افزار و اشتراک', 12],
+  ]) {
+    const receipt = database.saveReceipt({ buffer: Buffer.from(ocrText), fileName: 'r.jpg', mimeType: 'image/jpeg', amount, type: 'expense', category,
+      accountId: account.id, occurredAt: '2026-10-10T08:30:00.000Z', status: 'ready', ocrText });
+    database.confirmReceipt(receipt.id, {});
+    const event = eventOfRow(`receipt:${receipt.id}`);
+    assert.equal(event?.status, 'posted', ocrText);
+    assert.deepEqual(lines(event.journalEntryId), [['prepaid-asset', amount], ['operational-account', amount]], ocrText);
+    assert.deepEqual(schedule(event.id), { count: months, total: amount }, ocrText);
+  }
+  // رسید قبض: هزینهٔ همان دوره، بی‌پیش‌پرداخت.
+  const bill = database.saveReceipt({ buffer: Buffer.from('bill'), fileName: 'b.jpg', mimeType: 'image/jpeg', amount: 2_000_000, type: 'expense', category: 'قبوض',
+    accountId: account.id, occurredAt: '2026-10-10T08:30:00.000Z', status: 'ready', ocrText: 'قبض برق مهر' });
+  database.confirmReceipt(bill.id, {});
+  assert.equal(kindBalance('expense-category'), 2_000_000);
+}));

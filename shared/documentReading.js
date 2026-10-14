@@ -3,6 +3,7 @@ import { classifyCategory } from './categoryRules.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { saysRefundable } from './moneyPurpose.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
+import { readPrepaymentMention } from './prepaymentSpeech.js';
 
 /**
  * خدمت دوره‌دار روی سندِ پایه — چک، طلب و بدهی، فاکتور، قاعدهٔ تکرار.
@@ -89,4 +90,28 @@ export function readDocumentService(input, { direction, occurredAt, category = n
 export function isTimeBoundCategory(category) {
   const name = String(category || '').trim();
   return TIME_BOUND_SERVICE_CATEGORIES.includes(name) || name === 'درآمد اجاره';
+}
+
+/**
+ * دورهٔ پوششی که شرح بانک یا متن رسید گفته — برای ردیفی که از پارسر صدا رد نشده.
+ *
+ * «حق بیمه آتش سوزی یکساله انبار» در صورت‌حساب یا «مدت پوشش یکساله» در رسید
+ * همان دوازده ماهی است که جملهٔ صوتی می‌گفت؛ ولی فقط پارسر صدا دوره را می‌خواند
+ * و این ردیف‌ها هر بار «دورهٔ پوشش از کِی؟» می‌پرسیدند. اینجا همان خواننده نسبت
+ * به تاریخ خودِ ردیف اجرا می‌شود.
+ *
+ * فقط پرداخت، و دریافتِ اجاره (آینهٔ پیش‌دریافت)؛ دورهٔ گفته‌نشده `null` می‌ماند
+ * تا موتور بپرسد. «پیش پرداخت» بی‌دوره نشانهٔ پیش‌پرداخت است، نه دوره.
+ */
+export function bookedServiceFacts(input, { type, category = null, occurredAt = null } = {}) {
+  const text = normalizePersian(input);
+  if (!text || !occurredAt) return {};
+  const expense = type === 'expense';
+  const rentIncome = type === 'income' && ['اجاره', 'درآمد اجاره'].includes(String(category || '').trim());
+  if (!expense && !rentIncome) return {};
+  const period = readServicePeriod(text, { occurredAt });
+  return {
+    ...(period?.start && period?.end ? { servicePeriodStart: period.start, servicePeriodEnd: period.end } : {}),
+    ...(expense && readPrepaymentMention(text) === true ? { prepaymentSignal: true } : {}),
+  };
 }
