@@ -1166,7 +1166,8 @@ test('ابطال چک: سند ثبت برمی‌گردد یا رویداد من�
   assert.equal(database.cancelCheque(posted.id, { reason: 'چک اشتباه نوشته شد' }).status, 'cancelled');
   assert.equal(kindBalance('prepaid-asset'), 0);
   assert.equal(kindBalance('cheque-payable'), 0);
-  assert.equal(schedule(posted.eventId).count, 12, 'برنامه می‌ماند ولی رویدادش برگشته است');
+  // برگشت رویداد، برنامهٔ شناسایی‌اش را هم می‌بندد (هیچ قلمِ زنده‌ای نمی‌ماند).
+  assert.equal(schedule(posted.eventId).count, 0, 'برنامهٔ رویدادِ برگشته بسته می‌شود');
   assert.equal(activeWorkspaceDatabase().prepare('SELECT status FROM financial_events WHERE id=?').get(posted.eventId).status, 'reversed');
   // شناسایی ماهانهٔ رویدادِ برگشته چیزی ثبت نمی‌کند.
   store.postDueRecognitionItems(activeWorkspaceDatabase(), { today: '2027-01-25T00:00:00.000Z' });
