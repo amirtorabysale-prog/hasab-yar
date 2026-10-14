@@ -16,7 +16,7 @@ import {
   pendingConfirmations, confirmPending, handOverPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
-  bounceCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
+  bounceCheque, cancelCheque, chequeSummary, clearCheque, listCheques, recordCheque, settleVatPeriod, claimVatRefund, transferWithFee,
   answerUnderstandingCase, commitUnderstandingCase, createUnderstandingCase, dismissUnderstandingCase, getUnderstandingCase, legacySnapshot,
   listUnderstandingCases, retryUnderstandingCase, scheduleShadowUnderstanding, sendUnderstandingToAccountant, understandingReport,
   closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling,
@@ -592,6 +592,9 @@ app.post('/api/cheques/:id/clear', (request, response, next) => {
 });
 app.post('/api/cheques/:id/bounce', (request, response, next) => {
   try { return response.json({ item: bounceCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/cheques/:id/cancel', (request, response, next) => {
+  try { return response.json({ item: cancelCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
 });
 
 // لیست حقوق: فایل دفتر، سند، و تسویهٔ سه بدهیِ جدا.

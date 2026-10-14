@@ -1115,3 +1115,70 @@ test('مدیر مالی، معاون، مسئول خرید و خانوادهٔ �
     'بیمه ایران چک خسارت ۲۰ میلیونی رو داد',
   ]) assert.equal(intent(text)?.direction, 'receivable', text);
 });
+
+// ---------------------------------------------------------------------------
+// برگشت یا رد رویدادِ پشت سند پایه: سند پایه و دفتر با هم.
+// ---------------------------------------------------------------------------
+
+test('ردیف فاکتور تنها برنمی‌گردد؛ چک و طلب/بدهیِ رویدادِ برگشته یا ردشده ابطال می‌شوند', () => inWorkspace(freshWorkspace('برگشت سند پایه'), () => {
+  engineOn();
+  const reason = 'ثبت اشتباه بود، برگشت';
+  // فاکتور دوردیفه: برگشت یک ردیف رد می‌شود؛ فاکتور و دفتر دست نمی‌خورند.
+  const invoice = database.createInvoice({ documentType: 'purchase', category: 'بیمه', customerName: 'بیمه ایران', issueNow: true, issuedAt: ISSUED,
+    items: [{ title: 'حق بیمه آتش سوزی یکساله انبار', unitPrice: 12_000_000 }, { title: 'حق بیمه بدنه یکساله', unitPrice: 6_000_000 }] });
+  const [lineEvent] = invoiceEvents(invoice);
+  assert.throws(() => database.reverseEvent(lineEvent.id, reason), (error) => error.status === 409 && error.code === 'EVENT_OWNED_BY_INVOICE');
+  assert.equal(database.getInvoice(invoice.id).status, 'sent');
+  assert.equal(kindBalance('prepaid-asset'), 18_000_000);
+  assert.equal(kindBalance('vendor-payable'), -18_000_000);
+  // راه درست: ابطال خودِ فاکتور همه را با هم برمی‌گرداند (آزمون ابطال فاکتور).
+
+  // چک ثبت‌شده (جملهٔ کاربر): برگشت رویداد چک را ابطال می‌کند؛ وصولش ممکن نیست.
+  const rent = voiceCheque('اجاره یک ساله دفتر رو با چک ۱۲۰ میلیون به آقای رضایی دادیم');
+  database.reverseEvent(rent.eventId, reason);
+  assert.equal(database.listCheques({ status: 'cancelled' }).some((cheque) => cheque.id === rent.id), true);
+  assert.throws(() => database.clearCheque(rent.id, { account: 'cash' }), (error) => error.status === 409);
+  assert.equal(kindBalance('cheque-payable'), 0);
+  // چکِ منتظر سؤال: رد رویداد، چک را از «چک‌های باز» بیرون می‌برد.
+  const pending = voiceCheque('اجاره دفتر رو با چک ۵ میلیونی به آقای رضایی دادیم');
+  assert.ok(pending.pendingQuestion);
+  database.rejectEvent(pending.eventId, reason);
+  assert.deepEqual({ ...database.chequeSummary().openPayable }, { count: 0, total: 0 });
+  // چکِ وصول‌شده: برگشت سند ثبتش رد می‌شود (اسناد پرداختنی نیمه‌کاره نمی‌ماند).
+  const cleared = voiceCheque('بیمه آتش سوزی یکساله رو با چک ۱۲ میلیون به بیمه ایران دادیم', { counterpartyName: 'بیمه ایران' });
+  database.clearCheque(cleared.id, { account: 'cash' });
+  assert.throws(() => database.reverseEvent(cleared.eventId, reason), (error) => error.status === 409 && error.code === 'CHEQUE_EVENT_DEPENDENCY');
+  assert.equal(kindBalance('cheque-payable'), 0);
+
+  // طلب و بدهی: برگشت رویداد بدهی را ابطال می‌کند؛ بدهیِ تسویه‌شده رد می‌شود.
+  const owed = database.saveObligation({ title: 'اشتراک یک ساله نرم افزار', amount: 24_000_000, direction: 'payable', contactName: 'شرکت پارس', note: '' });
+  database.reverseEvent(openingOf(owed).id, reason);
+  assert.equal(database.listObligations().some((item) => item.id === owed.id), false);
+  const settled = database.saveObligation({ title: 'بیمه یک ساله انبار', amount: 12_000_000, direction: 'payable', contactName: 'بیمه ایران', note: '' });
+  const settledEvent = openingOf(settled).id;
+  database.settleObligation(settled.id, { account: 'cash', amount: 2_000_000 });
+  assert.throws(() => database.reverseEvent(settledEvent, reason), (error) => error.status === 409 && error.code === 'OBLIGATION_EVENT_DEPENDENCY');
+}));
+
+test('ابطال چک: سند ثبت برمی‌گردد یا رویداد منتظر رد می‌شود؛ چک ساده هم', () => inWorkspace(freshWorkspace('ابطال چک'), () => {
+  engineOn();
+  const posted = voiceCheque('لایسنس یک ساله نرم افزار رو با چک ۲۴ میلیونی به شرکت همکاران سیستم دادیم');
+  assert.equal(database.cancelCheque(posted.id, { reason: 'چک اشتباه نوشته شد' }).status, 'cancelled');
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  assert.equal(kindBalance('cheque-payable'), 0);
+  assert.equal(schedule(posted.eventId).count, 12, 'برنامه می‌ماند ولی رویدادش برگشته است');
+  assert.equal(activeWorkspaceDatabase().prepare('SELECT status FROM financial_events WHERE id=?').get(posted.eventId).status, 'reversed');
+  // شناسایی ماهانهٔ رویدادِ برگشته چیزی ثبت نمی‌کند.
+  store.postDueRecognitionItems(activeWorkspaceDatabase(), { today: '2027-01-25T00:00:00.000Z' });
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  assert.equal(kindBalance('expense-category'), 0);
+  const pending = voiceCheque('اجاره دفتر رو با چک ۵ میلیونی به آقای رضایی دادیم');
+  database.cancelCheque(pending.id);
+  assert.equal(activeWorkspaceDatabase().prepare('SELECT status FROM financial_events WHERE id=?').get(pending.eventId).status, 'rejected');
+  const plain = voiceCheque('یه چک ۵ میلیونی بابت فروش کالا از آقای احمدی گرفتیم', { counterpartyName: 'احمدی' });
+  database.cancelCheque(plain.id);
+  assert.equal(kindBalance('cheque-receivable'), 0);
+  assert.equal(kindBalance('income-category'), 0);
+  assert.deepEqual({ ...database.chequeSummary().openPayable }, { count: 0, total: 0 });
+  assert.throws(() => database.cancelCheque(plain.id), (error) => error.code === 'CHEQUE_NOT_OPEN');
+}));

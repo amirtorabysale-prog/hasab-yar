@@ -10,11 +10,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { analyticForContact, counterpartyAnalyticForKey } from '../chartOfAccounts.js';
-import { chequeLedgerAccounts, postChequeJournal } from '../accounting.js';
+import { chequeLedgerAccounts, postChequeJournal, reverseJournalEntry } from '../accounting.js';
 import { activeWorkspaceDatabase, audit, cleanAmount, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { contactIdForName } from './contacts.js';
 import { resolveAccountId } from './accounts.js';
-import { findEventBySource, recordFinancialEvent } from '../financialEventStore.js';
+import { findEventBySource, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent } from '../financialEventStore.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { purchasePurposeFromSpeech } from '../../shared/purchasePurpose.js';
 import { DECISION_STATUS } from '../../shared/accountingDecision.js';
@@ -290,10 +290,16 @@ function openCheque(db_, id) {
   const row = db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(String(id || ''));
   if (!row) throw invalidInput('چک پیدا نشد.');
   if (row.status !== 'open') throw Object.assign(new Error(`این چک از قبل «${CHEQUE_STATUSES[row.status]}» است.`), { code: 'CHEQUE_NOT_OPEN', status: 409 });
+  const recorded = findEventBySource(db_, `cheque:${row.id}`);
+  // سند ثبتِ چک برگشته یا رد شده: اسناد پرداختنی/دریافتنی‌ای نمانده که وصول یا
+  // برگشت ببندد. چک ابطال می‌شود، نه وصول (که بانک را بی‌پشتوانه کم می‌کرد).
+  if (['reversed', 'rejected'].includes(recorded?.status)) {
+    db_.prepare("UPDATE cheques SET status='cancelled' WHERE id=? AND status='open'").run(row.id);
+    throw Object.assign(new Error('سند ثبت این چک برگشته یا رد شده؛ چک ابطال شد و وصول یا برگشت ندارد.'), { code: 'CHEQUE_CANCELLED', status: 409 });
+  }
   // چکی که سند ثبتش منتظر جواب است (دورهٔ پوشش، استرداد) هنوز اسناد
   // پرداختنی یا دریافتنی نساخته؛ وصول یا برگشتش حسابی را می‌بست که باز نشده.
   if (!row.journalEntryId) {
-    const recorded = findEventBySource(db_, `cheque:${row.id}`);
     if (recorded?.status === 'posted' && recorded.journalEntryId) {
       db_.prepare('UPDATE cheques SET journal_entry_id=? WHERE id=?').run(recorded.journalEntryId, row.id);
       return { ...row, journalEntryId: recorded.journalEntryId };
@@ -357,6 +363,38 @@ export function bounceCheque(id, { occurredAt = '' } = {}) {
   } catch (error) { db_.exec('ROLLBACK'); throw error; }
   audit('bounce', 'cheque', cheque.id, { amount: cheque.amount });
   return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(cheque.id));
+}
+
+/**
+ * ابطال چکِ باز: سند ثبتش برمی‌گردد (یا رویدادِ منتظرش رد می‌شود) و چک
+ * «ابطال‌شده» می‌شود. چکی که اشتباه ثبت شده یا هنوز سؤالش بی‌جواب است، راهی جز
+ * وصول و برگشت داشت — هر دو دفتر را غلط می‌کردند.
+ */
+export function cancelCheque(id, { reason = '' } = {}) {
+  const db_ = database();
+  const row = db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(String(id || ''));
+  if (!row) throw invalidInput('چک پیدا نشد.');
+  if (row.status !== 'open') throw Object.assign(new Error(`این چک از قبل «${CHEQUE_STATUSES[row.status]}» است.`), { code: 'CHEQUE_NOT_OPEN', status: 409 });
+  if (String(row.id).startsWith('review:')) {
+    throw Object.assign(new Error('این چک را حسابدار از صف بررسی ثبت کرده؛ همان ثبت را از صف بررسی برگردان تا چک هم ابطال شود.'), { code: 'CHEQUE_FROM_REVIEW', status: 409 });
+  }
+  const actor = currentWorkspace()?.userId || null;
+  const memo = reason ? `ابطال چک: ${String(reason).slice(0, 150)}` : `ابطال چک ${row.counterpartyName}`;
+  db_.exec('BEGIN IMMEDIATE');
+  try {
+    const recorded = findEventBySource(db_, `cheque:${row.id}`);
+    if (recorded?.status === 'posted') {
+      reverseFinancialEvent(db_, recorded.id, { actor, reason: memo, timeZone: currentTimeZone(), withinTransaction: true });
+    } else if (recorded?.status === 'pending') {
+      rejectFinancialEvent(db_, recorded.id, { actor, reason: memo });
+    } else if (!recorded) {
+      reverseJournalEntry(db_, { sourceType: 'cheque_record', sourceId: row.id, memo, createdBy: actor, timeZone: currentTimeZone() });
+    }
+    db_.prepare("UPDATE cheques SET status='cancelled' WHERE id=? AND status='open'").run(row.id);
+    db_.exec('COMMIT');
+  } catch (error) { db_.exec('ROLLBACK'); throw error; }
+  audit('cancel', 'cheque', row.id, { amount: row.amount, reason: String(reason).slice(0, 200) });
+  return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(row.id));
 }
 
 export function chequeSummary() {
