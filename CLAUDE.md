@@ -25,3 +25,16 @@
 
 - آزمون: `npm test` — ساخت: `npm run build`
 - عبور یک جمله از مسیر برنامه بدون دیتابیس: `test/helpers/voicePipeline.js` (`runVoice`)
+
+## گراف کد (graphify)
+
+گراف دانش کد در `graphify-out/` است: گره‌های مرکزی، خوشه‌ها و رابطه‌های میان فایل‌ها.
+روی این ماشین و روی Claude Code در سایت یکسان در دسترس است.
+
+- پرسش دربارهٔ ساختار کد: اول `graphify query "<پرسش>"`؛ برای رابطه `graphify path "<A>" "<B>"`
+  و برای یک مفهوم `graphify explain "<مفهوم>"`. خروجی‌شان زیرگراف کوچکی است، کوچک‌تر از گزارش کامل یا grep خام.
+- اگر فرمان `graphify` نصب نیست (مثلاً در محیط ابری): `pip install graphifyy` یا `uv tool install graphifyy`.
+  اگر نصب ممکن نبود، `graphify-out/GRAPH_REPORT.md` را بخوان و در `graphify-out/graph.json` با نام فایل یا تابع جست‌وجو کن.
+- گزارش کامل (`GRAPH_REPORT.md`) فقط برای مرور کلی معماری، یا وقتی پرسش‌های بالا کافی نبود.
+- بعد از تغییر کد: `graphify update .` (فقط ساختار کد، بی‌هزینهٔ AI) و خروجی تازهٔ `graphify-out/` را همراه همان تغییر commit کن.
+  گزارش می‌گوید از کدام commit ساخته شده؛ اگر با `git rev-parse HEAD` فاصلهٔ زیادی دارد، اول به‌روزش کن.
