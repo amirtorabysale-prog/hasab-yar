@@ -107,7 +107,7 @@ function invoiceServiceGate(invoice, items, { issuedAt, servicePeriodStart = nul
 function serviceBlockedError(blocked) {
   const message = blocked.code === 'INVOICE_SERVICE_QUESTION'
     ? `ردیف «${blocked.itemTitle}» خدمت دوره‌دار است: ${blocked.question} دورهٔ پوشش (یا دسته) را بگو تا صادر شود؛ هزینه یا درآمد یک‌جا ساخته نشد.`
-    : `ردیف «${blocked.itemTitle}»: ${blocked.question} فاکتور صادر نشد تا حسابدار ماهیتش را تعیین کند.`;
+    : `ردیف «${blocked.itemTitle}»: ${blocked.question} فاکتور صادر نشد؛ ماهیت این ردیف را با حسابدار روشن کن و دسته‌اش را در فاکتور درست کن — درآمد یا هزینهٔ یک‌جا ساخته نشد.`;
   return Object.assign(new Error(message), { code: blocked.code, status: 409, question: blocked.question, itemTitle: blocked.itemTitle });
 }
 

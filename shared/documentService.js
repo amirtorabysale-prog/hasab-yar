@@ -4,6 +4,7 @@ import { TREATMENTS } from './factRequirements.js';
 import { ROUTES } from './confidenceEngine.js';
 import { isTimeBoundService } from './economicFamily.js';
 import { isTimeBoundCategory } from './documentReading.js';
+import { persianMonthRange, todayPersian } from './persianDate.js';
 
 // خواننده‌ها در فایل سبک خودشان‌اند تا کارت صوتی (سمت کاربر) بی‌آنکه موتور
 // تصمیم را بار کند، همان دسته و دوره را بخواند که سرور.
@@ -29,8 +30,30 @@ export function documentServiceDecision(event, { today = null } = {}) {
   // همان استثنایی که مسیر نقدی دارد، تا سندش به حسابدار نرود و همان هزینهٔ
   // جاافتاده بماند.
   const timeBound = isTimeBoundCategory(event?.category) && (String(event?.category).trim() === 'درآمد اجاره' || isTimeBoundService(facts));
-  const candidate = timeBound || Boolean(event?.servicePeriodStart && event?.servicePeriodEnd);
+  // دوره‌ای که در ماهِ خودِ سند یا پیش از آن تمام شده چیزی را به ماه‌های بعد
+  // نمی‌برد: «اشتراک مهر» یا «پشتیبانی شهریور» فروش یا هزینهٔ همان دوره است و
+  // ردیف دستهٔ خودش را نگه می‌دارد — نه پیش‌دریافت، نه صف حسابدار. ودیعه و
+  // سپرده استثناست: بدهی/دارایی است و هنوز تصمیم موتور را می‌خواهد.
+  const period = Boolean(event?.servicePeriodStart && event?.servicePeriodEnd);
+  if (!timeBound && period && !runsPastDocumentMonth(event) && !saysDeposit(event)) return null;
+  const candidate = timeBound || period;
   return candidate && decision.decisionStatus !== DECISION_STATUS.DECIDED ? decision : null;
+}
+
+const DEPOSIT_WORDS = /ودیعه|رهن|قرض\s*الحسنه|سپرده|تضمین|حسن\s*انجام/;
+function saysDeposit(event) {
+  if (event?.refundable === true || event?.paymentPurpose === 'deposit') return true;
+  return DEPOSIT_WORDS.test(`${event?.evidence || ''} ${event?.utterance || ''} ${event?.description || ''}`);
+}
+
+/** آیا پایان دوره از ماهِ (شمسیِ) تاریخ سند جلوتر است؟ */
+function runsPastDocumentMonth(event) {
+  const at = new Date(event?.occurredAt || '');
+  const end = new Date(event?.servicePeriodEnd || '');
+  if (Number.isNaN(at.getTime()) || Number.isNaN(end.getTime())) return true;
+  const day = todayPersian(at);
+  const month = persianMonthRange(day.year, day.month);
+  return end.getTime() > new Date(month.to).getTime();
 }
 
 /**

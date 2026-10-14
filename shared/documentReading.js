@@ -4,7 +4,7 @@ import { readServicePeriod } from './periodSpeech.js';
 import { saysRefundable } from './moneyPurpose.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
-import { GOODS_CATEGORIES, namesTimeBoundService, withoutNonCoveragePeriods } from './serviceCoverageSpeech.js';
+import { GOODS_CATEGORIES, coverageText, namesTimeBoundService, withoutNonCoveragePeriods } from './serviceCoverageSpeech.js';
 
 /**
  * خدمت دوره‌دار روی سندِ پایه — چک، طلب و بدهی، فاکتور، قاعدهٔ تکرار.
@@ -82,7 +82,7 @@ export function readDocumentService(input, { direction, occurredAt, category = n
   const resolvedCategory = sideCategory(category, direction) || documentCategory(text, direction);
   const period = servicePeriodStart && servicePeriodEnd
     ? { start: servicePeriodStart, end: servicePeriodEnd }
-    : (text && occurredAt && coversService(text, resolvedCategory) ? readServicePeriod(withoutNonCoveragePeriods(text), { occurredAt }) : null);
+    : (text && occurredAt && coversService(text, resolvedCategory) ? readServicePeriod(coverageText(text), { occurredAt }) : null);
   return {
     category: resolvedCategory,
     servicePeriodStart: period?.start || null,
@@ -130,7 +130,7 @@ export function bookedServiceFacts(input, { type, category = null, occurredAt = 
   const rentIncome = type === 'income' && ['اجاره', 'درآمد اجاره'].includes(String(category || '').trim());
   if (!expense && !rentIncome) return {};
   // «خرید کالا تسویه سه ماهه» یا «لپ تاپ گارانتی یکساله» دوره ندارند؛ فقط خدمت دوره‌دار.
-  const period = coversService(text, category) ? readServicePeriod(withoutNonCoveragePeriods(text), { occurredAt }) : null;
+  const period = coversService(text, category) ? readServicePeriod(coverageText(text), { occurredAt }) : null;
   return {
     ...(period?.start && period?.end ? { servicePeriodStart: period.start, servicePeriodEnd: period.end } : {}),
     ...(expense && readPrepaymentMention(text) === true ? { prepaymentSignal: true } : {}),

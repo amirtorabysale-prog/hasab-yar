@@ -39,6 +39,23 @@ export function withoutNonCoveragePeriods(input) {
   return normalizePersian(input).replace(WARRANTY, ' ').replace(PAYMENT_TERM, ' ').replace(CHEQUE_TENOR, 'چک ').replace(/\s+/g, ' ').trim();
 }
 
+const MONTH = '(?:فروردین|اردیبهشت|خرداد|تیر|مرداد|امرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)';
+// «مهر تا اسفند»، «پشتیبانی مهر ۱۴۰۵ تا شهریور ۱۴۰۶»، «مهر تا آخر سال»: بازه‌ای
+// که «از»ش افتاده. خوانندهٔ دوره بی «از» فقط ماه اول را می‌خواند (یا هیچ)، و
+// پوشش شش‌ماهه یک ماه می‌شد.
+const BARE_RANGE = new RegExp(`(?<![آ-ی\\d])((?:\\d{1,2}\\s*)?${MONTH}(?:\\s*ماه)?(?:\\s*\\d{2,4})?)(?![آ-ی])(?=\\s+تا\\s)`, 'g');
+
+/** «مهر تا اسفند» ← «از مهر تا اسفند»؛ بازه‌ای که «از» دارد دست نمی‌خورد. */
+export function withRangeStart(input) {
+  const text = String(input || '');
+  return text.replace(BARE_RANGE, (match, range, offset) => (/(?:^|\s)از\s*$/.test(text.slice(0, offset)) ? match : `از ${range}`));
+}
+
+/** متنی که خوانندهٔ دوره باید ببیند: بی‌گارانتی و شرط پرداخت، با «از» بازه. */
+export function coverageText(input) {
+  return withRangeStart(withoutNonCoveragePeriods(input));
+}
+
 /** دسته‌هایی که کالا یا فروش کالا هستند؛ مدتی که کنارشان آمده دورهٔ پوشش نیست. */
 export const GOODS_CATEGORIES = Object.freeze(['مواد و کالا', 'بهای تمام‌شدهٔ فروش', 'ملزومات اداری', 'خوراک', 'فروش', 'کسری و ضایعات موجودی']);
 

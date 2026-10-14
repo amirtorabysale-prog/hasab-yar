@@ -977,3 +977,46 @@ test('ردیف صورت‌حساب و رسید: کالای گارانتی‌دا
   database.createTransactionFromStatementLine(insured[0].id, { category: 'بیمه' });
   assert.deepEqual(schedule(eventOfRow(`statement-line:${insured[0].id}`).id), { count: 12, total: 12_000_000 });
 }));
+
+// ---------------------------------------------------------------------------
+// دورهٔ همین ماه یا گذشته روی سند فروش: درآمد همان دوره، بی‌صف و بی‌پیش‌نویس.
+// ---------------------------------------------------------------------------
+
+test('فاکتور فروش و طلبِ اشتراک همین ماه یا ماه گذشته صادر و ثبت می‌شود؛ دورهٔ چندماهه پیش‌دریافت است', () => inWorkspace(freshWorkspace('اشتراک همین ماه'), () => {
+  engineOn();
+  for (const title of ['اشتراک مهر', 'اشتراک شهریور', 'پشتیبانی مهر ماه']) {
+    const invoice = database.createInvoice({ documentType: 'sales', customerName: 'شرکت آلفا', items: [{ title, unitPrice: 5_000_000 }], issueNow: true, issuedAt: ISSUED });
+    assert.equal(invoice.status, 'sent', title);
+    assert.equal(invoice.pendingQuestion, undefined, title);
+    assert.deepEqual(lines(invoiceJournal(invoice)), [['customer-receivable', 5_000_000], ['income-category', 5_000_000]], title);
+  }
+  // صدور بعدیِ پیش‌نویس هم بی‌جواب ممکن است (کارت فاکتور payload نمی‌فرستد).
+  const draft = database.createInvoice({ documentType: 'sales', customerName: 'شرکت آلفا', items: [{ title: 'اشتراک مهر', unitPrice: 5_000_000 }] });
+  assert.equal(database.issueInvoice(draft.id, {}).status, 'sent');
+  // جملهٔ صوتی کاربر عیناً.
+  const { item: spoken } = voiceInvoice('فاکتور فروش اشتراک مهر ۵ میلیون به شرکت آلفا صادرش کن');
+  assert.equal(spoken.status, 'sent');
+  assert.deepEqual(lines(invoiceJournal(spoken)), [['customer-receivable', 5_000_000], ['income-category', 5_000_000]]);
+  // آینه در طلب و بدهی: سند خودکار، نه صف حسابدار.
+  for (const said of ['آقای احمدی بابت اشتراک مهر ۵ میلیون به ما بدهکاره', 'آقای احمدی بابت اشتراک شهریور ۵ میلیون به ما بدهکاره']) {
+    const opened = openingOf(voiceObligation(said));
+    assert.equal(opened.status, 'posted', said);
+    assert.deepEqual(lines(opened.journalEntryId), [['customer-receivable', 5_000_000], ['income-category', 5_000_000]], said);
+  }
+  // خرید خدمت همین ماه با دستهٔ «خدمات»: هزینهٔ همین ماه.
+  const bought = database.createInvoice({ documentType: 'purchase', category: 'خدمات', customerName: 'شرکت بتا', items: [{ title: 'قرارداد پشتیبانی مهر', unitPrice: 3_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(bought)), [['expense-category', 3_000_000], ['vendor-payable', 3_000_000]]);
+  assert.equal(kindBalance('deferred-revenue'), 0);
+  assert.equal(kindBalance('prepaid-asset'), 0);
+  // مثبت: «مهر تا اسفند» بی «از» شش ماه است، نه یک ماه؛ پیش‌دریافت با برنامهٔ شش‌ماهه.
+  const range = database.createInvoice({ documentType: 'sales', customerName: 'شرکت آلفا', items: [{ title: 'اشتراک مهر تا اسفند', unitPrice: 30_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.deepEqual(lines(invoiceJournal(range)), [['customer-receivable', 30_000_000], ['deferred-revenue', 30_000_000]]);
+  assert.deepEqual(schedule(invoiceEvents(range)[0].id), { count: 6, total: 30_000_000 });
+  const owedRange = openingOf(voiceObligation('آقای احمدی بابت پشتیبانی مهر تا اسفند ۳۰ میلیون به ما بدهکاره'));
+  assert.deepEqual(schedule(owedRange.id), { count: 6, total: 30_000_000 });
+  // منفی: ودیعه درآمد نیست؛ پیش‌نویس می‌ماند و درآمدی ساخته نمی‌شود.
+  const before = kindBalance('income-category');
+  const deposit = database.createInvoice({ documentType: 'sales', customerName: 'شرکت آلفا', items: [{ title: 'ودیعه اشتراک مهر', unitPrice: 5_000_000 }], issueNow: true, issuedAt: ISSUED });
+  assert.equal(deposit.status, 'draft');
+  assert.equal(kindBalance('income-category'), before);
+}));
