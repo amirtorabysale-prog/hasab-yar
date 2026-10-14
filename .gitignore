@@ -22,6 +22,8 @@ backups/
 graphify-out/cache/
 graphify-out/graph.html
 graphify-out/.graphify_analysis.json
+# پشتیبانی که graphify پیش از هر بازسازی از گراف قبلی در پوشهٔ تاریخ‌دار می‌گذارد.
+graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 parsian/
 
 # فایل‌های کار موقت، بیرون از تحویل
