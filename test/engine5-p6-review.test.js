@@ -693,3 +693,58 @@ test('نگهبان منفعت آینده: پوشش همین ماه و «سالا
   assert.equal(annual.decision.treatment, 'prepaid-expense');
   assert.equal(annual.status, 'posted');
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی: «پس داده میشه»، «برگردونده میشه»، «عودت داده میشه» وعده است، نه
+// برگشت — پرداخت ودیعه و دریافت اجارهٔ جلو همچنان ثبت می‌شوند.
+// ---------------------------------------------------------------------------
+
+test('ماهیت عودت: مجهول آینده، شرط و نفیِ برگشت عودت نیستند؛ فعل گذشته و ماضی نقلی هستند', () => {
+  for (const text of [
+    'ودیعه اجاره دفتر ۵۰ میلیون به آقای کریمی دادیم که موقع تخلیه پس داده میشه',
+    'ودیعه دفتر ۵۰ میلیون به آقای کریمی دادیم آخر قرارداد برگردونده میشه',
+    'اجاره ۶ ماه جلو از آقای احمدی ۶۰ میلیون گرفتیم که اگه زودتر بره عودت داده میشه',
+    'مساعده ۵ میلیون به علی دادیم از حقوقش پس گرفته میشه',
+    'پیش پرداخت خرید ۲۰ میلیون به پارس کالا دادیم اگه جنس نیاد پول پس داده میشه',
+    'ودیعه ۵۰ میلیون به صاحبخونه دادیم که پس داده می‌شود',
+    'ودیعه ۵۰ میلیون دادیم باید آخر قرارداد پس داده بشه',
+    'ودیعه ۵۰ میلیون دادیم هنوز پس داده نشده',
+    'ودیعه ۵۰ میلیون دادیم که عودت داده خواهد شد',
+  ]) assert.equal(reviewNature(text).refund, false, text);
+  for (const text of [
+    'شرکت بیمه پول رو برگردونده', 'ودیعه پس داده شد', 'سپرده مزایده مسترد شده', '۵ میلیون ودیعه رو به صاحبخونه برگردوندیم',
+    'صاحبخونه قبلی ۶۰ میلیون ودیعه‌مون رو به تجارت برگردوند.', 'پیش دریافت مشتری عودت داده شد',
+  ]) assert.equal(reviewNature(text).refund, true, text);
+  // پیش‌دریافتی که شرط عودت دارد، دریافت است؛ عنوان سند عودت، عودت.
+  assert.equal(reviewNature('پیش دریافت اجاره ۶ ماه از آقای احمدی ۶۰ میلیون گرفتیم که اگه زودتر بره عودت داده میشه').advanceRefund, false);
+  assert.equal(reviewNature('پیش دریافت ۲۰ میلیون از مشتری واریز شد با شرط عودت اگه کار انجام نشه').advanceRefund, false);
+  assert.equal(reviewNature('عودت پیش دریافت مشتری ۱۰ میلیون').advanceRefund, true);
+  assert.equal(reviewNature('آقای احمدی مستاجر تخلیه کرد ۱۰ میلیون از پیش دریافت اجاره رو بهش پس دادیم').advanceRefund, true);
+});
+
+test('صف حسابدار: ودیعه‌ای که «موقع تخلیه پس داده میشه» و اجارهٔ جلو که «اگه زودتر بره عودت داده میشه» با جهت پرداخت و دریافت اولیه ثبت می‌شوند', async () => {
+  for (const text of [
+    'ودیعه اجاره دفتر ۵۰ میلیون به آقای کریمی دادیم که موقع تخلیه پس داده میشه',
+    'ودیعه دفتر ۵۰ میلیون به آقای کریمی دادیم آخر قرارداد برگردونده میشه',
+  ]) {
+    const opening = await refundReview({ text, party: 'کریمی',
+      lines: () => [{ role: 'refundable-deposit', debit: 50e6, credit: 0 }, { role: 'cash', debit: 0, credit: 50e6 }] });
+    assert.equal(opening.prepared.canPost, true, `${text}: ${opening.prepared.postingBlockers?.join('|')}`);
+    assert.equal(opening.cashMoved, -50_000_000, text);
+  }
+  for (const [text, role] of [
+    ['اجاره ۶ ماه جلو از آقای احمدی ۶۰ میلیون گرفتیم که اگه زودتر بره عودت داده میشه', 'deferred-revenue'],
+    ['پیش دریافت اجاره ۶ ماه از آقای احمدی ۶۰ میلیون گرفتیم که اگه زودتر بره عودت داده میشه', 'customer-advance'],
+  ]) {
+    const received = await refundReview({ text, party: 'احمدی',
+      lines: () => [{ role: 'cash', debit: 60e6, credit: 0 }, { role, debit: 0, credit: 60e6 }] });
+    assert.equal(received.prepared.canPost, true, `${text}: ${received.prepared.postingBlockers?.join('|')}`);
+    assert.equal(received.cashMoved, 60_000_000, text);
+  }
+  // منفی: برگشت واقعی ودیعه در جهت پرداخت اولیه همچنان رد می‌شود.
+  const wrongWay = await refundReview({ base: 'ودیعه دفتر ۵۰ میلیون به آقای کریمی صاحبخونه دادیم که برمیگرده',
+    text: 'دفتر رو تخلیه کردیم آقای کریمی ودیعه ۵۰ میلیون رو پس داد', party: 'کریمی',
+    lines: ({ ledger }) => [{ role: 'refundable-deposit', accountId: ledger('refundable-deposit'), debit: 50e6, credit: 0 }, { role: 'cash', debit: 0, credit: 50e6 }] });
+  assert.equal(wrongWay.prepared.canPost, false);
+  assert.equal(wrongWay.cashMoved, 0);
+});
