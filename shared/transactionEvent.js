@@ -150,7 +150,8 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     paymentPurpose,
     // کل گفته، نه تکهٔ کنار مبلغ: «وانت شرکت که قیمت دفتریش چهل بود رو صد و ده
     // فروختیم» دو ردیف می‌سازد و نشانه در هیچ‌کدام از دو تکه کامل نیست.
-    needsJudgment: item.needsJudgment || (structured ? null : judgmentReason(transcript || said)),
+    // نشانهٔ باقی یا قسطِ قرارداد در جملهٔ چندپرداختی فقط مال ردیف خودش است.
+    needsJudgment: item.needsJudgment || (structured ? null : judgmentReason(transcript || said, { amount: sentence ? undefined : item.amount })),
     // شاهد، عین گفتهٔ کاربر است — همان تعریف قرارداد واقعیت. جملهٔ کامل وقتی
     // فراخوان مطمئن است مالِ همین ردیف است، وگرنه تکهٔ کنار مبلغ.
     evidence: String(item.rawText || sentence || transcript || '').slice(0, 1000),

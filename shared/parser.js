@@ -657,6 +657,33 @@ const RECEIVABLE_STATEMENT = /قرار(?:ه)?\s*(?:بدن|بده|بدهند|پر
 // فعل پرداختِ اول‌شخص. «برای خرید مواد اولیه» اسم است، نه فعل؛ جلوی تشخیص
 // ورود را نمی‌گیرد.
 const MONEY_OUT_VERB = /(?:دادم|دادیم|ریختم|ریختیم|زدم|زدیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم)|برداشت\s*کرد)/;
+/**
+ * «ریختیم به حساب ملت/شرکت/صندوق»: پول در حساب خودِ دفتر ماند، به کسی پرداخت
+ * نشد. نام بانک پیش از این از پنجره برداشته شده، پس «به حساب ملت» این‌جا
+ * «به حساب» خالی است؛ «به حساب بیمه ایران» نام گیرنده را نگه می‌دارد.
+ */
+/**
+ * «قرارداد زدیم»، «قولنامه زدیم»، «ضرر زدیم»، «زنگ زدیم»: «زدن» این‌جا امضا،
+ * زیان یا تماس است و هیچ پولی جابه‌جا نشده. «یه بیمه ۱۲ میلیونی زدیم» هم قیمتِ
+ * چیزی را می‌گوید، نه پولی که رفت. «زدیم» فقط با نشانهٔ پرداخت («کارت زدیم»،
+ * «واریز»، «به حساب X زدیم»، «پول») یا وقتی مبلغ خودش مفعول است («۱۸ میلیون
+ * زدیم») پرداخت است.
+ */
+const STRUCK_NOT_PAID = /(?<![آ-ی])(?:قرارداد|قولنامه|ضرر|زیان|سود|بار|زنگ|حرف|تماس|امضا|تیک|جنس|کالا)(?![آ-ی])|[\d۰-۹]\s*(?:میلیون|هزار|تومن|تومان)\s*(?:ی|ای)(?![آ-ی])|(?:میلیون|هزار|تومن|تومان)ی(?![آ-ی])/;
+const STRUCK_PAYMENT = /کارت|واریز|پول|انتقال|پایا|ساتنا|(?:به|تو|توی)\s*حساب/;
+function struckNotPaid(text) {
+  return /(?<![آ-ی])زد(?:یم|م)(?![آ-ی])/.test(text)
+    && !/(?:دادم|دادیم|ریختم|ریختیم|خریدم|خریدیم|پرداخت\s*(?:کردم|کردیم))/.test(text)
+    && STRUCK_NOT_PAID.test(text) && !STRUCK_PAYMENT.test(text);
+}
+
+function paidIntoOwnAccount(text) {
+  if (/(?:به|تو|توی)\s*(?:بانک|صندوق|حساب(?:مون|مان|م))(?![آ-ی])/.test(text)) return true;
+  const destination = /(?:(?:به|تو|توی)\s*|ریخت(?:یم|م)\s*)(?:حساب|کارت)(?![آ-ی])\s*(\S*)/.exec(text);
+  if (!destination) return false;
+  const next = destination[1];
+  return !next || MONEY_OUT_VERB.test(next) || /^(?:بانک|شرکت|خود|صندوق)|^ما$/.test(next) || Boolean(detectBank(destination[0]));
+}
 
 /**
  * «مشتری ۹ میلیون داد»، «خانم توکلی از بدهیش پرداخت کرد»، «کارت به کارت کرد» —
@@ -877,7 +904,7 @@ function incomeTwin(text) {
   };
 }
 
-function classify(context, learnings = [], categoryContext = '', { moneyIn = false, rentTaken = false } = {}) {
+function classify(context, learnings = [], categoryContext = '', { moneyIn = false, rentTaken = false, rowText = '' } = {}) {
   const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
   // نگاشت تأییدشدهٔ «اجاره → اجاره» برای پرداخت اجارهٔ خودمان بود؛ وقتی جمله
@@ -899,6 +926,16 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
     : incomeScore === expenseScore
       ? 'متن هم‌زمان نشانهٔ روشن درآمد یا هزینه ندارد.'
       : `متن هر دو نشانه را دارد؛ نوع از فعل ${type === 'income' ? 'دریافت' : 'پرداخت'} برداشت شد و باید کنترل شود.`;
+  // «سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم/زدیم»: فعل پرداختِ اول‌شخص است ولی در
+  // فهرست واژه‌ها نیست، پس نوع بی‌نشانه می‌ماند و جمله به حسابدار می‌رفت. فقط
+  // وقتی هیچ نشانهٔ دیگری نیست («فروش زدیم» درآمد است)، مقصد حسابِ خودِ دفتر
+  // نیست («نقد رو ریختیم به حساب ملت» انتقال است) و فعل، صدور سند نیست.
+  if (!hasIncome && !hasExpense && MONEY_OUT_VERB.test(normalizedContext) && !paidIntoOwnAccount(normalizedContext)
+    && !struckNotPaid(normalizePersian(`${rowText} ${context}`)) && !/فاکتور|صورت\s*حساب|سفارش|کارتخوان|پوز|تخفیف|چک/.test(normalizedContext)) {
+    type = 'expense';
+    confidence = 0.93;
+    typeReason = 'نوع از فعل پرداخت اول‌شخص تشخیص داده شد.';
+  }
   // پرداخت‌کنندهٔ نام‌برده (مستاجر، مشتری) از هر واژهٔ دسته‌ای صریح‌تر است.
   // «اجاره» در «مستاجر اجاره رو واریز کرد» موضوع پول است، نه جهتش.
   if (moneyIn && type === 'expense') {
@@ -1271,7 +1308,8 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const ownContact = segment && !petty?.holder ? extractContactCandidate(ownText) : null;
     const rowCounterparty = ownContact?.name && (ownContact.confident || !counterparty.name) ? ownContact : counterparty;
     const rowMoneyDirection = rowCounterparty === ownContact ? counterpartyMoneyDirection(ownText) : moneyDirection;
-    let classified = classify(context, learnings, categoryContext, { moneyIn: rowMoneyIn, rentTaken });
+    // «سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم»: فعل پرداختِ همین بند (نه کل جمله) نوع را می‌گوید.
+    let classified = classify(context, learnings, categoryContext, { moneyIn: rowMoneyIn, rentTaken, rowText: text.slice(previousEnd, nextStart) });
     // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
     //
     // پنجرهٔ جهت فقط متنِ کنار مبلغ را می‌بیند و «یه پولی اومده تو حساب ملی
@@ -1331,7 +1369,11 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
     const reviewReasons = [];
-    if (rowPeriod && !occurredAt) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
+    // «بیمه یک ساله ۱۲ میلیون دادیم»: دورهٔ فقط‌مدت از همان تاریخ پرداخت (امروز)
+    // شروع می‌شود؛ تاریخی گفته نشده که با تاریخ پرداخت اشتباه شود. فقط وقتی شروع
+    // پوشش گفته شده («از اول فروردین تا آخر اسفند») تاریخ پرداخت را باید جدا پرسید.
+    const paymentDateUnknown = Boolean(rowPeriod && !occurredAt && rowPeriod.start !== now.toISOString());
+    if (paymentDateUnknown) reviewReasons.push('تاریخ پرداخت مشخص نیست؛ تاریخ پوشش یا دورهٔ خدمت جای تاریخ پرداخت نیست.');
     // آوردهٔ مالک درآمد نیست و دارایی ثابت هزینه نیست.
     //
     // برای این جمله‌ها برگهٔ مخصوص باز می‌شود، ولی اگر کاربر آن را ببندد و
@@ -1376,7 +1418,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
       ...(rowPrepayment ? { prepaymentSignal: true } : {}),
       ...(unpaid || notYet ? { unpaidSignal: true } : {}),
       ...(eventNature !== EVENT_NATURES.NEW ? { eventNature } : {}),
-      ...(rowPeriod ? { servicePeriodStart: rowPeriod.start, servicePeriodEnd: rowPeriod.end } : {}), chartCode: classified.chartCode,
+      ...(rowPeriod ? { servicePeriodStart: rowPeriod.start, servicePeriodEnd: rowPeriod.end } : {}), ...(paymentDateUnknown ? { paymentDateUnknown: true } : {}), chartCode: classified.chartCode,
       // Amount extraction masks banks and dates. Those masks must never become
       // the user's evidence. Keep scoped context for genuinely separate amounts.
       rawText: spans.length === 1 ? String(input) : ownText.trim() || rawContext || text,
