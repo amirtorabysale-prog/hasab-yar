@@ -215,15 +215,32 @@ function chequeGivenToUs(part) {
 }
 
 /**
- * چند برگ چک در یک جمله: «۱۲ تا چک»، «شش فقره چک»، «دوازده برگ چک»، «۱۲تا چک».
- * فقط شمارِ پیش از «چک» — «دسته چک پنجاه برگه» تعداد برگ دسته‌چک است، نه سری.
+ * چند برگ چک در یک جمله: «۱۲ تا چک»، «شش فقره چک»، «دوازده برگ چک»، «۱۲تا چک»،
+ * عددِ تنها پیش از چک («۱۲ چک ۱۰ میلیونی»، «شش چک‌های …») و شمارِ پس از مبلغ
+ * («چک ۱۰ میلیونی ۱۲ تا»). «دسته چک پنجاه برگه» تعداد برگ دسته‌چک است، نه سری؛
+ * «نه»ی تنها نفی است، نه عدد نُه.
  */
 const SERIES_COUNT = /(?<![آ-ی\d])((?:\d{1,2})|(?:[آ-ی]+(?:\s+و\s+[آ-ی]+)?))\s*(?:تا|فقره|برگ|برگه|عدد|قطعه)\s*(?:چک|چکِ)(?![آ-ی])/;
+const SERIES_NUMBER = '(?:\\d{1,2}|(?:یک|دو|سه|چهار|پنج|شش|شیش|هفت|هشت|ده|یازده|دوازده|سیزده|چهارده|پانزده|پونزده|شانزده|شونزده|هفده|هیفده|هجده|هیجده|نوزده|بیست|سی|چهل|پنجاه|شصت)(?:\\s+و\\s+(?:یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه))?)';
+const SERIES_BARE_BEFORE = new RegExp(`(?<![آ-ی\\d])(${SERIES_NUMBER})\\s+(?:چک|چکِ)(?![آ-ی])`);
+// «چک ۱۰ میلیونی ۱۲ تا»: شمار پس از صفت مبلغ.
+const SERIES_COUNT_AFTER = new RegExp(`((?<![آ-ی])چک(?:\\s*ها(?:ی)?)?\\s+(?:\\S+\\s+){0,3}?\\S*(?:میلیونی|ملیونی|هزاری|تومنی|تومانی))\\s+(${SERIES_NUMBER})\\s*(?:تا|فقره|برگ|برگه|عدد|قطعه)(?![آ-ی])`);
+
+/**
+ * شمارِ پس از مبلغ پیش از خواندن مبلغ کنار می‌رود؛ وگرنه «۱۰ میلیونی ۱۲ تا»
+ * یک مبلغ ۱۰٬۰۱۲٬۰۰۰ خوانده می‌شد. مدتِ خودِ چک پس از مبلغ («چک ۱۰ میلیونی
+ * دو ماهه») هم به همان شکل در مبلغ ادغام می‌شد و فقط از خواندن مبلغ کنار می‌رود.
+ */
+const CHEQUE_TENOR_AFTER = new RegExp(`((?<![آ-ی])چک(?:\\s*ها(?:ی)?)?\\s+(?:\\S+\\s+){0,3}?\\S*(?:میلیونی|ملیونی|هزاری|تومنی|تومانی))\\s+${SERIES_NUMBER}\\s*(?:ماهه|روزه|ساله|هفته\\s*ای)(?![آ-ی])`);
+function withoutSeriesCountAfter(text) {
+  return text.replace(SERIES_COUNT_AFTER, '$1').replace(CHEQUE_TENOR_AFTER, '$1');
+}
+
 export function chequeSeriesCount(input) {
   const text = normalizePersian(input);
-  const match = SERIES_COUNT.exec(text);
+  const match = SERIES_COUNT.exec(text) || SERIES_COUNT_AFTER.exec(text)?.slice(1) || SERIES_BARE_BEFORE.exec(text);
   if (!match) return 0;
-  const token = match[1];
+  const token = match[1].trim();
   const count = /^\d+$/.test(token) ? Number(token) : wordsToNumber(token.split(/\s+/));
   return Number.isInteger(count) && count >= 2 && count <= 60 ? count : 0;
 }
@@ -377,7 +394,10 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   if (/نمی\s*دونم|نمیدونم|نمی\s*دانم|معلوم\s*نیس|مشخص\s*نیس|مطمئن\s*نیست(?:م|یم|ن)?|احتمالا|احتمالاً|(?<![آ-ی])شاید(?![آ-ی])/.test(text)) return null;
   if (/ضمانت|تضمین|وثیقه|نه\s*تاریخ\s*داره|در\s*وجه\s*کسی|دستت\s*باشه/.test(text)) return null;
 
-  const amount = spokenAmount(input);
+  // «چک ۱۰ میلیونی ۱۲ تا»: شمار برگ‌ها جزو مبلغ خوانده نمی‌شود.
+  const countless = withoutSeriesCountAfter(text);
+  const amountInput = countless === text ? input : countless;
+  const amount = spokenAmount(amountInput);
   const contactName = extractContactName(input, { allowBare: obligationContext });
   // «دسته چک جدید رو تحویل گرفتیم… کارمزدش کم شد» دربارهٔ کارمزد بانک است، نه
   // یک چک؛ کارت چک برایش سؤال «بابت فروش تازه یا طلب قبلی؟» می‌پرسید.
@@ -463,9 +483,9 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   const direction = receivable && payable ? null : receivable ? 'receivable' : 'payable';
   // «یه چک ۵۵ میلیونی… دادیم»: مبلغ چک همان عددی است که در جملهٔ خودِ چک آمده،
   // حتی وقتی جمله عددهای دیگری (بهای کالا، درصد) هم دارد.
-  const chequeAmounts = isCheque && chequeClause ? parseFinancialText(chequeClause, { source: 'voice' }).transactions.map((item) => Number(item.amount) || 0).filter(Boolean) : [];
+  const chequeAmounts = isCheque && chequeClause ? parseFinancialText(withoutSeriesCountAfter(chequeClause), { source: 'voice' }).transactions.map((item) => Number(item.amount) || 0).filter(Boolean) : [];
   const ownAmount = chequeAmounts.length === 1 ? chequeAmounts[0] : 0;
-  const severalAmounts = !ownAmount && hasSeveralAmounts(input);
+  const severalAmounts = !ownAmount && hasSeveralAmounts(amountInput);
   const spoken = ownAmount || amount;
   // «۱۲ تا چک ۱۰ میلیونی»: پارسر عدد شمارش را عمداً مبلغ نمی‌خواند، پس مبلغ
   // گفته‌شده مالِ **یک** چک است. کارت تک‌چکی آن را کل سند می‌کرد و ۱۱۰ میلیون
