@@ -748,3 +748,53 @@ test('صف حسابدار: ودیعه‌ای که «موقع تخلیه پس د�
   assert.equal(wrongWay.prepared.canPost, false);
   assert.equal(wrongWay.cashMoved, 0);
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی: «بیمه پرسنلو»، «بیمه کارکنانمون»، «بیمه کارگرهای کارگاه» — پسوند
+// چسبیده به واژهٔ کارکنان، لیست بیمهٔ حقوق را حق بیمهٔ دوره‌دار نمی‌کند.
+// ---------------------------------------------------------------------------
+
+const { runVoice } = await import('./helpers/voicePipeline.js');
+const { isNotInsurancePremium } = await import('../shared/insuranceNature.js');
+
+test('ماهیت بیمه: واژهٔ کارکنان با پسوند جمع، ملکی، اضافه و مفعولی همان لیست بیمهٔ حقوق است؛ موتور دورهٔ پوشش نمی‌پرسد', () => {
+  const lists = [
+    'بیمه پرسنلو ۱۵ میلیون دادیم',
+    'بیمه پرسنلمون رو ۱۵ میلیون دادیم',
+    'بیمه کارکنانمون ۱۵ میلیون واریز شد',
+    'بیمه کارگرهای کارگاه ۱۵ میلیون پرداخت شد',
+    'بیمه کارگرا رو ۱۵ میلیون ریختیم',
+    'بیمه کارمندامونو ۸ میلیون دادیم',
+    'بیمه کارکنان‌مون ۱۵ میلیون پرداخت شد',
+    'بیمه پرسنلی شهریور ۱۵ میلیون پرداخت شد',
+  ];
+  for (const text of lists) {
+    assert.equal(isNotInsurancePremium(text), true, text);
+    assert.equal(reviewNature(text).insuranceSettlement, true, text);
+    assert.equal(reviewNature(text).prepaid, false, text);
+    assert.equal(isTimeBoundService({ category: 'بیمه', utterance: text }), false, text);
+  }
+  for (const text of lists.slice(0, 3)) {
+    const items = runVoice(text, { today: TODAY.toISOString() }).items;
+    assert.ok(!items.some((item) => item.fact === 'servicePeriodStart' || item.decision?.treatment === 'prepaid-expense'), `${text}: ${JSON.stringify(items.map((item) => [item.outcome, item.fact]))}`);
+  }
+  // منفی: حق بیمهٔ بیمه‌نامه با همان پسوندها پیش‌پرداخت می‌ماند؛ «کارگاه» واژهٔ کارگر نیست.
+  for (const text of [
+    'بیمه تکمیلی کارکنانمون یک ساله ۲۴ میلیون پرداخت کردیم',
+    'بیمه حوادث کارگرامون یک ساله ۱۲ میلیون دادیم',
+    'بیمه کارگاه یک ساله ۱۵ میلیون پرداخت شد',
+  ]) {
+    assert.equal(isNotInsurancePremium(text), false, text);
+    assert.equal(reviewNature(text).insuranceSettlement, false, text);
+    assert.equal(isTimeBoundService({ category: 'بیمه', utterance: text }), true, text);
+  }
+});
+
+test('دستیار حسابدار: «بیمه کارکنانمون ۱۵ میلیون واریز شد» با لیست باز همان مبلغ، تسویهٔ بیمهٔ لیست حقوق است', async () => {
+  for (const text of ['بیمه کارکنانمون ۱۵ میلیون واریز شد', 'بیمه پرسنلو ۱۵ میلیون دادیم']) {
+    const list = await reviewOf(text, { payroll: true });
+    assert.equal(list.proposal.model, 'nature-rules-v1', text);
+    assert.deepEqual(roleShape(list.proposal), [['payroll-insurance-payable', 15_000_000, 0], ['cash', 0, 15_000_000]], text);
+    assert.equal(list.canPost, true, text);
+  }
+});
