@@ -803,7 +803,9 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     if (!periodStart && !periodEnd && (type === 'expense' || timeBoundIncome) && movement.direction !== 'none' && paymentDate) {
       const spokenPeriod = readServicePeriod(incomeText(scope.own), { occurredAt: paymentDate });
       if (spokenPeriod) { periodStart = spokenPeriod.start; periodEnd = spokenPeriod.end; }
-      else if (!scope.alone && readServicePeriod(incomeText(scope.shared), { occurredAt: paymentDate })) periodUnowned = true;
+      // بخشِ مشترک تنهاست («برای شش ماه آینده،») و نام خدمتش در بند دیگری آمده؛
+      // همین که عبارتِ دوره در آن هست کافی است تا دوره صاحب نداشته باشد.
+      else if (!scope.alone && readServicePeriod(incomeText(scope.shared), { occurredAt: paymentDate, answer: true })) periodUnowned = true;
     }
     // «اجاره ۶ ماه دفتر از اول آبان»، «از امروز به مدت یک سال»: آغاز گفته شده و طول
     // هم؛ پایان از همین دو ساخته می‌شود و دوباره پرسیده نمی‌شود. طول یا عددِ «مدت»ِ

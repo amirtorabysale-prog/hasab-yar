@@ -123,7 +123,9 @@ const CURRENCY_ONLY = /^[\s،,]*(?:(?:تومان|تومن|ریال)[\s،,]*)?$/;
  */
 // موضوعِ تغییرِ نرخ: قیمت دوره‌ای (اجاره، بیمه، اشتراک) یا حقوق. «کارمزد ۲۰۰ هزار
 // کم شد» برداشت بانک است، نه تغییر نرخ.
-const RATE_CHANGE_SUBJECTS = [...TIME_BOUND_SERVICE_CATEGORIES, 'حقوق و دستمزد'];
+// تابع، نه ثابت: economicFamily → purchasePurpose → partnerPaidSpeech → … → parser
+// یک چرخهٔ import است و این فهرست هنگام بارگذاری parser هنوز ساخته نشده.
+const rateChangeSubjects = () => [...TIME_BOUND_SERVICE_CATEGORIES, 'حقوق و دستمزد'];
 // افزایش بی‌ابهام؛ «کم شد» تنها در گفتار بانکی کسرِ پول هم هست.
 const RATE_RAISE_AFTER = /^\s*(?:تومان|تومن|ریال)?\s*(?:(?:اضافه|افزایش|گرون|گران|زیاد|بیشتر)\s*(?:تر\s*)?(?:شد|شده|شده\s*است|میشه|می\s*شود|کرد|کردن|کردند|یافت|یافته|پیدا\s*کرد|داشت)|(?:رفت|میره|می\s*رود)\s*بالا|بالا\s*رفت)(?![آ-ی])/;
 export const RATE_CHANGE_REASON = 'این مبلغ تغییر نرخ را می‌گوید («اضافه شد»، «… شد»)، نه لزوماً پرداخت؛ اینکه پولی جابه‌جا شده یا نه با حسابدار است.';
@@ -133,7 +135,7 @@ export function withoutRateAmounts(text, spans) {
   const leadingOf = (index) => text.slice(spans[index - 1]?.end ?? 0, spans[index].start);
   const changeSubject = (index) => {
     const found = classifyCategory(leadingOf(index));
-    return found.matched && RATE_CHANGE_SUBJECTS.includes(found.category);
+    return found.matched && rateChangeSubjects().includes(found.category);
   };
   const accountMovement = (span, index) => ACCOUNT_MOVEMENT_AFTER.test(text.slice(span.end, span.end + 30)) || ACCOUNT_MOVEMENT_BEFORE.test(leadingOf(index));
   if (spans.length < 2) {

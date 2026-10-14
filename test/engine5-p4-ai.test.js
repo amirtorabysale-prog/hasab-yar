@@ -479,21 +479,19 @@ test('آغاز + طول: «از اول آبان ۶ ماه» و «از امروز
   }
 });
 
-test('طولِ تنها («به مدت یک سال»، «برای شش ماه»): فقط آغاز پرسیده می‌شود، پایان از طول', async () => {
-  for (const [text, evidence, amount, start, months, first] of [
-    ['بیمه آتش سوزی انبار به مدت یک سال ۱۲ میلیون از تجارت دادیم', 'یک سال', '۱۲ میلیون', 'this-month', 12, '1405-07'],
-    ['اجاره دفتر برای شش ماه ۳۰ میلیون از تجارت دادیم', 'شش ماه', '۳۰ میلیون', 'next-month', 6, '1405-08'],
+test('طولِ تنها («به مدت یک سال»، «برای شش ماه»): از روز پرداخت، مثل مسیر قطعی؛ نه آغاز پرسیده می‌شود نه پایان', async () => {
+  // همان قاعدهٔ مسیر صوتی («بیمه یک ساله ۱۲ میلیون دادیم» از امروز): دو مسیر یک
+  // جمله را دو جور ثبت نمی‌کنند.
+  for (const [text, evidence, amount, months] of [
+    ['بیمه آتش سوزی انبار به مدت یک سال ۱۲ میلیون از تجارت دادیم', 'یک سال', '۱۲ میلیون', 12],
+    ['اجاره دفتر برای شش ماه ۳۰ میلیون از تجارت دادیم', 'شش ماه', '۳۰ میلیون', 6],
   ]) {
     const said = model({ amounts: [amt('a1', 'paid-now', amount)], nonAmountNumbers: duration(evidence), movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service(text.split(' ')[0]) });
     await inFreshWorkspace(async () => {
-      const { item } = await understandCase(text, said, { commit: false });
-      assert.deepEqual(questionIds(item), ['engine.a1.servicePeriodStart'], text);
-    });
-    await inFreshWorkspace(async () => {
-      const { item, posted } = await understandCase(text, said, { answers: [{ 'engine.a1.servicePeriodStart': { value: start } }] });
+      const { item, posted } = await understandCase(text, said);
       assert.equal(item.status, 'ready', `${text}: ${JSON.stringify(item.plan?.questions)}`);
       assert.equal(posted.schedule.length, months, text);
-      assert.equal(posted.schedule[0].period_key, first, text);
+      assert.equal(posted.schedule[0].period_key, '1405-07', text);
     });
   }
 });
@@ -584,13 +582,14 @@ const versions = (id) => database.activeWorkspaceDatabase().prepare('SELECT COUN
 
 test('پایانِ دورهٔ نامفهوم رد می‌شود و هیچ چیز ذخیره نمی‌شود؛ پرونده همچنان قابل پاسخ و ثبت است', async () => {
   await inFreshWorkspace(async () => {
-    const text = 'اجاره دفتر برای شش ماه ۳۰ میلیون از تجارت دادیم';
+    const text = 'بیمه انبار ۳۰ میلیون از تجارت دادیم';
     const { item: asked, options } = await understandCase(text, model({
-      amounts: [amt('a1', 'paid-now', '۳۰ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('اجاره دفتر'),
+      amounts: [amt('a1', 'paid-now', '۳۰ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت')], subject: service('بیمه انبار'),
     }), { answers: [{ 'engine.a1.servicePeriodStart': { value: 'next-month' } }], commit: false });
     assert.deepEqual(questionIds(asked), ['engine.a1.servicePeriodEnd']);
     const before = versions(asked.id);
-    for (const bad of [{ value: 'custom', freeText: 'آخر فروردین' }, { value: 'custom', freeText: '۶ ماه از مهر' }, { value: 'custom' }]) {
+    // «۶ ماه از مهر» و «آخر فروردین» حالا جواب خوانا هستند؛ این‌ها نه.
+    for (const bad of [{ value: 'custom', freeText: 'فلان روز' }, { value: 'custom', freeText: 'نمیدونم کی' }, { value: 'custom' }]) {
       await assert.rejects(database.answerUnderstandingCase(asked.id, { 'engine.a1.servicePeriodEnd': bad }, options), (error) => error.status === 400 && /^ANSWER_/.test(error.code));
     }
     const still = database.getUnderstandingCase(asked.id);
@@ -615,7 +614,7 @@ test('پاسخِ خرابی که از پیش ذخیره شده پرونده را
     }), { commit: false });
     assert.deepEqual(questionIds(asked), ['engine.a1.servicePeriodStart']);
     const db = database.activeWorkspaceDatabase();
-    const answers = { ...asked.answers, 'engine.a1.servicePeriodStart': { value: 'custom', freeText: '۶ ماه از مهر', picker: 'options' } };
+    const answers = { ...asked.answers, 'engine.a1.servicePeriodStart': { value: 'custom', freeText: 'نمیدونم کی', picker: 'options' } };
     db.prepare('UPDATE understanding_cases SET answers=? WHERE id=?').run(JSON.stringify(answers), asked.id);
     assert.throws(() => database.commitUnderstandingCase(asked.id, { now: new Date(NOW) }), (error) => error.code === 'UNDERSTANDING_NOT_READY');
     assert.deepEqual(questionIds(database.getUnderstandingCase(asked.id)), ['engine.a1.servicePeriodStart']);
@@ -1005,8 +1004,14 @@ test('طولِ دوره با عددِ مرکب: ۱۳، ۱۵، ۱۸، ۲۴، ۳۶
       assert.equal(posted.schedule[0].period_key, '1405-08', text);
     });
   }
-  // منفی: عددِ مدل با شاهد نمی‌خواند، یا طول عدد ندارد — پایان پرسیده می‌شود، نه حساب.
-  for (const [evidence, value] of [['پانزده ماه', '12'], ['چند ماه', null]]) {
+  // عددِ مدل با شاهد نمی‌خواند ولی خودِ متن طول را صریح دارد: متن برنده است، نه عدد مدل.
+  await inFreshWorkspace(async () => {
+    const { posted } = await understandCase('اجاره انبار از اول آبان به مدت پانزده ماه ۴۵ میلیون از تجارت دادیم', model({ event: { kind: 'advance-paid', description: '', status: 'done' },
+      amounts: [amt('a1', 'paid-now', '۴۵ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], nonAmountNumbers: [{ value: '12', role: 'duration', evidence: 'پانزده ماه' }], dates: startAban, subject: service('اجاره انبار') }));
+    assert.equal(posted.schedule.length, 15);
+  });
+  // منفی: طول عدد ندارد — پایان پرسیده می‌شود، نه حساب.
+  for (const [evidence, value] of [['چند ماه', null]]) {
     await inFreshWorkspace(async () => {
       const { item, posted } = await understandCase(`اجاره انبار از اول آبان به مدت ${evidence} ۴۵ میلیون از تجارت دادیم`, model({ event: { kind: 'advance-paid', description: '', status: 'done' },
         amounts: [amt('a1', 'paid-now', '۴۵ میلیون')], movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')], nonAmountNumbers: [{ value, role: 'duration', evidence }], dates: startAban, subject: service('اجاره انبار') }));

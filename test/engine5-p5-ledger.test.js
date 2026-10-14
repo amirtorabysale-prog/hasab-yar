@@ -63,7 +63,7 @@ const run = (today) => store.postDueRecognitionItems(sql(), { today, actor: owne
 function capture(text, { now = NOW, clientId = `c-${Math.random()}`, approve = true } = {}) {
   const rows = parseFinancialText(text, { source: 'voice', now: new Date(now) }).transactions || [];
   assert.ok(rows.length >= 1, `پارسر چیزی از «${text}» نخواند`);
-  const [transactionId] = database.insertTransactions({ transcript: text, transactions: rows.map((row) => ({ ...row, occurredAt: row.occurredAt || now, userConfirmed: true, clientId })) });
+  const [transactionId] = database.insertTransactions({ transcript: text, transactions: rows.map((row) => ({ ...row, occurredAt: row.occurredAt || now, userConfirmed: approve, clientId })) });
   let event = eventOf(transactionId);
   if (approve && event.status === 'pending') { database.approveEvent(event.id); event = eventOf(transactionId); }
   return { transactionId, eventId: event.id, event };
