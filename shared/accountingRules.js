@@ -208,7 +208,30 @@ export function planJournal(event, decision = null) {
  * تفاوت که سطرِ صندوق یا بانک جایش را به جاری شریک یا پرداختنیِ کارمند می‌دهد.
  * یک قاعده برای همهٔ برخوردها، نه یک نسخهٔ دوم از هر کدام.
  */
+/**
+ * سندِ پایه‌ای که پولی جابه‌جا نمی‌کند: چک، طلب و بدهی، فاکتور.
+ *
+ * برخورد از ماهیت می‌آید و منبع پول جدا خوانده می‌شود — همان اصلی که پرداخت
+ * شریک را می‌سازد. «اجارهٔ یک‌ساله با چک» همان پیش‌پرداخت اجاره است که با نقد
+ * می‌شد؛ فقط طرف بستانکارش اسناد پرداختنی است، نه صندوق. نقشه‌های برخورد
+ * (پیش‌پرداخت، درآمد انتقالی، ودیعه، پیش‌دریافت) طرف پولی را «صندوق» نوشته‌اند؛
+ * برای این رویدادها آن سطر جایش را به حساب خودِ سند می‌دهد، وگرنه سطر نقدی برای
+ * پولی ساخته می‌شد که از حساب شرکت جابه‌جا نشده.
+ */
+const DOCUMENT_COUNTER_ROLES = Object.freeze({
+  [EVENT_KINDS.CHEQUE_ISSUED]: ROLES.CHEQUE_PAYABLE,
+  [EVENT_KINDS.CHEQUE_RECEIVED]: ROLES.CHEQUE_RECEIVABLE,
+  [EVENT_KINDS.PAYABLE_OPENED]: ROLES.PAYABLE,
+  [EVENT_KINDS.PURCHASE_INVOICE]: ROLES.PAYABLE,
+  [EVENT_KINDS.RECEIVABLE_OPENED]: ROLES.RECEIVABLE,
+  [EVENT_KINDS.SALES_INVOICE]: ROLES.RECEIVABLE,
+});
+
 export function applyFunding(plan, event) {
+  const documentRole = event?.kind ? DOCUMENT_COUNTER_ROLES[event.kind] : null;
+  if (documentRole && plan?.lines) {
+    return { ...plan, lines: plan.lines.map((line) => (line.role === ROLES.CASH ? { ...line, role: documentRole, key: event.counterparty } : line)) };
+  }
   if (!event?.fundedBy || !plan?.lines) return plan;
   const role = event.fundedBy === 'employee' ? ROLES.PAYABLE : ROLES.PARTNER_PAYABLE;
   const key = event.payerName || (event.fundedBy === 'employee' ? 'کارمند' : 'شریک');

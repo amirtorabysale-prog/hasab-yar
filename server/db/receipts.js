@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { audit, cleanAmount, currentWorkspace, db, invalidInput, parseStoredJson } from './core.js';
 import { insertTransactionRows, jsonText } from './transactions.js';
+import { bookedServiceFacts } from '../../shared/documentReading.js';
 import { matchStatementLine as matchStatementLineCore } from '../reconciliation.js';
 import { normalizePersian } from '../../shared/parser.js';
 
@@ -141,10 +142,15 @@ export function confirmReceipt(id, values = {}) {
       const transaction = db.prepare("SELECT id,amount,type,account_id AS accountId FROM transactions WHERE id=? AND status!='deleted'").get(transactionId);
       if (!transaction || transaction.amount !== receipt.amount || transaction.type !== receipt.type || transaction.accountId !== receipt.accountId) throw Object.assign(new Error('تراکنش انتخاب‌شده با مبلغ، نوع و حساب رسید برابر نیست.'), { code: 'RECEIPT_MATCH_MISMATCH', status: 409 });
     } else {
+      // «مدت پوشش یکساله» در متن رسید همان دورهٔ پوشش است؛ پرسیدنش دوباره کار
+      // کاربر بود و با صدا پرسیده نمی‌شد.
+      const said = [receipt.ocrText, receipt.note].map((part) => String(part || '').trim()).filter(Boolean).join(' — ');
+      const occurredAt = receipt.occurredAt || receipt.createdAt;
+      const service = bookedServiceFacts(said, { type: receipt.type, category: receipt.category, occurredAt });
       const [createdId] = insertTransactionRows({ transcript: receipt.ocrText || receipt.note || receipt.merchant || 'ثبت از رسید', transactions: [{
         clientId: `receipt:${receipt.id}`, amount: receipt.amount, type: receipt.type, category: receipt.category,
         rawText: receipt.ocrText || receipt.note || receipt.merchant || 'ثبت از رسید', source: 'text', accountId: receipt.accountId,
-        occurredAt: receipt.occurredAt || receipt.createdAt, confidence: receipt.ocrConfidence || 1,
+        occurredAt, confidence: receipt.ocrConfidence || 1, ...service,
         note: `ثبت از رسید ${receipt.fileName}${receipt.reference ? ` · پیگیری ${receipt.reference}` : ''}`,
       }] });
       transactionId = createdId;

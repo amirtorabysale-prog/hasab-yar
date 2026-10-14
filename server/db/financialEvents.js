@@ -8,6 +8,7 @@ import { prepareReviewResources, applyReviewInventory, reverseReviewInventory } 
 import { randomUUID } from 'node:crypto';
 import { prepareReviewProposal, reviewConversation, reviewedEvent, originalReviewTranscript, relevantDna, proposalRevision, addReviewMessage, reviewContext } from '../reviewAssistant.js';
 import { attachReviewedCheque } from './cheques.js';
+import { assertEventChangeAllowed, retireDocumentBehindEvent } from './documentEvents.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
 import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, releaseHeldRecognition, reviewedTimingCategory, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
@@ -326,8 +327,10 @@ export function reverseEvent(eventId, reason = '') {
     if (cheque && cheque.status!=='open') throw Object.assign(new Error('این چک پیش‌تر وصول یا تعیین تکلیف شده؛ ابتدا اسناد وابسته را اصلاح کن.'),{code:'REVIEW_CHEQUE_DEPENDENCY',status:409});
     const posted=database.prepare('SELECT journal_entry_id FROM financial_events WHERE id=?').get(eventId);
     if(posted?.journal_entry_id) assertHoldHasNoResolutions(database,posted.journal_entry_id);
+    const document=assertEventChangeAllowed(database,eventId,'reverse');
     reverseReviewInventory(database,eventId,{actor:currentWorkspace()?.userId,timeZone:currentTimeZone()});
     const item=reverseFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason,timeZone:currentTimeZone(),withinTransaction:true});
+    retireDocumentBehindEvent(database,document,{eventId,action:'reverse'});
     releaseInsuranceSettlement(database,eventId);
     if(cheque) database.prepare("UPDATE cheques SET status='cancelled' WHERE id=?").run(cheque.id);
     retireTransactionBehind(eventId,'reverse');
@@ -343,7 +346,9 @@ export function rejectEvent(eventId, reason = '') {
   const proposal = latestReviewProposal(database,eventId);
   database.exec('BEGIN IMMEDIATE');
   try {
+    const document = assertEventChangeAllowed(database,eventId,'reject');
     const item = rejectFinancialEvent(database,eventId,{actor:currentWorkspace()?.userId || null,reason});
+    retireDocumentBehindEvent(database,document,{eventId,action:'reject'});
     if (proposal?.state==='proposed') recordReviewFeedback(database,eventId,proposal.id,{state:'rejected',reason,actor:currentWorkspace()?.userId || null});
     addReviewMessage(database,eventId,'rejected',reason,currentWorkspace()?.userId || null);
     retireTransactionBehind(eventId,'reject');

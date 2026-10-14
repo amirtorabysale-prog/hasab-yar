@@ -896,9 +896,13 @@ export default function App() {
         await load();
         // پیام دقیقاً می‌گوید سند در چه وضعیتی است. «ثبت شد» خالی، کاربر را به
         // این باور می‌رساند که فاکتور صادر شده درحالی‌که ممکن است پیش‌نویس باشد.
-        notify(payload.issueNow
-          ? `فاکتور ${item.number} صادر شد؛ در دفتر کل سند خورد و در گزارش مالیاتی می‌آید.`
-          : `پیش‌نویس ${item.number} ساخته شد؛ هر وقت خواستی از برگهٔ فاکتورها صادرش کن.`);
+        // ردیف خدمتی که دوره‌اش گفته نشده صادر نمی‌شود (هزینه یا درآمد یک‌جا
+        // حدس است)؛ پیش‌نویس می‌ماند و سؤالش همین‌جا گفته می‌شود.
+        notify(item.pendingQuestion
+          ? `پیش‌نویس ${item.number} ساخته شد ولی صادر نشد: ${item.pendingQuestion}`
+          : payload.issueNow
+            ? `فاکتور ${item.number} صادر شد؛ در دفتر کل سند خورد و در گزارش مالیاتی می‌آید.`
+            : `پیش‌نویس ${item.number} ساخته شد؛ هر وقت خواستی از برگهٔ فاکتورها صادرش کن.`);
         return;
       }
       if (draft.intent === 'capital' || draft.intent === 'fixed-asset') {
@@ -919,21 +923,31 @@ export default function App() {
         const { item } = await withCounterpartyConfirmation((counterpartyResolution) => api.recordCheque({
           direction: draft.direction, counterpartyName: draft.contactName, amount: draft.amount,
           against: draft.against, dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
-          note: draft.transcript.slice(0, 300), counterpartyResolution,
+          note: draft.transcript.slice(0, 300), counterpartyResolution, source: 'voice',
+          // سری چک («۱۲ تا چک ۱۰ میلیونی») با تعدادش می‌رود؛ سرور آن را یک چکِ
+          // تک ثبت نمی‌کند.
+          ...(draft.chequeCount > 1 ? { chequeCount: draft.chequeCount, perChequeAmount: draft.perChequeAmount || null } : {}),
         }));
         setIntentDraft(null);
         await load();
-        notify(item.queuedForAccountant ? item.queuedReason : draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
+        notify(item.queuedForAccountant ? item.queuedReason
+          : item.pendingQuestion ? `چک در دفتر چک‌ها ثبت شد؛ سندش منتظر یک جواب است: ${item.pendingQuestion}`
+            : draft.against === 'receivable' ? 'چک ثبت شد؛ درآمد یا هزینهٔ تازه‌ای ساخته نشد.' : 'چک ثبت شد.');
         return;
       }
-      await api.saveObligation({
+      // طرف حسابِ گفته‌شده همان مسیر فرم و کارت چک را می‌رود: مخاطب ساخته یا
+      // پیدا می‌شود و تعهد به او وصل است. بی‌آن، بدهی «شرکت پارس» بی‌مخاطب
+      // می‌ماند و کارت طرف حساب بعداً همان مبلغ را «بی‌پوشش» دوباره تسویه می‌کرد.
+      const { item } = await withCounterpartyConfirmation((counterpartyResolution) => api.saveObligation({
         title: draft.title, amount: draft.amount, direction: draft.direction,
         dueAt: draft.dueAt || null, occurredAt: draft.occurredAt || null,
-        note: draft.transcript.slice(0, 300),
-      });
+        note: draft.transcript.slice(0, 300), contactName: draft.contactName || '', counterpartyResolution,
+      }));
       setIntentDraft(null);
       await load();
-      notify(draft.direction === 'receivable' ? 'طلب ثبت شد.' : 'بدهی ثبت شد.');
+      notify(item?.journalStatus === 'pending'
+        ? `${draft.direction === 'receivable' ? 'طلب' : 'بدهی'} ثبت شد؛ سندش منتظر یک جواب یا بررسی حسابدار است.`
+        : draft.direction === 'receivable' ? 'طلب ثبت شد.' : 'بدهی ثبت شد.');
     } catch (error) { notify(error.message); }
   };
 

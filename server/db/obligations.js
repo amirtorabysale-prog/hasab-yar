@@ -1,13 +1,49 @@
 import { randomUUID } from 'node:crypto';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
-import { audit, cleanAmount, currentWorkspace, db, invalidInput } from './core.js';
+import { audit, cleanAmount, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { automationPolicy } from './settings.js';
 import { contactIdForName } from './contacts.js';
-import { ensureFinancialEventSchema, findEventBySource, recordFinancialEvent } from '../financialEventStore.js';
+import { ensureFinancialEventSchema, findEventBySource, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent } from '../financialEventStore.js';
+import { documentRouting, documentServiceDecision, readDocumentService } from '../../shared/documentService.js';
 import { insertTransactionRows, transactionRow } from './transactions.js';
 import { resolveAccountId } from './accounts.js';
 import { routeEvent } from '../../shared/confidenceEngine.js';
 import { ledgerSideBalances } from './counterpartyCard.js';
+
+/**
+ * سندِ ایجادِ زندهٔ یک تعهد.
+ *
+ * ویرایش مبلغ، جهت، طرف حساب یا تاریخ، سند قبلی را برمی‌گرداند و سند تازه‌ای با
+ * شناسهٔ بازنگری (`obligation:<id>#r<n>`) می‌زند؛ همیشه آخرین سندی که برگشت یا
+ * رد نخورده، سند این تعهد است — در فهرست، در تسویه و در حذف.
+ */
+const OPENING_EVENT_SQL = `SELECT fe.id FROM financial_events fe
+  WHERE (fe.source_event_id='obligation:' || obligations.id OR fe.source_event_id LIKE 'obligation:' || obligations.id || '#r%')
+    AND fe.status NOT IN ('reversed','rejected')
+  ORDER BY fe.rowid DESC LIMIT 1`;
+
+function openingEvent(id) {
+  ensureFinancialEventSchema(db);
+  const row = db.prepare(`SELECT source_event_id FROM financial_events
+    WHERE (source_event_id=? OR source_event_id LIKE ?) AND status NOT IN ('reversed','rejected')
+    ORDER BY rowid DESC LIMIT 1`).get(`obligation:${id}`, `obligation:${id}#r%`);
+  return row ? findEventBySource(db, row.source_event_id) : null;
+}
+
+function openingRevision(id) {
+  return db.prepare("SELECT COUNT(*) AS count FROM financial_events WHERE source_event_id=? OR source_event_id LIKE ?")
+    .get(`obligation:${id}`, `obligation:${id}#r%`).count;
+}
+
+/** سند ایجاد را پس می‌گیرد: ثبت‌شده برمی‌گردد، منتظر رد می‌شود. */
+function withdrawOpening(id, reason) {
+  const opened = openingEvent(id);
+  if (!opened) return null;
+  const actor = currentWorkspace()?.userId || null;
+  if (opened.status === 'posted') return reverseFinancialEvent(db, opened.id, { actor, reason, timeZone: currentTimeZone(), withinTransaction: true });
+  if (opened.status === 'pending') return rejectFinancialEvent(db, opened.id, { actor, reason });
+  return opened;
+}
 
 export function listObligations({ status = 'open' } = {}) {
   ensureFinancialEventSchema(db);
@@ -21,7 +57,7 @@ export function listObligations({ status = 'open' } = {}) {
     CASE WHEN opened.status='posted' AND journal.id IS NOT NULL THEN 'posted'
       WHEN opened.id IS NULL THEN 'legacy' ELSE 'pending' END AS journalStatus
     FROM obligations LEFT JOIN contacts ON contacts.id=obligations.contact_id
-    LEFT JOIN financial_events AS opened ON opened.source_event_id='obligation:' || obligations.id
+    LEFT JOIN financial_events AS opened ON opened.id=(${OPENING_EVENT_SQL})
     LEFT JOIN journal_entries AS journal ON journal.id=opened.journal_entry_id ${where}
     ORDER BY CASE WHEN obligations.due_at IS NULL THEN 1 ELSE 0 END,obligations.due_at,obligations.created_at DESC`).all(...args);
 }
@@ -33,21 +69,80 @@ export function saveObligation(values = {}) {
   const title = String(values.title || '').trim().slice(0, 120);
   if (!title) throw invalidInput('عنوان طلب یا بدهی را وارد کن.');
   const contactId = values.contactId || (values.contactName ? contactIdForName(values.contactName, values.counterpartyResolution) : null);
-  const id = values.id || randomUUID();
-  db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,occurred_at,status,note) VALUES (?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,title=excluded.title,amount=excluded.amount,
-      direction=excluded.direction,due_at=excluded.due_at,occurred_at=excluded.occurred_at,status=excluded.status,note=excluded.note,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, contactId, title, amount, direction, values.dueAt || null, values.occurredAt || null, ['open', 'paid', 'cancelled'].includes(values.status) ? values.status : 'open', String(values.note || '').slice(0, 500));
-  audit(values.id ? 'update' : 'create', 'obligation', id, { amount, direction, title });
+  if (values.id) return updateObligation(String(values.id), { ...values, amount, direction, title, contactId });
+  const id = randomUUID();
+  db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,occurred_at,status,note) VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(id, contactId, title, amount, direction, values.dueAt || null, values.occurredAt || null, 'open', String(values.note || '').slice(0, 500));
+  audit('create', 'obligation', id, { amount, direction, title });
   // تعهدِ باز تا امروز هیچ سندی در دفتر نمی‌زد، پس نه در تراز دیده می‌شد و نه در
   // فایل انتقال پارسیان. طلب و بدهی رویداد مستقل‌اند: حق دریافت یا تعهد پرداخت
   // همان لحظه ساخته می‌شود، حتی وقتی هنوز پولی جابه‌جا نشده.
-  //
-  // فقط تعهد تازه سند می‌گیرد؛ ویرایش یک تعهد موجود سند دوم نمی‌سازد، چون شناسهٔ
-  // منبع یکتاست و لایهٔ رویداد همان نتیجهٔ قبلی را برمی‌گرداند.
-  if (!values.id) {
-    postObligationOpened(id, { amount, direction, title, contactId, occurredAt: values.occurredAt, note: values.note });
+  postObligationOpened(id, { amount, direction, title, contactId, occurredAt: values.occurredAt, note: values.note, category: values.category });
+  return listObligations({ status: 'all' }).find((item) => item.id === id);
+}
+
+/**
+ * ویرایش یک تعهد — فهرست و دفتر کل با هم عوض می‌شوند.
+ *
+ * تا امروز ویرایش فقط ردیف فهرست را عوض می‌کرد: بیمهٔ دوازده میلیونی که شش شد،
+ * در دفتر دوازده می‌ماند و کارت طرف حساب شش میلیون «بدهی بی‌پوشش» نشان می‌داد که
+ * تسویهٔ کارت از صندوق می‌پرداخت. حالا هر تغییری که سند را عوض می‌کند (مبلغ،
+ * جهت، طرف حساب، تاریخ)، سند قبلی را برمی‌گرداند و سند تازه می‌زند. تعهدی که
+ * بخشی‌اش تسویه شده، اول باید تسویه‌هایش برگردد. وضعیت از بدنهٔ درخواست
+ * خوانده نمی‌شود: فقط تسویه و حذف آن را عوض می‌کنند.
+ */
+/**
+ * عنوان و یادداشت تعهد دسته و دورهٔ پوششِ سندش را می‌سازند («اشتراک یک ساله نرم
+ * افزار — پوشش مهر تا شهریور» پیش‌پرداخت است، «بدهی به شرکت پارس» سایر هزینه‌ها).
+ * ویرایشی که خواندنِ آن‌ها را عوض کند — یا دستهٔ صریح تازه بیاورد — سند را هم عوض
+ * می‌کند؛ وگرنه پیش‌پرداخت و برنامهٔ دوازده‌ماهه زیر عنوان «خرید جنس» می‌ماند.
+ */
+function serviceReadingChanged(id, existing, values) {
+  const at = new Date(values.occurredAt || existing.occurred_at || existing.created_at || Date.now());
+  const when = Number.isNaN(at.getTime()) ? new Date().toISOString() : at.toISOString();
+  const read = (title, note, category, direction) => readDocumentService(
+    [title, note].map((part) => String(part || '').trim()).filter(Boolean).join(' — '),
+    { direction, occurredAt: when, category },
+  );
+  const opened = openingEvent(id);
+  let stored = null;
+  try { stored = opened ? JSON.parse(db.prepare('SELECT payload FROM financial_events WHERE id=?').get(opened.id)?.payload || 'null') : null; } catch { stored = null; }
+  const before = read(existing.title, existing.note, null, existing.direction);
+  const after = read(values.title, values.note, values.category || null, values.direction);
+  if (values.category && stored?.category && values.category !== stored.category) return true;
+  return before.category !== after.category || before.servicePeriodStart !== after.servicePeriodStart
+    || before.servicePeriodEnd !== after.servicePeriodEnd || before.refundable !== after.refundable;
+}
+
+function updateObligation(id, values) {
+  const existing = db.prepare('SELECT * FROM obligations WHERE id=?').get(id);
+  if (!existing) throw Object.assign(invalidInput('این طلب یا بدهی پیدا نشد.'), { status: 404, code: 'OBLIGATION_MISSING' });
+  if (existing.status === 'cancelled') throw Object.assign(invalidInput('این طلب یا بدهی حذف شده و قابل ویرایش نیست.'), { status: 409, code: 'OBLIGATION_CANCELLED' });
+  const occurredAt = values.occurredAt === undefined ? existing.occurred_at : (values.occurredAt || null);
+  const note = values.note === undefined ? existing.note : values.note;
+  const ledgerChanged = values.amount !== existing.amount || values.direction !== existing.direction
+    || (values.contactId || null) !== (existing.contact_id || null) || (occurredAt || null) !== (existing.occurred_at || null)
+    || serviceReadingChanged(id, existing, { ...values, note, occurredAt });
+  const paid = Number(existing.paid_amount) || 0;
+  if (ledgerChanged && paid > 0) {
+    throw Object.assign(invalidInput('بخشی از این طلب یا بدهی تسویه شده؛ برای تغییر مبلغ، جهت یا طرف حساب اول تسویه‌هایش را برگردان.'), { status: 409, code: 'OBLIGATION_PARTLY_SETTLED' });
   }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`UPDATE obligations SET contact_id=?,title=?,amount=?,direction=?,due_at=?,occurred_at=?,note=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(values.contactId || null, values.title, values.amount, values.direction,
+        values.dueAt === undefined ? existing.due_at : (values.dueAt || null), occurredAt,
+        values.note === undefined ? existing.note : String(values.note || '').slice(0, 500), id);
+    if (ledgerChanged) {
+      withdrawOpening(id, 'ویرایش طلب/بدهی');
+      postObligationOpened(id, {
+        amount: values.amount, direction: values.direction, title: values.title, contactId: values.contactId || null,
+        occurredAt, note, category: values.category,
+      }, { sourceEventId: `obligation:${id}#r${openingRevision(id)}`, withinTransaction: true });
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  audit('update', 'obligation', id, { amount: values.amount, direction: values.direction, title: values.title, reposted: ledgerChanged });
   return listObligations({ status: 'all' }).find((item) => item.id === id);
 }
 
@@ -72,7 +167,7 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
   // تعهدهای قدیمی ممکن است قبلاً در دفتر یا در فاکتور دیگری شناسایی شده باشند.
   // هیچ راه مطمئنی برای حدسِ حساب مقابل از عنوان آن‌ها نداریم؛ مسیر قدیمی هنگام
   // وصول، «درآمد/هزینهٔ تازه» می‌ساخت. پیش از هر تغییر در مانده یا تراکنش متوقف شو.
-  const opened = findEventBySource(db, `obligation:${id}`);
+  const opened = openingEvent(id);
   const journalExists = opened?.journalEntryId && db.prepare('SELECT 1 FROM journal_entries WHERE id=?').get(opened.journalEntryId);
   if (opened?.status !== 'posted' || !journalExists) {
     throw invalidInput(opened
@@ -135,10 +230,29 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
   return { item: listObligations({ status: 'all' }).find((row) => row.id === id), transaction: transactionRow(transactionId) };
 }
 
+/**
+ * حذف تعهد — همراه با سندش.
+ *
+ * حذفِ تنهای ردیف، سند ایجاد را در دفتر می‌گذاشت: بدهی‌ای که کاربر پاک کرده بود
+ * در کارت طرف حساب «بی‌پوشش» دیده می‌شد و تسویهٔ کارت آن را از صندوق می‌پرداخت.
+ * حالا سند ثبت‌شده برمی‌گردد (یا رویداد منتظر رد می‌شود) و ردیف «ابطال‌شده»
+ * می‌ماند تا ردپای برگشت گم نشود. تعهدی که بخشی‌اش تسویه شده حذف نمی‌شود.
+ */
 export function deleteObligation(id) {
-  const result = db.prepare('DELETE FROM obligations WHERE id=?').run(id);
-  if (result.changes) audit('delete', 'obligation', id);
-  return result.changes > 0;
+  const existing = db.prepare('SELECT * FROM obligations WHERE id=?').get(String(id || ''));
+  if (!existing) return false;
+  if ((Number(existing.paid_amount) || 0) > 0) {
+    throw Object.assign(invalidInput('بخشی از این طلب یا بدهی تسویه شده؛ اول تسویه‌هایش را برگردان، بعد حذفش کن.'), { status: 409, code: 'OBLIGATION_PARTLY_SETTLED' });
+  }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const withdrawn = withdrawOpening(existing.id, 'حذف طلب/بدهی');
+    if (withdrawn) db.prepare("UPDATE obligations SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(existing.id);
+    else db.prepare('DELETE FROM obligations WHERE id=?').run(existing.id);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  audit('delete', 'obligation', existing.id);
+  return true;
 }
 
 /**
@@ -151,20 +265,47 @@ export function deleteObligation(id) {
  * شکست اینجا نباید ساخت تعهد را از بین ببرد: کاربر طلبش را ثبت کرده و آن حقیقت
  * دارد، حتی اگر کدینگ دفتر هنوز آمادهٔ سند نباشد. رویداد به صف بررسی می‌رود.
  */
-function postObligationOpened(obligationId, { amount, direction, title, contactId, occurredAt, note }) {
+// تعهدی که طرف حساب ندارد زیر یک حساب خنثی می‌نشیند، نه زیر حسابی به نام عنوانش.
+// «طلب/بدهی» یا «شرکت پارس»ِ تایپ‌شده در عنوان، بعداً با ساخته‌شدن مخاطبی به همان
+// نام، ماندهٔ این تعهد را «بی‌پوشش» نشان می‌داد و تسویهٔ کارت دوباره می‌پرداخت.
+const NO_COUNTERPARTY = 'بدون طرف حساب';
+
+function postObligationOpened(obligationId, { amount, direction, title, contactId, occurredAt, note, category = null },
+  { sourceEventId = `obligation:${obligationId}`, withinTransaction = false } = {}) {
   try {
     const contact = contactId ? db.prepare('SELECT name FROM contacts WHERE id=?').get(contactId) : null;
+    const when = occurredAt || new Date().toISOString();
+    // شاهد، عنوان و یادداشت با هم است؛ «note || title» عنوانِ «حق بیمه یکساله» را
+    // هر بار که یادداشتی بود دور می‌انداخت.
+    const evidence = [title, note].map((part) => String(part || '').trim()).filter(Boolean).join(' — ');
+    // «اشتراک یک ساله … بدهکاریم»، «مستاجر اجاره شش ماه بعد رو بدهکاره»: همان
+    // دسته و دورهٔ پوششی که پرداخت نقدی می‌خواند. دستهٔ ثابت «سایر هزینه‌ها /
+    // سایر درآمدها» فقط وقتی می‌ماند که متن هیچ دسته‌ای نگوید.
+    const service = readDocumentService(evidence, { direction, occurredAt: when, category });
     const event = normalizeFinancialEvent({
       kind: direction === 'receivable' ? EVENT_KINDS.RECEIVABLE_OPENED : EVENT_KINDS.PAYABLE_OPENED,
       amount,
-      occurredAt: occurredAt || new Date().toISOString(),
-      counterparty: contact?.name || title,
+      occurredAt: when,
+      counterparty: contact?.name || NO_COUNTERPARTY,
       counterpartyId: contactId || null,
-      category: direction === 'receivable' ? 'سایر درآمدها' : 'سایر هزینه‌ها',
+      category: service.category || (direction === 'receivable' ? 'سایر درآمدها' : 'سایر هزینه‌ها'),
       description: title,
+      servicePeriodStart: service.servicePeriodStart,
+      servicePeriodEnd: service.servicePeriodEnd,
+      refundable: service.refundable,
       source: 'text',
-      evidence: note || title,
+      evidence,
     });
+    const actor = currentWorkspace()?.userId || null;
+    // خدمت دوره‌دار: هر چه موتور بگوید — پیش‌پرداخت یا پیش‌دریافت با برنامهٔ
+    // ماهانه، سؤال دوره، یا حسابدار — و هرگز هزینه یا درآمد یک‌جا.
+    const accountingDecision = documentServiceDecision(event, { today: new Date().toISOString() });
+    if (accountingDecision) {
+      return recordFinancialEvent(db, event, {
+        sourceEventId, decision: documentRouting(accountingDecision), accountingDecision,
+        actor, rawInput: evidence, transcript: evidence, timeZone: currentTimeZone(), withinTransaction,
+      });
+    }
     // ورودی فرم برداشت نیست: کاربر مبلغ و جهت را خودش انتخاب کرده و دکمهٔ ذخیره
     // را زده. خودِ همان ثبت، تأیید است.
     //
@@ -178,12 +319,16 @@ function postObligationOpened(obligationId, { amount, direction, title, contactI
       policy: automationPolicy(),
     });
     return recordFinancialEvent(db, event, {
-      sourceEventId: `obligation:${obligationId}`,
+      sourceEventId,
       decision,
-      actor: currentWorkspace()?.userId || null,
+      actor,
       rawInput: title,
+      withinTransaction,
     });
   } catch (error) {
+    // ویرایشی که سند قبلی را برگردانده ولی سند تازه نخورده، نیمه‌کاره است؛
+    // کل ویرایش برمی‌گردد تا فهرست و دفتر از هم جدا نیفتند.
+    if (withinTransaction) throw error;
     // سند نخوردن یک تعهد نباید ثبت خودِ تعهد را برگرداند؛ ولی بی‌صدا هم نباید
     // رد شود، چون یعنی دفتر و فهرست طلب‌ها از هم جدا افتاده‌اند.
     audit('journal-failed', 'obligation', obligationId, { code: error.code || 'UNKNOWN', message: String(error.message).slice(0, 200) });
