@@ -1,4 +1,5 @@
 import { normalizePersian } from './normalize.js';
+import { moneyReturned } from './refundSpeech.js';
 
 /**
  * ماهیت یک پرداخت «بیمه»: لیست بیمهٔ حقوق (تأمین اجتماعی) یا حق بیمهٔ یک
@@ -37,13 +38,17 @@ const PAYROLL_LIST = /لیست (?:حقوق|دستمزد)/;
 const PREMIUM_LINE = /بیمه(?: ?ی)? ?(?:نامه|تکمیلی|درمان|درمانی|عمر|حوادث|حادثه|مسئولیت|مسیولیت|مسولیت|اتش|آتش|بدنه|شخص ثالث|ثالث|انبار|سرقت|باربری|محموله|اموال|تجهیزات|ماشین|خودرو|دستگاه|کارگاه|ساختمان|مغازه|دفتر|زلزله|سیل|مهندسی|اعتبار|سایبری)/;
 const COVERAGE = /(?:یک|دو|سه|[0-9]+) ?ساله|یکساله|(?:یک|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|یازده|دوازده|[0-9]+) ?ماهه|سالانه|پوشش|از (?:اول |ابتدای )?(?:فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)[^.،]{0,24} تا /;
 const CLAIM = /خسارت|غرامت/;
-// فعل‌های پرداخت، رسمی و محاوره؛ «پس داد» و «برگشت» پرداخت ما نیستند.
+// فعل‌های پرداخت، رسمی و محاوره. «پس داد»، «برگردوند» و «عودت داد» پرداخت ما
+// نیستند: «تأمین اجتماعی ۱۵ میلیون بهمون پس داد» پول آمده است، و «داد» درون
+// آن، لیست باز را «پرداخت‌شده» و صندوق را منفی می‌کرد. جمله‌ای که برگشت پول
+// را می‌گوید، به‌هیچ‌وجه پرداخت لیست خوانده نمی‌شود.
 const PAID = /پرداخت|تسویه|واریز|ریختیم|ریختم|ریخت(?![آ-ی])|زدیم|زدم|کارت به کارت|حواله|فرستادیم|فرستادم|دادیم|دادم|دادن(?![آ-ی])|داد(?![آ-ی])|دادند/;
 
 export function insuranceNature(text) {
   const t = normalizePersian(String(text || '')).replace(/\s+/g, ' ');
   const insurance = /بیمه/.test(t);
-  if (!insurance) return { insurance, statutory: false, staffPayroll: false, premium: false, coverage: false, claim: false, payrollList: false, paid: PAID.test(t) };
+  const paid = PAID.test(t) && !moneyReturned(t);
+  if (!insurance) return { insurance, statutory: false, staffPayroll: false, premium: false, coverage: false, claim: false, payrollList: false, paid };
   const statutory = STATUTORY.test(t) || PAYROLL_LIST.test(t);
   const staffPayroll = STAFF_ADJACENT.test(t);
   const coverage = COVERAGE.test(t);
@@ -51,7 +56,7 @@ export function insuranceNature(text) {
   const claim = CLAIM.test(t);
   // لیست بیمهٔ حقوق: نشانهٔ صریح، یا «بیمهٔ کارکنان» بی‌هیچ نشانهٔ بیمه‌نامه.
   const payrollList = statutory || (staffPayroll && !premium && !claim);
-  return { insurance, statutory, staffPayroll, premium, coverage, claim, payrollList, paid: PAID.test(t) };
+  return { insurance, statutory, staffPayroll, premium, coverage, claim, payrollList, paid };
 }
 
 /** پرداخت لیست بیمهٔ حقوق — تسویهٔ بدهی لیست، نه هزینه و نه پیش‌پرداخت. */

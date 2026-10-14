@@ -798,3 +798,42 @@ test('دستیار حسابدار: «بیمه کارکنانمون ۱۵ میلی
     assert.equal(list.canPost, true, text);
   }
 });
+
+// ---------------------------------------------------------------------------
+// بازبینی: «تأمین اجتماعی … بهمون پس داد» پول آمده است؛ پرداخت لیست بیمه نیست
+// و لیست باز را «پرداخت‌شده» نمی‌کند.
+// ---------------------------------------------------------------------------
+
+const { insuranceNature } = await import('../shared/insuranceNature.js');
+const { insuranceSettlementContext } = await import('../server/reviewInsurance.js');
+
+test('ماهیت بیمه: برگشت پول از تأمین اجتماعی پرداخت لیست نیست؛ واریزِ تأمین اجتماعی به حساب شرکت هم تسویهٔ لیست نیست', async () => {
+  for (const text of [
+    'سازمان تامین اجتماعی ۱۵ میلیون پول بیمه رو بهمون پس داد',
+    'تامین اجتماعی اضافه پرداختی بیمه پرسنل رو برگردوند ۲ میلیون',
+    'تامین اجتماعی ۲ میلیون از بیمه کارکنان رو عودت داد',
+    'لیست بیمه رو پرداخت کردیم ولی ۲ میلیون اضافه رو تامین اجتماعی پس داد',
+  ]) {
+    assert.equal(insuranceNature(text).paid, false, text);
+    assert.equal(reviewNature(text).insuranceSettlement, false, text);
+  }
+  // مثبت: «دادیم»، «داد» (پرداخت‌کننده سوم‌شخص) و «پرداخت شد» همچنان پرداخت‌اند.
+  for (const text of ['لیست بیمه شهریور رو ۱۵ میلیون دادیم', 'حسابدار بیمه پرسنل رو ۱۵ میلیون داد', 'بیمه تامین اجتماعی مهر پرداخت شد']) {
+    assert.equal(reviewNature(text).insuranceSettlement, true, text);
+  }
+  const run = freshWorkspace();
+  await run(async () => {
+    database.importPayrollFile(buildWorkbook([{ name: 'حقوق', rows: [PAYROLL_HEADER, ...PAYROLL_PEOPLE] }]), 'payroll.xlsx', { period: '۱۴۰۵/۰۶', occurredAt: '2026-09-01' });
+    const sql = database.activeWorkspaceDatabase();
+    const deposited = 'تامین اجتماعی ۱۵ میلیون بیمه پرسنل رو به حساب شرکت واریز کرد';
+    assert.equal(reviewNature(deposited).insuranceSettlement, true, 'متن به‌تنهایی جهت را نمی‌داند');
+    assert.equal(insuranceSettlementContext(sql, deposited, 15_000_000, { kind: 'cash-income', occurredAt: TODAY.toISOString() }), null);
+    assert.ok(insuranceSettlementContext(sql, 'لیست بیمه شهریور رو ۱۵ میلیون دادیم', 15_000_000, { kind: 'cash-expense', occurredAt: TODAY.toISOString() })?.run);
+  });
+  for (const text of ['سازمان تامین اجتماعی ۱۵ میلیون پول بیمه رو بهمون پس داد', 'تامین اجتماعی ۱۵ میلیون بیمه پرسنل رو به حساب شرکت واریز کرد']) {
+    const review = await reviewOf(text, { payroll: true });
+    assert.notEqual(review.proposal.model, 'nature-rules-v1', text);
+    assert.ok(!review.proposal.lines.some((line) => line.role === 'payroll-insurance-payable'), text);
+    assert.equal(review.sql.prepare('SELECT insurance_paid_at AS paid FROM payroll_runs').get().paid, null, `${text}: لیست پرداخت‌نشده می‌ماند`);
+  }
+});

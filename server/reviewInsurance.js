@@ -34,8 +34,15 @@ function openRuns(database, occurredAt) {
     .filter((run) => !occurredAt || String(run.occurredAt).slice(0, 10) <= String(occurredAt).slice(0, 10));
 }
 
+/**
+ * رویدادهایی که پول آورده‌اند. پرداخت لیست بیمه همیشه خروج وجه است؛
+ * «تأمین اجتماعی ۱۵ میلیون به حساب شرکت واریز کرد» یا «… بهمون پس داد» هر
+ * فعلی هم داشته باشد، تسویهٔ بدهی لیست نیست و لیست را «پرداخت‌شده» نمی‌کند.
+ */
+const MONEY_IN_KINDS = new Set(['cash-income', 'cheque-received', 'receivable-opened', 'capital-contribution', 'sales-invoice']);
+
 export function insuranceSettlementContext(database, text, amount, event = {}) {
-  if (!reviewNature(text).insuranceSettlement) return null;
+  if (!reviewNature(text).insuranceSettlement || MONEY_IN_KINDS.has(event?.kind)) return null;
   const runs = openRuns(database, event.occurredAt);
   const answer = reference(event.questionAnswers?.[QUESTION_ID]?.value);
   const byAmount = runs.filter((run) => run.total === amount);
