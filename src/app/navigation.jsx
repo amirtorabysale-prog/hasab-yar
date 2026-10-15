@@ -71,7 +71,7 @@ export function MenuTree({ access, screen, section = '', navigate, profileType =
 
 export function DesktopNav({ screen, section = '', navigate, businessName, profileType = 'business', access, searchRef = null }) {
   const profile = profileDefinition(profileType);
-  return <aside className="desktop-nav hidden lg:block"><div className="desktop-nav-inner"><div className="workspace-brand"><span className="brand-mark"><BookOpenCheck size={24} /></span><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">فضای کار مالی شما</p></div></div><div className="workspace-identity"><span className="text-[11px] text-muted">دفتر فعال</span><p className="mt-1 break-words text-sm font-bold">{access?.workspace?.name || businessName || profile.label}</p></div><MenuTree access={access} screen={screen} section={section} navigate={navigate} profileType={profileType} searchRef={searchRef} /></div></aside>;
+  return <aside className="desktop-nav hidden lg:block"><div className="desktop-nav-inner"><div className="workspace-brand"><span className="brand-mark"><BookOpenCheck size={24} /></span><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="text-xs text-muted">فضای کار مالی شما</p></div></div><div className="workspace-identity"><span className="text-xs text-muted">دفتر فعال</span><p className="mt-1 break-words text-sm font-bold">{access?.workspace?.name || businessName || profile.label}</p></div><MenuTree access={access} screen={screen} section={section} navigate={navigate} profileType={profileType} searchRef={searchRef} /></div></aside>;
 }
 
 export function BottomNav({ screen, navigate, access }) {
@@ -83,7 +83,7 @@ export function BottomNav({ screen, navigate, access }) {
 
 export function Drawer({ profileType = 'business', close, navigate, access, screen, section = '' }) {
   const profile = profileDefinition(profileType);
-  return <div className="fixed inset-0 z-[60] bg-ink/35 lg:hidden" onKeyDown={(event) => { if (event.key === 'Escape') close(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+  return <div className="fixed inset-0 z-[60] bg-scrim/35 lg:hidden" onKeyDown={(event) => { if (event.key === 'Escape') close(); }} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
     <aside aria-label="منوی بخش‌ها" className="sheet-in h-full w-[86%] max-w-[340px] overflow-y-auto bg-surface px-4 py-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><p className="text-xl font-extrabold">حساب‌یار</p><p className="mt-1 text-xs text-muted">{access?.workspace?.name || profile.label}</p></div><button autoFocus onClick={close} className="tap grid place-items-center" aria-label="بستن منو"><X /></button></div>
       <MenuTree access={access} screen={screen} section={section} profileType={profileType} navigate={(id, part) => { navigate(id, part); close(); }} />

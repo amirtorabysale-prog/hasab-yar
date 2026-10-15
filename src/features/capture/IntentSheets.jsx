@@ -57,10 +57,10 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
     await confirm(draft);
     setBusy(false);
   };
-  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
+  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
     <section role="dialog" aria-modal="true" aria-label={isPetty ? 'تأیید پرداخت تنخواه' : isTransfer ? 'تأیید انتقال بین حساب‌ها' : isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
-      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">{label}</span>
+      <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">{label}</span>
       <h2 className="mt-3 text-xl font-extrabold">
         {isPetty ? (pettyFund ? `تنخواه ${pettyFund.holderName} شارژ شود؟` : 'تنخواه تازه پرداخت شود؟')
           : isTransfer ? 'این مبلغ بین حساب‌های شرکت منتقل شود؟' : isInvoice ? 'پیش‌نویس فاکتور ساخته شود؟'
@@ -77,7 +77,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
           <input dir="ltr" inputMode="numeric" value={draft.amount || ''} placeholder="مبلغ به تومان"
             onChange={(event) => setDraft({ ...draft, amount: Number(String(event.target.value).replace(/[^\d]/g, '')) || 0 })}
             className="tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-lg numbers" />
-          <p className="mt-1 text-[11px] leading-5 text-expense">
+          <p className="mt-1 text-xs leading-5 text-expense">
             {isPetty && pettyFund && draft.amount ? 'مبلغی گفته نشد؛ همان مبلغ خرج‌شده پیشنهاد شد تا تنخواه به سقفش برگردد.'
               : draft.amountHint ? 'جمله بیش از یک مبلغ داشت؛ مبلغ همین سند را خودت بنویس.' : 'مبلغ از جمله برداشت نشد؛ خودت بنویس.'}
           </p>
@@ -126,7 +126,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
         </label>
         {/* حساب دارایی بی‌نام، ردیفی است که شش ماه بعد هیچ‌کس نمی‌داند چیست. */}
-        {isAsset && !String(draft.title || '').trim() && <p className="mt-1 text-[11px] leading-5 text-expense">
+        {isAsset && !String(draft.title || '').trim() && <p className="mt-1 text-xs leading-5 text-expense">
           نام دارایی از جمله برداشت نشد؛ خودت بنویس. حساب دارایی بدون نام در دفتر کل قابل پیگیری نیست.
         </p>}
 
@@ -140,7 +140,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
           </div>
         </div>
 
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-[11px] leading-6 text-accent">
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">
           {isCapital
             ? 'آورده درآمد نیست: در جمع درآمد و سود ماه نمی‌آید و بستانکار حساب سرمایه می‌شود. مانده و کنترل پایان روزِ همان حساب، این پول را می‌بیند.'
             : 'دارایی ثابت هزینهٔ این ماه نیست: به بهای تمام‌شده در دارایی‌ها می‌نشیند و از جمع هزینهٔ دوره بیرون می‌ماند. استهلاک در این نسخه محاسبه نمی‌شود.'}
@@ -178,7 +178,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
               </div>
             ))}
           </div>
-          {!(draft.lines || []).length && <p className="mt-1 text-[11px] leading-5 text-muted">
+          {!(draft.lines || []).length && <p className="mt-1 text-xs leading-5 text-muted">
             نرخ واحد در جمله گفته نشد، پس یک ردیف به کل مبلغ ساخته می‌شود. برای ردیف دقیق بگو
             «ده عدد چای هرکدام پنجاه هزار تومان».
           </p>}
@@ -201,12 +201,12 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
               </button>
             ))}
           </div>
-          {draft.tax?.wanted && !availableTaxRates.length && <p className="mt-1 text-[11px] leading-5 text-expense">
+          {draft.tax?.wanted && !availableTaxRates.length && <p className="mt-1 text-xs leading-5 text-expense">
             در جمله مالیات خواسته شد ولی هیچ نرخ فعالی در این دفتر تعریف نشده است. نرخ را در «مالیات» بساز؛
             حساب‌یار نرخ نمی‌سازد چون سند باید به نرخ واقعی دفتر بخورد.
           </p>}
           {draft.tax?.wanted && draft.tax.ratePercent != null && !availableTaxRates.some((rate) => Math.round(rate.rate) === draft.tax.ratePercent) && availableTaxRates.length > 0 && (
-            <p className="mt-1 text-[11px] leading-5 text-accent">
+            <p className="mt-1 text-xs leading-5 text-accent">
               نرخ <span className="numbers">{toPersianDigits(draft.tax.ratePercent)}٪</span> گفته شد ولی در نرخ‌های این دفتر نیست؛ خودت از بالا انتخاب کن.
             </p>
           )}
@@ -218,7 +218,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
           <span>همین حالا صادر شود {draft.occurredAt ? <>با تاریخ <b>{persianDate(draft.occurredAt)}</b></> : '(با تاریخ امروز)'}</span>
         </label>
 
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-[11px] leading-6 text-accent">
+        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">
           {draft.issueNow
             ? 'سند صادر می‌شود: در دفتر کل سند می‌خورد، در گزارش مالیاتی می‌آید و در جمع طلب و بدهی می‌نشیند. پس از صدور، اصلاحش سند برگشتی می‌خواهد.'
             : 'سند به‌صورت پیش‌نویس می‌ماند: نه در دفتر کل سند می‌خورد، نه در گزارش مالیاتی می‌آید و نه در جمع طلب و بدهی. هر وقت خواستی از برگهٔ «فاکتورها» صادرش کن.'}
@@ -226,7 +226,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
       </> : <>
         <div className="mt-3">
           <p className="text-xs font-bold text-muted">جهت</p>
-          {draft.ambiguous && <p className="mt-1 text-[11px] leading-5 text-expense">جمله هم نشانهٔ طلب داشت هم بدهی؛ خودت انتخاب کن.</p>}
+          {draft.ambiguous && <p className="mt-1 text-xs leading-5 text-expense">جمله هم نشانهٔ طلب داشت هم بدهی؛ خودت انتخاب کن.</p>}
           <div className="mt-2 grid grid-cols-2 gap-2">
             {[['receivable', 'طلب ما (بدهکار است)'], ['payable', 'بدهی ما (طلبکار است)']].map(([value, text]) => (
               <button key={value} onClick={() => setDraft({ ...draft, direction: value, ambiguous: false })}
@@ -250,7 +250,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
                   className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.against === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{text}</button>
               ))}
             </div>
-            <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-[11px] leading-6 text-accent">
+            <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-accent">
               {draft.against === 'receivable'
                 ? 'بابت حساب قبلی است، پس درآمد یا هزینهٔ تازه‌ای شناسایی نمی‌شود؛ فقط شکل طلب یا بدهی به چک عوض می‌شود.'
                 : draft.against === 'income' && draft.vatMentioned
@@ -272,7 +272,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
       {draft.bounced && queueReview && <button disabled={busy} className="tap mt-3 w-full rounded-lg border border-accent p-3 font-bold text-accent" onClick={async()=>{setBusy(true);try{await queueReview(draft);}finally{setBusy(false);}}}>ارسال به صف حسابدار</button>}
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
-        <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">
+        <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">
           {busy ? 'در حال ثبت…' : isInvoice ? 'پیش‌نویس بساز' : 'ثبت کن'}
         </button>
         <button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
@@ -323,10 +323,10 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
     setBusy(false);
   };
 
-  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
+  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
     <section role="dialog" aria-modal="true" aria-label="تأیید تسویه" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
-      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">تسویه</span>
+      <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">تسویه</span>
       <h2 className="mt-3 text-xl font-extrabold">{draft.bounced ? 'چک برگشتی تسویه نمی‌شود' : intoPartner ? 'کدام طلب به حساب شخصی شریک وصول شد؟' : byPartner ? 'کدام بدهی از پول شخصی شریک تسویه شد؟' : 'کدام سند تسویه شود؟'}</h2>
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
 
@@ -371,7 +371,7 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
               className={`tap flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-3 text-right ${selectedId === target.id ? 'border-accent bg-accent/10' : 'border-line bg-surface'}`}>
               <span className="min-w-0">
                 <b className="block truncate text-sm">{target.label}</b>
-                <span className="mt-0.5 block text-[11px] text-muted">
+                <span className="mt-0.5 block text-xs text-muted">
                   {target.kind === 'invoice' ? 'فاکتور' : target.kind === 'ledger-balance' ? 'ماندهٔ کارت حساب (بدون سند باز)' : target.direction === 'receivable' ? 'طلب ما' : 'بدهی ما'}
                   {target.name ? ` · ${target.name}` : ''}
                 </span>
@@ -386,7 +386,7 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
       </>}
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
-        {!draft.bounced && <button disabled={busy || !selected || (byPartner && !payer)} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
+        {!draft.bounced && <button disabled={busy || !selected || (byPartner && !payer)} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
         <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''}`}>{draft.bounced ? 'بستن' : 'لغو'}</button>
       </div>
     </section>

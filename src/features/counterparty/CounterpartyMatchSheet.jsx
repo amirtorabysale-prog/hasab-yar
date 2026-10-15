@@ -24,20 +24,20 @@ export default function CounterpartyMatchSheet() {
   const { details = {}, resolve } = pending;
   const answer = (resolution) => { setPending(null); resolve(resolution); };
 
-  return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]"
+  return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]"
     onMouseDown={(event) => { if (event.target === event.currentTarget) answer(null); }}>
     <section role="dialog" aria-modal="true" aria-label="تأیید طرف حساب"
       className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
-      <span className="rounded-full bg-warn-bg px-2 py-1 text-[10px] font-extrabold text-accent">طرف حساب مشابه</span>
+      <span className="rounded-full bg-warn-bg px-2 py-1 text-xs font-extrabold text-accent">طرف حساب مشابه</span>
       <h2 className="mt-3 text-xl font-extrabold">این همان طرف حساب است؟</h2>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <div className="rounded-[10px] border border-line bg-surface p-3">
-          <span className="text-[10px] font-bold text-muted">نام این ثبت</span>
+          <span className="text-xs font-bold text-muted">نام این ثبت</span>
           <b className="mt-2 block text-[15px]">{details.input}</b>
         </div>
         <div className="rounded-[10px] border border-accent/30 bg-warn-bg p-3">
-          <span className="text-[10px] font-bold text-muted">طرف حساب موجود</span>
+          <span className="text-xs font-bold text-muted">طرف حساب موجود</span>
           <b className="mt-2 block text-[15px]">{details.existing?.name}</b>
         </div>
       </div>

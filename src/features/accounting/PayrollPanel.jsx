@@ -30,7 +30,7 @@ function RunCard({ run, canManage, notify, refresh }) {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         <p className="font-bold">لیست حقوق {toPersianDigits(run.period)}</p>
-        <p className="mt-0.5 text-[11px] text-muted">{toPersianDigits(run.employeeCount)} نفر · ثبت‌شده</p>
+        <p className="mt-0.5 text-xs text-muted">{toPersianDigits(run.employeeCount)} نفر · ثبت‌شده</p>
       </div>
       {canManage && run.unpaidCount === run.employeeCount && !run.insurancePaidAt && !run.taxPaidAt && <button
         disabled={Boolean(busy)}
@@ -41,7 +41,7 @@ function RunCard({ run, canManage, notify, refresh }) {
 
     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
       {SUMMARY.map(([label, key]) => <div key={key} className="rounded-lg bg-surface px-2 py-1.5">
-        <span className="block text-[11px] text-muted">{label}</span>
+        <span className="block text-xs text-muted">{label}</span>
         <b className="numbers mt-0.5 block text-[13px]">{formatAmount(run[key])}</b>
       </div>)}
     </div>
@@ -49,7 +49,7 @@ function RunCard({ run, canManage, notify, refresh }) {
     <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
       {run.unpaidCount > 0
         ? canManage && <button disabled={Boolean(busy)} onClick={() => act('salary', () => api.payPayrollSalaries(run.id), 'خالص حقوق پرداخت شد.')}
-          className="tap rounded-lg bg-accent px-3 py-1.5 font-bold text-white disabled:opacity-45">
+          className="tap rounded-lg bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-45">
           {busy === 'salary' ? 'در حال ثبت…' : `پرداخت خالص ${toPersianDigits(run.unpaidCount)} نفر (${formatAmount(run.unpaidNet)})`}
         </button>
         : <span className="rounded-lg bg-income/10 px-3 py-1.5 font-bold text-income">خالص همه پرداخت شد</span>}
@@ -73,7 +73,7 @@ function RunCard({ run, canManage, notify, refresh }) {
       <summary className="tap cursor-pointer text-[12px] font-bold text-muted">ردیف‌های این لیست</summary>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full min-w-[520px] text-right text-[12px]">
-          <thead className="border-b border-line text-[11px] text-muted"><tr>
+          <thead className="border-b border-line text-xs text-muted"><tr>
             <th className="pb-1 pl-2 font-bold">پرسنل</th><th className="pb-1 pl-2 font-bold">ناخالص</th>
             <th className="pb-1 pl-2 font-bold">کسورات</th><th className="pb-1 pl-2 font-bold">خالص</th>
             <th className="pb-1 font-bold">وضعیت</th>
@@ -141,7 +141,7 @@ export default function PayrollPanel({ canManage, notify }) {
       <input type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={(event) => { setFile(event.target.files?.[0] || null); setIssues([]); }} disabled={!canManage}
         className="block text-[13px] file:ml-3 file:rounded-lg file:border file:border-line file:bg-paper file:px-3 file:py-2 file:text-[13px] file:font-bold" />
-      <button disabled={!canManage || !file || !period.trim() || busy} className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">
+      <button disabled={!canManage || !file || !period.trim() || busy} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">
         {busy ? 'در حال ثبت…' : 'ثبت لیست حقوق'}
       </button>
       <a href="#payroll-template" onClick={(event) => { event.preventDefault(); notify('ستون‌های لازم بالای همین کادر نوشته شده‌اند؛ هر فایل اکسل یا CSV با همان سرستون‌ها کار می‌کند.'); }}

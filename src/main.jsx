@@ -3,6 +3,11 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import ErrorBoundary from './ErrorBoundary.jsx';
 import './styles.css';
+import { applyTheme, watchSystemTheme } from './lib/theme.js';
+
+// تم پیش از اولین رنگ‌آمیزی React اعمال می‌شود تا صفحه یک لحظه روشن و بعد تاریک نشود.
+applyTheme();
+watchSystemTheme();
 
 // برگهٔ سبک فونت بعد از شروع برنامه اضافه می‌شود، نه در مسیر اولین رنگ‌آمیزی.
 // یک `<link rel="stylesheet">` که از ابتدا در HTML باشد، تا رسیدن یا

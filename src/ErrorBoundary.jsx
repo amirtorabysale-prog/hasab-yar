@@ -33,13 +33,13 @@ export default class ErrorBoundary extends React.Component {
           <p className="mt-3 text-[13px] leading-7 text-muted">
             ایراد از نمایش است، نه از داده‌ات. هر چیزی که تا این لحظه ثبت شده روی سرور دست‌نخورده باقی مانده است.
           </p>
-          <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-[11px] leading-6 text-muted" dir="ltr">
+          <p className="mt-3 rounded-lg bg-paper px-3 py-2 text-xs leading-6 text-muted" dir="ltr">
             {String(this.state.error?.message || this.state.error).slice(0, 300)}
           </p>
           <div className="mt-5 grid grid-cols-2 gap-2">
             <button
               onClick={() => window.location.reload()}
-              className="tap rounded-lg bg-ink font-extrabold text-white"
+              className="tap rounded-lg bg-ink font-extrabold text-on-fill"
             >
               بارگذاری دوباره
             </button>
@@ -50,7 +50,7 @@ export default class ErrorBoundary extends React.Component {
               بازگشت به صفحهٔ اول
             </button>
           </div>
-          <p className="mt-4 text-[11px] leading-6 text-muted">
+          <p className="mt-4 text-xs leading-6 text-muted">
             اگر باز هم تکرار شد، همین متن خطا را برای پشتیبانی بفرست؛ برای پیداکردن علت کافی است.
           </p>
         </section>

@@ -46,7 +46,7 @@ export function DecisionQuestionCard({ question, busy, onAnswer }) {
           <input aria-label={question.text} value={current.text} onChange={(event) => setText(event.target.value)}
             className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
           <button disabled={busy || !current.text.trim()} onClick={submitText}
-            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">ثبت پاسخ</button>
+            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40">ثبت پاسخ</button>
         </div>}
 
     {/* گزینهٔ «خودم می‌گویم» یک مقدار نیست؛ ورودی آزاد می‌خواهد. */}
@@ -54,7 +54,7 @@ export function DecisionQuestionCard({ question, busy, onAnswer }) {
       <input aria-label={freeFor.label} value={current.text} onChange={(event) => setText(event.target.value)} placeholder={freeFor.label}
         className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
       <button disabled={busy || !current.text.trim()} onClick={submitText}
-        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">ثبت پاسخ</button>
+        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40">ثبت پاسخ</button>
     </div>}
   </div>;
 }

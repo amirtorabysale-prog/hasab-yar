@@ -66,10 +66,10 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
   };
   const extracting = draft.status === 'extracting' || !draft.id;
 
-  return <div className="fixed inset-0 z-[78] flex items-end justify-center bg-ink/40 backdrop-blur-[2px]">
+  return <div className="fixed inset-0 z-[78] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
     <section role="dialog" aria-modal="true" aria-label="پروندهٔ فهم گفته" className="sheet-in max-h-[92vh] w-full max-w-[600px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
-      <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">فهم گفته</span>
+      <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">فهم گفته</span>
       <h2 className="mt-3 text-xl font-extrabold">{extracting ? 'در حال فهمیدن گفته…' : draft.understanding?.event?.description || 'این گفته را این‌طور فهمیدم'}</h2>
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm leading-7 text-muted">«{draft.transcript}»</blockquote>
 
@@ -79,7 +79,7 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
         <p className="text-sm font-bold text-expense">گفته فهمیده نشد</p>
         <p className="mt-1 text-[12px] leading-6 text-muted">{draft.error?.message || 'سرویس فهم گفته پاسخ نداد.'} متن تو نگه داشته شده و هیچ سندی ساخته نشده است.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button disabled={busy} onClick={() => run(() => api.retryUnderstandingCase(draft.id))} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40">تلاش دوباره</button>
+          <button disabled={busy} onClick={() => run(() => api.retryUnderstandingCase(draft.id))} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40">تلاش دوباره</button>
           <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده با متن کامل به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap rounded-lg border border-line px-3 text-[12px] font-bold">ارسال به حسابدار</button>
         </div>
       </div>}
@@ -93,8 +93,8 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
               return <li key={amount.id} className="flex items-start justify-between gap-2 px-3 py-2 text-[13px]">
                 <span className="min-w-0">
                   <b>{ROLE_LABELS[amount.role] || amount.role}</b>
-                  <span className={`mr-2 text-[11px] font-bold ${statusClass}`}>{statusLabel}</span>
-                  <span className="block truncate text-[11px] text-muted">«{amount.evidence}»{PROVENANCE[amount.provenance] ? ` · ${PROVENANCE[amount.provenance]}` : ''}</span>
+                  <span className={`mr-2 text-xs font-bold ${statusClass}`}>{statusLabel}</span>
+                  <span className="block truncate text-xs text-muted">«{amount.evidence}»{PROVENANCE[amount.provenance] ? ` · ${PROVENANCE[amount.provenance]}` : ''}</span>
                 </span>
                 <b className={`numbers shrink-0 ${amount.accepted ? '' : 'text-expense'}`}>{amount.accepted ? formatAmount(amount.value) : 'نامعلوم'}</b>
               </li>;
@@ -102,7 +102,7 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
           </ul>
         </div>
         {draft.understanding.dates.some((date) => date.iso) && <div className="mt-3 flex flex-wrap gap-2">
-          {draft.understanding.dates.filter((date) => date.iso).map((date) => <span key={date.id} className="rounded-lg border border-line bg-surface px-2 py-1 text-[11px]">{DATE_ROLES[date.role] || 'تاریخ'}: <b>{persianDate(date.iso)}</b></span>)}
+          {draft.understanding.dates.filter((date) => date.iso).map((date) => <span key={date.id} className="rounded-lg border border-line bg-surface px-2 py-1 text-xs">{DATE_ROLES[date.role] || 'تاریخ'}: <b>{persianDate(date.iso)}</b></span>)}
         </div>}
       </>}
 
@@ -112,8 +112,8 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
           <ul className="mt-2 space-y-2">
             {plan.components.map((component) => <li key={component.id} className="rounded-lg border border-income/40 bg-surface px-3 py-2 text-[13px]">
               <b>{component.label}</b>
-              {component.accountId && <span className="block text-[11px] text-muted">حساب: {accountName(component.accountId) || '—'}{component.category ? ` · ${component.category}` : ''}</span>}
-              {component.preview?.lines?.length > 0 && <span className="mt-1 block text-[11px] text-muted">
+              {component.accountId && <span className="block text-xs text-muted">حساب: {accountName(component.accountId) || '—'}{component.category ? ` · ${component.category}` : ''}</span>}
+              {component.preview?.lines?.length > 0 && <span className="mt-1 block text-xs text-muted">
                 {component.preview.lines.map((line, index) => <span key={index} className="ml-2 inline-block">{line.debit ? 'بدهکار' : 'بستانکار'} {LINE_ROLES[line.role] || line.role} <span className="numbers">{formatAmount(line.debit || line.credit)}</span></span>)}
               </span>}
               <RecognitionNote recognition={component.preview?.recognition} servicePeriod={component.preview?.servicePeriod} decided={component.preview?.decisionStatus === 'decided'} />
@@ -137,9 +137,9 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
       </>}
 
       <div className="mt-5 grid grid-cols-2 gap-2">
-        {draft.status === 'ready' && <button disabled={busy} onClick={commit} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? 'در حال ثبت…' : 'ثبت'}</button>}
-        {plan?.questions.length > 0 && <button disabled={busy || !answered} onClick={submitAnswers} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? '…' : 'ثبت پاسخ‌ها'}</button>}
-        {draft.status === 'needs-accountant' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">ارسال به حسابدار</button>}
+        {draft.status === 'ready' && <button disabled={busy} onClick={commit} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? 'در حال ثبت…' : 'ثبت'}</button>}
+        {plan?.questions.length > 0 && <button disabled={busy || !answered} onClick={submitAnswers} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? '…' : 'ثبت پاسخ‌ها'}</button>}
+        {draft.status === 'needs-accountant' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">ارسال به حسابدار</button>}
         {/* «نمی‌دانم» هم یک پاسخ است. کسی که دورهٔ پوشش، طرف حساب یا بابت پول را
             نمی‌داند نباید ناچار شود حدس بزند (پیش‌پرداخت یک‌ساله را یک‌جا هزینه
             کند) یا انصراف دهد (پولی که رفته، ثبت نشود). همان «مطمئن نیستم» کارت
@@ -181,7 +181,7 @@ function QuestionField({ question, accounts, value, onChange }) {
     return <label className="block">{label}
       <input inputMode="numeric" dir="ltr" value={value?.value || ''} onChange={(event) => onChange({ value: Number(digitsOnly(event.target.value)) || '' })}
         placeholder="مبلغ به تومان" className="tap numbers mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left text-lg" />
-      {Number(value?.value) > 0 && <span className="numbers mt-1 block text-[11px] text-muted">{formatAmount(value.value)} تومان</span>}
+      {Number(value?.value) > 0 && <span className="numbers mt-1 block text-xs text-muted">{formatAmount(value.value)} تومان</span>}
     </label>;
   }
   if (question.picker === 'date') {
@@ -190,7 +190,7 @@ function QuestionField({ question, accounts, value, onChange }) {
   return <label className="block">{label}
     <textarea value={value?.value || ''} onChange={(event) => onChange({ value: event.target.value })} rows={2}
       className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm" />
-    <span className="mt-1 block text-[11px] text-muted">با این پاسخ، گفته یک بار دیگر خوانده می‌شود.</span>
+    <span className="mt-1 block text-xs text-muted">با این پاسخ، گفته یک بار دیگر خوانده می‌شود.</span>
   </label>;
 }
 
@@ -214,19 +214,19 @@ export function UnderstandingPolicyBox({ policy, busy, save }) {
   ];
   return <div className="mt-3 border-t border-line pt-3">
     <p className="text-[12px] font-extrabold">فهم گفتهٔ مرکب با AI</p>
-    <p className="mt-1 text-[11px] leading-5 text-muted">
+    <p className="mt-1 text-xs leading-5 text-muted">
       برای جمله‌هایی که چند مبلغ، شرط، نفی یا بدهی قبلی دارند. AI فقط می‌فهمد چه گفته شده؛ سند را همان قاعده‌های دفتر می‌سازند.
     </p>
     <div className="mt-2 grid grid-cols-3 gap-2">
       {modes.map(([mode, label]) => <button key={mode} disabled={busy} onClick={() => save({ understandingMode: mode })}
-        className={`tap rounded-lg border px-2 text-[12px] font-bold ${policy.understandingMode === mode ? 'border-accent bg-accent text-white' : 'border-line bg-paper'}`}>{label}</button>)}
+        className={`tap rounded-lg border px-2 text-[12px] font-bold ${policy.understandingMode === mode ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper'}`}>{label}</button>)}
     </div>
-    <p className="mt-1 text-[11px] leading-5 text-muted">{modes.find(([mode]) => mode === policy.understandingMode)?.[2]}</p>
+    <p className="mt-1 text-xs leading-5 text-muted">{modes.find(([mode]) => mode === policy.understandingMode)?.[2]}</p>
     {policy.understandingMode !== 'off' && <label className="mt-2 flex items-center gap-2 text-[12px]">
       <input type="checkbox" disabled={busy} checked={policy.understandingScope === 'all'} onChange={(event) => save({ understandingScope: event.target.checked ? 'all' : 'composite' })} />
       همهٔ گفته‌ها، نه فقط گفته‌های مرکب (هزینهٔ AI بیشتر)
     </label>}
-    {report && report.total > 0 && <p className="numbers mt-2 rounded-lg bg-surface px-2 py-2 text-[11px] leading-6 text-muted">
+    {report && report.total > 0 && <p className="numbers mt-2 rounded-lg bg-surface px-2 py-2 text-xs leading-6 text-muted">
       مقایسه: {report.compared} گفته · هم‌نظر با مسیر فعلی {report.agree} · مسیر فعلی به حسابدار داد {report.legacyToAccountant} · مسیر تازه بدون حسابدار {report.wouldAvoidAccountant} · ناموفق {report.failed} · درخواست AI {report.aiCalls}{report.latencyMs ? ` · میانهٔ زمان ${Math.round(report.latencyMs.median / 100) / 10} ثانیه` : ''}
     </p>}
   </div>;

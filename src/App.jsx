@@ -2,6 +2,7 @@ import { needsUnquantifiedReview, UNQUANTIFIED_REVIEW_REASON } from '../shared/r
 import { Check, Menu, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { BottomNav, DesktopNav, Drawer, allowedScreens } from './app/navigation.jsx';
+import { ThemeChoice, ThemeToggle } from './components/ThemeToggle.jsx';
 import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_REQUIRES, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
 import { profileDefinition } from '../shared/product.js';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
@@ -1192,11 +1193,11 @@ export default function App() {
 
   return (
     <div dir="rtl" className="min-h-screen bg-paper text-ink">
-      {!online && <div className="sticky top-0 z-50 flex h-9 items-center justify-center gap-2 bg-ink px-4 text-[13px] text-white"><WifiOff size={15} /> آفلاین — ضبط ذخیره می‌شود و بعداً ارسال</div>}
+      {!online && <div className="sticky top-0 z-50 flex h-9 items-center justify-center gap-2 bg-ink px-4 text-[13px] text-on-fill"><WifiOff size={15} /> آفلاین — ضبط ذخیره می‌شود و بعداً ارسال</div>}
       <div className="app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper">
         <DesktopNav screen={screen} section={section} searchRef={menuSearchRef} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div className="safe-bottom min-w-0 lg:col-start-2">
-          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden"><Menu size={21} /></button><div className="min-w-0"><p className="text-[11px] text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><span className="rounded-full border border-line bg-paper px-3 py-1 text-[11px] text-muted">مبالغ به تومان</span></header>
+          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden"><Menu size={21} /></button><div className="min-w-0"><p className="text-xs text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><div className="flex shrink-0 items-center gap-2"><span className="hidden rounded-full border border-line bg-paper px-3 py-1 text-xs text-muted sm:inline">مبالغ به تومان</span><ThemeToggle /></div></header>
           <Suspense fallback={<ScreenLoading />}>
           {screen === 'today' && (
             <TodayPage
@@ -1230,7 +1231,7 @@ export default function App() {
             const refreshAccess = async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); };
             return <>
               <div className="mx-auto w-full max-w-[900px] px-4"><nav aria-label="بخش‌های تنظیمات" className="section-navigation">{tabs.map(([id, label]) => <button type="button" key={id} aria-current={part === id ? 'page' : undefined} onClick={() => navigate('settings', id)}>{label}</button>)}</nav></div>
-              {part === 'general' && <><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={canManageWorkspace} /></>}
+              {part === 'general' && <><section className="mx-auto mt-2 w-full max-w-[900px] px-4"><div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4"><div><h2 className="font-extrabold">ظاهر برنامه</h2><p className="mt-1 text-xs text-muted">«خودکار» از تنظیم دستگاه پیروی می‌کند.</p></div><ThemeChoice /></div></section><SettingsPage initial={data.settings} accounts={data.accounts} notify={notify} refresh={load} onLogout={logout} canManage={canManageWorkspace} /></>}
               {part === 'accounts' && <AccountsPanel accounts={data.accounts} canManage={canManageWorkspace} notify={notify} refresh={load} />}
               {part === 'team' && <><ExportAccessCard access={access} navigate={navigate} notify={notify} refreshAccess={refreshAccess} /><Suspense fallback={null}><WorkspacePanel access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={refreshAccess} /></Suspense></>}
               {part === 'backup' && <BackupPanel access={access} notify={notify} refresh={load} />}
@@ -1264,9 +1265,9 @@ export default function App() {
       {settleDraft && <SettleSheet draft={settleDraft} obligations={data.obligations || []} contacts={data.contacts || []} close={() => setSettleDraft(null)} confirm={applySettlement} queueReview={queueSettlementReview} />}
       {selectedDecision && <DecisionDetailsSheet access={access} navigate={navigate} item={selectedDecision} close={() => setSelectedDecision(null)} />}
       {closeDayOpen && <CloseDaySheet data={data} close={() => setCloseDayOpen(false)} onComplete={async () => { setCloseDayOpen(false); await load(); notify('امروز بسته شد و نتیجه در سابقهٔ صندوق ماند.'); }} />}
-      {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.` : 'مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">برگردان</button></div>}
-      {redoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-white shadow-paper"><RotateCcw size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{redoSave.count > 1 ? 'ثبت‌ها برگردانده شدند.' : 'ثبت برگردانده شد.'}</span><button disabled={undoing} onClick={redoLastUndo} className="tap min-w-0 rounded-md border border-white/30 px-3 text-xs font-extrabold">دوباره انجام بده</button></div>}
-      {toast && <div role="status" className="fixed bottom-28 left-1/2 z-[80] w-[calc(100%-32px)] max-w-[430px] -translate-x-1/2 rounded-lg bg-ink px-4 py-3 text-center text-sm text-white shadow-paper">{toast}</div>}
+      {undoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-on-fill shadow-paper"><Check size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{undoSave.count > 1 ? `${toPersianDigits(undoSave.count)} مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.` : 'مورد ذخیره شد؛ وضعیت نهایی را در فهرست بررسی کن.'}</span><button disabled={undoing} onClick={undoLastSave} className="tap min-w-0 rounded-md border border-on-fill/30 px-3 text-xs font-extrabold">برگردان</button></div>}
+      {redoSave && <div role="status" className="fixed bottom-28 left-1/2 z-[80] flex w-[calc(100%-32px)] max-w-[460px] -translate-x-1/2 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-sm text-on-fill shadow-paper"><RotateCcw size={19} className="shrink-0 text-income" /><span className="min-w-0 flex-1">{redoSave.count > 1 ? 'ثبت‌ها برگردانده شدند.' : 'ثبت برگردانده شد.'}</span><button disabled={undoing} onClick={redoLastUndo} className="tap min-w-0 rounded-md border border-on-fill/30 px-3 text-xs font-extrabold">دوباره انجام بده</button></div>}
+      {toast && <div role="status" className="fixed bottom-28 left-1/2 z-[80] w-[calc(100%-32px)] max-w-[430px] -translate-x-1/2 rounded-lg bg-ink px-4 py-3 text-center text-sm text-on-fill shadow-paper">{toast}</div>}
       {data.settings.onboardingDone === 'false' && <Onboarding initial={data.settings} onDone={async (values) => { const result = await api.settings({ ...values, onboardingDone: 'true' }); setData((current) => ({ ...current, settings: result.settings })); }} />}
     </div>
   );

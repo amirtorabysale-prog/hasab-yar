@@ -15,12 +15,12 @@ function WeekdayBars({ rows }) {
   const highest = Math.max(...rows.map((item) => item.percent), 1);
   return <div className="mt-3 space-y-1.5">
     {rows.map((item) => <div key={item.day} className="flex items-center gap-2" title={`${item.day}: ${formatAmount(item.amount)} تومان`}>
-      <span className="w-16 shrink-0 text-[11px] text-muted">{item.day}</span>
+      <span className="w-16 shrink-0 text-xs text-muted">{item.day}</span>
       <div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-paper">
         <div className="h-full rounded-full bg-accent" style={{ width: `${item.percent ? Math.max(4, Math.round((item.percent / highest) * 100)) : 0}%` }} />
       </div>
-      <span className="numbers w-9 shrink-0 text-left text-[11px] font-bold text-muted">{toPersianDigits(item.percent)}٪</span>
-      <span className="w-8 shrink-0">{item.day === peak.day && <span className="rounded-md bg-warn-bg px-1.5 py-0.5 text-[10px] font-bold text-accent">اوج</span>}</span>
+      <span className="numbers w-9 shrink-0 text-left text-xs font-bold text-muted">{toPersianDigits(item.percent)}٪</span>
+      <span className="w-8 shrink-0">{item.day === peak.day && <span className="rounded-md bg-warn-bg px-1.5 py-0.5 text-xs font-bold text-accent">اوج</span>}</span>
     </div>)}
   </div>;
 }
@@ -72,13 +72,13 @@ export function FinancialDnaPanel({ notify }) {
           ['انضباط ثبت', brief.discipline],
           ['ثبت معمول درآمد', `${formatAmount(brief.typicalIncome)} تومان`],
         ].map(([label, value]) => <div key={label} className="rounded-lg bg-paper p-3">
-          <span className="text-[11px] text-muted">{label}</span>
+          <span className="text-xs text-muted">{label}</span>
           <b className="mt-1 block text-[13px] leading-6">{value}</b>
         </div>)}
       </div>
       <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">{brief.workloadNote}</p>
       <div className="mt-3 flex flex-wrap gap-1.5">
-        {brief.activeCategories.map((item) => <span key={item.category} className="rounded-md border border-line px-2 py-1 text-[11px]">
+        {brief.activeCategories.map((item) => <span key={item.category} className="rounded-md border border-line px-2 py-1 text-xs">
           {item.category} <span className="numbers text-muted">{toPersianDigits(item.count)}</span>
         </span>)}
       </div>
@@ -92,10 +92,10 @@ export function FinancialDnaPanel({ notify }) {
             <b className="text-[13px]">{trait.label}</b>
             <span className="text-[13px] font-extrabold text-accent">{trait.value}</span>
           </div>
-          <p className="mt-2 text-[11px] leading-6 text-muted">{trait.detail}</p>
+          <p className="mt-2 text-xs leading-6 text-muted">{trait.detail}</p>
           {trait.id === 'weekday-pattern' && <WeekdayBars rows={weekday.evidence.byWeekday} />}
           {trait.id === 'expense-backbone' && trait.evidence.fixed.length > 0 && <div className="mt-3 space-y-1">
-            {trait.evidence.fixed.slice(0, 4).map((item) => <div key={item.category} className="flex items-center justify-between text-[11px]">
+            {trait.evidence.fixed.slice(0, 4).map((item) => <div key={item.category} className="flex items-center justify-between text-xs">
               <span className="text-muted">{item.category}</span>
               <span className="flex shrink-0 items-baseline gap-2">
                 <b className="numbers">{toPersianDigits(item.percent)}٪</b>
@@ -104,17 +104,17 @@ export function FinancialDnaPanel({ notify }) {
             </div>)}
           </div>}
           {trait.id === 'income-concentration' && <div className="mt-3 space-y-1">
-            {trait.evidence.top.map((item) => <div key={item.category} className="flex items-center justify-between text-[11px]">
+            {trait.evidence.top.map((item) => <div key={item.category} className="flex items-center justify-between text-xs">
               <span className="text-muted">{item.category}</span>
               <span className="numbers font-bold">{toPersianDigits(item.percent)}٪</span>
             </div>)}
           </div>}
-          {trait.id === 'entry-discipline' && <p className="mt-3 text-[11px] leading-6 text-muted">
+          {trait.id === 'entry-discipline' && <p className="mt-3 text-xs leading-6 text-muted">
             فاصلهٔ معمول ثبت تا وقوع: <b className="numbers">{toPersianDigits(trait.evidence.typicalLagDays)}</b> روز ·
             همان‌روز: <b className="numbers">{toPersianDigits(trait.evidence.sameDayPercent)}٪</b> ·
             شلوغ‌ترین روز ثبت: <b className="numbers">{toPersianDigits(trait.evidence.busiestDayCount)}</b> سند
           </p>}
-          <p className="mt-2 text-[10px] text-muted">بر پایهٔ {toPersianDigits(trait.evidence.sample ?? trait.evidence.total ?? 0)} ثبت</p>
+          <p className="mt-2 text-xs text-muted">بر پایهٔ {toPersianDigits(trait.evidence.sample ?? trait.evidence.total ?? 0)} ثبت</p>
         </article>)}
       </div>
     </section>

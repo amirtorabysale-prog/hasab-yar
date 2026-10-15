@@ -28,7 +28,7 @@ export function ReviewPriorBasis({item,ai,onPrepared,notify,busy}) {
       <label className="block">مرجع مستند دفتر قبلی<textarea aria-label="مرجع مستند مانده منتقل‌شده" value={reference} maxLength={300} onChange={e=>setReference(e.target.value)} className="block w-full rounded border border-line p-2" /></label>
       <p>بدهکار: {basis.debit} · {formatAmount(Number(amount) || 0)} تومان</p><p>بستانکار: {basis.credit} · {formatAmount(Number(amount) || 0)} تومان</p>
       <label className="block"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} /> تأیید می‌کنم این مانده واقعی و مستند است و قبلاً در همین دفتر ثبت نشده است.</label>
-      <button disabled={busy || loading || !confirmed || !date || reference.trim().length<8 || !Number.isSafeInteger(Number(amount)) || Number(amount)<basis.amount} onClick={submit} className="tap rounded bg-accent px-3 text-white disabled:opacity-40">{loading?'در حال ثبت مبنا و بازبینی…':'تأیید مانده منتقل‌شده و ثبت سند مبنا'}</button>
+      <button disabled={busy || loading || !confirmed || !date || reference.trim().length<8 || !Number.isSafeInteger(Number(amount)) || Number(amount)<basis.amount} onClick={submit} className="tap rounded bg-accent px-3 text-on-fill disabled:opacity-40">{loading?'در حال ثبت مبنا و بازبینی…':'تأیید مانده منتقل‌شده و ثبت سند مبنا'}</button>
     </div>}
     {error && <p role="alert" className="text-expense">{error}</p>}
   </div>;

@@ -26,7 +26,7 @@ const ROUTE_STYLE = {
 function OriginalTranscript({text}) {
   return <section aria-label="متن اصلی گفتهٔ کاربر" className="mt-3 rounded-lg border border-line bg-paper p-3">
     <p className="text-xs font-extrabold text-ink">متن اصلی گفتهٔ کاربر</p>
-    <p className="mt-1 text-[11px] text-muted">متن ذخیره‌شده هنگام دریافت؛ مبنای بررسی حسابدار</p>
+    <p className="mt-1 text-xs text-muted">متن ذخیره‌شده هنگام دریافت؛ مبنای بررسی حسابدار</p>
     {text ? <blockquote dir="auto" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-7 text-ink">{text}</blockquote>
       : <p className="mt-2 text-xs text-muted">متن اصلی برای این مورد ذخیره نشده است.</p>}
   </section>;
@@ -104,7 +104,7 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
       {ai?.state === 'proposed' && <label className="flex items-center gap-2"><input type="checkbox" checked={aiAccepted} disabled={ai.missingFacts?.length > 0} onChange={(event) => setAiAccepted(event.target.checked)} />مبالغ پیشنهاد AI را پس از انتخاب حساب‌ها تأیید می‌کنم؛ در صورت اصلاح، دلیل را می‌نویسم.</label>}
       <textarea aria-label="دلیل و مبنای ثبت حسابدار" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="مبنای حسابداری و اطلاعات بررسی‌شده" className="w-full rounded border border-line bg-paper p-2" rows={2} />
       {error && <p className="text-expense">{error}</p>}
-      <button disabled={saving} onClick={submit} className="tap rounded bg-accent px-3 py-1.5 font-bold text-white disabled:opacity-40">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
+      <button disabled={saving} onClick={submit} className="tap rounded bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-40">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
     </div>}
   </div>;
 }
@@ -143,12 +143,12 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
 
   return <article className="py-3">
     <div className="flex flex-wrap items-center gap-3">
-      <span className={`rounded border px-2 py-0.5 text-[11px] font-bold ${ROUTE_STYLE[item.route] || ROUTE_STYLE.confirm}`}>
+      <span className={`rounded border px-2 py-0.5 text-xs font-bold ${ROUTE_STYLE[item.route] || ROUTE_STYLE.confirm}`}>
         {ROUTE_LABELS[item.route] || 'در انتظار'}
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-bold">{confidence.summary || item.kind}</p>
-        <p className="mt-0.5 text-[11px] text-muted">
+        <p className="mt-0.5 text-xs text-muted">
           {persianDate(item.occurredAt)} · <span className="numbers">{formatAmount(item.amount)}</span> تومان{item.event?.amountReferenceOnly ? ' (بزرگ‌ترین مبلغ گفته‌شده؛ مبلغ سند هنوز مشخص نیست)' : ''}
           {item.dueAt && <> · سررسید {persianDate(item.dueAt)}</>}
         </p>
@@ -157,7 +157,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
         {toPersianDigits(confidence.percent ?? 0)}٪
       </span>
       <div className="flex gap-1.5">
-        <button disabled={busy} onClick={() => item.approvalBlocked ? setOpen(true) : onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-white disabled:opacity-40"><Check size={15} />{item.approvalBlocked ? 'تکمیل و اصلاح سند' : 'تأیید و ثبت سند'}</button>
+        <button disabled={busy} onClick={() => item.approvalBlocked ? setOpen(true) : onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40"><Check size={15} />{item.approvalBlocked ? 'تکمیل و اصلاح سند' : 'تأیید و ثبت سند'}</button>
         <button disabled={busy} onClick={() => onReject(item)} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense disabled:opacity-40">رد</button>
         <button onClick={toggle} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">{open ? 'بستن' : 'چرا؟'}</button>
       </div>
@@ -168,7 +168,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
       <p>{item.approvalNextStep === 'answer-question' ? 'ابتدا به سؤال پایین کارت پاسخ بده؛ بعد از تکمیل، امکان ثبت دوباره بررسی می‌شود.' : 'سطرهای این سند هنوز قطعی نیست. پیشنهاد AI را با «تحلیل کن» بگیر و حساب‌ها را بررسی کن.'}</p>
     </div>}
     {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
-    {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-[11px] leading-5 text-muted">• {confidence.reasons[0]}</p>}
+    {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-xs leading-5 text-muted">• {confidence.reasons[0]}</p>}
 
     {item.route === 'accountant-review' && <ReviewAssistant item={item} ai={ai} setAi={setAi} onSaved={onAnswered} notify={notify} busy={busy} />}
 
@@ -181,7 +181,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
     {decision?.decision?.question && <DecisionQuestionCard key={questionCardKey(decision.decision.id || item.decisionId, decision.decision.question)} question={decision.decision.question} busy={busy} onAnswer={answer} />}
 
     {/* برنامهٔ تخصیص، وقتی ساخته شده — همان چیزی که ثابت می‌کند مبلغ یک‌جا هزینه نشد. */}
-    {decision?.schedule?.length > 0 && <p className="mt-1.5 text-[11px] text-muted">
+    {decision?.schedule?.length > 0 && <p className="mt-1.5 text-xs text-muted">
       برنامهٔ شناسایی: <span className="numbers">{toPersianDigits(decision.schedule.length)}</span> قلم ماهانه،
       از {decision.schedule[0].periodKey} تا {decision.schedule[decision.schedule.length - 1].periodKey}
     </p>}
@@ -190,9 +190,9 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
       <ConfidencePanel assessment={{ percent: confidence.percent ?? 0, fields: confidence.components || {}, reasons: confidence.reasons || [] }} />
       <div className="mt-3 rounded-[10px] border border-line bg-surface p-3">
         <p className="text-xs font-extrabold">تاریخچهٔ رویداد</p>
-        {trail === null && <p className="mt-2 text-[11px] text-muted">در حال خواندن…</p>}
-        {trail?.length === 0 && <p className="mt-2 text-[11px] text-muted">رویدادی ثبت نشده است.</p>}
-        {trail?.map((entry, index) => <p key={`${entry.stage}-${index}`} className="mt-1.5 text-[11px] leading-5 text-muted">
+        {trail === null && <p className="mt-2 text-xs text-muted">در حال خواندن…</p>}
+        {trail?.length === 0 && <p className="mt-2 text-xs text-muted">رویدادی ثبت نشده است.</p>}
+        {trail?.map((entry, index) => <p key={`${entry.stage}-${index}`} className="mt-1.5 text-xs leading-5 text-muted">
           <b className="text-ink">{entry.stage}</b> · {persianDate(entry.createdAt)}
         </p>)}
       </div>
@@ -226,7 +226,7 @@ function CapitalizationThresholdField({ value, busy, onSave }) {
   const next = digits(draft) ? Number(digits(draft)) : null;
   return <div className="rounded-lg border border-line bg-surface p-3">
     <p className="text-[12px] font-extrabold">حد سرمایه‌ای دارایی کم‌ارزش {value ? <span className="numbers">— {toPersianDigits(Number(value).toLocaleString('fa-IR'))} تومان</span> : '— تصویب نشده'}</p>
-    <p className="mt-1 text-[11px] leading-5 text-muted">خرید تجهیز و اموالِ کمتر از این مبلغ هزینهٔ دوره ثبت می‌شود و از آن به بالا دارایی ثابت. خالی بماند، برای هر خرید تجهیز سؤال پرسیده می‌شود.</p>
+    <p className="mt-1 text-xs leading-5 text-muted">خرید تجهیز و اموالِ کمتر از این مبلغ هزینهٔ دوره ثبت می‌شود و از آن به بالا دارایی ثابت. خالی بماند، برای هر خرید تجهیز سؤال پرسیده می‌شود.</p>
     <div className="mt-2 flex gap-2">
       <input inputMode="numeric" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="مثلاً ۲۰۰۰۰۰۰۰" aria-label="حد سرمایه‌ای به تومان" className="tap numbers min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
       <button disabled={busy || next === (value || null)} onClick={() => onSave(next)} className="tap rounded-lg border border-accent px-3 text-[12px] font-bold text-accent disabled:opacity-40">{next ? 'ثبت' : 'برداشتن'}</button>
@@ -261,7 +261,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         <p className="text-xs font-extrabold">قانون ثبت خودکار</p>
-        <p className="mt-0.5 text-[11px] text-muted">
+        <p className="mt-0.5 text-xs text-muted">
           {everythingReviewed
             ? 'الان هیچ ثبتی بدون تأیید وارد دفتر نمی‌شود.'
             : <>بالای <span className="numbers">{percent(policy.autoThreshold)}</span>٪ خودکار · از <span className="numbers">{percent(policy.confirmThreshold)}</span>٪ سؤال از کاربر · پایین‌تر، همین صف</>}
@@ -269,7 +269,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
       </div>
       {canManage && <button onClick={() => setOpen(!open)} className="tap rounded-lg border border-line bg-surface px-3 text-[12px] font-bold">{open ? 'بستن' : 'تغییر'}</button>}
     </div>
-    {!canManage && <p className="mt-2 text-[11px] text-muted">تغییر این قانون با نقش مدیر است.</p>}
+    {!canManage && <p className="mt-2 text-xs text-muted">تغییر این قانون با نقش مدیر است.</p>}
 
     {open && canManage && <div className="mt-3 space-y-3 border-t border-line pt-3">
       {/*
@@ -280,12 +280,12 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
       */}
       <div className={`rounded-lg border p-3 ${policy.engineV2 ? 'border-accent bg-accent/5' : 'border-line bg-surface'}`}>
         <p className="text-[12px] font-extrabold">تشخیص ماهیت رویداد {policy.engineV2 ? '— روشن' : '— خاموش'}</p>
-        <p className="mt-1 text-[11px] leading-5 text-muted">
+        <p className="mt-1 text-xs leading-5 text-muted">
           به‌جای «هر پرداختی هزینه است»، اول می‌پرسد این رویداد از نظر اقتصادی چیست.
           اگر چیزی لازم باشد و ندانَد، یک سؤال کوتاه می‌پرسد و تا جواب نیامده ثبت نمی‌کند.
         </p>
         <button disabled={busy} onClick={() => save({ engineV2: !policy.engineV2 })}
-          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-white'}`}>
+          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-on-fill'}`}>
           {policy.engineV2 ? 'خاموش کن' : 'روشن کن'}
         </button>
 
@@ -298,7 +298,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
         */}
         {policy.engineV2 && <div className="mt-3 border-t border-line pt-3">
           <p className="text-[12px] font-extrabold">ضبط بدون ثبت {policy.shadowMode ? '— روشن' : '— خاموش'}</p>
-          <p className="mt-1 text-[11px] leading-5 text-muted">
+          <p className="mt-1 text-xs leading-5 text-muted">
             موتور برای هر ثبت نظرش را می‌دهد و ذخیره می‌کند، ولی سند همان‌طور که تا امروز می‌خورده می‌خورد.
             <b className="text-ink"> دفتر دست نمی‌خورد.</b> بعد می‌شود دید موتور کجا با تو اختلاف داشته.
           </p>
@@ -319,7 +319,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
 
       {[['autoThreshold', 'آستانهٔ ثبت خودکار'], ['confirmThreshold', 'آستانهٔ سؤال از کاربر'], ['minimumAmountCertainty', 'حداقل اطمینان مبلغ']].map(([key, label]) =>
         <label key={key} className="block">
-          <span className="text-[11px] font-bold text-muted">{label}</span>
+          <span className="text-xs font-bold text-muted">{label}</span>
           <span className="mt-1 flex items-center gap-2">
             <input
               type="range" min="0" max="100" step="1" disabled={busy}
@@ -338,7 +338,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
           onChange={(event) => save({ allowAiOnlyAutoPost: event.target.checked })} />
         برداشت مدل زبانی به‌تنهایی اجازهٔ ثبت خودکار داشته باشد
       </label>
-      <p className="text-[11px] leading-5 text-muted">
+      <p className="text-xs leading-5 text-muted">
         وقتی خاموش است، برداشتی که هیچ شاهد دیگری — پارسر محلی، تطبیق بانکی یا سابقهٔ پرونده — پشتش نباشد
         هرگز بی‌پرسش ثبت نمی‌شود.
       </p>
@@ -362,7 +362,7 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
     <p className="text-muted">شناسه پیگیری: {item.id} — هیچ سند یا مبلغ فرضی ثبت نشده است. ابتدا مبلغ، تاریخ و سند مبنا را بررسی کن.</p>
     <input className="w-full rounded border border-line p-2" value={journalEntryId} onChange={e => setJournalEntryId(e.target.value)} placeholder="شناسه سند مرتبط در صورت ثبت اصلاح توسط حسابدار (اختیاری)" />
     <textarea className="w-full rounded border border-line p-2" value={reason} onChange={e => setReason(e.target.value)} placeholder="نتیجه بررسی و دلیل بستن پرونده" />
-    <button disabled={busy || reason.trim().length < 8} onClick={resolve} className="tap rounded bg-accent px-3 text-white disabled:opacity-40">ثبت نتیجه بررسی و بستن پرونده</button>
+    <button disabled={busy || reason.trim().length < 8} onClick={resolve} className="tap rounded bg-accent px-3 text-on-fill disabled:opacity-40">ثبت نتیجه بررسی و بستن پرونده</button>
   </article>;
 }
 

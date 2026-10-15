@@ -41,15 +41,15 @@ export function OverdraftApprovalSheet({ prompt, canApprove, close }) {
   const queue = prompt.mode === 'request';
   const inline = canApprove && !queue;
   const ready = reason.trim().length >= 3;
-  return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-ink/40 backdrop-blur-[2px] sm:items-center">
+  return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center">
     <section role="alertdialog" aria-modal="true" aria-label={copy.title} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl sm:rounded-2xl">
-      <span className="rounded-full bg-expense/10 px-2 py-1 text-[10px] font-extrabold text-expense">{copy.badge}</span>
+      <span className="rounded-full bg-expense/10 px-2 py-1 text-xs font-extrabold text-expense">{copy.badge}</span>
       <h2 className="mt-3 text-lg font-extrabold">{copy.title}</h2>
       <ul className="mt-3 divide-y divide-line rounded-lg border border-line bg-surface text-[13px]">
         {prompt.accounts.map((item) => <li key={item.accountId} className="flex items-center justify-between gap-3 px-3 py-2">
           <b>{item.name}</b>
           {kind === 'export'
-            ? <span className="truncate text-[11px] text-muted">{item.fileName}</span>
+            ? <span className="truncate text-xs text-muted">{item.fileName}</span>
             : <span className="numbers">{(kind === 'stock' ? quantity : negative)(item.before)} <span className="text-muted">←</span> <b className="text-expense">{(kind === 'stock' ? quantity : negative)(item.after)}</b>{kind === 'stock' && item.unit ? ` ${item.unit}` : ''}</span>}
         </li>)}
       </ul>
@@ -67,8 +67,8 @@ export function OverdraftApprovalSheet({ prompt, canApprove, close }) {
       </>}
       {!inline && !queue && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] text-accent">این تأیید با حسابدار یا مدیر دفتر است؛ از او بخواه یا اول ثبت جاافتاده را بزن.</p>}
       <div className="mt-4 grid grid-cols-[2fr_1fr] gap-2">
-        {inline && <button disabled={!ready} onClick={() => close(reason.trim())} className="tap rounded-lg bg-expense font-extrabold text-white disabled:opacity-40">تأیید حسابدار و ثبت</button>}
-        {queue && <button onClick={() => close({ requestNote: reason.trim() })} className="tap rounded-lg bg-accent font-extrabold text-white">ارسال برای تأیید حسابدار</button>}
+        {inline && <button disabled={!ready} onClick={() => close(reason.trim())} className="tap rounded-lg bg-expense font-extrabold text-on-fill disabled:opacity-40">تأیید حسابدار و ثبت</button>}
+        {queue && <button onClick={() => close({ requestNote: reason.trim() })} className="tap rounded-lg bg-accent font-extrabold text-on-fill">ارسال برای تأیید حسابدار</button>}
         <button onClick={() => close(null)} className={`tap rounded-lg border border-line bg-surface font-bold ${inline || queue ? '' : 'col-span-2'}`}>انصراف — ثبت نشود</button>
       </div>
     </section>

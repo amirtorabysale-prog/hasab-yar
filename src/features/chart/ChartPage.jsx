@@ -40,7 +40,7 @@ function ChartMappingRow({ item, chartAccounts, notify, onChanged }) {
   };
   return <tr className="border-b border-line">
     <td className="py-2 pl-3"><span className="numbers text-muted">{toPersianDigits(item.code)}</span></td>
-    <td className="py-2 pl-3"><p className="truncate font-bold">{item.name}</p><p className="text-[11px] text-muted">{item.typeLabel}</p></td>
+    <td className="py-2 pl-3"><p className="truncate font-bold">{item.name}</p><p className="text-xs text-muted">{item.typeLabel}</p></td>
     <td className="py-2 pl-3">
       <select
         value={item.chartAccountId || ''} disabled={saving || !options.length}
@@ -50,8 +50,8 @@ function ChartMappingRow({ item, chartAccounts, notify, onChanged }) {
         <option value="">— بدون نگاشت —</option>
         {options.map((account) => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}
       </select>
-      {!item.mapped && item.suggestion && <p className="mt-1 text-[11px] text-accent">پیشنهاد: {item.suggestion.code} · {item.suggestion.name}</p>}
-      {!options.length && <p className="mt-1 text-[11px] text-expense">هیچ معین هم‌نوعی در کدینگ نیست.</p>}
+      {!item.mapped && item.suggestion && <p className="mt-1 text-xs text-accent">پیشنهاد: {item.suggestion.code} · {item.suggestion.name}</p>}
+      {!options.length && <p className="mt-1 text-xs text-expense">هیچ معین هم‌نوعی در کدینگ نیست.</p>}
     </td>
   </tr>;
 }
@@ -103,10 +103,10 @@ function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
       <button
         disabled={!chartAccountId || busy || !targets.length}
         onClick={apply}
-        className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45"
+        className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45"
       >{busy ? 'در حال نگاشت…' : `اعمال به ${toPersianDigits(targets.length)} حساب`}</button>
     </div>
-    <p className="mt-2 text-[11px] leading-5 text-muted">
+    <p className="mt-2 text-xs leading-5 text-muted">
       همهٔ حساب‌های بدون نگاشتِ این نوع روی یک معین می‌نشینند. اگر بعضی از آن‌ها معین جداگانه دارند، اول همان‌ها را تکی نگاشت کن و بعد بقیه را گروهی.
     </p>
   </div>;
@@ -170,7 +170,7 @@ export function ChartPage({ access, notify, initialTab = '' }) {
     {!loading && !mapping?.chartInstalled && <div className="mt-5 rounded-[10px] border border-accent/40 bg-warn-bg px-4 py-4">
       <p className="font-bold text-accent">هنوز کدینگی برای این دفتر تعریف نشده است.</p>
       <p className="mt-1 text-[13px] leading-6 text-muted">یا کدینگ پیشنهادی حساب‌یار را نصب کن و بعد ویرایشش کن، یا فایل کدینگ خود دفتر را وارد کن. کدینگ پیشنهادی یک نقطهٔ شروع است، نه کدینگ رسمی.</p>
-      {canManage && <button onClick={() => run(() => api.installChartTemplate(), 'کدینگ پیشنهادی نصب شد.')} className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-white">نصب کدینگ پیشنهادی</button>}
+      {canManage && <button onClick={() => run(() => api.installChartTemplate(), 'کدینگ پیشنهادی نصب شد.')} className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill">نصب کدینگ پیشنهادی</button>}
     </div>}
 
     <div className="mt-6 flex flex-wrap gap-1.5 border-b border-line pb-2 text-[13px] font-bold">
@@ -241,7 +241,7 @@ export function ChartPage({ access, notify, initialTab = '' }) {
         placeholder={'کد,نام,سطح,کد والد,نوع\n1,دارایی‌های جاری,گروه,,دارایی\n11,موجودی نقد و بانک,کل,1,دارایی\n1101,صندوق,معین,11,دارایی'}
         className="numbers w-full rounded-lg border border-line bg-surface p-3 text-[13px] outline-none focus:border-accent"
       />
-      <button disabled={!canManage || !csv.trim()} onClick={() => run(async () => { await api.importChart(csv); setCsv(''); }, 'کدینگ وارد شد.')} className="tap rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">ورود کدینگ</button>
+      <button disabled={!canManage || !csv.trim()} onClick={() => run(async () => { await api.importChart(csv); setCsv(''); }, 'کدینگ وارد شد.')} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">ورود کدینگ</button>
       {!canManage && <p className="text-[12px] text-muted">تغییر کدینگ فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
     </div>}
   </section>;
@@ -269,7 +269,7 @@ function AnalyticTargetCode({ item, canManage, notify, onSaved }) {
   };
 
   if (!canManage) {
-    return <span className={`numbers text-[11px] ${item.externalCode ? 'text-muted' : 'text-expense'}`}>
+    return <span className={`numbers text-xs ${item.externalCode ? 'text-muted' : 'text-expense'}`}>
       {item.externalCode ? toPersianDigits(item.externalCode) : 'بدون کد مقصد'}
     </span>;
   }
@@ -310,13 +310,13 @@ function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setD
         {canManage && <form onSubmit={(event) => { event.preventDefault(); add(async () => { await api.saveAnalytic({ name: analyticName, kind: analyticKind }); setAnalyticName(''); }); }} className="mt-2 flex flex-wrap gap-2">
           <input required value={analyticName} onChange={(event) => setAnalyticName(event.target.value)} placeholder="مثلاً پروژهٔ برج آبان" className="tap min-w-40 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
           <select value={analyticKind} onChange={(event) => setAnalyticKind(event.target.value)} className="tap rounded-lg border border-line bg-paper px-2 text-[13px]"><option value="project">پروژه</option><option value="employee">پرسنل</option><option value="custom">سایر</option></select>
-          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-white">افزودن</button>
+          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill">افزودن</button>
         </form>}
         <ul className="mt-3 divide-y divide-line text-[13px]">
           {(overview?.analytics || []).map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
             <span className="min-w-0 flex-1 truncate"><b className="numbers text-muted">{toPersianDigits(item.code)}</b> · {item.name}</span>
             <AnalyticTargetCode item={item} canManage={canManage} notify={notify} onSaved={refresh} />
-            <span className="text-[11px] text-muted">{item.kindLabel}</span>
+            <span className="text-xs text-muted">{item.kindLabel}</span>
           </li>)}
           {!overview?.analytics?.length && <li className="py-3 text-muted">هنوز تفصیلی‌ای تعریف نشده؛ طرف‌حساب‌های فاکتور خودکار اضافه می‌شوند.</li>}
         </ul>
@@ -326,7 +326,7 @@ function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setD
         <p className="font-bold">مرکز هزینه</p>
         {canManage && <form onSubmit={(event) => { event.preventDefault(); add(async () => { await api.saveCostCenter({ name: centerName }); setCenterName(''); }); }} className="mt-2 flex flex-wrap gap-2">
           <input required value={centerName} onChange={(event) => setCenterName(event.target.value)} placeholder="مثلاً شعبهٔ مرکزی" className="tap min-w-40 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
-          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-white">افزودن</button>
+          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill">افزودن</button>
         </form>}
         <ul className="mt-3 divide-y divide-line text-[13px]">
           {(overview?.costCenters || []).map((item) => <li key={item.id} className="py-2"><b className="numbers text-muted">{toPersianDigits(item.code)}</b> · {item.name}</li>)}
@@ -358,7 +358,7 @@ function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setD
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-[11px] leading-5 text-muted">ردیف «بدون تخصیص» عمداً نمایش داده می‌شود؛ گزارش بعد بدون آن گمراه‌کننده است.</p>
+      <p className="mt-2 text-xs leading-5 text-muted">ردیف «بدون تخصیص» عمداً نمایش داده می‌شود؛ گزارش بعد بدون آن گمراه‌کننده است.</p>
     </section>
   </div>;
 }

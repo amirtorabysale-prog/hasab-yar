@@ -54,7 +54,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
     <div className="flex flex-wrap items-end justify-between gap-2">
       <div>
         <h2 className="font-extrabold">دفتر چک</h2>
-        <p className="mt-1 text-[11px] leading-5 text-muted">
+        <p className="mt-1 text-xs leading-5 text-muted">
           چک تا وصول نشود پول نیست. اینجا سررسیدش را می‌بینی، وصولش می‌کنی، و اگر برگشت خورد طلبِ همان شخص برمی‌گردد.
         </p>
       </div>
@@ -67,15 +67,15 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
 
     <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
       <div className="rounded-lg border border-line bg-surface px-3 py-2">
-        <span className="block text-[11px] text-muted">چک دریافتی در جریان</span>
+        <span className="block text-xs text-muted">چک دریافتی در جریان</span>
         <b className="numbers mt-0.5 block text-income">{formatAmount(summary.openReceivable?.total || 0)}</b>
       </div>
       <div className="rounded-lg border border-line bg-surface px-3 py-2">
-        <span className="block text-[11px] text-muted">چک پرداختی در جریان</span>
+        <span className="block text-xs text-muted">چک پرداختی در جریان</span>
         <b className="numbers mt-0.5 block text-expense">{formatAmount(summary.openPayable?.total || 0)}</b>
       </div>
       <div className="rounded-lg border border-line bg-surface px-3 py-2">
-        <span className="block text-[11px] text-muted">برگشتی</span>
+        <span className="block text-xs text-muted">برگشتی</span>
         <b className="numbers mt-0.5 block">{formatAmount(summary.bounced || 0)}</b>
       </div>
     </div>
@@ -102,20 +102,20 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
           placeholder="شماره چک" className="tap numbers rounded-lg border border-line px-3 text-[13px]" />
         <input value={draft.bankName} onChange={(event) => setDraft({ ...draft, bankName: event.target.value })}
           placeholder="بانک" className="tap rounded-lg border border-line px-3 text-[13px]" />
-        <label className="text-[11px] text-muted">سررسید<PersianDateInput value={draft.dueAt} onChange={(iso) => setDraft({ ...draft, dueAt: iso })} /></label>
+        <label className="text-xs text-muted">سررسید<PersianDateInput value={draft.dueAt} onChange={(iso) => setDraft({ ...draft, dueAt: iso })} /></label>
         <select value={draft.against} onChange={(event) => setDraft({ ...draft, against: event.target.value })} className="tap rounded-lg border border-line bg-paper px-3 text-[13px]">
           <option value="income">بابت فروش یا خرید تازه</option>
           <option value="receivable">بابت طلب یا بدهی قبلی</option>
         </select>
       </div>
       {/* مهم‌ترین انتخاب همین است و بی‌سروصدا از دست می‌رود، پس نوشته می‌شود. */}
-      <p className="mt-2 text-[11px] leading-5 text-muted">
+      <p className="mt-2 text-xs leading-5 text-muted">
         {draft.against === 'receivable'
           ? 'چون بابت طلب قبلی است، درآمدی دوباره شناسایی نمی‌شود؛ فقط شکل طلب از حساب دریافتنی به اسناد دریافتنی عوض می‌شود.'
           : 'چون بابت معاملهٔ تازه است، همین حالا درآمد یا هزینه شناسایی می‌شود. اگر بابت طلب قبلی است، گزینه را عوض کن وگرنه همان فروش دو بار در سود دوره می‌آید.'}
       </p>
       <button disabled={busy === 'save' || !draft.counterpartyName.trim() || !draft.amount}
-        className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">
+        className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">
         {busy === 'save' ? 'در حال ثبت…' : 'ثبت چک'}
       </button>
     </form>
@@ -126,7 +126,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
         <ReceiptText size={20} className={cheque.direction === 'receivable' ? 'text-income' : 'text-expense'} />
         <div className="min-w-0 flex-1">
           <p className="truncate font-bold">{cheque.counterpartyName}</p>
-          <p className="mt-1 text-[11px] text-muted">
+          <p className="mt-1 text-xs text-muted">
             {cheque.direction === 'receivable' ? 'دریافتی' : 'پرداختی'}
             {cheque.serial ? ` · شماره ${toPersianDigits(cheque.serial)}` : ''}
             {cheque.bankName ? ` · ${cheque.bankName}` : ''}

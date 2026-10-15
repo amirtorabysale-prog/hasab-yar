@@ -40,7 +40,7 @@ function NoticeCard({ notice, onSeen }) {
         </p>
       </div>
       {notice.seenAt
-        ? <span className="flex items-center gap-1 text-[11px] text-muted"><CheckCheck size={14} />دیده شد</span>
+        ? <span className="flex items-center gap-1 text-xs text-muted"><CheckCheck size={14} />دیده شد</span>
         : <button onClick={() => onSeen(notice.periodKey)} className="tap shrink-0 rounded-lg border border-accent px-3 text-xs font-bold text-accent">دیدم</button>}
     </div>
   </article>;
@@ -67,8 +67,8 @@ function ContractRow({ item }) {
       </div>
       <div className="shrink-0 text-left">
         <b className="numbers block text-sm">{formatAmount(item.remaining)}</b>
-        <span className="block text-[10px] text-muted">مانده از {formatAmount(item.total)}</span>
-        <span className={`mt-1 block text-[11px] font-bold ${tone}`}>{label}</span>
+        <span className="block text-xs text-muted">مانده از {formatAmount(item.total)}</span>
+        <span className={`mt-1 block text-xs font-bold ${tone}`}>{label}</span>
       </div>
       {open ? <ChevronUp size={16} className="mt-1 text-muted" /> : <ChevronDown size={16} className="mt-1 text-muted" />}
     </button>
@@ -122,8 +122,8 @@ export function TimingContractsView({ data, showClosed = false, onToggleClosed =
       <p className="mt-1 text-sm leading-7 text-muted">پولی که برای ماه‌های آینده داده یا گرفته شده، ماه‌به‌ماه سر موعد خودش هزینه یا درآمد می‌شود. ثبت هر ماه خودکار است و حسابدار خبرش را همین‌جا و در صف بررسی می‌بیند.</p>
     </div>
     <div className="grid grid-cols-2 gap-2">
-      <div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌پرداخت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.prepaidRemaining)}</b><span className="text-[10px] text-muted">تومان · {toPersianDigits(data.summary.prepaidActive)} قرارداد در جریان</span></div>
-      <div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌دریافت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.deferredRemaining)}</b><span className="text-[10px] text-muted">تومان · {toPersianDigits(data.summary.deferredActive)} قرارداد در جریان</span></div>
+      <div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌پرداخت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.prepaidRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.prepaidActive)} قرارداد در جریان</span></div>
+      <div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌دریافت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.deferredRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.deferredActive)} قرارداد در جریان</span></div>
     </div>
     {data.notices.length > 0 && <div className="space-y-2">
       <h3 className="font-extrabold">خبر ثبت‌های ماهانه {unseen.length > 0 && <span className="text-xs font-bold text-accent">({toPersianDigits(unseen.length)} دیده‌نشده)</span>}</h3>
@@ -138,7 +138,7 @@ export function TimingContractsView({ data, showClosed = false, onToggleClosed =
           ? <>«{item.accountName}» ماندهٔ وارونه دارد ({formatAmount(Math.abs(item.balance || 0))} تومان)؛ سندی بیرون از برنامه آن را جابه‌جا کرده و باید اصلاح شود.</>
           : <>«{item.accountName}» {formatAmount(item.residual || 0)} تومان مانده دارد که برنامهٔ ماهانه ندارد؛ دوره‌اش را حسابدار در صف بررسی می‌دهد.</>}</li>)}
       </ul>
-      <p className="mt-2 text-[11px] text-muted">این موارد در «صف بررسی حسابدار» با دکمهٔ اقدام آمده‌اند.</p>
+      <p className="mt-2 text-xs text-muted">این موارد در «صف بررسی حسابدار» با دکمهٔ اقدام آمده‌اند.</p>
     </div>}
     <ContractList title="پیش‌پرداخت‌ها" hint="پولی که برای پوشش آینده داده‌ایم (بیمه، اجاره، اشتراک و …). دارایی است و ماه‌به‌ماه هزینه می‌شود." items={prepaid} emptyText="پیش‌پرداخت در جریانی نیست." />
     <ContractList title="پیش‌دریافت‌ها" hint="پولی که برای خدمت آینده گرفته‌ایم (اجارهٔ مستاجر، پشتیبانی، اشتراک). بدهی است و ماه‌به‌ماه درآمد می‌شود." items={deferred} emptyText="پیش‌دریافت در جریانی نیست." />

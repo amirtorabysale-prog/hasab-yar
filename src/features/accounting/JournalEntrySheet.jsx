@@ -34,12 +34,12 @@ export function JournalEntrySheet({ line, close }) {
 
   const totals = (entry?.lines || []).reduce((sum, row) => ({ debit: sum.debit + row.debit, credit: sum.credit + row.credit }), { debit: 0, credit: 0 });
 
-  return <div className="fixed inset-0 z-[80] flex items-end justify-center bg-ink/40 backdrop-blur-[2px] sm:items-center" onClick={close}>
+  return <div className="fixed inset-0 z-[80] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center" onClick={close}>
     <section role="dialog" aria-modal="true" aria-label="سند حسابداری" onClick={(event) => event.stopPropagation()}
       className="sheet-in max-h-[90vh] w-full max-w-[680px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl sm:rounded-2xl">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <span className="rounded-full bg-accent/10 px-2 py-1 text-[10px] font-extrabold text-accent">سند حسابداری</span>
+          <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">سند حسابداری</span>
           <h2 className="mt-2 text-lg font-extrabold">
             {entry ? `سند شماره ${toPersianDigits(entry.documentNumber ?? '—')} · سال ${toPersianDigits(entry.fiscalYear ?? '—')}` : (line?.title || 'سند این ردیف')}
           </h2>
@@ -60,13 +60,13 @@ export function JournalEntrySheet({ line, close }) {
         {entry.memo && <p className="mt-3 rounded-lg border border-line bg-surface px-3 py-2 text-[13px] leading-6">{entry.memo}</p>}
         <div className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface">
           <table className="w-full min-w-[520px] text-[13px]">
-            <thead className="bg-paper text-[11px] text-muted"><tr>
+            <thead className="bg-paper text-xs text-muted"><tr>
               {['ردیف', 'حساب', 'شرح', 'بدهکار', 'بستانکار'].map((label) => <th key={label} className="p-2 text-right font-bold">{label}</th>)}
             </tr></thead>
             <tbody className="divide-y divide-line">
               {entry.lines.map((row, index) => <tr key={`${row.accountId}-${index}`}>
                 <td className="numbers p-2 text-muted">{toPersianDigits(index + 1)}</td>
-                <td className="p-2"><b className="block">{row.name}</b><span className="numbers text-[11px] text-muted">{row.chartCode ? `${toPersianDigits(row.chartCode)} · ${row.chartName}` : toPersianDigits(row.code || '')}</span></td>
+                <td className="p-2"><b className="block">{row.name}</b><span className="numbers text-xs text-muted">{row.chartCode ? `${toPersianDigits(row.chartCode)} · ${row.chartName}` : toPersianDigits(row.code || '')}</span></td>
                 <td className="p-2 text-[12px] text-muted">{row.description || row.analyticName || '—'}</td>
                 <td className="numbers p-2 font-bold text-income">{row.debit ? formatAmount(row.debit) : '—'}</td>
                 <td className="numbers p-2 font-bold text-expense">{row.credit ? formatAmount(row.credit) : '—'}</td>
@@ -79,11 +79,11 @@ export function JournalEntrySheet({ line, close }) {
             </tr></tfoot>
           </table>
         </div>
-        <p className={`mt-2 text-[11px] ${totals.debit === totals.credit ? 'text-income' : 'text-expense'}`}>
+        <p className={`mt-2 text-xs ${totals.debit === totals.credit ? 'text-income' : 'text-expense'}`}>
           {totals.debit === totals.credit ? 'بدهکار و بستانکار متوازن است.' : `اختلاف سند: ${formatAmount(Math.abs(totals.debit - totals.credit))}`}
         </p>
         {entry.returnReason && <p className="mt-2 text-[12px] text-expense">دلیل برگشت: {entry.returnReason}</p>}
-        <p className="mt-2 text-[11px] text-muted">برای تأیید یا اصلاح، همین شماره را در «حسابداری و اسناد ← اسناد ثبت‌شده» جست‌وجو کن.</p>
+        <p className="mt-2 text-xs text-muted">برای تأیید یا اصلاح، همین شماره را در «حسابداری و اسناد ← اسناد ثبت‌شده» جست‌وجو کن.</p>
       </>}
     </section>
   </div>;

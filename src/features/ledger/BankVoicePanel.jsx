@@ -104,7 +104,7 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
         className="tap rounded-lg border border-line bg-paper px-4 text-[13px] font-bold">بررسی</button>
     </div>
 
-    {listening && <p className="mt-2 text-[11px] font-bold text-expense">در حال شنیدن…</p>}
+    {listening && <p className="mt-2 text-xs font-bold text-expense">در حال شنیدن…</p>}
     {heard && <blockquote className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">«{heard}»</blockquote>}
 
     {draft?.intent === 'create-account' && <div className="mt-3 rounded-lg border border-accent/50 bg-warn-bg px-3 py-3 text-[13px]">
@@ -122,14 +122,14 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
         فقط یک طرف را گفتی. طرف دیگر را خودت انتخاب کن — پول از حسابی که کسی نگفته نباید کم شود.
       </p>}
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        <label className="text-[11px] text-muted">از حساب
+        <label className="text-xs text-muted">از حساب
           <select value={draft.fromAccountId || ''} onChange={pick('fromAccountId')}
             className="tap mt-1 block w-full rounded-lg border border-line bg-paper px-2 text-[13px] text-ink">
             <option value="">— انتخاب کن —</option>
             {active.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
           </select>
         </label>
-        <label className="text-[11px] text-muted">به حساب
+        <label className="text-xs text-muted">به حساب
           <select value={draft.toAccountId || ''} onChange={pick('toAccountId')}
             className="tap mt-1 block w-full rounded-lg border border-line bg-paper px-2 text-[13px] text-ink">
             <option value="">— انتخاب کن —</option>
@@ -140,7 +140,7 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
     </div>}
 
     {draft && <button disabled={!ready || busy} onClick={save}
-      className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-white disabled:opacity-45">
+      className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">
       {busy ? 'در حال ثبت…' : draft.intent === 'create-account' ? 'بساز' : 'ثبت انتقال'}
     </button>}
   </section>;

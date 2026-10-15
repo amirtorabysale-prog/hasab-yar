@@ -42,7 +42,7 @@ export default function JournalExplorer({ revision, workspaceId }) {
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold">اسناد حسابداری</h2><p className="mt-1 text-xs leading-6 text-muted">سند را انتخاب کنید تا حساب‌ها، مبالغ و سابقهٔ تأیید آن را ببینید. مبالغ به تومان است.</p></div><span className="rounded-lg bg-paper px-3 py-2 text-sm">{toPersianDigits(data.total)} سند</span></div>
       <form className="mt-4 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); setPage(1); setSearch(query); }}>
         <input aria-label="جست‌وجوی سند" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="شماره سند، شرح یا شناسه منبع…" className="tap min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-sm" />
-        <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-white">جست‌وجو</button>
+        <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill">جست‌وجو</button>
         <select aria-label="وضعیت سند" value={state} onChange={(event) => { setState(event.target.value); setPage(1); }} className="tap rounded-lg border border-line bg-surface px-3 text-sm"><option value="">همه وضعیت‌ها</option>{Object.entries(states).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
       </form>
     </div>

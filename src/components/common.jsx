@@ -54,6 +54,6 @@ export function PersianDateInput({ value, onChange, placeholder = '۱۴۰۵/۰۵
       onChange={(event) => commit(event.target.value)} onBlur={() => setTyping(false)}
       className={`tap w-full rounded-lg border px-3 text-left numbers ${invalid ? 'border-expense' : 'border-line'} ${className}`}
     />
-    {invalid && <span className="mt-1 block text-[10px] text-expense">تاریخ شمسی را به شکل ۱۴۰۵/۰۵/۱۵ بنویس.</span>}
+    {invalid && <span className="mt-1 block text-xs text-expense">تاریخ شمسی را به شکل ۱۴۰۵/۰۵/۱۵ بنویس.</span>}
   </span>;
 }

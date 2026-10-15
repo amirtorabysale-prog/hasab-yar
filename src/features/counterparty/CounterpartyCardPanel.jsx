@@ -42,7 +42,7 @@ function BalanceBadge({ balance }) {
   return (
     <span className="flex shrink-0 items-baseline gap-1">
       <span className={`numbers text-sm font-extrabold ${tone.className}`}>{formatAmount(Math.abs(balance))}</span>
-      <span className={`text-[10px] font-extrabold ${tone.className}`}>{tone.label}</span>
+      <span className={`text-xs font-extrabold ${tone.className}`}>{tone.label}</span>
     </span>
   );
 }
@@ -50,7 +50,7 @@ function BalanceBadge({ balance }) {
 function Stat({ label, value, tone = '' }) {
   return (
     <div className="rounded-[10px] border border-line bg-surface px-3 py-2.5">
-      <p className="text-[11px] text-muted">{label}</p>
+      <p className="text-xs text-muted">{label}</p>
       <p className={`numbers mt-1 text-sm font-extrabold ${tone}`}>{formatAmount(value)}</p>
     </div>
   );
@@ -75,10 +75,10 @@ function StatementRow({ line, showAccount, open }) {
       title={line.entryId ? 'نمایش سند حسابداری' : 'این ردیف هنوز سند قطعی ندارد'}
       className="-mx-2 cursor-pointer rounded-lg px-2 py-3 hover:bg-accent/5 focus:bg-accent/5 focus:outline-none sm:grid sm:grid-cols-[74px_1fr_118px_118px_150px] sm:items-baseline sm:gap-x-3">
       <div className="flex items-baseline justify-between gap-3 sm:contents">
-        <time className="numbers shrink-0 text-[11px] text-muted">{shortDate(line.occurredAt)}</time>
+        <time className="numbers shrink-0 text-xs text-muted">{shortDate(line.occurredAt)}</time>
         <div className="min-w-0 flex-1 sm:order-none">
           <p className="truncate text-[13px] font-bold">{line.title || 'بدون شرح'}</p>
-          {showAccount && <p className="truncate text-[11px] text-muted">{line.accountName}</p>}
+          {showAccount && <p className="truncate text-xs text-muted">{line.accountName}</p>}
         </div>
         <span className={`numbers shrink-0 text-[13px] font-extrabold sm:hidden ${line.debit ? 'text-income' : 'text-expense'}`}>
           {line.debit ? `+ ${formatAmount(line.debit)}` : `− ${formatAmount(line.credit)}`}
@@ -92,9 +92,9 @@ function StatementRow({ line, showAccount, open }) {
         {line.credit ? formatAmount(line.credit) : <span className="text-line">—</span>}
       </p>
       <p className={`numbers mt-1 text-[12px] font-extrabold sm:mt-0 sm:text-right ${tone.className}`}>
-        <span className="ml-1 text-[10px] font-normal text-muted sm:hidden">مانده</span>
+        <span className="ml-1 text-xs font-normal text-muted sm:hidden">مانده</span>
         {formatAmount(Math.abs(line.balance))}
-        <span className="mr-1 text-[10px] font-bold"> {tone.label}</span>
+        <span className="mr-1 text-xs font-bold"> {tone.label}</span>
       </p>
     </article>
   );
@@ -124,7 +124,7 @@ function UnexplainedNotice({ reconciliation }) {
         <b className={`numbers ${tone.className}`}>{formatAmount(gap)}</b> تومان {tone.label} برای این طرف حساب ثبت
         شده که در دفتر کل به حساب او نچسبیده، پس در گردش پایین دیده نمی‌شود.
       </p>
-      <p className="mt-2 text-[11px] leading-6 text-muted">
+      <p className="mt-2 text-xs leading-6 text-muted">
         معمولاً یعنی آن سند وقتی ثبت شده که طرف حسابش انتخاب نشده بود. با باز کردن همان سند در «طلب و بدهی» یا
         «فاکتور» و انتخاب این شخص، گردشش به همین کارت می‌آید.
       </p>
@@ -170,7 +170,7 @@ function ContactList({ contacts, onOpen }) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-extrabold">{contact.name}</span>
-                <span className="block text-[11px] text-muted">
+                <span className="block text-xs text-muted">
                   {KIND_LABELS[contact.kind] || 'شخص'}
                   {contact.openCount ? ` · ${toPersianDigits(contact.openCount)} سند باز` : ''}
                 </span>
@@ -211,17 +211,17 @@ function Card({ contact, onBack, notify }) {
       </button>
 
       <header className="mt-3 rounded-[12px] border border-line bg-surface p-4">
-        <p className="text-[11px] font-bold text-muted">{KIND_LABELS[contact.kind] || 'شخص'}</p>
+        <p className="text-xs font-bold text-muted">{KIND_LABELS[contact.kind] || 'شخص'}</p>
         <h2 className="mt-1 text-xl font-extrabold">{contact.name}</h2>
         {contact.phone && <p className="numbers mt-1 text-[12px] text-muted">{toPersianDigits(contact.phone)}</p>}
         <div className="mt-4 border-t border-line pt-3">
-          <p className="text-[11px] text-muted">مانده حساب</p>
+          <p className="text-xs text-muted">مانده حساب</p>
           <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className={`numbers text-[28px] font-extrabold leading-none ${tone.className}`}>{formatAmount(Math.abs(card?.totals?.balance || 0))}</span>
             <small className="text-[13px] text-muted">تومان</small>
-            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-extrabold ${tone.className} ${card?.totals?.balance ? 'border-current' : 'border-line'}`}>{tone.label}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-xs font-extrabold ${tone.className} ${card?.totals?.balance ? 'border-current' : 'border-line'}`}>{tone.label}</span>
           </p>
-          <p className="mt-1 text-[11px] leading-6 text-muted">
+          <p className="mt-1 text-xs leading-6 text-muted">
             {!card?.totals?.balance ? 'حساب این طرف تسویه است.'
               : tone.label === 'بدهکار' ? 'این مبلغ را از او طلب داریم.' : 'این مبلغ را به او بدهکاریم.'}
           </p>
@@ -265,12 +265,12 @@ function Card({ contact, onBack, notify }) {
 
           <div className="mt-5 flex items-baseline justify-between">
             <h3 className="text-sm font-extrabold">گردش حساب</h3>
-            <p className="text-[11px] text-muted">
+            <p className="text-xs text-muted">
               {toPersianDigits(card.lines.length)} ردیف از {toPersianDigits(card.totals.documents)} سند
             </p>
           </div>
 
-          <div className="mt-2 hidden grid-cols-[74px_1fr_118px_118px_150px] gap-x-3 border-b border-line pb-2 text-[11px] font-bold text-muted sm:grid">
+          <div className="mt-2 hidden grid-cols-[74px_1fr_118px_118px_150px] gap-x-3 border-b border-line pb-2 text-xs font-bold text-muted sm:grid">
             <span>تاریخ</span><span>شرح</span>
             <span className="text-right">بدهکار</span><span className="text-right">بستانکار</span><span className="text-right">مانده</span>
           </div>

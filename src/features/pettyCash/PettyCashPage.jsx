@@ -78,7 +78,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
         </p>
       </div>
       {canManage && <button onClick={() => setCreating(creating ? null : { holderName: '', ceiling: '', fromAccountId: sources[0]?.id || '' })}
-        className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[13px] font-bold text-white">
+        className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[13px] font-bold text-on-fill">
         <Plus size={16} />{creating ? 'بستن' : 'تنخواه تازه'}
       </button>}
     </div>
@@ -92,7 +92,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
       <label className="block text-[12px] text-muted">سقف تنخواه (تومان)
         <input required inputMode="numeric" value={creating.ceiling} onChange={(event) => setCreating({ ...creating, ceiling: digitsOnly(event.target.value) })}
           className="tap numbers mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-[15px] font-bold text-ink" />
-        {Number(creating.ceiling) > 0 && <span className="numbers mt-1 block text-[11px]">{formatAmount(creating.ceiling)} تومان</span>}
+        {Number(creating.ceiling) > 0 && <span className="numbers mt-1 block text-xs">{formatAmount(creating.ceiling)} تومان</span>}
       </label>
       <label className="block text-[12px] text-muted">از کدام حساب پرداخت شد؟
         <select required value={creating.fromAccountId} onChange={(event) => setCreating({ ...creating, fromAccountId: event.target.value })}
@@ -101,8 +101,8 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
           {sources.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
         </select>
       </label>
-      <p className="rounded-lg bg-warn-bg px-3 py-2 text-[11px] leading-6 text-accent">به اندازهٔ سقف از این حساب به تنخواه منتقل می‌شود. بعد از هر بار خرج، با «شارژ» دوباره به سقف می‌رسد.</p>
-      <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-white disabled:opacity-40">{busy ? 'در حال ثبت…' : 'پرداخت تنخواه'}</button>
+      <p className="rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-accent">به اندازهٔ سقف از این حساب به تنخواه منتقل می‌شود. بعد از هر بار خرج، با «شارژ» دوباره به سقف می‌رسد.</p>
+      <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-on-fill disabled:opacity-40">{busy ? 'در حال ثبت…' : 'پرداخت تنخواه'}</button>
     </form>}
 
     <div className="mt-4 space-y-3">
@@ -125,7 +125,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
       <p>«تنخواه رضایی رو از بانک ملت شارژ کردیم» — شارژ؛ هزینه نیست.</p>
     </section>
 
-    {action && <div className="fixed inset-0 z-[80] grid place-items-center bg-ink/40 p-4">
+    {action && <div className="fixed inset-0 z-[80] grid place-items-center bg-scrim/40 p-4">
       <form onSubmit={submitAction} className="w-full max-w-[420px] rounded-[12px] bg-paper p-4">
         <h2 className="text-lg font-extrabold">
           {action.kind === 'replenish' ? `شارژ تنخواه ${action.fund.holderName}` : action.kind === 'ceiling' ? 'تغییر سقف تنخواه' : `بستن تنخواه ${action.fund.holderName}`}
@@ -133,7 +133,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
         {action.kind !== 'close' && <label className="mt-4 block text-xs text-muted">{action.kind === 'ceiling' ? 'سقف تازه (تومان)' : 'مبلغ شارژ (تومان)'}
           <input autoFocus required inputMode="numeric" value={action.amount} onChange={(event) => setAction({ ...action, amount: digitsOnly(event.target.value) })}
             className="tap numbers mt-2 w-full rounded-lg border border-line bg-surface px-3 text-xl font-extrabold" />
-          {action.kind === 'replenish' && <span className="mt-1 block text-[11px] leading-5">
+          {action.kind === 'replenish' && <span className="mt-1 block text-xs leading-5">
             پیشنهاد همان مبلغ خرج‌شده است ({formatAmount(action.fund.spent)} تومان) تا تنخواه دوباره به سقفش برسد.
           </span>}
         </label>}
@@ -151,7 +151,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
         </label>}
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button type="button" onClick={() => setAction(null)} className="tap rounded-lg border border-line font-bold">انصراف</button>
-          <button disabled={busy} className="tap rounded-lg bg-accent font-extrabold text-white disabled:opacity-40">{busy ? '…' : 'ثبت'}</button>
+          <button disabled={busy} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? '…' : 'ثبت'}</button>
         </div>
       </form>
     </div>}
@@ -165,11 +165,11 @@ function FundCard({ fund, canManage, onAction }) {
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="font-extrabold">{fund.holderName}</p>
-        <p className="mt-0.5 text-[11px] text-muted">{fund.status === 'open' ? 'باز' : `بسته شده${fund.closedAt ? ` · ${persianDate(fund.closedAt)}` : ''}`} · سقف <span className="numbers">{formatAmount(fund.ceiling)}</span> تومان</p>
+        <p className="mt-0.5 text-xs text-muted">{fund.status === 'open' ? 'باز' : `بسته شده${fund.closedAt ? ` · ${persianDate(fund.closedAt)}` : ''}`} · سقف <span className="numbers">{formatAmount(fund.ceiling)}</span> تومان</p>
       </div>
       <div className="text-left">
         <b className={`numbers block text-lg ${fund.balance < 0 ? 'text-expense' : ''}`}>{formatAmount(fund.balance)}</b>
-        <span className="text-[11px] text-muted">مانده دست {fund.holderName}</span>
+        <span className="text-xs text-muted">مانده دست {fund.holderName}</span>
       </div>
     </div>
     {fund.status === 'open' && <>

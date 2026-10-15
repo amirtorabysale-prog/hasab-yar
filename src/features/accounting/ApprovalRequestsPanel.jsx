@@ -45,21 +45,21 @@ export function ApprovalRequestsPanel({ canApprove, notify }) {
     <div className="mt-3 divide-y divide-line">
       {items.map((item) => <article key={item.id} className="py-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded border border-expense/40 px-2 py-0.5 text-[11px] font-bold text-expense">{KIND_LABEL[item.kind] || item.kind}</span>
-          <span className="text-[11px] text-muted">{STATUS_LABEL[item.status]} · {persianDate(item.createdAt)}</span>
+          <span className="rounded border border-expense/40 px-2 py-0.5 text-xs font-bold text-expense">{KIND_LABEL[item.kind] || item.kind}</span>
+          <span className="text-xs text-muted">{STATUS_LABEL[item.status]} · {persianDate(item.createdAt)}</span>
         </div>
         {item.message && <p className="mt-1 text-[12px] leading-6">{item.message}</p>}
-        {item.items?.length > 0 && <ul className="mt-1 text-[11px] text-muted">
+        {item.items?.length > 0 && <ul className="mt-1 text-xs text-muted">
           {item.items.map((row) => <li key={row.accountId}>{row.name}{row.kind !== 'export' && Number.isFinite(row.after) && row.after !== 0 ? ` ← ${row.after < 0 ? '−' : ''}${formatAmount(Math.abs(row.after))}` : ''}</li>)}
         </ul>}
         {item.note && <p className="mt-1 text-[12px] text-muted">توضیح ثبت‌کننده: {item.note}</p>}
         {item.decisionReason && <p className="mt-1 text-[12px] text-income">دلیل تأیید: {item.decisionReason}</p>}
         <div className="mt-2 flex flex-wrap gap-1.5">
           {item.status === 'pending' && canApprove && <>
-            <button disabled={busy === item.id} onClick={() => act(item, 'approve')} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-white">تأیید</button>
+            <button disabled={busy === item.id} onClick={() => act(item, 'approve')} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill">تأیید</button>
             <button disabled={busy === item.id} onClick={() => act(item, 'reject')} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense">رد</button>
           </>}
-          {item.status === 'approved' && <button disabled={busy === item.id} onClick={() => act(item, 'execute')} className="tap rounded-lg bg-income px-3 text-[12px] font-bold text-white">اجرا</button>}
+          {item.status === 'approved' && <button disabled={busy === item.id} onClick={() => act(item, 'execute')} className="tap rounded-lg bg-income px-3 text-[12px] font-bold text-on-fill">اجرا</button>}
           <button disabled={busy === item.id} onClick={() => act(item, 'cancel')} className="tap rounded-lg border border-line px-3 text-[12px] font-bold">لغو</button>
         </div>
       </article>)}

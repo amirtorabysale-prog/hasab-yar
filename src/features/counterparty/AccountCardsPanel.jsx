@@ -29,7 +29,7 @@ const CASH_KINDS = { cash: 'صندوق', wallet: 'کیف پول', other: 'سای
 function Stat({ label, value, tone = '' }) {
   return (
     <div className="rounded-[10px] border border-line bg-surface px-3 py-2.5">
-      <p className="text-[11px] text-muted">{label}</p>
+      <p className="text-xs text-muted">{label}</p>
       <p className={`numbers mt-1 text-sm font-extrabold ${tone}`}>{formatAmount(value)}</p>
     </div>
   );
@@ -43,17 +43,17 @@ function MoneyRow({ line, open }) {
       title={line.entryId ? 'نمایش سند حسابداری' : 'این ردیف هنوز سند قطعی ندارد'}
       className="-mx-2 cursor-pointer rounded-lg px-2 py-3 hover:bg-accent/5 focus:bg-accent/5 focus:outline-none">
       <div className="flex items-baseline justify-between gap-3">
-        <time className="numbers shrink-0 text-[11px] text-muted">{shortDate(line.occurredAt)}</time>
+        <time className="numbers shrink-0 text-xs text-muted">{shortDate(line.occurredAt)}</time>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-bold">{line.title || 'بدون شرح'}</p>
-          {line.counterpart && <p className="truncate text-[11px] text-muted">{line.debit ? 'از' : 'به'} {line.counterpart}</p>}
+          {line.counterpart && <p className="truncate text-xs text-muted">{line.debit ? 'از' : 'به'} {line.counterpart}</p>}
         </div>
         <span className={`numbers shrink-0 text-[13px] font-extrabold ${line.debit ? 'text-income' : 'text-expense'}`}>
           {line.debit ? `+ ${formatAmount(line.debit)}` : `− ${formatAmount(line.credit)}`}
         </span>
       </div>
       <p className={`numbers mt-1 text-left text-[12px] font-extrabold ${line.balance < 0 ? 'text-expense' : ''}`}>
-        <span className="ml-1 text-[10px] font-normal text-muted">مانده</span>{line.balance < 0 ? '− ' : ''}{formatAmount(Math.abs(line.balance))}
+        <span className="ml-1 text-xs font-normal text-muted">مانده</span>{line.balance < 0 ? '− ' : ''}{formatAmount(Math.abs(line.balance))}
       </p>
     </article>
   );
@@ -80,15 +80,15 @@ function MoneyCard({ account, onBack, notify }) {
         <ArrowRight size={18} /> همهٔ حساب‌ها
       </button>
       <header className="mt-3 rounded-[12px] border border-line bg-surface p-4">
-        <p className="text-[11px] font-bold text-muted">{account.kind === 'bank' ? (bank?.name || 'بانک') : CASH_KINDS[account.kind] || 'حساب'}</p>
+        <p className="text-xs font-bold text-muted">{account.kind === 'bank' ? (bank?.name || 'بانک') : CASH_KINDS[account.kind] || 'حساب'}</p>
         <h2 className="mt-1 text-xl font-extrabold">{account.name}</h2>
         <div className="mt-4 border-t border-line pt-3">
-          <p className="text-[11px] text-muted">موجودی</p>
+          <p className="text-xs text-muted">موجودی</p>
           <p className="mt-1 flex items-baseline gap-2">
             <span className={`numbers text-[28px] font-extrabold leading-none ${balance < 0 ? 'text-expense' : ''}`}>{balance < 0 ? '− ' : ''}{formatAmount(Math.abs(balance))}</span>
             <small className="text-[13px] text-muted">تومان</small>
           </p>
-          {balance < 0 && <p className="mt-1 text-[11px] text-expense">موجودی منفی است؛ برداشتی ثبت شده که پولش در این حساب نبوده.</p>}
+          {balance < 0 && <p className="mt-1 text-xs text-expense">موجودی منفی است؛ برداشتی ثبت شده که پولش در این حساب نبوده.</p>}
         </div>
       </header>
       {gap ? (
@@ -117,7 +117,7 @@ function MoneyCard({ account, onBack, notify }) {
           </div>
           <div className="mt-5 flex items-baseline justify-between">
             <h3 className="text-sm font-extrabold">گردش حساب</h3>
-            <p className="text-[11px] text-muted">{toPersianDigits(card.lines.length)} ردیف از {toPersianDigits(card.totals.documents)} سند</p>
+            <p className="text-xs text-muted">{toPersianDigits(card.lines.length)} ردیف از {toPersianDigits(card.totals.documents)} سند</p>
           </div>
           <div className="mt-2 divide-y divide-line border-y border-line">
             {[...card.lines].reverse().map((line) => <MoneyRow key={line.id} line={line} open={setOpenLine} />)}
@@ -161,12 +161,12 @@ function AccountForm({ section, onSaved, onCancel, notify }) {
       <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })}
         placeholder={suggested || (isBank ? 'نام حساب، مثلاً جاری ملت شرکت' : 'نام صندوق، مثلاً صندوق فروشگاه')}
         className="tap w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
-      <label className="block text-[11px] text-muted">موجودی ابتدای دوره (تومان)
+      <label className="block text-xs text-muted">موجودی ابتدای دوره (تومان)
         <input inputMode="numeric" value={draft.openingBalance} onChange={(event) => setDraft({ ...draft, openingBalance: digitsOnly(event.target.value) })}
           placeholder="۰" className="numbers tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
       </label>
       <div className="flex gap-2">
-        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-white disabled:opacity-60">ذخیره</button>
+        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-on-fill disabled:opacity-60">ذخیره</button>
         <button type="button" onClick={onCancel} className="tap rounded-lg border border-line px-3 text-[13px] font-bold">انصراف</button>
       </div>
     </form>
@@ -202,7 +202,7 @@ function ContactForm({ onSaved, onCancel, notify }) {
           placeholder="تلفن (اختیاری)" className="numbers tap rounded-lg border border-line bg-paper px-3 text-[13px]" />
       </div>
       <div className="flex gap-2">
-        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-white disabled:opacity-60">ذخیره</button>
+        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-on-fill disabled:opacity-60">ذخیره</button>
         <button type="button" onClick={onCancel} className="tap rounded-lg border border-line px-3 text-[13px] font-bold">انصراف</button>
       </div>
     </form>
@@ -223,7 +223,7 @@ function AccountList({ items, empty, onOpen }) {
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-extrabold">{account.name}</span>
-              <span className="block text-[11px] text-muted">
+              <span className="block text-xs text-muted">
                 {account.kind === 'bank' ? (bank?.name || 'بانکش مشخص نیست') : CASH_KINDS[account.kind] || 'حساب'}
                 {!account.active ? ' · غیرفعال' : ''}
               </span>
@@ -254,7 +254,7 @@ export function AccountCardsPanel({ accounts = [], contacts = [], notify, refres
       <div className="flex gap-2">
         {SECTIONS.map(([id, label, Icon]) => (
           <button key={id} onClick={() => setSection(id)}
-            className={`tap flex flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[12px] font-bold ${section === id ? 'bg-ink text-white' : 'border border-line bg-surface text-muted'}`}>
+            className={`tap flex flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[12px] font-bold ${section === id ? 'bg-ink text-on-fill' : 'border border-line bg-surface text-muted'}`}>
             <Icon size={15} /> {label}
           </button>
         ))}

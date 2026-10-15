@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#F5F3ED" />
+    <meta name="theme-color" content="#F4F6F7" />
     <meta name="description" content="دفتر مالی صوتی با دفتر کل دوطرفه، کارتابل سند، تطبیق بانکی و خروجی استاندارد برای دفتر حسابداری" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
@@ -40,18 +40,18 @@
         justify-items: center;
         gap: 18px;
         padding: 24px;
-        background: #F5F3ED;
-        color: #1C1B19;
+        background: #F4F6F7;
+        color: #13232C;
         font-family: Vazirmatn, Tahoma, sans-serif;
         text-align: center;
       }
       #boot-name { font-size: 20px; font-weight: 800; letter-spacing: .2px; }
-      #boot-role { font-size: 13px; line-height: 1.9; color: #6E6C64; max-width: 22rem; }
+      #boot-role { font-size: 13px; line-height: 1.9; color: #526573; max-width: 22rem; }
       #boot-spinner {
         width: 32px;
         height: 32px;
-        border: 2px solid #DDDAD1;
-        border-top-color: #C8622D;
+        border: 2px solid #DFE6EA;
+        border-top-color: #12706A;
         border-radius: 999px;
         animation: boot-spin .9s linear infinite;
       }
@@ -61,7 +61,7 @@
       #boot-slow {
         font-size: 12px;
         line-height: 1.9;
-        color: #6E6C64;
+        color: #526573;
         max-width: 22rem;
         opacity: 0;
         animation: boot-reveal .4s ease-out 12s forwards;
@@ -71,10 +71,16 @@
          به JavaScript سپرده می‌شد، بین برداشتن صفحهٔ آغاز و اولین رنگ‌آمیزی
          React یک پرش سفید می‌افتاد. */
       #root:not(:empty) ~ #boot { display: none; }
+      /* تم تاریک پیش از رسیدن JavaScript: همان رنگ‌های `styles.css`، از تنظیم دستگاه. */
+      @media (prefers-color-scheme: dark) {
+        #boot { background: #0D1417; color: #E4ECEF; }
+        #boot-role, #boot-slow { color: #9AACB6; }
+        #boot-spinner { border-color: #26333A; border-top-color: #3DBDB0; }
+      }
       @keyframes boot-spin { to { transform: rotate(360deg); } }
       @keyframes boot-reveal { to { opacity: 1; } }
       @media (prefers-reduced-motion: reduce) {
-        #boot-spinner { animation: none; border-top-color: #C8622D; }
+        #boot-spinner { animation: none; border-top-color: #12706A; }
         #boot-slow { animation-duration: .01ms; }
       }
     </style>

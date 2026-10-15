@@ -15,7 +15,7 @@ export function FirmSummaryTile({ label, value, hint, tone = '' }) {
   return <div className="rounded-[10px] border border-line bg-surface px-3 py-3">
     <p className="text-[12px] text-muted">{label}</p>
     <p className={`numbers mt-1 text-2xl font-extrabold ${tone}`}>{value}</p>
-    {hint && <p className="mt-1 text-[11px] leading-5 text-muted">{hint}</p>}
+    {hint && <p className="mt-1 text-xs leading-5 text-muted">{hint}</p>}
   </div>;
 }
 
@@ -27,7 +27,7 @@ function FirmClientRow({ client, onOpen, isActive }) {
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
         <p className="truncate font-extrabold">{client.workspace?.name || 'بدون نام'}</p>
-        {isActive && <span className="rounded border border-line px-1.5 text-[10px] font-bold text-muted">دفتر فعال</span>}
+        {isActive && <span className="rounded border border-line px-1.5 text-xs font-bold text-muted">دفتر فعال</span>}
       </div>
       <p className="mt-1 text-[12px] text-muted">
         <span className={`inline-block rounded border px-1.5 py-0.5 font-bold ${style.badge}`}>{client.levelLabel}</span>
@@ -44,12 +44,12 @@ function FirmClientRow({ client, onOpen, isActive }) {
         {client.blockers.map((item) => <span key={item.id} className="rounded border border-expense/40 bg-expense/10 px-2 py-0.5 font-bold text-expense">{item.label}{item.count > 1 && <span className="numbers"> · {toPersianDigits(item.count)}</span>}</span>)}
         {client.warnings.map((item) => <span key={item.id} className="rounded border border-line bg-surface px-2 py-0.5 text-muted">{item.label}{item.id !== 'stale' && item.count > 1 && <span className="numbers"> · {toPersianDigits(item.count)}</span>}</span>)}
       </div>
-      {client.activity && <p className="mt-2 text-[11px] text-muted">
+      {client.activity && <p className="mt-2 text-xs text-muted">
         <span className="numbers">{toPersianDigits(client.activity.transactionCount)}</span> ثبت این ماه ·
         درآمد <b className="numbers text-income">{formatAmount(client.activity.income)}</b> ·
         هزینه <b className="numbers text-expense">{formatAmount(client.activity.expense)}</b>
       </p>}
-      {batch && <p className="mt-1 text-[11px] text-muted">آخرین خروجی {batch.period} — {FIRM_BATCH_LABELS[batch.status] || batch.status}</p>}
+      {batch && <p className="mt-1 text-xs text-muted">آخرین خروجی {batch.period} — {FIRM_BATCH_LABELS[batch.status] || batch.status}</p>}
     </div>
     <button onClick={() => onOpen(client.workspace?.id)} disabled={isActive} className="tap h-10 shrink-0 rounded-lg border border-line bg-surface px-4 text-sm font-bold disabled:opacity-45">
       {isActive ? 'همین‌جا هستی' : 'باز کردن پرونده'}
@@ -74,7 +74,7 @@ function AddClientForm({ notify, onAdded }) {
   };
   return <form onSubmit={submit} className="mt-3 flex flex-wrap gap-2">
     <input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} placeholder="نام شرکت مشتری" className="tap min-w-52 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
-    <button disabled={busy} className="tap rounded-lg bg-accent px-4 text-sm font-bold text-white disabled:opacity-45">{busy ? 'در حال ساخت…' : 'افزودن پروندهٔ مشتری'}</button>
+    <button disabled={busy} className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill disabled:opacity-45">{busy ? 'در حال ساخت…' : 'افزودن پروندهٔ مشتری'}</button>
   </form>;
 }
 
@@ -150,7 +150,7 @@ export function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess
       />)}
     </div>
 
-    {portfolio && <p className="mt-4 text-[11px] leading-5 text-muted">
+    {portfolio && <p className="mt-4 text-xs leading-5 text-muted">
       این خلاصه هر ۵ دقیقه بازسازی می‌شود؛ برای دیدن لحظهٔ دقیق، «بازخوانی وضعیت» را بزن. پروندهٔ خوانده‌نشده با وضعیت «نامشخص» می‌ماند و عددش صفر فرض نمی‌شود.
     </p>}
   </section>;

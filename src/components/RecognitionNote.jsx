@@ -32,13 +32,13 @@ export function RecognitionNote({ recognition, servicePeriod, decided = false })
     const { schedule } = recognition;
     const first = schedule[0];
     const last = schedule[schedule.length - 1];
-    return <p aria-label="دورهٔ پوشش و برنامهٔ شناسایی" className="mt-1 block rounded-md bg-accent/5 px-2 py-1 text-[11px] leading-5 text-ink">
+    return <p aria-label="دورهٔ پوشش و برنامهٔ شناسایی" className="mt-1 block rounded-md bg-accent/5 px-2 py-1 text-xs leading-5 text-ink">
       پوشش <b>{coverageDate(recognition.periodStart)}</b> تا <b>{coverageDate(recognition.periodEnd)}</b> — <span className="numbers">{toPersianDigits(recognition.count || schedule.length)}</span> قسط ماهانهٔ <span className="numbers">{formatAmount(first.amount)}</span> تومان،
       از {periodKeyLabel(first.periodKey)} تا {periodKeyLabel(last.periodKey)}
     </p>;
   }
   if (decided && servicePeriod?.start && servicePeriod?.end) {
-    return <p aria-label="دورهٔ پوشش" className="mt-1 block text-[11px] leading-5 text-muted">
+    return <p aria-label="دورهٔ پوشش" className="mt-1 block text-xs leading-5 text-muted">
       پوشش {coverageDate(servicePeriod.start)} تا {coverageDate(servicePeriod.end)} — یک‌جا در همین دوره شناسایی می‌شود
     </p>;
   }

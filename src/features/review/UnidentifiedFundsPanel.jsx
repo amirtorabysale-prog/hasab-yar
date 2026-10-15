@@ -48,7 +48,7 @@ function ResolveForm({ hold, targets, invoices, contacts, notify, onDone }) {
     </>}
     <label>تاریخ تعیین تکلیف<input type="date" value={form.occurredAt} onChange={set('occurredAt')} className={field} /></label>
     <label className="sm:col-span-2">دلیل یا مدرک منشأ<textarea required minLength={8} value={form.reason} onChange={set('reason')} placeholder="مثلاً فیش واریز شرکت آریا رسید" className="mt-1 min-h-16 w-full rounded-lg border border-line bg-surface p-2 text-sm" /></label>
-    <button disabled={busy} className="tap rounded-lg bg-accent font-bold text-white disabled:opacity-45 sm:col-span-2">ثبت تعیین تکلیف</button>
+    <button disabled={busy} className="tap rounded-lg bg-accent font-bold text-on-fill disabled:opacity-45 sm:col-span-2">ثبت تعیین تکلیف</button>
   </form>;
 }
 
