@@ -3,6 +3,7 @@ import { Check, Menu, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { BottomNav, DesktopNav, Drawer, allowedScreens } from './app/navigation.jsx';
 import { ThemeChoice, ThemeToggle } from './components/ThemeToggle.jsx';
+import { readRoute, writeRoute } from './app/route.js';
 import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_REQUIRES, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
 import { profileDefinition } from '../shared/product.js';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
@@ -117,9 +118,10 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
   const [authError, setAuthError] = useState('');
   const [access, setAccess] = useState({ user: null, workspaces: [], workspace: null });
-  const [screen, setScreen] = useState('today');
+  // صفحه و بخش از نشانی خوانده می‌شوند (`src/app/route.js`)؛ تازه‌سازی همان صفحه را باز می‌کند.
+  const [screen, setScreen] = useState(() => readRoute().screen || 'today');
   // بخش داخل صفحه: زبانهٔ دفتر مالی، حسابداری، کدینگ، همکاری یا تنظیمات.
-  const [section, setSection] = useState('');
+  const [section, setSection] = useState(() => readRoute().section);
   const menuSearchRef = useRef(null);
   const [drawer, setDrawer] = useState(false);
   const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, dnaProfiles: null, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
@@ -1107,7 +1109,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const navigate = (target, section = '') => {
+  const navigate = (target, section = '', { fromHistory = false } = {}) => {
     // صفحه‌ای که این کاربر اجازه‌اش را ندارد حتی با ناوبری مستقیم باز نمی‌شود.
     // سرور هم همین مرز را دارد، پس این فقط تجربه را تمیز نگه می‌دارد — ولی
     // نبودش یعنی کاربر ساده می‌تواند به صفحه‌ای برود که همهٔ درخواست‌هایش ۴۰۳
@@ -1115,6 +1117,7 @@ export default function App() {
     if (allowedScreens(access).length && !allowedScreens(access).some((item) => item.id === target)) return;
     // یادگیری‌ها زبانهٔ تنظیمات شد؛ پیوندهای قدیمی همان‌جا می‌روند.
     if (target === 'learning') { target = 'settings'; section = 'learning'; }
+    if (!fromHistory) writeRoute(target, section);
     setSection(section);
     setScreen(target); setDrawer(false);
     // صفحه‌ها تنبل بارگذاری می‌شوند؛ بخش مقصد چند لحظه بعد ساخته می‌شود.
@@ -1132,6 +1135,22 @@ export default function App() {
     // مستقیم به پایین «همکاری حسابدار» می‌رسید و بخش اصلی را نمی‌دید.
     if (!section) window.scrollTo({ top: 0, behavior: 'auto' });
   };
+
+  // «بازگشت» و «جلو» مرورگر همان صفحهٔ نشانی را باز می‌کنند.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  useEffect(() => {
+    const onPop = () => { const route = readRoute(); navigateRef.current(route.screen || 'today', route.section, { fromHistory: true }); };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  // نشانیِ صفحه‌ای که این کاربر اجازه‌اش را ندارد (یا پیوند کهنه) به «امروز» برمی‌گردد.
+  useEffect(() => {
+    const screens = allowedScreens(access);
+    if (!screens.length) return;
+    if (!screens.some((item) => item.id === screen)) { writeRoute('today', '', { replace: true }); setScreen('today'); setSection(''); return; }
+    writeRoute(screen, section, { replace: true });
+  }, [access, screen, section]);
 
   const login = async (username, password) => {
     setAuthError('');
