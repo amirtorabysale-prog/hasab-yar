@@ -34,7 +34,10 @@ function NoticeCard({ notice, onSeen }) {
           {notice.incomeAmount > 0 && <>درآمد {formatAmount(notice.incomeAmount)} تومان</>}
           {!total && 'بدون مبلغ'}
         </p>
-        <p className="mt-1 text-xs leading-6 text-muted">{notice.contracts.map((contract) => `${contract.title} (${formatAmount(contract.amount)})`).join('، ')}</p>
+        <p className="mt-1 text-xs leading-6 text-muted">
+          {notice.contracts.slice(0, 3).map((contract) => `${contract.title} (${formatAmount(contract.amount)})`).join('، ')}
+          {notice.contracts.length > 3 && ` و ${toPersianDigits(notice.contracts.length - 3)} قرارداد دیگر`}
+        </p>
       </div>
       {notice.seenAt
         ? <span className="flex items-center gap-1 text-[11px] text-muted"><CheckCheck size={14} />دیده شد</span>
