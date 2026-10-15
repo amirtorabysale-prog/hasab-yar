@@ -21,6 +21,8 @@
  * داده می‌شود.
  */
 import { classifyCategory } from './categoryRules.js';
+import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
+import { incomeTwin } from './parser.js';
 import { detectBank } from './banks.js';
 import { normalizePersian } from './normalize.js';
 import { persianMonthRange, persianToISO, todayPersian } from './persianDate.js';
@@ -84,6 +86,8 @@ const DEPOSIT_IN_WORDS = /(?<![آ-ی])(?:ودیعه|رهن)|حسن\s*انجام|
 const TIME_BOUND_INCOME = /اجاره|کرایه(?!\s*(?:حمل|بار|ماشین\s*بار))|اشتراک|لایسنس|پشتیبانی|نگهداری|شارژ|حق\s*عضویت|آبونمان/;
 const THIS_MONTH_WORDS = /(?:این|همین)\s*ماه|ماه\s*جاری/;
 const PARTY_TITLE = /آقای|خانم|شرکت|دکتر|مهندس|حاج|فروشگاه|موسسه|مؤسسه|کارخانه/;
+/** نوع‌هایی که ماهیتِ یک مبلغ‌اند، نه کل گفته؛ در گفتهٔ چندمبلغی به همه نمی‌رسند. */
+const PER_AMOUNT_KINDS = new Set(['advance-paid', 'advance-received', 'deposit']);
 
 /**
  * نوع رویداد → هدف دریافت یا پرداخت، همان واژگان موتور تصمیم.
@@ -603,6 +607,13 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     let movement = movementOf(amount.id);
     // نسیه یعنی پولی جابه‌جا نشده، حتی اگر مدل جابه‌جایی گفته باشد.
     if (amount.role === 'credit-part') movement = { id: `${amount.id}-credit`, amountRef: amount.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null } };
+    // «۴۰ میلیون از ملت دادیم: ۳۰ میلیون بیمه … و ۱۰ میلیون اجاره …»: جزءِ بی‌جابه‌جایی
+    // از همان حسابی رفته که کلش رفت؛ پرسیدن حساب برای هر جزء، سؤالی بود که جمله جواب داده
+    // بود (آزمون زندهٔ موتور ۵، ۲۲ مهر ۱۴۰۵).
+    if (!movement && amount.partOf) {
+      const whole = movementOf(amount.partOf);
+      if (whole && ['in', 'out'].includes(whole.direction)) movement = whole;
+    }
     if (!movement) {
       // بخش نقدیِ یک خرید یا فروش جهتش از خودِ رویداد معلوم است؛ فقط حسابش پرسیده می‌شود.
       const implied = ['purchase', 'asset-purchase', 'expense', 'advance-paid', 'deposit', 'owner-drawing'].includes(facts.event.kind) ? 'out'
@@ -725,7 +736,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // را قرض می‌گرفت و اجارهٔ مهر هرگز هزینه نمی‌شد.
     // «پول پیش»ِ ملک همان ودیعه است (`mentionsPropertyDeposit`، مشترک با مسیر قطعی).
     const depositWord = (part) => REFUNDABLE_WORDS.test(part) || mentionsPropertyDeposit(part);
+    // «پول پیش انبار ۸۰ میلیون … دادیم»: مدل شاهدِ مبلغ را فقط «۸۰ میلیون» نوشت؛ نامِ
+    // ودیعهٔ ملک در بندِ خودِ همین مبلغ است وقتی بند پرداخت دیگری ندارد.
+    const soleInClause = amounts.filter((other) => other.accepted && !retracted.has(other.id) && other.status === 'done'
+      && clauseOf(said, other.evidence) === clause).length <= 1;
     const refundableHere = depositWord(own)
+      || (soleInClause && mentionsPropertyDeposit(clause) && !classifyCategory(own, 'expense').matched)
       || (amount.role === 'deposit' && depositWord(said) && !ADVANCE_WORDS.test(own) && !classifyCategory(own, 'expense').matched);
     if (type === 'expense' && movement.direction !== 'none' && DEPOSIT_AND_SERVICE.test(own)) {
       toAccountant(`«${label}» هم ودیعه است و هم اجاره یا هزینهٔ دوره؛ سهم هر کدام گفته نشده و تفکیکش با حسابدار است.`);
@@ -749,10 +765,20 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
         : advanceHere ? (type === 'expense' ? { paymentPurpose: 'advance' } : { receiptPurpose: 'advance' })
           : serviceUpfront ? { receiptPurpose: 'advance' }
             : type === 'expense' && depositSibling ? { paymentPurpose: 'expense', refundable: false }
-              : PURPOSE_BY_KIND[facts.event.kind] || {};
+              // نوعِ رویداد برای کل گفته است: «بیمهٔ یک‌ساله ۱۲ میلیون و ناهار پرسنل ۲ میلیون» را
+              // مدل «پیش‌پرداخت» نامید و ناهار پیش‌پرداخت خرید شد که طرف حسابش پرسیده می‌شد.
+              // در گفتهٔ چندمبلغی، پیش‌پرداخت و ودیعه فقط از بخشِ خودِ مبلغ می‌آیند (بالا).
+              : !scope.alone && PER_AMOUNT_KINDS.has(facts.event.kind) ? {}
+                : PURPOSE_BY_KIND[facts.event.kind] || {};
     // کالای ماندگار برای استفادهٔ خودمان، استفادهٔ بلندمدت است؛ حد سرمایه‌ای دفتر
     // می‌گوید دارایی است یا هزینه. آزمون زنده (V26): دستگاه کپی ۴۵ میلیونی هزینه شد.
-    const intendedUse = (facts.subject.kind === 'asset' && facts.subject.use === 'internal' ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use])
+    // موضوعِ مدل یکی است و برای کل گفته؛ در گفتهٔ چندمبلغی فقط به مبلغی می‌رسد که
+    // موضوع در بخشِ خودش آمده. «بیمهٔ یک‌سالهٔ تجهیزات … و ناهار پرسنل ۲ میلیون»: کاربردِ
+    // «بلندمدت»ِ تجهیزات ناهار را دارایی ثابت می‌کرد (آزمون زندهٔ موتور ۵).
+    const ownText = normalizePersian(scope.own || '');
+    const subjectHere = scope.alone || [facts.subject.evidence, facts.subject.what].filter(Boolean)
+      .some((part) => ownText.includes(normalizePersian(part)));
+    const intendedUse = (subjectHere ? (facts.subject.kind === 'asset' && facts.subject.use === 'internal' ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use]) : null)
       || purposes.intendedUse || null;
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
@@ -772,8 +798,19 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // دسته هم اول از شاهدِ خودِ مبلغ و بندِ آن (در جملهٔ چندمبلغی، بخشِ خودِ آن)،
     // و فقط اگر چیزی نگفتند از شرحِ کل.
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
-    const category = [amount.evidence, scope.alone ? clause : scope.own].map((part) => (part ? classifyCategory(part, type) : null)).find((result) => result?.matched)?.category
-      || classifyCategory(describe, type).category;
+    const matchedIn = (part) => (part ? classifyCategory(part, type) : null);
+    let category = [amount.evidence, scope.alone ? clause : scope.own, describe].map(matchedIn).find((result) => result?.matched)?.category || null;
+    // «اجاره ماهی ۸ میلیون، سه ماه آینده انبار رو یک‌جا ۲۴ میلیون»: نرخ همان خدمت را نام
+    // می‌برد که پرداخت یک‌جا برایش است؛ «انبار»ِ بندِ پرداخت آن را «مواد و کالا» می‌کرد.
+    if (scope.alone && !TIME_BOUND_SERVICE_CATEGORIES.includes(category)) {
+      const rated = amounts.filter((other) => other !== amount && other.accepted && other.role === 'unit-price')
+        .map((other) => matchedIn(clauseOf(said, other.evidence))).find((result) => result?.matched && TIME_BOUND_SERVICE_CATEGORIES.includes(result.category));
+      if (rated) category = rated.category;
+    }
+    // «مستاجر اجارهٔ شش ماه آینده رو ریخت»: موضوعِ هزینه‌ایِ دریافتی دوقلوی درآمدی دارد
+    // (اجاره ← درآمد اجاره)؛ بی آن درآمد اجاره در «سایر درآمدها» می‌نشست (همان قاعدهٔ پارسر).
+    if (!category && type === 'income') category = incomeTwin(scope.alone ? said : `${scope.own} ${clause}`)?.category || null;
+    category = category || classifyCategory(describe, type).category;
     // «۶ میلیون اجارهٔ همین ماه»: پوششی که در ماهِ پرداخت تمام می‌شود هزینهٔ همین
     // دوره است. برای درآمد، پوششِ درونِ همین ماه چیزی را به بعد نمی‌برد.
     const paidMonth = paymentDate ? monthOf(paymentDate) : null;

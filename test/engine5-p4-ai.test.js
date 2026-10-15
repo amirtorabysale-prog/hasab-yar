@@ -959,11 +959,12 @@ test('مبلغ‌های هم‌اندازه: جای هر کدام معلوم ب�
 });
 
 test('اجزای یک کل: ماهیت جدا یعنی بخش جدا؛ اجزای همان کل دوره را با هم می‌برند؛ کلِ قرارداد دوره‌اش را به پرداختِ این ماه نمی‌دهد', async () => {
-  // جملهٔ بازبین با «جمعا»: قبض هزینه، اجاره ۶ ماهه.
+  // جملهٔ بازبین با «جمعا»: قبض هزینه، اجاره ۶ ماهه. اجزا از همان حسابِ کل («از تجارت») رفته‌اند
+  // و حسابشان دیگر پرسیده نمی‌شود (آزمون زندهٔ موتور ۵، ۲۲ مهر ۱۴۰۵).
   await inFreshWorkspace(async () => {
     const { item, posted } = await understandCase('قبض برق ۲ میلیون و اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون، جمعا ۳۲ میلیون از تجارت دادیم', model({
       amounts: [amt('a1', 'total', 'جمعا ۳۲ میلیون'), amt('a2', 'part', 'قبض برق ۲ میلیون', { partOf: 'a1' }), amt('a3', 'part', 'اجاره ۶ ماه جلوتر دفتر ۳۰ میلیون', { partOf: 'a1' })],
-      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }), { answers: [{ 'movements.a2-implied.account': '$tejarat', 'movements.a3-implied.account': '$tejarat' }] });
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }));
     assert.equal(item.status, 'ready', JSON.stringify(item.plan?.questions || item.plan?.reasons));
     assert.equal(treatments(item)[2_000_000], 'period-expense');
     assert.equal(debitOf(posted, /پیش‌پرداخت/), 30_000_000);
@@ -973,7 +974,7 @@ test('اجزای یک کل: ماهیت جدا یعنی بخش جدا؛ اجزا�
   await inFreshWorkspace(async () => {
     const { item, posted } = await understandCase('بابت قبض برق و اجاره شش ماه جلوتر دفتر ۳۲ میلیون از تجارت دادیم، ۲ میلیون قبض و ۳۰ میلیون اجاره', model({
       amounts: [amt('a1', 'total', '۳۲ میلیون'), amt('a2', 'part', '۲ میلیون قبض', { partOf: 'a1' }), amt('a3', 'part', '۳۰ میلیون اجاره', { partOf: 'a1' })],
-      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }), { answers: [{ 'movements.a2-implied.account': '$tejarat', 'movements.a3-implied.account': '$tejarat' }] });
+      movements: [mv('m1', 'a1', 'out', BANK, UNKNOWN, 'از تجارت دادیم')] }));
     assert.equal(item.status, 'needs-accountant', JSON.stringify(item.plan?.questions));
     assert.equal(posted, null);
   });

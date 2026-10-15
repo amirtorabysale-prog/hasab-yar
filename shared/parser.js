@@ -2,7 +2,7 @@ import { withReviewAssessment } from './review.js';
 import { normalizePersian } from './normalize.js';
 import { CATEGORY_DEFINITIONS, chartCodeForCategory, classifyCategory } from './categoryRules.js';
 import { PERSIAN_MONTHS, extractOccurrenceDate } from './persianDate.js';
-import { detectBank, detectTransferBanks } from './banks.js';
+import { BANKS, detectBank, detectTransferBanks } from './banks.js';
 import { mentionsCapitalOrAsset } from './capitalSpeech.js';
 import { readPrepaymentMention } from './prepaymentSpeech.js';
 import { periodYearSpans, readServicePeriod } from './periodSpeech.js';
@@ -225,8 +225,10 @@ export function withoutRateAmounts(text, spans) {
 
 export function hasCompositeAmounts(input) {
   const normalized = normalizePersian(input);
-  if (extractAmounts(normalized).spans.length < 2) return false;
+  const spans = extractAmounts(normalized).spans;
+  if (spans.length < 2) return false;
   return /سرمایه.*(?:افزایش|کاهش)|بدهکار.*(?:ببخش|می بخشم|می‌بخشم)/.test(normalized)
+    || totalThenParts(spans)
     || /شامل|از این مبلغ|جمع کل|مجموع|تفکیک|ناخالص|(?:اصل\s*(?:وام|قسط|تسهیلات)?\s*و\s*(?:سود|بهره))/.test(normalized)
     || /(?:قسط|وام).*(?:اصل).*(?:سود|بهره)/.test(normalized)
     || /(?:اصل\s*(?:وام|قسط|تسهیلات)|سهم\s*کارمند|بهای\s*کالا).*(?:سود|بهره|مالیات|بیمه)/.test(normalized)
@@ -237,6 +239,20 @@ export function hasCompositeAmounts(input) {
     // «۱ میلیون ازش کم کردیم» همان تخفیف است؛ «کارمزدش کم شد» (مجهول، کار بانک)
     // نیست و کارت انتقال خودش کارمزد را جدا می‌کند.
     || (/(?<![آ-ی])(?:تخفیف|(?:کم|کسر)\s*کرد(?:یم|م|ن|ند)?(?![آ-ی]))/.test(normalized) && !/(?<![آ-ی])چک(?![آ-ی])/.test(normalized));
+}
+
+/**
+ * «۴۰ میلیون از ملت دادیم: ۳۰ میلیون بیمه … و ۱۰ میلیون اجاره …» — کلی که اجزایش
+ * پشتش آمده‌اند. سه ردیف ۴۰ و ۳۰ و ۱۰ ساخته می‌شد و با «تأیید» هر سه، ۸۰ میلیون از
+ * بانک می‌رفت (آزمون زندهٔ موتور ۵، ۲۲ مهر ۱۴۰۵). نشانه عددی است، نه واژه: مبلغِ اول
+ * دقیقاً جمعِ دست‌کم دو مبلغِ بعدی است. تصادفِ جمع («۱۵ قبض، ۱۰ اجاره و ۵ شارژ») هم
+ * فقط به پرونده یا حسابدار می‌رود — هیچ‌وقت ثبت غلط نمی‌سازد.
+ */
+function totalThenParts(spans) {
+  const values = spans.map((span) => span.amount).filter((value) => Number.isSafeInteger(value) && value > 0);
+  if (values.length < 3) return false;
+  const [first, ...rest] = values;
+  return rest.reduce((sum, value) => sum + value, 0) === first;
 }
 
 /**
@@ -520,6 +536,9 @@ export function extractAmounts(input) {
     // «نه ۱۸ میلیون» با هم ۲۷ میلیون خوانده می‌شد — مبلغی که هیچ‌کس نگفته بود.
     // کسی که «نُه» می‌گوید، موتور گفتار آن را ۹ می‌نویسد؛ «نه میلیون» همان نُه میلیون می‌ماند.
     if (token.value === 'نه' && /^\d/.test(tokens[index + 1]?.value || '')) continue;
+    // «هر دو رو نقد دادیم»، «هر سه تا»: شمارِ چیزهای گفته‌شده است، نه مبلغ. ردیفی دوتومانی
+    // می‌ساخت که «بابت چه بود؟» می‌پرسید (آزمون زندهٔ موتور ۵، ۲۲ مهر ۱۴۰۵).
+    if (tokens[index - 1]?.value === 'هر' && /^(?:دو|سه|چهار|پنج)$/.test(token.value) && !SCALES[tokens[index + 1]?.value]) continue;
     const collected = [token.value];
     let cursor = index + 1;
     let end = token.end;
@@ -729,7 +748,7 @@ const PAYER_ROLE = '(?<![آ-ی])(?:مست[اأ]جر|مشتری|خریدار|کا
 const FROM_PAYER = new RegExp(`(?<![آ-ی])از\\s*${PAYER_ROLE}`);
 // «سفارش داد»، «قول داد»، «تحویل داد» کار یا تعهد است، نه پول.
 const NOT_MONEY_GAVE = /(?:سفارش|قول|تحویل|انجام|نشون|نشان|گزارش|اجازه|خبر|رضایت|فاکتور|ضمانت)\s*داد(?:ن|ه)?(?![آ-ی])/g;
-const PAYER_GAVE = new RegExp(`${PAYER_ROLE}(?:\\s+\\S+){0,10}?\\s+(?:نقد\\s*)?(?<!(?:پس|عودت)\\s*)(?:داد|دادن|پرداخت\\s*کرد(?:ن)?|واریز\\s*کرد(?:ن)?|کارت\\s*به\\s*کارت\\s*کرد(?:ن)?|تسویه\\s*کرد(?:ن)?|ریخت(?:ن)?)(?![آ-ی])`);
+const PAYER_GAVE = new RegExp(`${PAYER_ROLE}(?:\\s+\\S+){0,16}?\\s+(?:نقد\\s*)?(?<!(?:پس|عودت)\\s*)(?:داد|دادن|پرداخت\\s*کرد(?:ن)?|واریز\\s*کرد(?:ن)?|کارت\\s*به\\s*کارت\\s*کرد(?:ن)?|تسویه\\s*کرد(?:ن)?|ریخت(?:ن)?)(?![آ-ی])`);
 const RECEIVED_AS_INCOME = /پیش\s*دریافت|درآمد\s*(?:اجاره|کرایه|اشتراک)|(?:اجاره|کرایه)\s*(?:بها\s*)?دریافتی|(?:حق\s*)?اشتراک\s*دریافتی|فروش\s*اشتراک|(?<![آ-ی])(?:دریافت|وصول)\s*(?:اجاره|کرایه)|(?<![آ-ی])(?:اجاره|کرایه)(?:\s+\S+){0,8}?\s+(?:دریافت|وصول)\s*(?:کرد(?:یم|م|ن|ند)?|شد)(?![آ-ی])/;
 const PAID_BACK = /(?<![آ-ی])(?:پس|عودت)\s*داد(?:یم|م)|برگردوند(?:یم|م)|برگرداند(?:یم|م)/;
 
@@ -786,6 +805,26 @@ const DELIVERY_DONE_ALL = new RegExp(DELIVERY_DONE.source, 'g');
 const NOT_MONEY_NOT_GIVEN = /(?:تحویل|انجام|جواب|اجازه|قول|خبر|سفارش)\s*ن(?:داده|داد|دادن|دادند)(?![آ-ی])/g;
 // پرداخت‌کنندهٔ نام‌دار با عنوان: «آقای رضایی هنوز ۵ میلیون رو نداده».
 const TITLED_PARTY = /(?<![آ-ی])(?:آقای|اقای|خانم|جناب|شرکت|مهندس|دکتر|حاج|حاجی)(?![آ-ی])/;
+
+/**
+ * «آقای نادری شهریهٔ دورهٔ سه‌ماهه رو ۹ میلیون نقد داد»: فاعل کسِ دیگری است و فعلش
+ * «داد». یا به ما پول داده (پیش‌دریافت) یا از جیب خودش بابت ما پرداخته؛ در هیچ‌کدام
+ * پولی از صندوق ما نرفته. چون جمله دستهٔ هزینه («شهریه») هم داشت، پیش‌پرداخت از
+ * صندوق ثبت می‌شد (آزمون زندهٔ موتور ۵، ۲۲ مهر ۱۴۰۵). جهت را حدس نمی‌زنیم (قاعدهٔ ۴):
+ * حسابدار تعیین می‌کند. «به ما داد»، «به حساب ملت ریخت» و «از مستاجر» جهت را
+ * می‌گویند و این‌جا نمی‌رسند؛ «پرداخت کرد» و «تسویه کرد» (پرداختِ قبض از طرف ما) هم نه.
+ */
+const TITLED_SUBJECT_START = /^\s*(?:آقای|اقای|خانم|جناب|شرکت|مهندس|دکتر|حاج|حاجی)\s+\S+/;
+const GAVE_MONEY_VERB = /(?<![آ-ی])(?<!(?:پس|عودت)\s*)(?:نقد\s*)?(?:داد|دادن|دادند|ریخت|ریختن|کارت\s*به\s*کارت\s*کرد(?:ن)?|واریز\s*کرد(?:ن)?)(?![آ-ی])/;
+export const PAYER_GAVE_UNCLEAR = 'جهت پول روشن نیست: «… داد» یعنی طرف مقابل به ما پول داده یا از طرف ما پرداخته؛ در هیچ‌کدام پولی از صندوق یا بانک ما نرفته. حسابدار تعیین می‌کند. اگر به ما داده، «به ما داد» یا «به حساب … ریخت» را بگو.';
+// «از جیب خودش داد»، «با پول شخصی‌اش»: پرداخت‌کننده و جهت روشن است و مسیر پول
+// شخصیِ شریک یا کارمند (`partnerPaidSpeech`) آن را بی ردیف نقدی ثبت می‌کند.
+const PERSONAL_FUNDS = /پول\s*(?:شخصی|خودش|خودشون|خودشان)|جیب\s*(?:خودش|خودشون|خودشان|شخصی|ش|شون)(?![آ-ی])|از\s*حساب\s*(?:شخصی|خودش|خودشون)|شخصا|شخصاً/;
+function thirdPartyGaveMoney(input) {
+  const text = normalizePersian(input).replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
+  return TITLED_SUBJECT_START.test(text) && GAVE_MONEY_VERB.test(text.replace(NOT_MONEY_GAVE, ' '))
+    && !OTHER_RECIPIENT.test(text) && !MONEY_OUT_VERB.test(text) && !PERSONAL_FUNDS.test(text);
+}
 // فقط صیغهٔ فعال سوم‌شخص؛ «پرداخت نشده» مجهول است و قبضِ پرداخت‌نشدهٔ خودمان هم هست.
 const THEY_HAVE_NOT_PAID = /(?<![آ-ی])ن(?:داده|داد|دادن|دادند|ریخته|ریخت|ریختن|پرداخته)(?![آ-ی])(?!\s*(?:ایم|ام|ای)(?![آ-ی]))|(?<![آ-ی])(?:پرداخت|واریز|تسویه|کارت\s*به\s*کارت)\s*ن(?:کرده|کرد|کردن|کردند)(?![آ-ی])(?!\s*(?:ایم|ام)(?![آ-ی]))/;
 function payerHasNotPaid(input) {
@@ -874,14 +913,29 @@ function sentenceMoneyIn(input) {
   const text = normalizePersian(input);
   // «تحویل دادیم» و «انجام دادیم» دربارهٔ کار است، نه پول.
   const payments = text.replace(/(?:تحویل|انجام)\s*داد(?:یم|م)/g, ' ');
-  return ((MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments))
+  return ((MONEY_IN_PHRASE.test(text) || THIRD_PERSON_IN.test(text) || thirdPersonIntoOurBank(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text)) && !MONEY_OUT_VERB.test(payments))
     || counterpartyPaidUs(input);
 }
 
 /** نشانهٔ ورودِ صریح، نه حدسی: اطمینانش پایین نمی‌آید. */
 function explicitMoneyIn(input) {
   const text = normalizePersian(input);
-  return THIRD_PERSON_IN.test(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text) || counterpartyPaidUs(input);
+  return THIRD_PERSON_IN.test(text) || thirdPersonIntoOurBank(text) || BROUGHT_MONEY_IN.test(text) || RECEIVABLE_STATEMENT.test(text) || counterpartyPaidUs(input);
+}
+
+/**
+ * «… ۴۸ میلیون به حساب ملت ریخت»، «شرکت بتا ۱۵ میلیون بیعانه به ملت ریخت»: فعلِ
+ * سوم‌شخص با مقصدِ بانکی که فقط با نامش آمده. الگوی بالا «بانک X» یا «حساب شرکت»
+ * می‌خواست، و جمله‌ای که دستهٔ هزینه هم داشت («اجاره»، «سفارش کالا») پرداختِ ما
+ * خوانده می‌شد — پیش‌پرداخت از صندوق برای پولی که آمده بود (آزمون زندهٔ موتور ۵،
+ * ۲۲ مهر ۱۴۰۵). پولی که «از صندوق» یا «از حساب» خودمان رفته انتقال است، نه ورود.
+ */
+const KNOWN_BANK_NAMES = [...new Set(BANKS.flatMap((bank) => bank.strong).concat(['سامان']))]
+  .sort((left, right) => right.length - left.length).join('|');
+const THIRD_PERSON_INTO_BANK = new RegExp(`(?<![آ-ی])(?:به|تو|توی)\\s*(?:حساب\\s*)?(?:بانک\\s*)?(?:${KNOWN_BANK_NAMES})(?![آ-ی])\\s*(?:\\S+\\s*){0,3}?(?:کارت\\s*به\\s*کارت\\s*کرد|واریز\\s*کرد|انتقال\\s*داد|ریخت)(?:ن|ند)?(?![آ-ی])`);
+const FROM_OUR_ACCOUNT = new RegExp(`(?<![آ-ی])از\\s*(?:صندوق|تنخواه|حساب|بانک|${KNOWN_BANK_NAMES})(?![آ-ی])`);
+function thirdPersonIntoOurBank(text) {
+  return THIRD_PERSON_INTO_BANK.test(text) && !FROM_OUR_ACCOUNT.test(text) && !MONEY_OUT_VERB.test(text);
 }
 
 /**
@@ -895,7 +949,7 @@ function explicitMoneyIn(input) {
 const INCOME_TWIN = Object.freeze({ اجاره: 'درآمد اجاره', 'نرم‌افزار و اشتراک': 'خدمات' });
 // «کرایه» بی ملک، قاعدهٔ حمل‌ونقل را می‌گیرد؛ کرایه‌ای که مستاجر می‌دهد اجارهٔ ملک است.
 const TENANT_RENT = /(?<![آ-ی])مست[اأ]جر(?:[\s‌]*\S+){0,10}?[\s‌]*(?:اجاره|کرایه)|(?<![آ-ی])(?:اجاره|کرایه)(?:[\s‌]*\S+){0,10}?[\s‌]*مست[اأ]جر/;
-function incomeTwin(text) {
+export function incomeTwin(text) {
   const subject = classifyCategory(text, 'expense');
   const twin = TENANT_RENT.test(text) ? 'درآمد اجاره' : subject.matched ? INCOME_TWIN[subject.category] : null;
   if (!twin) return null;
@@ -1404,8 +1458,10 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (depositReceived) reviewReasons.push(DEPOSIT_RECEIVED);
     const rateChange = span.rateChange ? RATE_CHANGE_REASON : null;
     if (rateChange) reviewReasons.push(rateChange);
+    const payerGaveUnclear = classified.type === 'expense' && spans.length === 1 && !refundJudgment && !notYet && thirdPartyGaveMoney(input);
+    if (payerGaveUnclear) reviewReasons.push(PAYER_GAVE_UNCLEAR);
     const judgment = millionAbbreviation || rateChange || (refundJudgment ? CONTRACT_REFUND_REASON : notYet ? PAYER_UNPAID
-      : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : serviceTie);
+      : depositReceived ? DEPOSIT_RECEIVED : classified.directionUnclear ? RENT_DIRECTION_UNCLEAR : payerGaveUnclear ? PAYER_GAVE_UNCLEAR : serviceTie);
     if (span.bareScale) reviewReasons.push(`عدد پیش از «${span.raw}» شنیده نشد؛ مبلغ را خودت بنویس.`);
     // دلیلِ قضاوت اول می‌آید: صف حسابدار همان را نشان می‌دهد، نه «نوع با اطمینان
     // کم» که فقط پیامدِ همان قضاوت است.

@@ -154,6 +154,8 @@ const CONDITION_CLAUSE = /(?:^|\s)(?:اگر|اگه)(?=$|\s)|در\s*صورت/;
 const DONE_CLAUSE = /(?:^|\s)(?:کردیم|کردم|کرد|کردند|کردن|شد|شده|دادیم|دادم|داد|دادند|دادن|گرفتیم|گرفتم|گرفت|گرفتند|ریختیم|ریختم|ریخت|ریختند|زدیم|زدم|زد|زدند|کشیدیم|کشیدن|خریدیم|خریدم|فروختیم|فروختم|رسید|آمد|اومد)(?=$|[\s.،؛!؟])/;
 /** فعلِ سوم‌شخصِ واریز: «شرکت آفتاب ... به ملت واریز کرد» یعنی پول آمد. */
 const THEIR_DEPOSIT = /(?:واریز|پرداخت)\s*(?:کرد|کردند|کردن)(?=$|[\s.،؛!؟])|(?:^|\s)(?:ریخت|ریختند|ریختن|زد|زدند|زدن|داد|دادند|دادن)(?=$|[\s.،؛!؟])/;
+/** «نقد»، «نقدی»، «صندوق» — حسابِ نقدِ دفتر، وقتی بانکی نام برده نشده. */
+const CASH_WORD = /(?<![آ-ی])(?:نقد|نقدی|نقدا|صندوق)(?![آ-ی])/;
 const OUR_PAYMENT = /(?:^|\s)(?:کردیم|دادیم|ریختیم|زدیم|کردم|دادم|ریختم|زدم|پرداختیم)(?=$|[\s.،؛!؟])/;
 /** نفیِ پرداخت — نه نفیِ ماهیت. «ودیعه هزینه نیست» پرداخت را نفی نمی‌کند. */
 const PAYMENT_NEGATION = /(?:پرداخت|واریز|تسویه|دریافت)\s*ن(?:کرده|کردیم|کردم|کرد|کردند|شده|شد)|(?:^|\s)ن(?:دادیم|دادم|داده|دادن|دادند|گرفتیم|گرفتم|گرفته|گرفتن|ریختیم|ریخته|زدیم|زده)|هنوز[^.،؛]{0,25}(?:پول|پرداخت|واریز|نداد|نگرفت)|پولی\s*(?:هم\s*)?ن/;
@@ -1035,6 +1037,16 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       movement[cashKey] = { kind: 'bank', name: movement[otherKey].name };
       movement[otherKey] = people.length === 1 ? { kind: 'counterparty', name: people[0].name } : { kind: 'unknown', name: null };
       violations.push(`movements.${movement.id}:bank-is-the-account`);
+    }
+    // «نقد دادیم»، «۹ میلیون نقد داد»: سمتِ حسابِ بی‌نام صندوق است. مدل «ما» نوشت و
+    // حسابی نگفت، و برگه می‌پرسید «پول از کدام حساب رفت؟» درحالی‌که جمله گفته بود
+    // (آزمون زندهٔ موتور ۵، ۲۲ مهر ۱۴۰۵). نامِ بانک در همان بند بر این واژه مقدم است.
+    if (!ACCOUNT_SIDES.has(movement[cashKey].kind) && !movement[cashKey].name && !loanEvent) {
+      const said = normalizePersian(`${movement.evidence || ''} ${clauseOf(byId.get(movement.amountRef)?.evidence) || ''}`);
+      if (CASH_WORD.test(said) && !detectBank(said) && !namedBanks.length) {
+        movement[cashKey] = { kind: 'cash', name: null };
+        violations.push(`movements.${movement.id}:cash-by-word`);
+      }
     }
   }
 
