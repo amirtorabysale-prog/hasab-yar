@@ -4,7 +4,7 @@ import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
 const FIRM_LEVEL_STYLE = {
   blocked: { badge: 'border-expense/40 bg-expense/10 text-expense', dot: 'bg-expense' },
-  attention: { badge: 'border-accent/40 bg-warn-bg text-accent', dot: 'bg-accent' },
+  attention: { badge: 'border-accent/40 bg-accent/10 text-accent', dot: 'bg-accent' },
   ready: { badge: 'border-income/40 bg-income/10 text-income', dot: 'bg-income' },
   unknown: { badge: 'border-line bg-surface text-muted', dot: 'bg-muted' },
 };

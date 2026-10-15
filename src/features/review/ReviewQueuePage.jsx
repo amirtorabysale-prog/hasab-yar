@@ -285,7 +285,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
           اگر چیزی لازم باشد و ندانَد، یک سؤال کوتاه می‌پرسد و تا جواب نیامده ثبت نمی‌کند.
         </p>
         <button disabled={busy} onClick={() => save({ engineV2: !policy.engineV2 })}
-          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-on-fill'} hover:bg-accent/90 active:bg-accent/80`}>
+          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-on-fill'}`}>
           {policy.engineV2 ? 'خاموش کن' : 'روشن کن'}
         </button>
 

@@ -117,7 +117,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
   const finish = () => missingPaymentDate(item) ? undefined : index < items.length - 1 ? setIndex(index + 1) : onConfirm(confirmedItems());
   const statusCards = [
     ['ready', 'آماده ارسال', summary.ready, 'border-income/30 bg-income/5 text-income'],
-    ['review', 'نیازمند بررسی', summary.review, 'border-accent/35 bg-warn-bg text-accent'],
+    ['review', 'نیازمند بررسی', summary.review, 'border-accent/35 bg-accent/10 text-accent'],
     ['unintelligible', 'نامفهوم', summary.unintelligible, 'border-expense/30 bg-expense/5 text-expense'],
   ];
   const quickConfirm = summary.ready === summary.total && summary.total > 0 && !detailsOpen && !items.some(missingPaymentDate);
@@ -134,7 +134,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
           const funder = detectPartnerFundedSpend(result.transcript);
           if (!funder) return null;
           const who = funder.name || funder.role || (funder.kind === 'employee' ? 'کارمند' : 'شریک');
-          return <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">
+          return <p className="mt-2 rounded-lg bg-accent/5 px-3 py-2 text-[12px] leading-6 text-accent">
             این پرداخت از پول شخصی {who} است: از صندوق و بانک کم نمی‌شود و شرکت همین مبلغ را به او بدهکار می‌شود
             ({funder.kind === 'employee' ? 'پرداختنی کارمند' : 'جاری شریک'}). حساب پرداخت در این کارت نادیده گرفته می‌شود.
           </p>;
@@ -145,7 +145,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
                 تأیید چیزی که کاربر ندیده — و اگر حساب یا روز اشتباه باشد، بعداً
                 فقط در تراز پیدا می‌شود. */}
               <p className="mt-1 text-xs text-muted">{entry.category} · {accounts.find((account) => account.id === entry.accountId)?.name || 'حساب پیش‌فرض'}{entry.occurredAtLabel ? ` · ${entry.occurredAtLabel}` : ''}</p></div><span className="rounded-full bg-income/10 px-2 py-1 text-xs font-bold text-income">آماده ارسال</span></div>)}</div><button onClick={() => onConfirm(confirmedItems())} className="tap mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 font-extrabold text-on-fill hover:bg-accent/90 active:bg-accent/80"><Check size={19} />تأیید سریع همه</button><button onClick={() => setDetailsOpen(true)} className="tap mt-2 w-full text-sm font-bold text-muted">دیدن جزئیات و دلیل تصمیم</button></div> : <>
-        <div className={`mt-4 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-bold ${assessment.state === 'ready' ? 'border-income/30 bg-income/5 text-income' : assessment.state === 'review' ? 'border-accent/40 bg-warn-bg text-accent' : 'border-expense/30 bg-expense/5 text-expense'}`}><span>{assessment.state === 'ready' ? 'آماده ارسال' : assessment.state === 'review' ? 'این مورد را بررسی کن' : 'این مورد نامفهوم است'}</span><span className="numbers">اطمینان {toPersianDigits(assessment.percent)}٪</span></div>
+        <div className={`mt-4 flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-bold ${assessment.state === 'ready' ? 'border-income/30 bg-income/5 text-income' : assessment.state === 'review' ? 'border-accent/40 bg-accent/10 text-accent' : 'border-expense/30 bg-expense/5 text-expense'}`}><span>{assessment.state === 'ready' ? 'آماده ارسال' : assessment.state === 'review' ? 'این مورد را بررسی کن' : 'این مورد نامفهوم است'}</span><span className="numbers">اطمینان {toPersianDigits(assessment.percent)}٪</span></div>
         <button onClick={() => setEditAmount(true)} className="my-4 w-full rounded-xl border border-transparent py-3 text-center hover:border-line">
           {editAmount ? (
             <input autoFocus inputMode="numeric" value={item.amount} onChange={(event) => patchField('amount', { amount: Number(event.target.value.replace(/\D/g, '')) })} onBlur={() => setEditAmount(false)} onKeyDown={(event) => { if (event.key === 'Enter') setEditAmount(false); }} className="numbers mx-auto block w-full bg-transparent text-center text-4xl font-extrabold tracking-[-.02em] outline-none" />
@@ -156,7 +156,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
         {previewReady && <RecognitionNote recognition={preflight.previews[index]?.recognition} servicePeriod={preflight.previews[index]?.servicePeriod} decided={preflight.previews[index]?.decisionStatus === 'decided'} />}
 
         <div className="space-y-2">
-          <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-on-fill' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-on-fill' : 'border-line bg-surface'} hover:bg-expense/90`}>هزینه</button></div></div>
+          <div className="flex min-h-14 items-center gap-3 border-t border-line py-2"><span className="w-12 text-[13px] text-muted">نوع</span><div className="grid flex-1 grid-cols-2 gap-2"><button onClick={() => patchFields(['type', 'category'], { type: 'income', category: categories.find((x) => x.type === 'income')?.name || 'فروش' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'income' ? 'border-income bg-income text-on-fill' : 'border-line bg-surface'}`}>درآمد</button><button onClick={() => patchFields(['type', 'category'], { type: 'expense', category: categories.find((x) => x.type === 'expense')?.name || 'سایر هزینه‌ها' })} className={`tap rounded-lg border text-sm font-bold ${item.type === 'expense' ? 'border-expense bg-expense text-on-fill' : 'border-line bg-surface'}`}>هزینه</button></div></div>
           {/* طرف حساب، مهم‌ترین تصمیم این برگه است: تعیین می‌کند این پول به
               کارت حساب چه کسی می‌نشیند. پس پرسیده می‌شود، نه حدس زده. */}
           {settlement && <div className={`mt-2 rounded-lg border px-3 py-3 ${choice.link ? 'border-accent/50 bg-warn-bg' : 'border-line bg-surface'}`}>
@@ -164,7 +164,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
               <p className="text-[13px] font-extrabold text-ink">طرف حساب: {settlement.name}</p>
               <button
                 onClick={() => setChoice({ link: !choice.link, settlement: 'none' })}
-                className={`tap shrink-0 rounded-lg border px-2 text-xs font-bold ${choice.link ? 'border-line bg-paper text-muted' : 'border-accent bg-accent text-on-fill'} hover:bg-accent/90 active:bg-accent/80`}
+                className={`tap shrink-0 rounded-lg border px-2 text-xs font-bold ${choice.link ? 'border-line bg-paper text-muted' : 'border-accent bg-accent text-on-fill'}`}
               >{choice.link ? 'بدون طرف حساب' : 'وصل کن'}</button>
             </div>
 
@@ -193,7 +193,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
                   {settlement.direction === 'payable' ? 'بابت بدهی او' : 'بابت طلب او'}
                 </button>
                 <button onClick={() => setChoice({ settlement: 'none' })}
-                  className={`tap rounded-lg border py-1.5 ${choice.settlement === 'none' ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper text-muted'} hover:bg-accent/90 active:bg-accent/80`}>
+                  className={`tap rounded-lg border py-1.5 ${choice.settlement === 'none' ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper text-muted'}`}>
                   {item.type === 'expense' ? 'هزینهٔ عادی' : 'درآمد عادی'}
                 </button>
               </div>}
@@ -234,7 +234,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
             <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>
             <PersianDateInput value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
           </label>}
-          {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-warn-bg px-2 py-1 text-xs font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
+          {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-accent/5 px-2 py-1 text-xs font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
         </div>
 
         <ConfidencePanel assessment={assessment} />

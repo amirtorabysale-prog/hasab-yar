@@ -55,7 +55,7 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
       <button type="button" onClick={download} className="tap flex items-center gap-2 rounded-lg border border-line bg-paper px-3 text-[13px] font-bold hover:bg-paper hover:text-ink"><Download size={16} />الگوی خالی اکسل</button>
     </div>
     <div className="mt-3 flex flex-wrap gap-1.5 text-[13px] font-bold">
-      {IMPORT_KINDS.map((item) => <button key={item.id} type="button" onClick={() => { setKind(item.id); setIssues([]); setResult(null); }} className={`tap rounded-lg border px-3 ${kind === item.id ? 'border-accent bg-warn-bg text-accent' : 'border-line bg-paper text-muted'} hover:bg-paper hover:text-ink`}>{item.label}</button>)}
+      {IMPORT_KINDS.map((item) => <button key={item.id} type="button" onClick={() => { setKind(item.id); setIssues([]); setResult(null); }} className={`tap rounded-lg border px-3 ${kind === item.id ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-paper text-muted'} hover:bg-paper hover:text-ink`}>{item.label}</button>)}
     </div>
     <form onSubmit={submit} className="mt-3 space-y-3">
       <p className="text-[12px] text-muted">{active.hint}</p>

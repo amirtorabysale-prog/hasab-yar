@@ -254,7 +254,7 @@ export function AccountCardsPanel({ accounts = [], contacts = [], notify, refres
       <div className="flex gap-2">
         {SECTIONS.map(([id, label, Icon]) => (
           <button key={id} onClick={() => setSection(id)}
-            className={`tap flex flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[12px] font-bold ${section === id ? 'bg-ink text-on-fill' : 'border border-line bg-surface text-muted'} hover:bg-ink/90`}>
+            className={`tap flex flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[12px] font-bold ${section === id ? 'border border-accent/30 bg-accent/10 text-accent' : 'border border-line bg-surface text-muted hover:bg-paper hover:text-ink'}`}>
             <Icon size={15} /> {label}
           </button>
         ))}

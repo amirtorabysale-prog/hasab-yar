@@ -29,7 +29,7 @@ export default function CounterpartyMatchSheet() {
     <section role="dialog" aria-modal="true" aria-label="تأیید طرف حساب"
       className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
-      <span className="rounded-full bg-warn-bg px-2 py-1 text-xs font-extrabold text-accent">طرف حساب مشابه</span>
+      <span className="rounded-full bg-accent/5 px-2 py-1 text-xs font-extrabold text-accent">طرف حساب مشابه</span>
       <h2 className="mt-3 text-xl font-extrabold">این همان طرف حساب است؟</h2>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <div className="rounded-xl border border-line bg-surface p-3">

@@ -97,7 +97,7 @@ export function AccountingPage({ access, notify, initialSection = '', onSectionC
 
 const APPROVAL_STYLE = {
   draft: 'border-line bg-surface text-muted',
-  submitted: 'border-accent/40 bg-warn-bg text-accent',
+  submitted: 'border-accent/40 bg-accent/10 text-accent',
   returned: 'border-expense/40 bg-expense/10 text-expense',
   approved: 'border-income/40 bg-income/10 text-income',
 };

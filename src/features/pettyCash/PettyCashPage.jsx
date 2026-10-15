@@ -101,7 +101,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
           {sources.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
         </select>
       </label>
-      <p className="rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-accent">به اندازهٔ سقف از این حساب به تنخواه منتقل می‌شود. بعد از هر بار خرج، با «شارژ» دوباره به سقف می‌رسد.</p>
+      <p className="rounded-lg bg-accent/5 px-3 py-2 text-xs leading-6 text-accent">به اندازهٔ سقف از این حساب به تنخواه منتقل می‌شود. بعد از هر بار خرج، با «شارژ» دوباره به سقف می‌رسد.</p>
       <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال ثبت…' : 'پرداخت تنخواه'}</button>
     </form>}
 
@@ -137,7 +137,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
             پیشنهاد همان مبلغ خرج‌شده است ({formatAmount(action.fund.spent)} تومان) تا تنخواه دوباره به سقفش برسد.
           </span>}
         </label>}
-        {action.kind === 'close' && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">
+        {action.kind === 'close' && <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-[12px] leading-6 text-accent">
           {action.fund.balance > 0 ? `باقی‌ماندهٔ ${formatAmount(action.fund.balance)} تومان به حسابی که انتخاب کنی برمی‌گردد.`
             : action.fund.balance < 0 ? `${action.fund.holderName} ${formatAmount(-action.fund.balance)} تومان بیش از تنخواه خرج کرده؛ همین مبلغ از حسابی که انتخاب کنی به او پرداخت می‌شود.`
               : 'تنخواه مانده‌ای ندارد و فقط بسته می‌شود.'}

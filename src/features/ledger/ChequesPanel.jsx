@@ -60,7 +60,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
       </div>
       <div className="flex gap-1.5 text-[12px] font-bold">
         {[['open', 'در جریان'], ['cleared', 'وصول‌شده'], ['bounced', 'برگشتی']].map(([id, label]) => (
-          <button key={id} onClick={() => setStatus(id)} className={`tap rounded-lg px-3 ${status === id ? 'bg-warn-bg text-accent' : 'text-muted hover:bg-surface'}`}>{label}</button>
+          <button key={id} onClick={() => setStatus(id)} className={`tap rounded-lg px-3 ${status === id ? 'bg-accent/10 text-accent' : 'text-muted hover:bg-surface'}`}>{label}</button>
         ))}
       </div>
     </div>

@@ -20,7 +20,7 @@ function WeekdayBars({ rows }) {
         <div className="h-full rounded-full bg-accent" style={{ width: `${item.percent ? Math.max(4, Math.round((item.percent / highest) * 100)) : 0}%` }} />
       </div>
       <span className="numbers w-9 shrink-0 text-left text-xs font-bold text-muted">{toPersianDigits(item.percent)}٪</span>
-      <span className="w-8 shrink-0">{item.day === peak.day && <span className="rounded-md bg-warn-bg px-1.5 py-0.5 text-xs font-bold text-accent">اوج</span>}</span>
+      <span className="w-8 shrink-0">{item.day === peak.day && <span className="rounded-md bg-accent/5 px-1.5 py-0.5 text-xs font-bold text-accent">اوج</span>}</span>
     </div>)}
   </div>;
 }
@@ -76,7 +76,7 @@ export function FinancialDnaPanel({ notify }) {
           <b className="mt-1 block text-[13px] leading-6">{value}</b>
         </div>)}
       </div>
-      <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">{brief.workloadNote}</p>
+      <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-[12px] leading-6 text-accent">{brief.workloadNote}</p>
       <div className="mt-3 flex flex-wrap gap-1.5">
         {brief.activeCategories.map((item) => <span key={item.category} className="rounded-md border border-line px-2 py-1 text-xs">
           {item.category} <span className="numbers text-muted">{toPersianDigits(item.count)}</span>

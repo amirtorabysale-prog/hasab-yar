@@ -60,12 +60,12 @@ export function OverdraftApprovalSheet({ prompt, canApprove, close }) {
           placeholder={copy.placeholder} className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px]" />
       </>}
       {queue && <>
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-accent">در این دفتر حسابدار یا مدیر دیگری هست؛ ثبت‌کننده کار خودش را تأیید نمی‌کند. درخواست با همین جزئیات برای او فرستاده می‌شود و پس از تأیید اجرا می‌شود.</p>
+        <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-[12px] leading-6 text-accent">در این دفتر حسابدار یا مدیر دیگری هست؛ ثبت‌کننده کار خودش را تأیید نمی‌کند. درخواست با همین جزئیات برای او فرستاده می‌شود و پس از تأیید اجرا می‌شود.</p>
         <label className="mt-3 block text-[12px] font-bold" htmlFor="overdraft-reason">توضیح برای حسابدار</label>
         <textarea id="overdraft-reason" value={reason} onChange={(event) => setReason(event.target.value)} rows={2}
           placeholder={copy.placeholder} className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px]" />
       </>}
-      {!inline && !queue && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] text-accent">این تأیید با حسابدار یا مدیر دفتر است؛ از او بخواه یا اول ثبت جاافتاده را بزن.</p>}
+      {!inline && !queue && <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-[12px] text-accent">این تأیید با حسابدار یا مدیر دفتر است؛ از او بخواه یا اول ثبت جاافتاده را بزن.</p>}
       <div className="mt-4 grid grid-cols-[2fr_1fr] gap-2">
         {inline && <button disabled={!ready} onClick={() => close(reason.trim())} className="tap rounded-lg bg-expense font-extrabold text-on-fill disabled:opacity-40 hover:bg-expense/90">تأیید حسابدار و ثبت</button>}
         {queue && <button onClick={() => close({ requestNote: reason.trim() })} className="tap rounded-lg bg-accent font-extrabold text-on-fill hover:bg-accent/90 active:bg-accent/80">ارسال برای تأیید حسابدار</button>}

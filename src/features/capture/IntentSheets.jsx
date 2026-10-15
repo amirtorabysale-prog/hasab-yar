@@ -96,7 +96,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             {pettySources.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
           </select>
         </label>
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">
+        <p className="mt-3 rounded-lg bg-accent/5 px-3 py-3 text-xs leading-6 text-accent">
           {pettyFund
             ? `تنخواه ${pettyFund.holderName} با سقف ${formatAmount(pettyFund.pettyCeiling)} تومان باز است؛ این مبلغ به آن اضافه می‌شود.`
             : 'برای این نفر تنخواه بازی نیست؛ تنخواه تازه با همین مبلغ به‌عنوان سقف ساخته می‌شود.'}
@@ -116,7 +116,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             onChange={(event) => setDraft({ ...draft, fee: Number(String(event.target.value).replace(/[^\d]/g, '')) || 0 })}
             className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left text-sm numbers" />
         </label>
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">{draft.fee > 0
+        <p className="mt-3 rounded-lg bg-accent/5 px-3 py-3 text-xs leading-6 text-accent">{draft.fee > 0
           ? `مبلغ انتقال فقط ماندهٔ دو حساب را جابه‌جا می‌کند؛ کارمزد ${Number(draft.fee).toLocaleString('fa-IR')} تومان هزینهٔ کارمزد بانکیِ حساب مبدأ ثبت می‌شود.`
           : 'فقط ماندهٔ مبدأ و مقصد جابه‌جا می‌شود؛ این انتقال درآمد یا هزینه نیست.'}</p>
       </> : isEquityMove ? <>
@@ -140,7 +140,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
           </div>
         </div>
 
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">
+        <p className="mt-3 rounded-lg bg-accent/5 px-3 py-3 text-xs leading-6 text-accent">
           {isCapital
             ? 'آورده درآمد نیست: در جمع درآمد و سود ماه نمی‌آید و بستانکار حساب سرمایه می‌شود. مانده و کنترل پایان روزِ همان حساب، این پول را می‌بیند.'
             : 'دارایی ثابت هزینهٔ این ماه نیست: به بهای تمام‌شده در دارایی‌ها می‌نشیند و از جمع هزینهٔ دوره بیرون می‌ماند. استهلاک در این نسخه محاسبه نمی‌شود.'}
@@ -218,7 +218,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
           <span>همین حالا صادر شود {draft.occurredAt ? <>با تاریخ <b>{persianDate(draft.occurredAt)}</b></> : '(با تاریخ امروز)'}</span>
         </label>
 
-        <p className="mt-3 rounded-lg bg-warn-bg px-3 py-3 text-xs leading-6 text-accent">
+        <p className="mt-3 rounded-lg bg-accent/5 px-3 py-3 text-xs leading-6 text-accent">
           {draft.issueNow
             ? 'سند صادر می‌شود: در دفتر کل سند می‌خورد، در گزارش مالیاتی می‌آید و در جمع طلب و بدهی می‌نشیند. پس از صدور، اصلاحش سند برگشتی می‌خواهد.'
             : 'سند به‌صورت پیش‌نویس می‌ماند: نه در دفتر کل سند می‌خورد، نه در گزارش مالیاتی می‌آید و نه در جمع طلب و بدهی. هر وقت خواستی از برگهٔ «فاکتورها» صادرش کن.'}
@@ -250,7 +250,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
                   className={`tap rounded-lg border px-3 py-2 text-xs font-bold ${draft.against === value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface text-muted'}`}>{text}</button>
               ))}
             </div>
-            <p className="mt-2 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-accent">
+            <p className="mt-2 rounded-lg bg-accent/5 px-3 py-2 text-xs leading-6 text-accent">
               {draft.against === 'receivable'
                 ? 'بابت حساب قبلی است، پس درآمد یا هزینهٔ تازه‌ای شناسایی نمی‌شود؛ فقط شکل طلب یا بدهی به چک عوض می‌شود.'
                 : draft.against === 'income' && draft.vatMentioned
@@ -343,18 +343,18 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
         </p>}
       </div>}
 
-      {draft.bounced ? <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+      {draft.bounced ? <p className="mt-4 rounded-lg bg-accent/5 px-3 py-3 text-[12px] leading-6 text-accent">
         برگشت چک، تسویه نیست: چک از اسناد دریافتنی یا پرداختنی برمی‌گردد و طلب یا بدهی دوباره باز می‌شود.
         حساب‌یار خودش سندی نمی‌زند؛ گفته را به صف حسابدار بفرست تا چک مربوط را پیدا و ثبت کند.
       </p> : <>
         {loadingInvoices && <p className="mt-4 text-sm text-muted">در حال خواندن سندهای باز…</p>}
 
-        {!loadingInvoices && !targets.length && byPartner && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+        {!loadingInvoices && !targets.length && byPartner && <p className="mt-4 rounded-lg bg-accent/5 px-3 py-3 text-[12px] leading-6 text-accent">
           {intoPartner ? 'طلب' : 'بدهی'}{draft.contactName ? ` ${intoPartner ? 'از' : 'به'} «${draft.contactName}»` : ''}{draft.amount ? ` به این مبلغ` : ''} نه در «طلب و بدهی» و فاکتورها
           پیدا شد، نه در ماندهٔ کارت حساب او در دفتر کل. نام طرف حساب را در کارت حسابش چک کن؛ اگر ثبت نشده،
           اول آن را ثبت کن و همین جمله را دوباره بگو، یا گفته را به صف حسابدار بفرست. صندوق و بانک دست نمی‌خورند.
         </p>}
-        {!loadingInvoices && !targets.length && !byPartner && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+        {!loadingInvoices && !targets.length && !byPartner && <p className="mt-4 rounded-lg bg-accent/5 px-3 py-3 text-[12px] leading-6 text-accent">
           سند بازی که با این توضیح بخورد پیدا نشد. شاید نام یا مبلغ فرق دارد، یا سند هنوز صادر نشده است
           — پیش‌نویس تسویه نمی‌شود. تعهدهای قدیمیِ بدون سند اولیه هم تا بررسی حسابدار قابل تسویه نیستند؛ وضعیتشان در «طلب و بدهی» نمایش داده می‌شود.
         </p>}
@@ -381,7 +381,7 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
           ))}
         </div>
 
-        {selected && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs text-accent">مبلغ این تسویه: <b className="numbers">{formatAmount(selected.paymentAmount)}</b> تومان از ماندهٔ <b className="numbers">{formatAmount(selected.amount)}</b> تومان.</p>}
+        {selected && <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-xs text-accent">مبلغ این تسویه: <b className="numbers">{formatAmount(selected.paymentAmount)}</b> تومان از ماندهٔ <b className="numbers">{formatAmount(selected.amount)}</b> تومان.</p>}
         {draft.occurredAt && <p className="mt-3 text-xs text-muted">تاریخ تسویه: <b className="text-ink">{persianDate(draft.occurredAt)}</b></p>}
       </>}
 

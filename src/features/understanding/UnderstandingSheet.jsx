@@ -124,7 +124,7 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
           <p className="text-xs font-bold text-muted">آن‌چه ثبت نمی‌شود</p>
           <ul className="mt-2 space-y-1 text-[12px] leading-6 text-muted">{plan.notes.map((note, index) => <li key={index}>• {note.text}</li>)}</ul>
         </div>}
-        {draft.status === 'needs-accountant' && <div className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+        {draft.status === 'needs-accountant' && <div className="mt-4 rounded-lg bg-accent/5 px-3 py-3 text-[12px] leading-6 text-accent">
           <b>این مورد قضاوت حسابدار می‌خواهد:</b>
           <ul className="mt-1">{plan.reasons.map((reason, index) => <li key={index}>• {reason}</li>)}</ul>
         </div>}
@@ -219,7 +219,7 @@ export function UnderstandingPolicyBox({ policy, busy, save }) {
     </p>
     <div className="mt-2 grid grid-cols-3 gap-2">
       {modes.map(([mode, label]) => <button key={mode} disabled={busy} onClick={() => save({ understandingMode: mode })}
-        className={`tap rounded-lg border px-2 text-[12px] font-bold ${policy.understandingMode === mode ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper'} hover:bg-accent/90 active:bg-accent/80`}>{label}</button>)}
+        className={`tap rounded-lg border px-2 text-[12px] font-bold ${policy.understandingMode === mode ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper'}`}>{label}</button>)}
     </div>
     <p className="mt-1 text-xs leading-5 text-muted">{modes.find(([mode]) => mode === policy.understandingMode)?.[2]}</p>
     {policy.understandingMode !== 'off' && <label className="mt-2 flex items-center gap-2 text-[12px]">

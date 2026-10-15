@@ -50,7 +50,7 @@ export function JournalEntrySheet({ line, close }) {
         <button onClick={close} aria-label="بستن" className="tap grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line hover:bg-paper hover:text-ink"><X size={17} /></button>
       </div>
 
-      {!entryId && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">
+      {!entryId && <p className="mt-4 rounded-lg bg-accent/5 px-3 py-3 text-[12px] leading-6 text-accent">
         این ردیف هنوز سند قطعی در دفتر کل ندارد؛ یا منتظر تأیید است یا در صف حسابدار. وقتی تأیید شود، از همین‌جا سندش باز می‌شود.
       </p>}
       {error && <p role="alert" className="mt-4 rounded-lg border border-expense px-3 py-3 text-[12px] text-expense">{error}</p>}
