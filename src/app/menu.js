@@ -26,6 +26,7 @@ export const MENU = Object.freeze([
     id: 'cash', label: 'دریافت و پرداخت', icon: 'wallet', items: [
       { label: 'تراکنش‌ها', screen: 'ledger', section: 'transactions', ledgerTab: 'transactions', keywords: 'دریافت پرداخت ثبت ها جستجو اصلاح حذف' },
       { label: 'طلب، بدهی و چک', screen: 'ledger', section: 'obligations', ledgerTab: 'obligations', keywords: 'چک اسناد دریافتنی پرداختنی سررسید قسط اشخاص' },
+      { label: 'پیش‌پرداخت و پیش‌دریافت', screen: 'ledger', section: 'timing', ledgerTab: 'timing', keywords: 'پیش پرداخت پیش دریافت درآمد انتقالی بیمه اجاره اشتراک قسط ماهانه شناسایی' },
       { label: 'تنخواه‌گردان', screen: 'petty-cash', keywords: 'تنخواه شارژ دارنده' },
       { label: 'ثبت‌های دوره‌ای', screen: 'ledger', section: 'recurring', ledgerTab: 'recurring', keywords: 'تکرار ماهانه اجاره قسط' },
       { label: 'رسید، بستن صندوق و پرسش از دفتر', screen: 'ledger', section: 'tools', ledgerTab: 'tools', keywords: 'رسید عکس بستن صندوق شمارش ابزار سوال' },
@@ -93,7 +94,7 @@ export const MENU = Object.freeze([
 
 /** زبانه‌های دفتر مالی که برگ‌های منو به آن‌ها می‌روند. */
 export const LEDGER_SECTIONS = Object.freeze({
-  transactions: 'transactions', obligations: 'obligations', invoices: 'invoices', reconciliation: 'reconciliation',
+  transactions: 'transactions', obligations: 'obligations', timing: 'timing', invoices: 'invoices', reconciliation: 'reconciliation',
   recurring: 'recurring', inventory: 'inventory', tools: 'tools', counterparties: 'counterparties',
   'cards-banks': 'counterparties', 'cards-cash': 'counterparties', 'cards-people': 'counterparties',
 });

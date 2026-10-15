@@ -11,7 +11,7 @@ import { attachReviewedCheque } from './cheques.js';
 import { assertEventChangeAllowed, retireDocumentBehindEvent } from './documentEvents.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
 import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
-import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listReviewQueue, releaseHeldRecognition, reviewedTimingCategory, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
+import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listRecognitionNotices, listReviewQueue, listTimingContracts, markRecognitionNoticeSeen, releaseHeldRecognition, reviewedTimingCategory, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
 import { saveFixedAssetSettings } from '../depreciationLedger.js';
@@ -68,7 +68,9 @@ export function reviewQueue(options = {}) {
   // ماندهٔ پیش‌پرداخت یا درآمد انتقالی بی‌برنامه (افتتاحیه، سند دستی، سند اصلاحی):
   // سؤال دوره برای حسابدار، نه دارایی یا بدهی ابدی.
   const unscheduledBalances=unscheduledTimingBalances(database);
-  return {items,blockedRecognition,heldRecognition,unscheduledBalances,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
+  // خبرِ اقلامی که خودکار ثبت شد و حسابدار هنوز ندیده (بخش پیش‌پرداخت و پیش‌دریافت).
+  const recognitionNotices=listRecognitionNotices(database,{unseenOnly:true});
+  return {items,blockedRecognition,heldRecognition,unscheduledBalances,recognitionNotices,dnaSummary:{accepted:counts.find(c=>c.state==='accepted')?.count || 0,rejected:counts.find(c=>c.state==='rejected')?.count || 0,messages:database.prepare("SELECT COUNT(*) count FROM accounting_review_messages WHERE speaker='accountant'").get().count}};
 }
 
 function actorName(id) {return id ? controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id)?.display_name || controlDb.prepare('SELECT username FROM users WHERE id=?').get(id)?.username || id : null;}
@@ -404,6 +406,38 @@ export function runRecognition() {
   // بداند چیزی بیرون از برنامه مانده است.
   const unscheduled = unscheduledTimingBalances(database).length;
   return unscheduled ? { ...result, unscheduled } : result;
+}
+
+/**
+ * بخش «پیش‌پرداخت و پیش‌دریافت»: همهٔ قراردادهای دوره‌دار، خبرهای ماهانهٔ شناسایی و
+ * آنچه به اقدام حسابدار نیاز دارد (قلم دورهٔ بسته، قلم نگه‌داشته، ماندهٔ بی‌برنامه).
+ */
+export function timingContracts() {
+  const database = activeWorkspaceDatabase();
+  const items = listTimingContracts(database);
+  const live = items.filter((item) => !['cancelled'].includes(item.state));
+  const sum = (kind, field) => live.filter((item) => item.kind === kind).reduce((total, item) => total + item[field], 0);
+  return {
+    items,
+    summary: {
+      prepaidRemaining: sum('prepaid', 'remaining'), deferredRemaining: sum('deferred', 'remaining'),
+      prepaidActive: live.filter((item) => item.kind === 'prepaid' && item.remaining > 0).length,
+      deferredActive: live.filter((item) => item.kind === 'deferred' && item.remaining > 0).length,
+    },
+    notices: listRecognitionNotices(database),
+    attention: {
+      blocked: listBlockedRecognition(database, { timeZone: currentTimeZone() }),
+      held: listHeldRecognition(database),
+      unscheduled: unscheduledTimingBalances(database),
+    },
+  };
+}
+
+/** حسابدار خبرِ یک ماه را دید. */
+export function seeRecognitionNotice(periodKey) {
+  const item = markRecognitionNoticeSeen(activeWorkspaceDatabase(), periodKey, { actor: currentWorkspace()?.userId || null });
+  audit('recognition-notice-seen', 'recognition-notice', String(periodKey), { postedItems: item?.postedItems });
+  return { item };
 }
 
 /** قلم نگه‌داشته‌ای که ماندهٔ قراردادش بیرون از برنامه برگشته، با دلیل کنار می‌رود. */

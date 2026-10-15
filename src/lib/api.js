@@ -398,6 +398,8 @@ export const api = {
   // شناسایی ماهانهٔ پیش‌پرداخت و درآمد انتقالی: اجرای اقلام سررسیدرسیده، اقلامی
   // که دورهٔ بسته جلویشان را گرفته، و ثبت جبرانیِ تأییدشدهٔ حسابدار.
   runRecognition: () => request('/api/financial-events/run-recognition', { method: 'POST', body: '{}' }),
+  timingContracts: () => request('/api/timing-contracts'),
+  seeRecognitionNotice: (periodKey) => request(`/api/timing-contracts/notices/${encodeURIComponent(periodKey)}/seen`, { method: 'POST', body: '{}' }),
   blockedRecognition: () => request('/api/financial-events/blocked-recognition'),
   catchUpRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/catch-up`, { method: 'POST', body: JSON.stringify({ reason }) }),
   releaseHeldRecognition: (key, reason) => request(`/api/financial-events/recognition-items/${encodeURIComponent(key)}/release`, { method: 'POST', body: JSON.stringify({ reason }) }),

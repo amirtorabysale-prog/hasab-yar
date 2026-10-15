@@ -12,7 +12,7 @@ import {
   correctLatestTransaction, counterpartyCard, moneyAccountCard, findPotentialDuplicates, getToday, getTransaction, previewTransactions, insertTransactions, queueCompositeUtterance, issueInvoice, latestTransaction, listAccounts, listContacts, listDailyClosings, listInvoices, listObligations, listProducts, listUserSessions, listUserWorkspaces, listWorkspaceMembers, setExperiencePreference, archiveWorkspace, listArchivedWorkspaces, renameWorkspace, restoreArchivedWorkspace, previewDayClosing,
   importBankStatement, ignoreReconciliationLine, listAutomationRules, listCollaborationRequests, listReceipts, listReconciliationImports, listRecurringRules, listTaxRates, listTransactions, loginThrottle, markInvoicePaid, matchReconciliationLine, materializeRecurringRules, monthlyAccountantPackage, pilotPortfolio, pilotWorkspaceDashboard, receiptCandidates, dnaProfiles, receiptImage, recordCapitalEntry, recordInvoicePayment, recordLoginFailure, recordRealtimeProviderDuration, recordVoiceMetric,
   applyChartSuggestions, chartOverview, fixedAssetOverview, saveFixedAsset, postDepreciation,
-  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry, releaseHeldItem,
+  submitFinancialEvent, reviewQueue, reviewAssistantHistory, reviewAssistantForJournal, analyzeReviewEvent, recordReviewPriorBasis, reviewAiFeedback, recordReviewedComposite, approveEvent, reverseEvent, rejectEvent, eventAudit, answerEvent, eventDecision, runRecognition, timingContracts, seeRecognitionNotice, blockedRecognition, catchUpRecognition, unscheduledBalances, scheduleBalance, unscheduledBalancesForEntry, releaseHeldItem,
   pendingConfirmations, confirmPending, handOverPending, answerPending, automationPolicy, saveAutomationPolicy, setUnderstandingForAll, dimensionReport, firmPortfolio, importChart, installChartTemplate,
   importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, transferFieldCatalog,
   importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun,
@@ -744,6 +744,13 @@ app.post('/api/financial-events/run-recognition', (_request, response, next) => 
   try { return response.json(runRecognition()); } catch (error) { return next(error); }
 });
 // اقلام شناسایی‌ای که دورهٔ بسته جلویشان را گرفته، و ثبت جبرانیِ تأییدشدهٔ حسابدار.
+// بخش «پیش‌پرداخت و پیش‌دریافت» — بیرون از /financial-events تا مالک در محیط ساده هم ببیند.
+app.get('/api/timing-contracts', (_request, response, next) => {
+  try { return response.json(timingContracts()); } catch (error) { return next(error); }
+});
+app.post('/api/timing-contracts/notices/:periodKey/seen', (request, response, next) => {
+  try { return response.json(seeRecognitionNotice(request.params.periodKey)); } catch (error) { return next(error); }
+});
 app.get('/api/financial-events/blocked-recognition', (_request, response, next) => {
   try { return response.json(blockedRecognition()); } catch (error) { return next(error); }
 });

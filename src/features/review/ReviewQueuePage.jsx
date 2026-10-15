@@ -8,6 +8,7 @@ import { ROUTE_LABELS } from '../../../shared/confidenceEngine.js';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
+import { periodKeyLabel } from '../../components/RecognitionNote.jsx';
 
 const ROUTE_STYLE = {
   'accountant-review': 'border-expense/40 bg-expense/5 text-expense',
@@ -365,13 +366,42 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
   </article>;
 }
 
+/**
+ * خبرِ اقلام پیش‌پرداخت و پیش‌دریافت که سرور سر موعد خودکار ثبت کرد.
+ *
+ * مالک محصول خواست حسابدار «خبر» بگیرد، نه اینکه هر قسط را تأیید کند (۲۳ مهر ۱۴۰۵).
+ * فقط خبرِ دیده‌نشده این‌جا می‌آید؛ تاریخچه و جزئیات هر قرارداد در بخش «پیش‌پرداخت و
+ * پیش‌دریافت» دفتر مالی است.
+ */
+function RecognitionNotices({ notices, navigate, notify, onSeen }) {
+  if (!notices.length) return null;
+  const seen = async (periodKey) => {
+    try { await api.seeRecognitionNotice(periodKey); await onSeen(); } catch (error) { notify(error.message); }
+  };
+  return <div className="mt-3 space-y-2 rounded-lg border border-accent/40 bg-accent/5 p-3 text-xs leading-6">
+    <p className="font-extrabold text-accent">قسط‌های ماهانهٔ پیش‌پرداخت و پیش‌دریافت خودکار ثبت شد</p>
+    {notices.map((notice) => <div key={notice.periodKey} className="flex flex-wrap items-center justify-between gap-2">
+      <span>
+        <b>{periodKeyLabel(notice.periodKey)}</b>: <span className="numbers">{toPersianDigits(notice.postedItems)}</span> قسط
+        {notice.expenseAmount > 0 && <> · هزینه <span className="numbers">{formatAmount(notice.expenseAmount)}</span></>}
+        {notice.incomeAmount > 0 && <> · درآمد <span className="numbers">{formatAmount(notice.incomeAmount)}</span></>} تومان
+      </span>
+      <span className="flex gap-2">
+        <button onClick={() => navigate?.('ledger', 'timing')} className="tap rounded-lg border border-line bg-surface px-3 font-bold">جزئیات</button>
+        <button onClick={() => seen(notice.periodKey)} className="tap rounded-lg border border-accent px-3 font-bold text-accent">دیدم</button>
+      </span>
+    </div>)}
+  </div>;
+}
+
 export function ReviewQueuePage({ notify, access, navigate, refresh }) {
   const [items, setItems] = useState(null);
   const [dnaSummary,setDnaSummary] = useState(null);
+  const [notices, setNotices] = useState([]);
   const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
-    try { const result=await api.reviewQueue();setItems(result.items);setDnaSummary(result.dnaSummary);await refresh?.(); }
+    try { const result=await api.reviewQueue();setItems(result.items);setDnaSummary(result.dnaSummary);setNotices(result.recognitionNotices || []);await refresh?.(); }
     catch (error) { notify(error.message); setItems([]); }
   }, [notify,refresh]);
 
@@ -422,6 +452,8 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
     {dnaSummary && <p className="mt-3 rounded border border-accent/30 bg-accent/5 p-3 text-xs leading-6"><b>DNA حسابداری همین شرکت</b> · {toPersianDigits(dnaSummary.accepted)} پیشنهاد تأییدشده · {toPersianDigits(dnaSummary.rejected)} اصلاح با دلیل · {toPersianDigits(dnaSummary.messages)} پیام حسابدار. تصمیم‌های شما در پیشنهادهای مرتبط بعدی استفاده می‌شوند.</p>}
 
     <div id="automation-policy" className="scroll-mt-4"><AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} /></div>
+
+    <RecognitionNotices notices={notices} navigate={navigate} notify={notify} onSeen={load} />
 
     <UnidentifiedFundsPanel notify={notify} />
 

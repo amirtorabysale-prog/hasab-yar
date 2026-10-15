@@ -1991,6 +1991,7 @@ export function postDueRecognitionItems(database, { today = null, actor = null, 
         event, decision, occurredAt: postAt, actor, timeZone,
         detail: item.status === SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD ? { resumedAfterReopen: true } : {},
       });
+      noteRecognitionPosted(database, { item, event, decision });
       database.exec('COMMIT');
       summary.posted += 1;
     } catch (error) {
@@ -2030,6 +2031,125 @@ export function releaseHeldRecognition(database, key, { reason = '', actor = nul
   database.prepare("UPDATE recognition_schedule_items SET status='superseded' WHERE key=? AND status='planned'").run(held.key);
   writeAudit(database, held.eventId, 'recognition-released', { key: held.key, periodKey: held.periodKey, amount: held.amount, reason: explanation }, actor);
   return held;
+}
+
+/**
+ * خبرِ ماهانهٔ شناسایی برای حسابدار.
+ *
+ * اقلام پیش‌پرداخت و درآمد انتقالی هر ماه خودکار سند می‌خورند (کار دقیقه‌ای سرور).
+ * مالک محصول خواست حسابدار «خبر» بگیرد، نه اینکه هر قلم را تأیید کند (۲۳ مهر ۱۴۰۵):
+ * تأییدِ تک‌تکِ اقلام صف را هر ماه با ده‌ها قلم تکراری پر می‌کرد. پس هر قلمی که
+ * ثبت می‌شود به خبرِ همان ماه اضافه می‌شود — یک سطر برای هر ماه، با جمع هزینه و
+ * درآمد و فهرست قراردادها — و خبرِ دیده‌شده با قلم تازه دوباره «دیده‌نشده» می‌شود.
+ * در همان تراکنشِ سند نوشته می‌شود: سندی بی‌خبر یا خبری بی‌سند نمی‌ماند.
+ */
+function ensureRecognitionNoticeSchema(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS recognition_notices (
+    period_key TEXT PRIMARY KEY,
+    posted_items INTEGER NOT NULL DEFAULT 0,
+    expense_amount INTEGER NOT NULL DEFAULT 0,
+    income_amount INTEGER NOT NULL DEFAULT 0,
+    contracts TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    seen_at TEXT,
+    seen_by TEXT
+  )`);
+}
+
+const timingKindOf = (decision) => (decision?.treatment === 'deferred-revenue' ? 'deferred' : 'prepaid');
+const contractTitle = (event) => [event.category, event.counterparty].filter(Boolean).join(' — ') || 'قرارداد دوره‌دار';
+
+function noteRecognitionPosted(database, { item, event, decision }) {
+  ensureRecognitionNoticeSchema(database);
+  const kind = timingKindOf(decision);
+  const row = database.prepare('SELECT contracts FROM recognition_notices WHERE period_key=?').get(item.periodKey);
+  const contracts = row ? JSON.parse(row.contracts) : [];
+  const existing = contracts.find((entry) => entry.eventId === item.eventId);
+  if (existing) existing.amount += item.amount;
+  else contracts.push({ eventId: item.eventId, title: contractTitle(event), kind, amount: item.amount });
+  const now = new Date().toISOString();
+  database.prepare(`INSERT INTO recognition_notices (period_key,posted_items,expense_amount,income_amount,contracts,updated_at,seen_at,seen_by)
+    VALUES (?,1,?,?,?,?,NULL,NULL)
+    ON CONFLICT(period_key) DO UPDATE SET posted_items=posted_items+1,expense_amount=expense_amount+excluded.expense_amount,
+      income_amount=income_amount+excluded.income_amount,contracts=excluded.contracts,updated_at=excluded.updated_at,seen_at=NULL,seen_by=NULL`)
+    .run(item.periodKey, kind === 'prepaid' ? item.amount : 0, kind === 'deferred' ? item.amount : 0, JSON.stringify(contracts), now);
+}
+
+/** خبرهای ماهانه، تازه‌ترین اول. `unseenOnly` برای صف حسابدار. */
+export function listRecognitionNotices(database, { unseenOnly = false, limit = 12 } = {}) {
+  ensureRecognitionNoticeSchema(database);
+  return database.prepare(`SELECT period_key AS periodKey,posted_items AS postedItems,expense_amount AS expenseAmount,income_amount AS incomeAmount,
+      contracts,updated_at AS updatedAt,seen_at AS seenAt,seen_by AS seenBy
+    FROM recognition_notices ${unseenOnly ? 'WHERE seen_at IS NULL' : ''} ORDER BY period_key DESC LIMIT ?`)
+    .all(Math.max(1, Math.min(60, Number(limit) || 12)))
+    .map((row) => ({ ...row, contracts: JSON.parse(row.contracts) }));
+}
+
+export function markRecognitionNoticeSeen(database, periodKey, { actor = null } = {}) {
+  ensureRecognitionNoticeSchema(database);
+  const changed = database.prepare('UPDATE recognition_notices SET seen_at=?,seen_by=? WHERE period_key=?')
+    .run(new Date().toISOString(), actor, String(periodKey || '')).changes;
+  if (!changed) throw storeError('خبری برای این ماه نیست.', 'RECOGNITION_NOTICE_MISSING', 404);
+  return listRecognitionNotices(database, { limit: 60 }).find((notice) => notice.periodKey === String(periodKey));
+}
+
+/**
+ * قراردادهای دوره‌دار: هر پیش‌پرداخت و پیش‌دریافتی که برنامهٔ شناسایی دارد.
+ *
+ * تا امروز این قراردادها فقط در دفتر روزنامه و ماندهٔ حساب‌ها پراکنده بودند؛ کسی
+ * نمی‌دید کدام بیمه چند قسط دیگر دارد یا کدام پیش‌دریافت تمام شده. هر سطر از خودِ
+ * رویداد و برنامه‌اش ساخته می‌شود — مبلغ کل، شناسایی‌شده تا امروز، مانده، قسط بعدی
+ * و وضعیت — نه از حدس روی دفتر کل. اقلام باطل‌شده (اصلاح برنامه، برگشت) در جمع
+ * نمی‌آیند ولی رویداد برگشتی با وضعیت «لغوشده» در فهرست می‌ماند.
+ */
+export function listTimingContracts(database) {
+  ensureFinancialEventSchema(database);
+  const events = database.prepare(`SELECT e.id,e.status,e.payload,e.journal_entry_id AS journalEntryId,e.source_event_id AS sourceEventId,
+      e.created_at AS createdAt
+    FROM financial_events e WHERE EXISTS (SELECT 1 FROM recognition_schedule_items i WHERE i.event_id=e.id)
+    ORDER BY e.created_at DESC,e.rowid DESC`).all();
+  const itemsOf = database.prepare(`SELECT key,period_key AS periodKey,recognition_date AS recognitionDate,amount,status,
+      journal_entry_id AS journalEntryId,account_id AS accountId
+    FROM recognition_schedule_items WHERE event_id=? ORDER BY period_key,key`);
+  const held = new Set(listHeldRecognition(database).map((item) => item.key));
+  const accountName = database.prepare('SELECT name FROM ledger_accounts WHERE id=?');
+  const timingLines = database.prepare(`SELECT a.name,l.debit,l.credit FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id
+    LEFT JOIN chart_accounts c ON c.id=a.chart_account_id
+    WHERE l.entry_id=? AND (a.source_kind IN ('prepaid-asset','deferred-revenue') OR c.role IN ('prepaid-asset','deferred-revenue'))`);
+  return events.map((row) => {
+    const event = JSON.parse(row.payload);
+    const decision = decisionForEvent(database, row.id);
+    const kind = timingKindOf(decision);
+    const stored = itemsOf.all(row.id).filter((item) => item.status !== SCHEDULE_ITEM_STATUS.SUPERSEDED);
+    const items = stored
+      .map((item) => ({
+        key: item.key, periodKey: item.periodKey, amount: item.amount, journalEntryId: item.journalEntryId,
+        recognitionDate: item.recognitionDate ? notBeforeDate(item.recognitionDate, event.occurredAt) : null,
+        status: item.status === SCHEDULE_ITEM_STATUS.PLANNED && held.has(item.key) ? 'held' : item.status,
+      }));
+    const total = items.reduce((sum, item) => sum + item.amount, 0);
+    const recognized = items.filter((item) => item.status === SCHEDULE_ITEM_STATUS.POSTED).reduce((sum, item) => sum + item.amount, 0);
+    const next = items.find((item) => item.status !== SCHEDULE_ITEM_STATUS.POSTED) || null;
+    const carrier = row.journalEntryId ? timingLines.all(row.journalEntryId) : [];
+    const carrierLine = carrier.find((line) => (kind === 'prepaid' ? line.debit : line.credit) === total) || carrier.find((line) => (kind === 'prepaid' ? line.debit : line.credit) > 0);
+    const account = stored.map((item) => item.accountId).find(Boolean);
+    const cancelled = ['reversed', 'rejected'].includes(row.status) || !items.length;
+    const attention = items.some((item) => ['held', SCHEDULE_ITEM_STATUS.BLOCKED_CLOSED_PERIOD].includes(item.status));
+    return {
+      eventId: row.id, kind, title: contractTitle(event),
+      category: event.category || '', counterparty: event.counterparty || '',
+      evidence: String(event.utterance || event.evidence || '').slice(0, 300),
+      source: String(row.sourceEventId || '').split(':')[0] || 'event',
+      occurredAt: event.occurredAt || null,
+      account: (account && accountName.get(account)?.name) || carrierLine?.name || '',
+      total, recognized, remaining: total - recognized,
+      instalments: items.length, postedInstalments: items.filter((item) => item.status === SCHEDULE_ITEM_STATUS.POSTED).length,
+      periodFrom: items[0]?.periodKey || null, periodTo: items.at(-1)?.periodKey || null,
+      next: next ? { periodKey: next.periodKey, recognitionDate: next.recognitionDate, amount: next.amount, status: next.status } : null,
+      state: cancelled ? 'cancelled' : row.status !== 'posted' ? 'pending' : attention ? 'attention' : total - recognized === 0 ? 'done' : 'active',
+      items,
+    };
+  });
 }
 
 /**
