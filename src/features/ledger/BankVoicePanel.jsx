@@ -78,7 +78,7 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
   const pick = (side) => (event) => setDraft({ ...draft, [side]: event.target.value });
   const ready = draft && (draft.intent === 'create-account' || (draft.fromAccountId && draft.toAccountId));
 
-  return <section className="rounded-[10px] border border-line bg-surface p-4">
+  return <section className="rounded-xl border border-line bg-surface p-4">
     <div className="flex items-start justify-between gap-3">
       <div className="flex items-start gap-3">
         <Landmark className="mt-1 shrink-0 text-accent" />
@@ -101,7 +101,7 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
         placeholder="یا همین‌جا بنویس: دو میلیون از صندوق به بانک ملت واریز شد"
         className="tap min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
       <button onClick={() => typed.trim() && understand(typed.trim())}
-        className="tap rounded-lg border border-line bg-paper px-4 text-[13px] font-bold">بررسی</button>
+        className="tap rounded-lg border border-line bg-paper px-4 text-[13px] font-bold hover:bg-paper hover:text-ink">بررسی</button>
     </div>
 
     {listening && <p className="mt-2 text-xs font-bold text-expense">در حال شنیدن…</p>}
@@ -140,7 +140,7 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
     </div>}
 
     {draft && <button disabled={!ready || busy} onClick={save}
-      className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">
+      className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">
       {busy ? 'در حال ثبت…' : draft.intent === 'create-account' ? 'بساز' : 'ثبت انتقال'}
     </button>}
   </section>;

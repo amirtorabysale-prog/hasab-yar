@@ -46,16 +46,16 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
     setBusy(false);
   };
 
-  return <section className="rounded-[10px] border border-line bg-surface p-4">
+  return <section className="rounded-xl border border-line bg-surface p-4">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div><p className="font-bold">ورود از اکسل یا پارسیان</p><p className="mt-1 max-w-xl text-[12px] leading-6 text-muted">
         فایل اکسل (xlsx) یا CSV را مستقیم بارگذاری کن. نوع فایل از محتوایش تشخیص داده می‌شود، نه از پسوند.
         اگر یک ردیف ایراد داشته باشد هیچ ردیفی وارد نمی‌شود. سقف امن: ۲ مگابایت، ۲۰ شیت، ۵۰ هزار ردیف و ۵۰۰ هزار سلول.
       </p></div>
-      <button type="button" onClick={download} className="tap flex items-center gap-2 rounded-lg border border-line bg-paper px-3 text-[13px] font-bold"><Download size={16} />الگوی خالی اکسل</button>
+      <button type="button" onClick={download} className="tap flex items-center gap-2 rounded-lg border border-line bg-paper px-3 text-[13px] font-bold hover:bg-paper hover:text-ink"><Download size={16} />الگوی خالی اکسل</button>
     </div>
     <div className="mt-3 flex flex-wrap gap-1.5 text-[13px] font-bold">
-      {IMPORT_KINDS.map((item) => <button key={item.id} type="button" onClick={() => { setKind(item.id); setIssues([]); setResult(null); }} className={`tap rounded-lg border px-3 ${kind === item.id ? 'border-accent bg-warn-bg text-accent' : 'border-line bg-paper text-muted'}`}>{item.label}</button>)}
+      {IMPORT_KINDS.map((item) => <button key={item.id} type="button" onClick={() => { setKind(item.id); setIssues([]); setResult(null); }} className={`tap rounded-lg border px-3 ${kind === item.id ? 'border-accent bg-warn-bg text-accent' : 'border-line bg-paper text-muted'} hover:bg-paper hover:text-ink`}>{item.label}</button>)}
     </div>
     <form onSubmit={submit} className="mt-3 space-y-3">
       <p className="text-[12px] text-muted">{active.hint}</p>
@@ -69,7 +69,7 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
         <span className="text-xs leading-5 text-muted">خالی یعنی روز شروع ثبت در این دفتر؛ تاریخ بعد از آن پذیرفته نمی‌شود.</span>
       </div>}
       {kind !== 'analytics' && <label className="flex items-center gap-2 text-[12px] text-muted"><input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} />{kind === 'chart' ? 'کدینگ فعلی جایگزین شود (فقط وقتی هیچ نگاشتی وجود ندارد)' : 'سند افتتاحیهٔ قبلی معکوس و جایگزین شود'}</label>}
-      <button disabled={!canManage || !file || busy} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">{busy ? 'در حال ورود…' : 'بارگذاری فایل'}</button>
+      <button disabled={!canManage || !file || busy} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال ورود…' : 'بارگذاری فایل'}</button>
       {!canManage && <p className="text-[12px] text-muted">ورود داده فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
     </form>
     {issues.length > 0 && <div className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3"><p className="text-[13px] font-bold text-expense">{toPersianDigits(issues.length)} ایراد در فایل — هیچ ردیفی وارد نشد</p><ul className="mt-2 space-y-1 text-[12px] leading-6">{issues.slice(0, 12).map((item, index) => <li key={`${item.rowNumber}-${index}`}>ردیف <b className="numbers">{toPersianDigits(item.rowNumber ?? item.position ?? '—')}</b>: {item.message}</li>)}{issues.length > 12 && <li className="text-muted">و {toPersianDigits(issues.length - 12)} مورد دیگر…</li>}</ul></div>}

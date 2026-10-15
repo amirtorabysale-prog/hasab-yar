@@ -28,7 +28,7 @@ const CASH_KINDS = { cash: 'صندوق', wallet: 'کیف پول', other: 'سای
 
 function Stat({ label, value, tone = '' }) {
   return (
-    <div className="rounded-[10px] border border-line bg-surface px-3 py-2.5">
+    <div className="rounded-xl border border-line bg-surface px-3 py-2.5">
       <p className="text-xs text-muted">{label}</p>
       <p className={`numbers mt-1 text-sm font-extrabold ${tone}`}>{formatAmount(value)}</p>
     </div>
@@ -79,7 +79,7 @@ function MoneyCard({ account, onBack, notify }) {
       <button onClick={onBack} className="tap -mr-2 flex items-center gap-1 text-sm font-bold text-muted">
         <ArrowRight size={18} /> همهٔ حساب‌ها
       </button>
-      <header className="mt-3 rounded-[12px] border border-line bg-surface p-4">
+      <header className="mt-3 rounded-2xl border border-line bg-surface p-4">
         <p className="text-xs font-bold text-muted">{account.kind === 'bank' ? (bank?.name || 'بانک') : CASH_KINDS[account.kind] || 'حساب'}</p>
         <h2 className="mt-1 text-xl font-extrabold">{account.name}</h2>
         <div className="mt-4 border-t border-line pt-3">
@@ -92,7 +92,7 @@ function MoneyCard({ account, onBack, notify }) {
         </div>
       </header>
       {gap ? (
-        <section className="mt-4 rounded-[12px] border border-accent/40 bg-warn-bg p-4">
+        <section className="mt-4 rounded-2xl border border-accent/40 bg-warn-bg p-4">
           <p className="flex items-center gap-2 text-[12px] font-extrabold text-accent"><TriangleAlert size={16} /> این کارت کامل نیست</p>
           <p className="mt-2 text-[13px] leading-7">
             موجودیِ فهرست حساب‌ها <b className="numbers">{formatAmount(card.reconciliation.listed)}</b> است و دفتر کل <b className="numbers">{formatAmount(card.reconciliation.ledger)}</b>.
@@ -105,7 +105,7 @@ function MoneyCard({ account, onBack, notify }) {
           <span className="h-7 w-7 animate-spin rounded-full border-2 border-line border-t-accent" />
         </div>
       ) : !card?.lines?.length ? (
-        <p className="mt-6 rounded-[10px] border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
+        <p className="mt-6 rounded-xl border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
           هنوز گردشی برای این حساب ثبت نشده است.
         </p>
       ) : (
@@ -150,7 +150,7 @@ function AccountForm({ section, onSaved, onCancel, notify }) {
     setBusy(false);
   };
   return (
-    <form onSubmit={save} className="mt-4 space-y-2 rounded-[12px] border border-line bg-surface p-4">
+    <form onSubmit={save} className="mt-4 space-y-2 rounded-2xl border border-line bg-surface p-4">
       <p className="text-[13px] font-extrabold">{isBank ? 'تعریف بانک' : 'تعریف صندوق'}</p>
       {isBank && (
         <select required value={draft.bankId} onChange={(event) => setDraft({ ...draft, bankId: event.target.value })} className="tap w-full rounded-lg border border-line bg-paper px-2 text-[13px]">
@@ -166,8 +166,8 @@ function AccountForm({ section, onSaved, onCancel, notify }) {
           placeholder="۰" className="numbers tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
       </label>
       <div className="flex gap-2">
-        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-on-fill disabled:opacity-60">ذخیره</button>
-        <button type="button" onClick={onCancel} className="tap rounded-lg border border-line px-3 text-[13px] font-bold">انصراف</button>
+        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-on-fill disabled:opacity-60 hover:bg-ink/90">ذخیره</button>
+        <button type="button" onClick={onCancel} className="tap rounded-lg border border-line px-3 text-[13px] font-bold hover:bg-paper hover:text-ink">انصراف</button>
       </div>
     </form>
   );
@@ -188,7 +188,7 @@ function ContactForm({ onSaved, onCancel, notify }) {
     setBusy(false);
   };
   return (
-    <form onSubmit={save} className="mt-4 space-y-2 rounded-[12px] border border-line bg-surface p-4">
+    <form onSubmit={save} className="mt-4 space-y-2 rounded-2xl border border-line bg-surface p-4">
       <p className="text-[13px] font-extrabold">تعریف شخص یا شرکت</p>
       <input required minLength={2} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })}
         placeholder="مثلاً شرکت آفتاب یا آقای کریمی" className="tap w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
@@ -202,15 +202,15 @@ function ContactForm({ onSaved, onCancel, notify }) {
           placeholder="تلفن (اختیاری)" className="numbers tap rounded-lg border border-line bg-paper px-3 text-[13px]" />
       </div>
       <div className="flex gap-2">
-        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-on-fill disabled:opacity-60">ذخیره</button>
-        <button type="button" onClick={onCancel} className="tap rounded-lg border border-line px-3 text-[13px] font-bold">انصراف</button>
+        <button disabled={busy} className="tap flex-1 rounded-lg bg-ink px-3 text-[13px] font-bold text-on-fill disabled:opacity-60 hover:bg-ink/90">ذخیره</button>
+        <button type="button" onClick={onCancel} className="tap rounded-lg border border-line px-3 text-[13px] font-bold hover:bg-paper hover:text-ink">انصراف</button>
       </div>
     </form>
   );
 }
 
 function AccountList({ items, empty, onOpen }) {
-  if (!items.length) return <p className="mt-6 rounded-[10px] border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">{empty}</p>;
+  if (!items.length) return <p className="mt-6 rounded-xl border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">{empty}</p>;
   return (
     <div className="mt-3 divide-y divide-line border-y border-line">
       {items.map((account) => {
@@ -254,7 +254,7 @@ export function AccountCardsPanel({ accounts = [], contacts = [], notify, refres
       <div className="flex gap-2">
         {SECTIONS.map(([id, label, Icon]) => (
           <button key={id} onClick={() => setSection(id)}
-            className={`tap flex flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[12px] font-bold ${section === id ? 'bg-ink text-on-fill' : 'border border-line bg-surface text-muted'}`}>
+            className={`tap flex flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[12px] font-bold ${section === id ? 'bg-ink text-on-fill' : 'border border-line bg-surface text-muted'} hover:bg-ink/90`}>
             <Icon size={15} /> {label}
           </button>
         ))}
@@ -265,7 +265,7 @@ export function AccountCardsPanel({ accounts = [], contacts = [], notify, refres
           {section === 'banks' ? `${toPersianDigits(banks.length)} حساب بانکی` : section === 'cash' ? `${toPersianDigits(boxes.length)} صندوق و تنخواه` : `${toPersianDigits(contacts.length)} طرف حساب`}
         </p>
         {!adding && (
-          <button onClick={() => setAdding(true)} className="tap flex items-center gap-1 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold">
+          <button onClick={() => setAdding(true)} className="tap flex items-center gap-1 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">
             <Plus size={15} /> {section === 'banks' ? 'تعریف بانک' : section === 'cash' ? 'تعریف صندوق' : 'تعریف شخص یا شرکت'}
           </button>
         )}

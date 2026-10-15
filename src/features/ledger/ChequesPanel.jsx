@@ -80,7 +80,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
       </div>
     </div>
 
-    <form onSubmit={submit} className="mt-3 rounded-[10px] border border-line bg-surface p-3">
+    <form onSubmit={submit} className="mt-3 rounded-xl border border-line bg-surface p-3">
       <h3 className="font-bold">ثبت چک</h3>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <select value={draft.direction} onChange={(event) => setDraft({ ...draft, direction: event.target.value })} className="tap rounded-lg border border-line bg-paper px-3 text-[13px]">
@@ -115,7 +115,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
           : 'چون بابت معاملهٔ تازه است، همین حالا درآمد یا هزینه شناسایی می‌شود. اگر بابت طلب قبلی است، گزینه را عوض کن وگرنه همان فروش دو بار در سود دوره می‌آید.'}
       </p>
       <button disabled={busy === 'save' || !draft.counterpartyName.trim() || !draft.amount}
-        className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">
+        className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">
         {busy === 'save' ? 'در حال ثبت…' : 'ثبت چک'}
       </button>
     </form>

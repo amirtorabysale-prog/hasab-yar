@@ -79,8 +79,8 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
         <p className="text-sm font-bold text-expense">گفته فهمیده نشد</p>
         <p className="mt-1 text-[12px] leading-6 text-muted">{draft.error?.message || 'سرویس فهم گفته پاسخ نداد.'} متن تو نگه داشته شده و هیچ سندی ساخته نشده است.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button disabled={busy} onClick={() => run(() => api.retryUnderstandingCase(draft.id))} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40">تلاش دوباره</button>
-          <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده با متن کامل به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap rounded-lg border border-line px-3 text-[12px] font-bold">ارسال به حسابدار</button>
+          <button disabled={busy} onClick={() => run(() => api.retryUnderstandingCase(draft.id))} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">تلاش دوباره</button>
+          <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده با متن کامل به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap rounded-lg border border-line px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">ارسال به حسابدار</button>
         </div>
       </div>}
 
@@ -137,17 +137,17 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
       </>}
 
       <div className="mt-5 grid grid-cols-2 gap-2">
-        {draft.status === 'ready' && <button disabled={busy} onClick={commit} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? 'در حال ثبت…' : 'ثبت'}</button>}
-        {plan?.questions.length > 0 && <button disabled={busy || !answered} onClick={submitAnswers} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? '…' : 'ثبت پاسخ‌ها'}</button>}
-        {draft.status === 'needs-accountant' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">ارسال به حسابدار</button>}
+        {draft.status === 'ready' && <button disabled={busy} onClick={commit} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال ثبت…' : 'ثبت'}</button>}
+        {plan?.questions.length > 0 && <button disabled={busy || !answered} onClick={submitAnswers} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? '…' : 'ثبت پاسخ‌ها'}</button>}
+        {draft.status === 'needs-accountant' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ارسال به حسابدار</button>}
         {/* «نمی‌دانم» هم یک پاسخ است. کسی که دورهٔ پوشش، طرف حساب یا بابت پول را
             نمی‌داند نباید ناچار شود حدس بزند (پیش‌پرداخت یک‌ساله را یک‌جا هزینه
             کند) یا انصراف دهد (پولی که رفته، ثبت نشود). همان «مطمئن نیستم» کارت
             امروز: پرونده با متن کامل به صف حسابدار می‌رود و هیچ سند یا ردیف نقدی
             ساخته نمی‌شود. */}
-        {draft.status === 'needs-answers' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده با متن کامل به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg border border-line bg-surface text-[13px] font-bold disabled:opacity-40">نمی‌دانم — به حسابدار بسپار</button>}
+        {draft.status === 'needs-answers' && <button disabled={busy} onClick={() => run(() => api.sendUnderstandingToAccountant(draft.id), 'پرونده با متن کامل به صف حسابدار رفت؛ سندی ساخته نشد.').then((item) => item && close())} className="tap col-span-2 rounded-lg border border-line bg-surface text-[13px] font-bold disabled:opacity-40 hover:bg-paper hover:text-ink">نمی‌دانم — به حسابدار بسپار</button>}
         <button disabled={busy || extracting} onClick={async () => { if (draft.id && !['posted', 'sent-to-accountant', 'dismissed'].includes(draft.status)) await api.dismissUnderstandingCase(draft.id).catch(() => {}); close(); }}
-          className="tap col-span-2 rounded-lg border border-line font-bold">{['posted', 'sent-to-accountant'].includes(draft.status) ? 'بستن' : 'انصراف — چیزی ثبت نشود'}</button>
+          className="tap col-span-2 rounded-lg border border-line font-bold hover:bg-paper hover:text-ink">{['posted', 'sent-to-accountant'].includes(draft.status) ? 'بستن' : 'انصراف — چیزی ثبت نشود'}</button>
       </div>
     </section>
   </div>;
@@ -219,7 +219,7 @@ export function UnderstandingPolicyBox({ policy, busy, save }) {
     </p>
     <div className="mt-2 grid grid-cols-3 gap-2">
       {modes.map(([mode, label]) => <button key={mode} disabled={busy} onClick={() => save({ understandingMode: mode })}
-        className={`tap rounded-lg border px-2 text-[12px] font-bold ${policy.understandingMode === mode ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper'}`}>{label}</button>)}
+        className={`tap rounded-lg border px-2 text-[12px] font-bold ${policy.understandingMode === mode ? 'border-accent bg-accent text-on-fill' : 'border-line bg-paper'} hover:bg-accent/90 active:bg-accent/80`}>{label}</button>)}
     </div>
     <p className="mt-1 text-xs leading-5 text-muted">{modes.find(([mode]) => mode === policy.understandingMode)?.[2]}</p>
     {policy.understandingMode !== 'off' && <label className="mt-2 flex items-center gap-2 text-[12px]">

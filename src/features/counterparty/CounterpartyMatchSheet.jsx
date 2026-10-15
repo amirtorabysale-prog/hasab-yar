@@ -32,11 +32,11 @@ export default function CounterpartyMatchSheet() {
       <span className="rounded-full bg-warn-bg px-2 py-1 text-xs font-extrabold text-accent">طرف حساب مشابه</span>
       <h2 className="mt-3 text-xl font-extrabold">این همان طرف حساب است؟</h2>
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <div className="rounded-[10px] border border-line bg-surface p-3">
+        <div className="rounded-xl border border-line bg-surface p-3">
           <span className="text-xs font-bold text-muted">نام این ثبت</span>
           <b className="mt-2 block text-[15px]">{details.input}</b>
         </div>
-        <div className="rounded-[10px] border border-accent/30 bg-warn-bg p-3">
+        <div className="rounded-xl border border-accent/30 bg-warn-bg p-3">
           <span className="text-xs font-bold text-muted">طرف حساب موجود</span>
           <b className="mt-2 block text-[15px]">{details.existing?.name}</b>
         </div>
@@ -47,7 +47,7 @@ export default function CounterpartyMatchSheet() {
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button onClick={() => answer('merge')} className="tap rounded-lg border border-accent bg-accent/5 font-extrabold text-accent">بله، همان است</button>
-        <button onClick={() => answer('separate')} className="tap rounded-lg border border-line bg-surface font-extrabold">نه، جداست</button>
+        <button onClick={() => answer('separate')} className="tap rounded-lg border border-line bg-surface font-extrabold hover:bg-paper hover:text-ink">نه، جداست</button>
       </div>
       <button onClick={() => answer(null)} className="tap mt-2 w-full text-sm text-muted">لغو ثبت</button>
     </section>

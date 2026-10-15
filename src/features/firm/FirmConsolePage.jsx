@@ -12,7 +12,7 @@ const FIRM_LEVEL_STYLE = {
 const FIRM_BATCH_LABELS = { generated: 'ساخته شده', delivered: 'تحویل شده', accepted: 'تأیید شده', rejected: 'رد شده' };
 
 export function FirmSummaryTile({ label, value, hint, tone = '' }) {
-  return <div className="rounded-[10px] border border-line bg-surface px-3 py-3">
+  return <div className="rounded-xl border border-line bg-surface px-3 py-3">
     <p className="text-[12px] text-muted">{label}</p>
     <p className={`numbers mt-1 text-2xl font-extrabold ${tone}`}>{value}</p>
     {hint && <p className="mt-1 text-xs leading-5 text-muted">{hint}</p>}
@@ -51,7 +51,7 @@ function FirmClientRow({ client, onOpen, isActive }) {
       </p>}
       {batch && <p className="mt-1 text-xs text-muted">آخرین خروجی {batch.period} — {FIRM_BATCH_LABELS[batch.status] || batch.status}</p>}
     </div>
-    <button onClick={() => onOpen(client.workspace?.id)} disabled={isActive} className="tap h-10 shrink-0 rounded-lg border border-line bg-surface px-4 text-sm font-bold disabled:opacity-45">
+    <button onClick={() => onOpen(client.workspace?.id)} disabled={isActive} className="tap h-10 shrink-0 rounded-lg border border-line bg-surface px-4 text-sm font-bold disabled:opacity-45 hover:bg-paper hover:text-ink">
       {isActive ? 'همین‌جا هستی' : 'باز کردن پرونده'}
     </button>
   </article>;
@@ -74,7 +74,7 @@ function AddClientForm({ notify, onAdded }) {
   };
   return <form onSubmit={submit} className="mt-3 flex flex-wrap gap-2">
     <input required minLength={2} value={name} onChange={(event) => setName(event.target.value)} placeholder="نام شرکت مشتری" className="tap min-w-52 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
-    <button disabled={busy} className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill disabled:opacity-45">{busy ? 'در حال ساخت…' : 'افزودن پروندهٔ مشتری'}</button>
+    <button disabled={busy} className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال ساخت…' : 'افزودن پروندهٔ مشتری'}</button>
   </form>;
 }
 
@@ -107,7 +107,7 @@ export function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess
           فقط پرونده‌هایی که عضو آن‌ها هستی دیده می‌شوند. ترتیب بر اساس فوریت است، نه الفبا. ارقام تا آخرین بازخوانی معتبرند و ادعای تأیید مالیاتی ندارند.
         </p>
       </div>
-      <button onClick={() => load(true)} disabled={loading} className="tap h-10 rounded-lg border border-line bg-surface px-4 text-sm font-bold disabled:opacity-45">
+      <button onClick={() => load(true)} disabled={loading} className="tap h-10 rounded-lg border border-line bg-surface px-4 text-sm font-bold disabled:opacity-45 hover:bg-paper hover:text-ink">
         {loading ? 'در حال بازخوانی…' : 'بازخوانی وضعیت'}
       </button>
     </div>
@@ -124,7 +124,7 @@ export function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess
       />
     </div>}
 
-    {summary?.topBlockers?.length > 0 && <div className="mt-4 rounded-[10px] border border-line bg-surface px-3 py-3">
+    {summary?.topBlockers?.length > 0 && <div className="mt-4 rounded-xl border border-line bg-surface px-3 py-3">
       <p className="text-[12px] font-bold text-muted">تکرارشونده‌ترین ایرادها در کل دفتر</p>
       <div className="mt-2 flex flex-wrap gap-1.5 text-[12px]">
         {summary.topBlockers.map((item) => <span key={item.id} className="rounded border border-line bg-paper px-2 py-0.5">
@@ -133,7 +133,7 @@ export function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess
       </div>
     </div>}
 
-    {!loading && clients.length <= 1 && <div className="mt-5 rounded-[10px] border border-accent/40 bg-warn-bg px-4 py-4">
+    {!loading && clients.length <= 1 && <div className="mt-5 rounded-xl border border-accent/40 bg-warn-bg px-4 py-4">
       <p className="font-bold text-accent">میز کار وقتی می‌درخشد که چند پروندهٔ مشتری داشته باشی.</p>
       <p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">
         هر مشتری یک پروندهٔ کاملاً جدا با دیتابیس مستقل می‌گیرد. از همین‌جا پرونده بساز؛ بعد می‌توانی از تنظیمات، همکارانت را با نقش حسابدار یا فقط‌مشاهده به هر پرونده اضافه کنی.

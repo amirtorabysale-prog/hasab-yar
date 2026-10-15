@@ -100,11 +100,11 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
         </select>
         {lines.length > 2 && <button onClick={() => setLines((current) => current.filter((_, position) => position !== index))} className="tap px-2 text-expense">حذف</button>}
       </div>)}
-      {lines.length < 12 && <button onClick={() => setLines((current) => [...current, { accountId: '', debit: '', credit: '', analyticId: '', costCenterId: '' }])} className="tap rounded border border-line px-2 py-1">افزودن سطر</button>}
+      {lines.length < 12 && <button onClick={() => setLines((current) => [...current, { accountId: '', debit: '', credit: '', analyticId: '', costCenterId: '' }])} className="tap rounded border border-line px-2 py-1 hover:bg-paper hover:text-ink">افزودن سطر</button>}
       {ai?.state === 'proposed' && <label className="flex items-center gap-2"><input type="checkbox" checked={aiAccepted} disabled={ai.missingFacts?.length > 0} onChange={(event) => setAiAccepted(event.target.checked)} />مبالغ پیشنهاد AI را پس از انتخاب حساب‌ها تأیید می‌کنم؛ در صورت اصلاح، دلیل را می‌نویسم.</label>}
       <textarea aria-label="دلیل و مبنای ثبت حسابدار" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="مبنای حسابداری و اطلاعات بررسی‌شده" className="w-full rounded border border-line bg-paper p-2" rows={2} />
       {error && <p className="text-expense">{error}</p>}
-      <button disabled={saving} onClick={submit} className="tap rounded bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-40">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
+      <button disabled={saving} onClick={submit} className="tap rounded bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
     </div>}
   </div>;
 }
@@ -157,9 +157,9 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
         {toPersianDigits(confidence.percent ?? 0)}٪
       </span>
       <div className="flex gap-1.5">
-        <button disabled={busy} onClick={() => item.approvalBlocked ? setOpen(true) : onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40"><Check size={15} />{item.approvalBlocked ? 'تکمیل و اصلاح سند' : 'تأیید و ثبت سند'}</button>
+        <button disabled={busy} onClick={() => item.approvalBlocked ? setOpen(true) : onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80"><Check size={15} />{item.approvalBlocked ? 'تکمیل و اصلاح سند' : 'تأیید و ثبت سند'}</button>
         <button disabled={busy} onClick={() => onReject(item)} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense disabled:opacity-40">رد</button>
-        <button onClick={toggle} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">{open ? 'بستن' : 'چرا؟'}</button>
+        <button onClick={toggle} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">{open ? 'بستن' : 'چرا؟'}</button>
       </div>
     </div>
 
@@ -188,7 +188,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
 
     {open && <div className="mt-2">
       <ConfidencePanel assessment={{ percent: confidence.percent ?? 0, fields: confidence.components || {}, reasons: confidence.reasons || [] }} />
-      <div className="mt-3 rounded-[10px] border border-line bg-surface p-3">
+      <div className="mt-3 rounded-xl border border-line bg-surface p-3">
         <p className="text-xs font-extrabold">تاریخچهٔ رویداد</p>
         {trail === null && <p className="mt-2 text-xs text-muted">در حال خواندن…</p>}
         {trail?.length === 0 && <p className="mt-2 text-xs text-muted">رویدادی ثبت نشده است.</p>}
@@ -257,7 +257,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
 
   const everythingReviewed = policy.manualOnly === true;
 
-  return <section className="mt-4 rounded-[10px] border border-line bg-paper p-3">
+  return <section className="mt-4 rounded-xl border border-line bg-paper p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         <p className="text-xs font-extrabold">قانون ثبت خودکار</p>
@@ -267,7 +267,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
             : <>بالای <span className="numbers">{percent(policy.autoThreshold)}</span>٪ خودکار · از <span className="numbers">{percent(policy.confirmThreshold)}</span>٪ سؤال از کاربر · پایین‌تر، همین صف</>}
         </p>
       </div>
-      {canManage && <button onClick={() => setOpen(!open)} className="tap rounded-lg border border-line bg-surface px-3 text-[12px] font-bold">{open ? 'بستن' : 'تغییر'}</button>}
+      {canManage && <button onClick={() => setOpen(!open)} className="tap rounded-lg border border-line bg-surface px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">{open ? 'بستن' : 'تغییر'}</button>}
     </div>
     {!canManage && <p className="mt-2 text-xs text-muted">تغییر این قانون با نقش مدیر است.</p>}
 
@@ -285,7 +285,7 @@ function AutomationPolicyPanel({ canManage, notify, onChanged }) {
           اگر چیزی لازم باشد و ندانَد، یک سؤال کوتاه می‌پرسد و تا جواب نیامده ثبت نمی‌کند.
         </p>
         <button disabled={busy} onClick={() => save({ engineV2: !policy.engineV2 })}
-          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-on-fill'}`}>
+          className={`tap mt-2 w-full rounded-lg border px-3 text-[12px] font-bold ${policy.engineV2 ? 'border-line bg-paper' : 'border-accent bg-accent text-on-fill'} hover:bg-accent/90 active:bg-accent/80`}>
           {policy.engineV2 ? 'خاموش کن' : 'روشن کن'}
         </button>
 
@@ -387,7 +387,7 @@ function RecognitionNotices({ notices, navigate, notify, onSeen }) {
         {notice.incomeAmount > 0 && <> · درآمد <span className="numbers">{formatAmount(notice.incomeAmount)}</span></>} تومان
       </span>
       <span className="flex gap-2">
-        <button onClick={() => navigate?.('ledger', 'timing')} className="tap rounded-lg border border-line bg-surface px-3 font-bold">جزئیات</button>
+        <button onClick={() => navigate?.('ledger', 'timing')} className="tap rounded-lg border border-line bg-surface px-3 font-bold hover:bg-paper hover:text-ink">جزئیات</button>
         <button onClick={() => seen(notice.periodKey)} className="tap rounded-lg border border-accent px-3 font-bold text-accent">دیدم</button>
       </span>
     </div>)}
@@ -435,7 +435,7 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
 
   const needsAccountant = (items || []).filter((item) => item.route === 'accountant-review').length;
 
-  return <section className="mx-auto my-5 w-full max-w-[980px] rounded-[16px] border border-line bg-surface p-4 sm:p-6">
+  return <section className="mx-auto my-5 w-full max-w-[980px] rounded-2xl border border-line bg-surface p-4 sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><p className="text-xs font-bold text-accent">میز بررسی حسابدار</p><h1 className="mt-1 text-xl font-extrabold">صف بررسی</h1><p className="mt-2 text-xs leading-6 text-muted">متن اصلی را بخوانید، اطلاعات لازم را تکمیل کنید و سپس پیشنهاد ثبت را بررسی کنید.</p></div>
       {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-[12px]">

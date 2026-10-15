@@ -78,12 +78,12 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
         </p>
       </div>
       {canManage && <button onClick={() => setCreating(creating ? null : { holderName: '', ceiling: '', fromAccountId: sources[0]?.id || '' })}
-        className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[13px] font-bold text-on-fill">
+        className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[13px] font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">
         <Plus size={16} />{creating ? 'بستن' : 'تنخواه تازه'}
       </button>}
     </div>
 
-    {creating && <form onSubmit={create} className="mt-4 space-y-3 rounded-[10px] border border-line bg-surface p-4">
+    {creating && <form onSubmit={create} className="mt-4 space-y-3 rounded-xl border border-line bg-surface p-4">
       <p className="font-bold">تنخواه تازه</p>
       <label className="block text-[12px] text-muted">دست چه کسی است؟
         <input required value={creating.holderName} onChange={(event) => setCreating({ ...creating, holderName: event.target.value })}
@@ -102,12 +102,12 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
         </select>
       </label>
       <p className="rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-accent">به اندازهٔ سقف از این حساب به تنخواه منتقل می‌شود. بعد از هر بار خرج، با «شارژ» دوباره به سقف می‌رسد.</p>
-      <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-on-fill disabled:opacity-40">{busy ? 'در حال ثبت…' : 'پرداخت تنخواه'}</button>
+      <button disabled={busy} className="tap w-full rounded-lg bg-accent font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال ثبت…' : 'پرداخت تنخواه'}</button>
     </form>}
 
     <div className="mt-4 space-y-3">
       {funds === null && <p className="py-8 text-center text-sm text-muted">در حال بارگذاری…</p>}
-      {funds?.length === 0 && <div className="rounded-[10px] border border-dashed border-line bg-surface px-4 py-8 text-center">
+      {funds?.length === 0 && <div className="rounded-xl border border-dashed border-line bg-surface px-4 py-8 text-center">
         <PiggyBank className="mx-auto text-muted" />
         <p className="mt-2 text-sm font-bold">{showClosed ? 'تنخواهی ثبت نشده است.' : 'تنخواه بازی نیست.'}</p>
         <p className="mt-1 text-[12px] leading-6 text-muted">با «تنخواه تازه» شروع کن، یا بگو «پنج میلیون تنخواه به رضایی دادیم».</p>
@@ -119,14 +119,14 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
       {showClosed ? 'فقط تنخواه‌های باز' : 'نمایش تنخواه‌های بسته‌شده هم'}
     </button>
 
-    <section className="mt-5 rounded-[10px] border border-line bg-surface p-4 text-[12px] leading-7 text-muted">
+    <section className="mt-5 rounded-xl border border-line bg-surface p-4 text-[12px] leading-7 text-muted">
       <p className="font-bold text-ink">ثبت خرج از تنخواه با صدا</p>
       <p>«از تنخواه رضایی دویست هزار تومان پذیرایی خریدیم» — هزینه ثبت می‌شود و از تنخواه رضایی کم می‌شود، نه از صندوق.</p>
       <p>«تنخواه رضایی رو از بانک ملت شارژ کردیم» — شارژ؛ هزینه نیست.</p>
     </section>
 
     {action && <div className="fixed inset-0 z-[80] grid place-items-center bg-scrim/40 p-4">
-      <form onSubmit={submitAction} className="w-full max-w-[420px] rounded-[12px] bg-paper p-4">
+      <form onSubmit={submitAction} className="w-full max-w-[420px] rounded-2xl bg-paper p-4">
         <h2 className="text-lg font-extrabold">
           {action.kind === 'replenish' ? `شارژ تنخواه ${action.fund.holderName}` : action.kind === 'ceiling' ? 'تغییر سقف تنخواه' : `بستن تنخواه ${action.fund.holderName}`}
         </h2>
@@ -150,8 +150,8 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
           </select>
         </label>}
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => setAction(null)} className="tap rounded-lg border border-line font-bold">انصراف</button>
-          <button disabled={busy} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? '…' : 'ثبت'}</button>
+          <button type="button" onClick={() => setAction(null)} className="tap rounded-lg border border-line font-bold hover:bg-paper hover:text-ink">انصراف</button>
+          <button disabled={busy} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? '…' : 'ثبت'}</button>
         </div>
       </form>
     </div>}
@@ -161,7 +161,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
 function FundCard({ fund, canManage, onAction }) {
   const [open, setOpen] = useState(false);
   const ratio = fund.ceiling > 0 ? Math.max(0, Math.min(100, Math.round((fund.balance / fund.ceiling) * 100))) : 0;
-  return <article className="rounded-[10px] border border-line bg-surface p-4">
+  return <article className="rounded-xl border border-line bg-surface p-4">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="font-extrabold">{fund.holderName}</p>
@@ -181,8 +181,8 @@ function FundCard({ fund, canManage, onAction }) {
     </>}
     {canManage && <div className="mt-3 flex flex-wrap gap-2">
       <button onClick={() => onAction('replenish', fund)} disabled={!(fund.spent > 0)} className="tap rounded-lg border border-accent px-3 text-[12px] font-bold text-accent disabled:opacity-40">شارژ</button>
-      <button onClick={() => onAction('ceiling', fund)} className="tap rounded-lg border border-line px-3 text-[12px] font-bold">تغییر سقف</button>
-      <button onClick={() => onAction('close', fund)} className="tap rounded-lg border border-line px-3 text-[12px] font-bold text-expense">بستن</button>
+      <button onClick={() => onAction('ceiling', fund)} className="tap rounded-lg border border-line px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">تغییر سقف</button>
+      <button onClick={() => onAction('close', fund)} className="tap rounded-lg border border-line px-3 text-[12px] font-bold text-expense hover:bg-paper hover:text-ink">بستن</button>
     </div>}
     {fund.recentSpends?.length > 0 && <>
       <button onClick={() => setOpen(!open)} className="tap mt-2 flex items-center gap-1 text-[12px] font-bold text-muted">

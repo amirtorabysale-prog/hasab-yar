@@ -99,7 +99,7 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       <b>دستیار حسابدار و DNA شرکت</b>
       <div className="flex gap-2">
         {(!ai || ai.state==='rejected' || !ai.canPost) && <button disabled={loading || busy} onClick={analyze} className="tap rounded border border-accent px-3 text-accent disabled:opacity-40">{loading?'در حال تحلیل…':'تحلیل کن'}</button>}
-        <button disabled={loading} onClick={toggle} className="tap rounded border border-line px-3">{open?'بستن گفت‌وگو':'گفت‌وگو و تکمیل اطلاعات'}</button>
+        <button disabled={loading} onClick={toggle} className="tap rounded border border-line px-3 hover:bg-paper hover:text-ink">{open?'بستن گفت‌وگو':'گفت‌وگو و تکمیل اطلاعات'}</button>
       </div>
     </div>
     {!ai && item.dnaMatches?.length>0 && <div className="mt-2 rounded bg-accent/5 p-2"><b>DNA شرکت {item.dnaMatches.length} تجربهٔ مشابه پیدا کرده است.</b>{item.dnaMatches.map(d=><p key={d.id}>{d.summary} · {d.actorName || d.actor} · {persianDate(d.date)} — {d.reason || 'تأیید قبلی'}</p>)}<p>با «تحلیل کن» تطبیق رویداد تازه را درخواست کن؛ تجربهٔ قبلی مجوز ثبت خودکار نیست.</p></div>}
@@ -123,7 +123,7 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       {hasUnreviewedChanges && <p role="status" className="text-accent">اطلاعات تغییر کرده؛ پیش از تأیید سند، پاسخ‌ها را ذخیره و پیشنهاد را بازبینی کن.</p>}
       <p className="mt-2 text-muted">با تأیید شما سند، اثرهای عملیاتی پشتیبانی‌شده و ردپای تصمیم حسابدار با هم ثبت می‌شوند.</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        <button disabled={loading || busy || !ai.canPost || hasUnreviewedChanges} onClick={()=>feedback(true)} className="tap rounded bg-accent px-3 font-bold text-on-fill disabled:opacity-40">{ai.newCounterparty || ai.inventoryItems?.length || ai.lines?.some(l=>l.newAccount)?'تأیید ایجاد موارد لازم و ثبت سند':'تأیید و اعمال سند'}</button>
+        <button disabled={loading || busy || !ai.canPost || hasUnreviewedChanges} onClick={()=>feedback(true)} className="tap rounded bg-accent px-3 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{ai.newCounterparty || ai.inventoryItems?.length || ai.lines?.some(l=>l.newAccount)?'تأیید ایجاد موارد لازم و ثبت سند':'تأیید و اعمال سند'}</button>
         <button disabled={loading || busy} onClick={()=>feedback(false)} className="tap rounded border border-expense px-3 text-expense">رد با دلیل</button>
         {!ai.canPost && <button disabled={loading} onClick={()=>open?null:toggle()} className="tap rounded border border-accent px-3 text-accent">پاسخ به ابهام و اصلاح پیشنهاد</button>}
       </div>
@@ -141,7 +141,7 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       {Object.keys(savedAnswers).length>0 && <details className="rounded border border-line p-3"><summary className="cursor-pointer font-bold">پاسخ‌های ذخیره‌شده ({Object.keys(savedAnswers).length}) · مشاهده و اصلاح</summary><p className="text-muted">این اطلاعات دوباره پرسیده نمی‌شوند. اگر واقعیت تغییر کرده، پاسخ را اصلاح و بازبینی کن.</p>{Object.entries(savedAnswers).map(([id,answer])=><label key={id} className="mt-2 block"><span>{answer.question}</span>{questionInput({id,text:answer.question,field:answer.field},answers[id] ?? answer.value)}</label>)}</details>}
       {questions.some(q=>savedAnswers[q.id]) && <p role="status" className="rounded bg-surface p-2">پاسخ شما محفوظ است؛ دستیار هنوز پیشنهاد قابل ثبت تهیه نکرده است. با بازبینی مجدد، پاسخ ذخیره‌شده دوباره به آن داده می‌شود.</p>}
       {conditions.length>0 && <div className="rounded bg-surface p-2"><b>موارد لازم برای آماده شدن سند</b>{conditions.map((text,i)=><p key={i}>{text}</p>)}</div>}
-      {(questions.length>0 || hasAnswerChanges) && <button disabled={loading || busy || (!hasAnswerChanges && !questions.some(q=>savedAnswers[q.id]))} onClick={analyze} className="tap rounded bg-accent px-3 font-bold text-on-fill disabled:opacity-40">{loading?'در حال ذخیره و بازبینی…':hasAnswerChanges?'ذخیره پاسخ‌ها و بازبینی پیشنهاد':'بازبینی با پاسخ‌های ذخیره‌شده'}</button>}
+      {(questions.length>0 || hasAnswerChanges) && <button disabled={loading || busy || (!hasAnswerChanges && !questions.some(q=>savedAnswers[q.id]))} onClick={analyze} className="tap rounded bg-accent px-3 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{loading?'در حال ذخیره و بازبینی…':hasAnswerChanges?'ذخیره پاسخ‌ها و بازبینی پیشنهاد':'بازبینی با پاسخ‌های ذخیره‌شده'}</button>}
     </div>}
     {open && <div className="mt-3 space-y-2 border-t border-line pt-3">
       <p>نکته یا پاسخ سؤال را بنویس. AI پیشنهاد تازه می‌دهد و برای ثبت نهایی از شما اجازه می‌گیرد.</p>

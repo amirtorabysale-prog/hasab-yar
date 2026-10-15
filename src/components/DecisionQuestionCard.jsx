@@ -30,7 +30,7 @@ export function DecisionQuestionCard({ question, busy, onAnswer }) {
     ? { fact: question.fact, value: freeFor.value, freeText: current.text.trim() }
     : { fact: question.fact, freeText: current.text.trim() });
 
-  return <div className="mt-2 rounded-[10px] border border-accent/40 bg-accent/5 p-3">
+  return <div className="mt-2 rounded-xl border border-accent/40 bg-accent/5 p-3">
     <p className="text-[12px] font-extrabold text-ink">{question.text}</p>
     {question.kind === 'options' && options.length > 0
       ? <div className="mt-2 flex flex-wrap gap-1.5">
@@ -46,7 +46,7 @@ export function DecisionQuestionCard({ question, busy, onAnswer }) {
           <input aria-label={question.text} value={current.text} onChange={(event) => setText(event.target.value)}
             className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
           <button disabled={busy || !current.text.trim()} onClick={submitText}
-            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40">ثبت پاسخ</button>
+            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ثبت پاسخ</button>
         </div>}
 
     {/* گزینهٔ «خودم می‌گویم» یک مقدار نیست؛ ورودی آزاد می‌خواهد. */}
@@ -54,7 +54,7 @@ export function DecisionQuestionCard({ question, busy, onAnswer }) {
       <input aria-label={freeFor.label} value={current.text} onChange={(event) => setText(event.target.value)} placeholder={freeFor.label}
         className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
       <button disabled={busy || !current.text.trim()} onClick={submitText}
-        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40">ثبت پاسخ</button>
+        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ثبت پاسخ</button>
     </div>}
   </div>;
 }

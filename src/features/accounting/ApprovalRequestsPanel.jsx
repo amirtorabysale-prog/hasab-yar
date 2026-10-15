@@ -40,7 +40,7 @@ export function ApprovalRequestsPanel({ canApprove, notify }) {
   };
 
   if (!items?.length) return null;
-  return <section className="mt-5 rounded-[10px] border border-accent/40 bg-surface p-4">
+  return <section className="mt-5 rounded-xl border border-accent/40 bg-surface p-4">
     <p className="font-bold">درخواست‌های تأیید <span className="numbers text-muted">({toPersianDigits(items.length)})</span></p>
     <div className="mt-3 divide-y divide-line">
       {items.map((item) => <article key={item.id} className="py-3">
@@ -56,11 +56,11 @@ export function ApprovalRequestsPanel({ canApprove, notify }) {
         {item.decisionReason && <p className="mt-1 text-[12px] text-income">دلیل تأیید: {item.decisionReason}</p>}
         <div className="mt-2 flex flex-wrap gap-1.5">
           {item.status === 'pending' && canApprove && <>
-            <button disabled={busy === item.id} onClick={() => act(item, 'approve')} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill">تأیید</button>
+            <button disabled={busy === item.id} onClick={() => act(item, 'approve')} className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">تأیید</button>
             <button disabled={busy === item.id} onClick={() => act(item, 'reject')} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense">رد</button>
           </>}
           {item.status === 'approved' && <button disabled={busy === item.id} onClick={() => act(item, 'execute')} className="tap rounded-lg bg-income px-3 text-[12px] font-bold text-on-fill">اجرا</button>}
-          <button disabled={busy === item.id} onClick={() => act(item, 'cancel')} className="tap rounded-lg border border-line px-3 text-[12px] font-bold">لغو</button>
+          <button disabled={busy === item.id} onClick={() => act(item, 'cancel')} className="tap rounded-lg border border-line px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">لغو</button>
         </div>
       </article>)}
     </div>

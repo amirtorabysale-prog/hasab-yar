@@ -49,7 +49,7 @@ function BalanceBadge({ balance }) {
 
 function Stat({ label, value, tone = '' }) {
   return (
-    <div className="rounded-[10px] border border-line bg-surface px-3 py-2.5">
+    <div className="rounded-xl border border-line bg-surface px-3 py-2.5">
       <p className="text-xs text-muted">{label}</p>
       <p className={`numbers mt-1 text-sm font-extrabold ${tone}`}>{formatAmount(value)}</p>
     </div>
@@ -115,7 +115,7 @@ function UnexplainedNotice({ reconciliation }) {
   const gap = Math.abs(reconciliation.unexplained);
   const tone = balanceTone(reconciliation.unexplained);
   return (
-    <section className="mt-4 rounded-[12px] border border-accent/40 bg-warn-bg p-4">
+    <section className="mt-4 rounded-2xl border border-accent/40 bg-warn-bg p-4">
       <p className="flex items-center gap-2 text-[12px] font-extrabold text-accent">
         <TriangleAlert size={16} /> این کارت کامل نیست
       </p>
@@ -142,7 +142,7 @@ function ContactList({ contacts, onOpen }) {
 
   return (
     <section className="mt-5">
-      <label className="flex min-h-12 items-center gap-2 rounded-lg border border-line bg-surface px-3">
+      <label className="flex min-h-12 items-center gap-2 rounded-lg border border-line bg-surface px-3 hover:bg-paper hover:text-ink">
         <Search size={18} className="text-muted" />
         <input
           value={query}
@@ -154,7 +154,7 @@ function ContactList({ contacts, onOpen }) {
       <p className="mt-3 text-xs text-muted">{toPersianDigits(filtered.length)} طرف حساب</p>
 
       {filtered.length === 0 ? (
-        <p className="mt-6 rounded-[10px] border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
+        <p className="mt-6 rounded-xl border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
           {contacts.length ? 'با این جست‌وجو چیزی پیدا نشد.' : 'هنوز طرف حسابی ثبت نشده است. با اولین فاکتور یا طلب، خودش ساخته می‌شود.'}
         </p>
       ) : (
@@ -210,7 +210,7 @@ function Card({ contact, onBack, notify }) {
         <ArrowRight size={18} /> همهٔ طرف حساب‌ها
       </button>
 
-      <header className="mt-3 rounded-[12px] border border-line bg-surface p-4">
+      <header className="mt-3 rounded-2xl border border-line bg-surface p-4">
         <p className="text-xs font-bold text-muted">{KIND_LABELS[contact.kind] || 'شخص'}</p>
         <h2 className="mt-1 text-xl font-extrabold">{contact.name}</h2>
         {contact.phone && <p className="numbers mt-1 text-[12px] text-muted">{toPersianDigits(contact.phone)}</p>}
@@ -248,7 +248,7 @@ function Card({ contact, onBack, notify }) {
         </div>
       ) : !card?.lines?.length ? (
         gap ? <UnexplainedNotice reconciliation={card.reconciliation} /> : (
-          <p className="mt-6 rounded-[10px] border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
+          <p className="mt-6 rounded-xl border border-dashed border-line px-4 py-8 text-center text-[13px] leading-7 text-muted">
             هنوز گردشی برای این طرف حساب در دفتر ثبت نشده است.
             <br />
             با اولین فاکتور، تسویه یا چک، همین‌جا دیده می‌شود.
@@ -289,7 +289,7 @@ export function CounterpartyCardPanel({ contacts = [], notify }) {
 
   if (!contacts.length && !selected) {
     return (
-      <section className="mt-8 grid place-items-center rounded-[12px] border border-dashed border-line px-4 py-12 text-center">
+      <section className="mt-8 grid place-items-center rounded-2xl border border-dashed border-line px-4 py-12 text-center">
         <Wallet className="text-line" size={32} />
         <p className="mt-3 text-sm font-extrabold">هنوز طرف حسابی نداری</p>
         <p className="mt-1 max-w-[280px] text-[12px] leading-7 text-muted">

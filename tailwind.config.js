@@ -15,6 +15,9 @@ export default {
         'warn-bg': token('warn-bg'), warn: token('warn'), 'on-fill': token('on-fill'), scrim: token('scrim'),
       },
       fontFamily: { vazir: ['Vazirmatn', 'Tahoma', 'sans-serif'] },
+      // یک مقیاس گوشه برای همه: برچسب ۶، کنترل ۱۰، کارت ۱۴، سطح بزرگ ۱۸.
+      borderRadius: { DEFAULT: '6px', md: '8px', lg: '10px', xl: '14px', '2xl': '18px' },
+      opacity: { 12: '0.12' },
       boxShadow: {
         paper: '0 1px 2px rgb(var(--c-shadow) / 0.06), 0 2px 10px rgb(var(--c-shadow) / 0.05)',
         raised: '0 4px 24px rgb(var(--c-shadow) / 0.10)',

@@ -48,7 +48,7 @@ function ResolveForm({ hold, targets, invoices, contacts, notify, onDone }) {
     </>}
     <label>تاریخ تعیین تکلیف<input type="date" value={form.occurredAt} onChange={set('occurredAt')} className={field} /></label>
     <label className="sm:col-span-2">دلیل یا مدرک منشأ<textarea required minLength={8} value={form.reason} onChange={set('reason')} placeholder="مثلاً فیش واریز شرکت آریا رسید" className="mt-1 min-h-16 w-full rounded-lg border border-line bg-surface p-2 text-sm" /></label>
-    <button disabled={busy} className="tap rounded-lg bg-accent font-bold text-on-fill disabled:opacity-45 sm:col-span-2">ثبت تعیین تکلیف</button>
+    <button disabled={busy} className="tap rounded-lg bg-accent font-bold text-on-fill disabled:opacity-45 sm:col-span-2 hover:bg-accent/90 active:bg-accent/80">ثبت تعیین تکلیف</button>
   </form>;
 }
 
@@ -76,7 +76,7 @@ export function UnidentifiedFundsPanel({ notify }) {
     catch (error) { notify(error.message); }
   };
   if (!data?.items?.length) return null;
-  return <section aria-label="وجوه ناشناس" className="mt-4 rounded-[10px] border border-line bg-paper p-3">
+  return <section aria-label="وجوه ناشناس" className="mt-4 rounded-xl border border-line bg-paper p-3">
     <p className="font-bold">وجوه ناشناس <span className="numbers text-muted">({toPersianDigits(data.items.length)})</span></p>
     <p className="mt-1 text-[12px] leading-6 text-muted">پولی که منشأش معلوم نبود و در بدهی موقت نگه داشته شده. وقتی منشأ معلوم شد اینجا تعیین تکلیفش کن؛ اگر همان پول دوباره ثبت شده، آن ثبت را رد کن.</p>
     <div className="mt-2 divide-y divide-line">

@@ -103,7 +103,7 @@ function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
       <button
         disabled={!chartAccountId || busy || !targets.length}
         onClick={apply}
-        className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45"
+        className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80"
       >{busy ? 'در حال نگاشت…' : `اعمال به ${toPersianDigits(targets.length)} حساب`}</button>
     </div>
     <p className="mt-2 text-xs leading-5 text-muted">
@@ -167,10 +167,10 @@ export function ChartPage({ access, notify, initialTab = '' }) {
       <FirmSummaryTile label="پیشنهاد آماده" value={toPersianDigits(mapping.suggestionsAvailable)} hint="با یک کلیک قابل اعمال است" />
     </div>}
 
-    {!loading && !mapping?.chartInstalled && <div className="mt-5 rounded-[10px] border border-accent/40 bg-warn-bg px-4 py-4">
+    {!loading && !mapping?.chartInstalled && <div className="mt-5 rounded-xl border border-accent/40 bg-warn-bg px-4 py-4">
       <p className="font-bold text-accent">هنوز کدینگی برای این دفتر تعریف نشده است.</p>
       <p className="mt-1 text-[13px] leading-6 text-muted">یا کدینگ پیشنهادی حساب‌یار را نصب کن و بعد ویرایشش کن، یا فایل کدینگ خود دفتر را وارد کن. کدینگ پیشنهادی یک نقطهٔ شروع است، نه کدینگ رسمی.</p>
-      {canManage && <button onClick={() => run(() => api.installChartTemplate(), 'کدینگ پیشنهادی نصب شد.')} className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill">نصب کدینگ پیشنهادی</button>}
+      {canManage && <button onClick={() => run(() => api.installChartTemplate(), 'کدینگ پیشنهادی نصب شد.')} className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">نصب کدینگ پیشنهادی</button>}
     </div>}
 
     <div className="mt-6 flex flex-wrap gap-1.5 border-b border-line pb-2 text-[13px] font-bold">
@@ -189,7 +189,7 @@ export function ChartPage({ access, notify, initialTab = '' }) {
           {canManage && mapping.mappedCount > 0 && <button
             onClick={() => { if (window.confirm(`همهٔ ${toPersianDigits(mapping.mappedCount)} نگاشت برداشته شود؟ سند و ثبتی پاک نمی‌شود؛ فقط پیوند حساب‌ها به کدینگ برداشته می‌شود تا بتوانی کدینگ دفتر را جایگزین کنی.`)) run(() => api.clearChartMappings(), 'همهٔ نگاشت‌ها برداشته شد؛ حالا می‌توانی کدینگ دفتر را با گزینهٔ جایگزینی وارد کنی.'); }}
             className="tap rounded-lg border border-expense/50 px-4 text-sm font-bold text-expense">برداشتن همهٔ نگاشت‌ها</button>}
-          {canManage && mapping.suggestionsAvailable > 0 && <button onClick={() => run(() => api.applyChartSuggestions(), 'پیشنهادها اعمال شدند.')} className="tap rounded-lg border border-line bg-surface px-4 text-sm font-bold">اعمال {toPersianDigits(mapping.suggestionsAvailable)} پیشنهاد</button>}
+          {canManage && mapping.suggestionsAvailable > 0 && <button onClick={() => run(() => api.applyChartSuggestions(), 'پیشنهادها اعمال شدند.')} className="tap rounded-lg border border-line bg-surface px-4 text-sm font-bold hover:bg-paper hover:text-ink">اعمال {toPersianDigits(mapping.suggestionsAvailable)} پیشنهاد</button>}
           {/* نگاشت‌های قدیمی پیش از شناختن معین اختصاصی دسته‌ها ساخته شده‌اند و
               همه روی «سایر هزینه‌های عملیاتی» نشسته‌اند. اصلاحشان تصمیم کاربر
               است، نه بازنویسی خاموش. */}
@@ -241,7 +241,7 @@ export function ChartPage({ access, notify, initialTab = '' }) {
         placeholder={'کد,نام,سطح,کد والد,نوع\n1,دارایی‌های جاری,گروه,,دارایی\n11,موجودی نقد و بانک,کل,1,دارایی\n1101,صندوق,معین,11,دارایی'}
         className="numbers w-full rounded-lg border border-line bg-surface p-3 text-[13px] outline-none focus:border-accent"
       />
-      <button disabled={!canManage || !csv.trim()} onClick={() => run(async () => { await api.importChart(csv); setCsv(''); }, 'کدینگ وارد شد.')} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">ورود کدینگ</button>
+      <button disabled={!canManage || !csv.trim()} onClick={() => run(async () => { await api.importChart(csv); setCsv(''); }, 'کدینگ وارد شد.')} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">ورود کدینگ</button>
       {!canManage && <p className="text-[12px] text-muted">تغییر کدینگ فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
     </div>}
   </section>;
@@ -305,12 +305,12 @@ function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setD
     </p>
 
     <div className="grid gap-4 lg:grid-cols-2">
-      <section className="rounded-[10px] border border-line bg-surface p-3">
+      <section className="rounded-xl border border-line bg-surface p-3">
         <p className="font-bold">تفصیلی شناور</p>
         {canManage && <form onSubmit={(event) => { event.preventDefault(); add(async () => { await api.saveAnalytic({ name: analyticName, kind: analyticKind }); setAnalyticName(''); }); }} className="mt-2 flex flex-wrap gap-2">
           <input required value={analyticName} onChange={(event) => setAnalyticName(event.target.value)} placeholder="مثلاً پروژهٔ برج آبان" className="tap min-w-40 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
           <select value={analyticKind} onChange={(event) => setAnalyticKind(event.target.value)} className="tap rounded-lg border border-line bg-paper px-2 text-[13px]"><option value="project">پروژه</option><option value="employee">پرسنل</option><option value="custom">سایر</option></select>
-          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill">افزودن</button>
+          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">افزودن</button>
         </form>}
         <ul className="mt-3 divide-y divide-line text-[13px]">
           {(overview?.analytics || []).map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
@@ -322,11 +322,11 @@ function DimensionsPanel({ overview, canManage, notify, refresh, dimension, setD
         </ul>
       </section>
 
-      <section className="rounded-[10px] border border-line bg-surface p-3">
+      <section className="rounded-xl border border-line bg-surface p-3">
         <p className="font-bold">مرکز هزینه</p>
         {canManage && <form onSubmit={(event) => { event.preventDefault(); add(async () => { await api.saveCostCenter({ name: centerName }); setCenterName(''); }); }} className="mt-2 flex flex-wrap gap-2">
           <input required value={centerName} onChange={(event) => setCenterName(event.target.value)} placeholder="مثلاً شعبهٔ مرکزی" className="tap min-w-40 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
-          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill">افزودن</button>
+          <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">افزودن</button>
         </form>}
         <ul className="mt-3 divide-y divide-line text-[13px]">
           {(overview?.costCenters || []).map((item) => <li key={item.id} className="py-2"><b className="numbers text-muted">{toPersianDigits(item.code)}</b> · {item.name}</li>)}

@@ -38,12 +38,12 @@ export function FinancialDnaPanel({ notify }) {
     return () => { alive = false; };
   }, [notify]);
 
-  if (loading) return <div className="mt-4 h-32 animate-pulse rounded-[12px] bg-surface" />;
+  if (loading) return <div className="mt-4 h-32 animate-pulse rounded-2xl bg-surface" />;
   if (!dna) return null;
 
   // نبود داده یک واقعیت است، نه خطا؛ ادعای الگو روی دادهٔ کم بدتر از سکوت است.
   if (dna.sufficiency.level !== 'ok') {
-    return <section className="mt-4 rounded-[12px] border border-line bg-surface p-4">
+    return <section className="mt-4 rounded-2xl border border-line bg-surface p-4">
       <h2 className="font-extrabold">DNA مالی این پرونده</h2>
       <p className="mt-2 text-[13px] leading-7 text-muted">{dna.message}</p>
       <p className="mt-3 rounded-lg bg-paper px-3 py-3 text-[12px] leading-6 text-muted">
@@ -55,7 +55,7 @@ export function FinancialDnaPanel({ notify }) {
   const brief = dna.brief;
   const weekday = dna.traits.find((item) => item.id === 'weekday-pattern');
   return <div className="mt-4 space-y-4">
-    <section className="rounded-[12px] border border-line bg-surface p-4">
+    <section className="rounded-2xl border border-line bg-surface p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-extrabold">پروفایل یک‌نگاهی پرونده</h2>
@@ -84,10 +84,10 @@ export function FinancialDnaPanel({ notify }) {
       </div>
     </section>
 
-    <section className="rounded-[12px] border border-line bg-surface p-4">
+    <section className="rounded-2xl border border-line bg-surface p-4">
       <h2 className="font-extrabold">اثر انگشت رفتاری</h2>
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        {dna.traits.map((trait) => <article key={trait.id} className="rounded-[10px] border border-line bg-paper p-3">
+        {dna.traits.map((trait) => <article key={trait.id} className="rounded-xl border border-line bg-paper p-3">
           <div className="flex items-baseline justify-between gap-2">
             <b className="text-[13px]">{trait.label}</b>
             <span className="text-[13px] font-extrabold text-accent">{trait.value}</span>

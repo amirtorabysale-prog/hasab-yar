@@ -23,7 +23,7 @@ const SOURCE_LABELS = { transaction: 'ثبت روزانه', 'invoice-line': 'ف�
 
 function NoticeCard({ notice, onSeen }) {
   const total = notice.expenseAmount + notice.incomeAmount;
-  return <article className={`rounded-[10px] border p-3 ${notice.seenAt ? 'border-line bg-surface' : 'border-accent bg-accent/5'}`}>
+  return <article className={`rounded-xl border p-3 ${notice.seenAt ? 'border-line bg-surface' : 'border-accent bg-accent/5'}`}>
     <div className="flex items-start gap-3">
       <BellRing size={18} className={notice.seenAt ? 'mt-0.5 text-muted' : 'mt-0.5 text-accent'} />
       <div className="min-w-0 flex-1">
@@ -72,7 +72,7 @@ function ContractRow({ item }) {
       </div>
       {open ? <ChevronUp size={16} className="mt-1 text-muted" /> : <ChevronDown size={16} className="mt-1 text-muted" />}
     </button>
-    {open && <div className="mr-8 mt-3 space-y-2 rounded-[10px] border border-line bg-surface p-3 text-xs">
+    {open && <div className="mr-8 mt-3 space-y-2 rounded-xl border border-line bg-surface p-3 text-xs">
       {item.account && <p className="text-muted">حساب: <b className="text-ink">{item.account}</b></p>}
       {item.evidence && <p className="leading-6 text-muted">«{item.evidence}»</p>}
       <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1">
@@ -122,14 +122,14 @@ export function TimingContractsView({ data, showClosed = false, onToggleClosed =
       <p className="mt-1 text-sm leading-7 text-muted">پولی که برای ماه‌های آینده داده یا گرفته شده، ماه‌به‌ماه سر موعد خودش هزینه یا درآمد می‌شود. ثبت هر ماه خودکار است و حسابدار خبرش را همین‌جا و در صف بررسی می‌بیند.</p>
     </div>
     <div className="grid grid-cols-2 gap-2">
-      <div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌پرداخت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.prepaidRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.prepaidActive)} قرارداد در جریان</span></div>
-      <div className="rounded-[10px] border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌دریافت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.deferredRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.deferredActive)} قرارداد در جریان</span></div>
+      <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌پرداخت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.prepaidRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.prepaidActive)} قرارداد در جریان</span></div>
+      <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌دریافت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.deferredRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.deferredActive)} قرارداد در جریان</span></div>
     </div>
     {data.notices.length > 0 && <div className="space-y-2">
       <h3 className="font-extrabold">خبر ثبت‌های ماهانه {unseen.length > 0 && <span className="text-xs font-bold text-accent">({toPersianDigits(unseen.length)} دیده‌نشده)</span>}</h3>
       {data.notices.slice(0, 4).map((notice) => <NoticeCard key={notice.periodKey} notice={notice} onSeen={seen} />)}
     </div>}
-    {attentionCount > 0 && <div className="rounded-[10px] border border-expense/40 bg-warn-bg/50 p-3">
+    {attentionCount > 0 && <div className="rounded-xl border border-expense/40 bg-warn-bg/50 p-3">
       <p className="flex items-center gap-2 text-sm font-extrabold text-expense"><TriangleAlert size={17} />نیاز به اقدام حسابدار ({toPersianDigits(attentionCount)})</p>
       <ul className="mt-2 space-y-1 text-xs leading-6">
         {blocked.map((item) => <li key={item.key}>قسط {periodKeyLabel(item.periodKey)} «{[item.category, item.counterparty].filter(Boolean).join(' — ')}» ({formatAmount(item.amount)} تومان): {item.reason}</li>)}

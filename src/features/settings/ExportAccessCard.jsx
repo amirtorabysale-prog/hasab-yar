@@ -33,7 +33,7 @@ export default function ExportAccessCard({ access, navigate, refreshAccess, noti
     tone = 'border-income/30 bg-income/5';
     title = 'خروجی پارسیان در دسترس است';
     body = 'منو ← «همکاری حسابدار» ← برگهٔ «تحویل به حسابدار» ← در «مقصد خروجی» گزینهٔ «پارسیان».';
-    action = <button onClick={() => navigate('collaboration')} className="tap shrink-0 rounded-lg bg-accent px-4 text-[13px] font-extrabold text-on-fill">رفتن به خروجی</button>;
+    action = <button onClick={() => navigate('collaboration')} className="tap shrink-0 rounded-lg bg-accent px-4 text-[13px] font-extrabold text-on-fill hover:bg-accent/90 active:bg-accent/80">رفتن به خروجی</button>;
   } else if (profileType !== 'business') {
     title = 'این دفتر «حساب شخصی» است';
     body = ['owner', 'manager'].includes(role)
@@ -45,14 +45,14 @@ export default function ExportAccessCard({ access, navigate, refreshAccess, noti
   } else if (access.experience !== 'professional' && role === 'owner') {
     title = 'در محیط ساده هستی';
     body = 'خروجی پارسیان و ابزار حسابدار در محیط حرفه‌ای است. با رفتن به آن، «همکاری حسابدار» به منو اضافه می‌شود.';
-    action = <button disabled={busy} onClick={goProfessional} className="tap shrink-0 rounded-lg bg-accent px-4 text-[13px] font-extrabold text-on-fill disabled:opacity-40">{busy ? 'در حال تغییر…' : 'رفتن به محیط حرفه‌ای'}</button>;
+    action = <button disabled={busy} onClick={goProfessional} className="tap shrink-0 rounded-lg bg-accent px-4 text-[13px] font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال تغییر…' : 'رفتن به محیط حرفه‌ای'}</button>;
   } else {
     title = 'خروجی پارسیان برای این دسترسی باز نیست';
     body = 'از مالک دفتر بخواه دسترسی‌ات را بررسی کند.';
   }
 
   return <section className="mx-auto mt-5 max-w-[760px] px-4">
-    <div className={`flex flex-wrap items-center justify-between gap-3 rounded-[10px] border p-4 ${tone}`}>
+    <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${tone}`}>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-extrabold text-muted">خروجی پارسیان</p>
         <p className="mt-1 text-[15px] font-extrabold">{title}</p>

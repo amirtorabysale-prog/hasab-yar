@@ -67,9 +67,9 @@ export function OverdraftApprovalSheet({ prompt, canApprove, close }) {
       </>}
       {!inline && !queue && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-[12px] text-accent">این تأیید با حسابدار یا مدیر دفتر است؛ از او بخواه یا اول ثبت جاافتاده را بزن.</p>}
       <div className="mt-4 grid grid-cols-[2fr_1fr] gap-2">
-        {inline && <button disabled={!ready} onClick={() => close(reason.trim())} className="tap rounded-lg bg-expense font-extrabold text-on-fill disabled:opacity-40">تأیید حسابدار و ثبت</button>}
-        {queue && <button onClick={() => close({ requestNote: reason.trim() })} className="tap rounded-lg bg-accent font-extrabold text-on-fill">ارسال برای تأیید حسابدار</button>}
-        <button onClick={() => close(null)} className={`tap rounded-lg border border-line bg-surface font-bold ${inline || queue ? '' : 'col-span-2'}`}>انصراف — ثبت نشود</button>
+        {inline && <button disabled={!ready} onClick={() => close(reason.trim())} className="tap rounded-lg bg-expense font-extrabold text-on-fill disabled:opacity-40 hover:bg-expense/90">تأیید حسابدار و ثبت</button>}
+        {queue && <button onClick={() => close({ requestNote: reason.trim() })} className="tap rounded-lg bg-accent font-extrabold text-on-fill hover:bg-accent/90 active:bg-accent/80">ارسال برای تأیید حسابدار</button>}
+        <button onClick={() => close(null)} className={`tap rounded-lg border border-line bg-surface font-bold ${inline || queue ? '' : 'col-span-2'} hover:bg-paper hover:text-ink`}>انصراف — ثبت نشود</button>
       </div>
     </section>
   </div>;

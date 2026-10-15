@@ -49,7 +49,7 @@ function RunCard({ run, canManage, notify, refresh }) {
     <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
       {run.unpaidCount > 0
         ? canManage && <button disabled={Boolean(busy)} onClick={() => act('salary', () => api.payPayrollSalaries(run.id), 'خالص حقوق پرداخت شد.')}
-          className="tap rounded-lg bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-45">
+          className="tap rounded-lg bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">
           {busy === 'salary' ? 'در حال ثبت…' : `پرداخت خالص ${toPersianDigits(run.unpaidCount)} نفر (${formatAmount(run.unpaidNet)})`}
         </button>
         : <span className="rounded-lg bg-income/10 px-3 py-1.5 font-bold text-income">خالص همه پرداخت شد</span>}
@@ -57,14 +57,14 @@ function RunCard({ run, canManage, notify, refresh }) {
       {insuranceTotal > 0 && (run.insurancePaidAt
         ? <span className="rounded-lg bg-income/10 px-3 py-1.5 font-bold text-income">بیمه پرداخت شد</span>
         : canManage && <button disabled={Boolean(busy)} onClick={() => act('insurance', () => api.payPayrollLiability(run.id, 'insurance'), 'بیمه پرداخت شد.')}
-          className="tap rounded-lg border border-line bg-surface px-3 py-1.5 font-bold">
+          className="tap rounded-lg border border-line bg-surface px-3 py-1.5 font-bold hover:bg-paper hover:text-ink">
           پرداخت بیمه ({formatAmount(insuranceTotal)})
         </button>)}
 
       {run.incomeTax > 0 && (run.taxPaidAt
         ? <span className="rounded-lg bg-income/10 px-3 py-1.5 font-bold text-income">مالیات پرداخت شد</span>
         : canManage && <button disabled={Boolean(busy)} onClick={() => act('tax', () => api.payPayrollLiability(run.id, 'tax'), 'مالیات حقوق پرداخت شد.')}
-          className="tap rounded-lg border border-line bg-surface px-3 py-1.5 font-bold">
+          className="tap rounded-lg border border-line bg-surface px-3 py-1.5 font-bold hover:bg-paper hover:text-ink">
           پرداخت مالیات ({formatAmount(run.incomeTax)})
         </button>)}
     </div>
@@ -121,7 +121,7 @@ export default function PayrollPanel({ canManage, notify }) {
     setBusy(false);
   };
 
-  return <section className="rounded-[10px] border border-line bg-surface p-4">
+  return <section className="rounded-xl border border-line bg-surface p-4">
     <p className="font-bold">حقوق و دستمزد</p>
     <p className="mt-1 max-w-2xl text-[12px] leading-6 text-muted">
       حساب‌یار حقوق را محاسبه نمی‌کند — نرخ بیمه و پلکان مالیات هر سال عوض می‌شوند و هر دفتری قاعدهٔ خودش را دارد.
@@ -141,7 +141,7 @@ export default function PayrollPanel({ canManage, notify }) {
       <input type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={(event) => { setFile(event.target.files?.[0] || null); setIssues([]); }} disabled={!canManage}
         className="block text-[13px] file:ml-3 file:rounded-lg file:border file:border-line file:bg-paper file:px-3 file:py-2 file:text-[13px] file:font-bold" />
-      <button disabled={!canManage || !file || !period.trim() || busy} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45">
+      <button disabled={!canManage || !file || !period.trim() || busy} className="tap rounded-lg bg-accent px-4 font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">
         {busy ? 'در حال ثبت…' : 'ثبت لیست حقوق'}
       </button>
       <a href="#payroll-template" onClick={(event) => { event.preventDefault(); notify('ستون‌های لازم بالای همین کادر نوشته شده‌اند؛ هر فایل اکسل یا CSV با همان سرستون‌ها کار می‌کند.'); }}

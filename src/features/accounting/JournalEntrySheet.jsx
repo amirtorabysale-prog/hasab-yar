@@ -47,7 +47,7 @@ export function JournalEntrySheet({ line, close }) {
             {persianDate(entry.occurredAt)} · {KINDS[entry.entryKind] || entry.entryKind} · <span className="font-bold">{entry.approvalLabel}</span>
           </p>}
         </div>
-        <button onClick={close} aria-label="بستن" className="tap grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line"><X size={17} /></button>
+        <button onClick={close} aria-label="بستن" className="tap grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line hover:bg-paper hover:text-ink"><X size={17} /></button>
       </div>
 
       {!entryId && <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-[12px] leading-6 text-accent">

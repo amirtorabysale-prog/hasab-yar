@@ -27,7 +27,7 @@ export default class ErrorBoundary extends React.Component {
     if (!this.state.error) return this.props.children;
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-[560px] flex-col justify-center px-4 py-10">
-        <section className="rounded-[12px] border border-line bg-surface p-5">
+        <section className="rounded-2xl border border-line bg-surface p-5">
           <p className="text-[12px] font-extrabold text-expense">خطای نمایش</p>
           <h1 className="mt-2 text-xl font-extrabold">این صفحه بالا نیامد</h1>
           <p className="mt-3 text-[13px] leading-7 text-muted">
@@ -39,13 +39,13 @@ export default class ErrorBoundary extends React.Component {
           <div className="mt-5 grid grid-cols-2 gap-2">
             <button
               onClick={() => window.location.reload()}
-              className="tap rounded-lg bg-ink font-extrabold text-on-fill"
+              className="tap rounded-lg bg-ink font-extrabold text-on-fill hover:bg-ink/90"
             >
               بارگذاری دوباره
             </button>
             <button
               onClick={() => { window.location.href = '/'; }}
-              className="tap rounded-lg border border-line bg-surface font-bold"
+              className="tap rounded-lg border border-line bg-surface font-bold hover:bg-paper hover:text-ink"
             >
               بازگشت به صفحهٔ اول
             </button>

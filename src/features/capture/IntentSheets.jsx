@@ -70,7 +70,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
       </h2>
       <blockquote className="mt-3 rounded-lg border border-line bg-surface px-3 py-3 text-sm text-muted">«{draft.transcript}»</blockquote>
 
-      <div className="mt-4 rounded-[10px] border border-line bg-surface px-3 py-3">
+      <div className="mt-4 rounded-xl border border-line bg-surface px-3 py-3">
         <p className="text-xs font-bold text-muted">مبلغ</p>
         {draft.needsAmount && !isInvoice && !isEquityMove ? <>
           {/* جمله بیش از یک مبلغ داشت یا مبلغی نگفت؛ حدس نمی‌زنیم، می‌پرسیم. */}
@@ -272,10 +272,10 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
       {draft.bounced && queueReview && <button disabled={busy} className="tap mt-3 w-full rounded-lg border border-accent p-3 font-bold text-accent" onClick={async()=>{setBusy(true);try{await queueReview(draft);}finally{setBusy(false);}}}>ارسال به صف حسابدار</button>}
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
-        <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">
+        <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">
           {busy ? 'در حال ثبت…' : isInvoice ? 'پیش‌نویس بساز' : 'ثبت کن'}
         </button>
-        <button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold">لغو</button>
+        <button disabled={busy} onClick={close} className="tap rounded-lg border border-line bg-surface font-bold hover:bg-paper hover:text-ink">لغو</button>
       </div>
     </section>
   </div>;
@@ -386,8 +386,8 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
       </>}
 
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
-        {!draft.bounced && <button disabled={busy || !selected || (byPartner && !payer)} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
-        <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''}`}>{draft.bounced ? 'بستن' : 'لغو'}</button>
+        {!draft.bounced && <button disabled={busy || !selected || (byPartner && !payer)} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{busy ? 'در حال تسویه…' : 'تسویه کن'}</button>}
+        <button disabled={busy} onClick={close} className={`tap rounded-lg border border-line bg-surface font-bold ${draft.bounced ? 'col-span-2' : ''} hover:bg-paper hover:text-ink`}>{draft.bounced ? 'بستن' : 'لغو'}</button>
       </div>
     </section>
   </div>;
