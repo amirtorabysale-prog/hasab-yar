@@ -231,6 +231,10 @@ function occurrences(keyed, evidence) {
  */
 const SERVICE_ONLY_CATEGORIES = new Set(['قبوض', 'اجاره', 'بیمه', 'حقوق و دستمزد', 'حمل‌ونقل', 'پیمانکار و خدمات بیرونی', 'کارمزد بانکی', 'مالیات و عوارض', 'جرایم مالیاتی', 'آموزش']);
 const SERVICE_ON_ASSET_CATEGORIES = new Set([...SERVICE_ONLY_CATEGORIES, 'تعمیر و نگهداری']);
+const GENERIC_CATEGORIES = new Set(['سایر هزینه‌ها', 'سایر درآمدها']);
+const SERVICE_INCOME_TWIN = Object.freeze({
+  اجاره: 'درآمد اجاره', 'تعمیر و نگهداری': 'خدمات', آموزش: 'خدمات', 'پیمانکار و خدمات بیرونی': 'خدمات', 'حمل‌ونقل': 'خدمات', 'نرم‌افزار و اشتراک': 'خدمات',
+});
 const CATEGORY_TYPES = new Map(CATEGORY_DEFINITIONS.map((definition) => [definition.name, definition.type]));
 function categoryFits(name, kind, type) {
   if (!name || CATEGORY_TYPES.get(name) !== type) return false;
@@ -799,7 +803,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // ثابت شد (محک دسته، مهر ۱۴۰۵). وقتی دستهٔ خودِ مدل خدمت است، پول بابت خدمتی روی
     // دارایی رفته، نه خریدِ آن.
     const boughtService = subjectHere && SERVICE_ON_ASSET_CATEGORIES.has(facts.subject.category);
-    const intendedUse = (subjectHere ? (facts.subject.kind === 'asset' && facts.subject.use === 'internal' && !boughtService ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use]) : null)
+    // «اتو برقی برای خیاطی»: مدل دارایی را «برای تولید» نامید و موجودی کالا شد. دارایی ماده‌ای
+    // نیست که در محصول مصرف شود؛ ابزارِ کار، استفادهٔ بلندمدت است.
+    const durableUse = facts.subject.kind === 'asset' && ['internal', 'production'].includes(facts.subject.use) && !boughtService;
+    const intendedUse = (subjectHere ? (durableUse ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use]) : null)
       || (boughtService ? null : purposes.intendedUse) || null;
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
@@ -821,7 +828,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // موضوع مالِ همین مبلغ باشد و دسته با نوعِ موضوع و جهتِ پول جور باشد؛ وگرنه همان
     // فهرست واژه، و آن هم فقط دسته‌ای که با فهمِ مدل در تضاد نیست.
     const fits = (name) => categoryFits(name, subjectHere ? facts.subject.kind : null, type);
-    const modelCategory = subjectHere && fits(facts.subject.category) ? facts.subject.category : null;
+    // «سایر …»ِ مدل یعنی «دستهٔ خاصی ندیدم»؛ جای دستهٔ مشخصِ فهرست واژه را نمی‌گیرد.
+    const modelCategory = !subjectHere ? null
+      : fits(facts.subject.category) && !GENERIC_CATEGORIES.has(facts.subject.category) ? facts.subject.category
+        // «تعمیر لپ‌تاپ مشتری … گرفتیم»: مدل دستهٔ خودِ خدمت (تعمیر) را گفت، ولی پول آمده؛
+        // خدمتی که ما انجام دادیم درآمدِ خدمات است، و اجاره‌ای که گرفتیم درآمد اجاره.
+        : type === 'income' && facts.subject.kind === 'service' ? SERVICE_INCOME_TWIN[facts.subject.category] || null : null;
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
     const matchedIn = (part) => (part ? classifyCategory(part, type) : null);
     let category = modelCategory || [amount.evidence, scope.alone ? clause : scope.own, describe].map(matchedIn)

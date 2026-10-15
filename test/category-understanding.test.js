@@ -123,8 +123,8 @@ test('دستهٔ ناجورِ مدل پذیرفته نمی‌شود: کالا د
       movements: [mv('m1', 'a1', 'in', NOBODY, CASH, 'نقد گرفتیم')],
       subject: subject('تعمیر لپ‌تاپ مشتری', 'service', 'تعمیر و نگهداری'),
     }));
-    const [category] = categories(item);
-    assert.ok(['خدمات', 'پروژه و دستمزد', 'سایر درآمدها'].includes(category), category);
+    // خدمتی که ما انجام دادیم و پولش آمده، درآمد خدمات است (محک دسته، I004 و I015).
+    assert.deepEqual(categories(item), ['خدمات']);
   });
 });
 
@@ -194,6 +194,14 @@ test('درآمد: دستهٔ درآمدیِ مدل می‌نشیند', async () 
   });
 });
 
+test('«سایر هزینه‌ها»ی مدل جای دستهٔ مشخصِ فهرست واژه را نمی‌گیرد', async () => {
+  await inFreshWorkspace(async () => {
+    const item = await paid('اجاره انبار این ماه ۸ میلیون نقد دادیم', 8_000_000, '۸ میلیون', subject('اجاره انبار', 'service', 'سایر هزینه‌ها'),
+      { event: { kind: 'expense', description: '', status: 'done' } });
+    assert.deepEqual(categories(item), ['اجاره']);
+  });
+});
+
 test('اعتبارسنجی: دسته‌ای بیرون از فهرست برنامه پذیرفته نمی‌شود', () => {
   const said = model({ subject: subject('کلید برق', 'goods', 'لوازم برقی') });
   assert.equal(validateUnderstanding(said, { text: 'خرید کلید برق ۲ میلیون', now: new Date(NOW) }).understanding?.subject?.category ?? null, null);
@@ -235,5 +243,72 @@ test('پنهان‌کاری: «مالیات نبینه»، «جایی ثبت ن�
   }
   for (const text of ['این قبض تکراریه، دوباره ثبت نکن', 'تا فاکتورش نیومده ثبتش نکن', 'خرید ۵ میلیون کاغذ نقد دادیم']) {
     assert.doesNotMatch(judgmentReason(text) || '', /پنهان‌کاری/, text);
+  }
+});
+
+test('دریافتی بابت خدمت یا اجاره: دستهٔ هزینه‌ایِ مدل به دوقلوی درآمدی‌اش می‌رود', async () => {
+  for (const [text, what, said, expected] of [
+    ['تعمیر گوشی تلفن مشتری ۸۰۰ هزار تومن نقد گرفتیم', 'تعمیر گوشی تلفن مشتری', 'تعمیر و نگهداری', 'خدمات'],
+    ['کلاس آموزش اکسل برگزار کردیم ۸۰۰ هزار تومن ثبت‌نام نقد گرفتیم', 'کلاس آموزش اکسل', 'آموزش', 'خدمات'],
+    ['اجاره انبار رو ۸۰۰ هزار تومن از مستاجر نقد گرفتیم', 'اجاره انبار', 'اجاره', 'درآمد اجاره'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const item = await understood(text, model({
+        event: { kind: 'income', description: '', status: 'done' },
+        amounts: [amt('a1', 800_000, 'received-now', '۸۰۰ هزار تومن')],
+        movements: [mv('m1', 'a1', 'in', NOBODY, CASH, 'نقد گرفتیم')],
+        subject: subject(what, 'service', said),
+      }));
+      assert.deepEqual(categories(item), [expected], text);
+    });
+  }
+  // نمونهٔ منفی: کالایی که فروختیم، دوقلوی خدماتی نمی‌گیرد.
+  await inFreshWorkspace(async () => {
+    const item = await understood('یه کلید برق اضافه داشتیم ۸۰۰ هزار تومن نقد فروختیم', model({
+      event: { kind: 'sale', description: '', status: 'done' },
+      amounts: [amt('a1', 800_000, 'received-now', '۸۰۰ هزار تومن')],
+      movements: [mv('m1', 'a1', 'in', NOBODY, CASH, 'نقد فروختیم')],
+      subject: subject('کلید برق', 'goods', 'ملزومات اداری'),
+    }));
+    assert.notEqual(categories(item)[0], 'خدمات');
+  });
+});
+
+test('ابزارِ کار «برای تولید» دارایی است، نه موجودی کالا؛ مادهٔ تولید همچنان موجودی است', async () => {
+  await inFreshWorkspace(async () => {
+    const item = await paid('دستگاه دوخت صنعتی برای خیاطی ۴۰ میلیون خریدیم', 40_000_000, '۴۰ میلیون', subject('دستگاه دوخت صنعتی', 'asset', null, { use: 'production' }));
+    assert.equal(treatments(item)[0], 'fixed-asset');
+  });
+  await inFreshWorkspace(async () => {
+    const item = await paid('اتو برقی برای خیاطی ۲ میلیون خریدیم', 2_000_000, '۲ میلیون', subject('اتو برقی', 'asset', null, { use: 'production' }));
+    assert.notEqual(treatments(item)[0], 'inventory-purchase');
+  });
+  await inFreshWorkspace(async () => {
+    const item = await paid('پارچه برای دوخت مانتو ۲۰ میلیون خریدیم', 20_000_000, '۲۰ میلیون', subject('پارچه', 'goods', 'مواد و کالا', { use: 'production' }));
+    assert.equal(treatments(item)[0], 'inventory-purchase');
+  });
+});
+
+test('فهرست واژه: شارژ موبایل، خدمت حرفه‌ای، پست و عوارض آزادراه دستهٔ خودشان را دارند', () => {
+  for (const [text, expected] of [
+    ['کارت شارژ موبایل برای پیک', 'قبوض'], ['شارژ سیم‌کارت شرکت', 'قبوض'], ['بسته اینترنت گوشی شرکت', 'قبوض'],
+    ['هزینه کارشناسی رسمی برای دادگاه', 'پیمانکار و خدمات بیرونی'], ['حق‌الزحمهٔ حسابرس', 'پیمانکار و خدمات بیرونی'],
+    ['نظافت دفتر توسط شرکت خدماتی', 'پیمانکار و خدمات بیرونی'],
+    ['پست سفارشی نامه‌ها', 'حمل‌ونقل'], ['تیپاکس مدارک', 'حمل‌ونقل'], ['ترخیص بار از گمرک', 'حمل‌ونقل'],
+    ['عوارض آزادراه', 'سوخت و ایاب‌وذهاب'], ['عوارض آزادراهی تهران قم', 'سوخت و ایاب‌وذهاب'],
+    ['شیرینی و میوه برای جلسه', 'خوراک'], ['چای و شیرینی مهمونا', 'خوراک'],
+    // منفی: جریمهٔ مالیاتی و عوارض شهرداری دستهٔ خودشان را نگه می‌دارند.
+    ['جریمه مالیاتی حسابرسی', 'جرایم مالیاتی'], ['عوارض شهرداری', 'مالیات و عوارض'],
+  ]) {
+    assert.equal(classifyCategory(text, 'expense').category, expected, text);
+  }
+});
+
+test('مسیر بی‌AI: دستگاه تلفن قبض نیست؛ قبض و پولِ همان دستگاه هنوز قبض است', () => {
+  for (const text of ['یه تلفن رومیزی برای پذیرش ۱ میلیون و ۲۰۰ خریدیم', 'تلفن همراه منشی', 'تلفن‌های داخلی دفتر رو سیم‌کشی کردیم', 'تلفن های داخلی']) {
+    assert.notEqual(classifyCategory(text, 'expense').category, 'قبوض', text);
+  }
+  for (const text of ['قبض تلفن همراه', 'پول تلفن همراه', 'شارژ تلفن همراه', 'پول تلفن این ماه', 'تلفن ها رو قطع کردن قبضش رو بده']) {
+    assert.equal(classifyCategory(text, 'expense').category, 'قبوض', text);
   }
 });
