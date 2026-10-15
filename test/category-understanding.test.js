@@ -312,3 +312,32 @@ test('مسیر بی‌AI: دستگاه تلفن قبض نیست؛ قبض و پو
     assert.equal(classifyCategory(text, 'expense').category, 'قبوض', text);
   }
 });
+
+test('عبارتِ دقیقِ گفتهٔ کاربر بر دستهٔ مدل مقدم است؛ واژهٔ تکی نه', async () => {
+  for (const [text, value, evidence, said, expected] of [
+    ['پول گاز انبار ۲ میلیون و ۷۰۰', 2_700_000, '۲ میلیون و ۷۰۰', subject('گاز انبار', 'other', 'سوخت و ایاب‌وذهاب'), 'قبوض'],
+    ['شارژ ساختمان مهر ۲ میلیون', 2_000_000, '۲ میلیون', subject('شارژ ساختمان', 'other', 'ملزومات اداری'), 'قبوض'],
+    // «حسابداری» مالِ «حسابدار» (خدمت بیرونی) نیست؛ دستهٔ مدل می‌ماند.
+    ['فلش و هارد اکسترنال برای پشتیبان حسابداری ۲ میلیون', 2_000_000, '۲ میلیون', subject('فلش و هارد اکسترنال', 'goods', 'ملزومات اداری'), 'ملزومات اداری'],
+    // منفی: «برق»ِ تنها عبارت دقیق نیست؛ دستهٔ مدل می‌ماند.
+    ['پرداخت ۲ میلیون بابت خرید کلید برق', 2_000_000, '۲ میلیون', subject('کلید برق', 'goods', 'ملزومات اداری'), 'ملزومات اداری'],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const item = await paid(text, value, evidence, said, { event: { kind: 'expense', description: '', status: 'done' } });
+      assert.deepEqual(categories(item), [expected], text);
+    });
+  }
+});
+
+test('تعمیر و سرویس با کاربرد «بلندمدت»ِ مدل هم دارایی نمی‌شود', async () => {
+  for (const [text, value, evidence, said] of [
+    ['سرویس و تعویض روغن وانت ۲ میلیون', 2_000_000, '۲ میلیون', subject('سرویس و تعویض روغن وانت', 'service', 'تعمیر و نگهداری', { use: 'long-term' })],
+    ['تعمیر کولر آبی دفتر ۱ میلیون و ۸۰۰', 1_800_000, '۱ میلیون و ۸۰۰', subject('کولر آبی', 'asset', 'تعمیر و نگهداری', { use: 'long-term' })],
+  ]) {
+    await inFreshWorkspace(async () => {
+      const item = await paid(text, value, evidence, said, { event: { kind: 'expense', description: '', status: 'done' } });
+      assert.deepEqual(categories(item), ['تعمیر و نگهداری'], text);
+      assert.notEqual(treatments(item)[0], 'fixed-asset', text);
+    });
+  }
+});

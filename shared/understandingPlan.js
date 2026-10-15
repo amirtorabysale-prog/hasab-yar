@@ -231,6 +231,7 @@ function occurrences(keyed, evidence) {
  */
 const SERVICE_ONLY_CATEGORIES = new Set(['قبوض', 'اجاره', 'بیمه', 'حقوق و دستمزد', 'حمل‌ونقل', 'پیمانکار و خدمات بیرونی', 'کارمزد بانکی', 'مالیات و عوارض', 'جرایم مالیاتی', 'آموزش']);
 const SERVICE_ON_ASSET_CATEGORIES = new Set([...SERVICE_ONLY_CATEGORIES, 'تعمیر و نگهداری']);
+const STRONG_KEYWORD = 0.94;
 const GENERIC_CATEGORIES = new Set(['سایر هزینه‌ها', 'سایر درآمدها']);
 const SERVICE_INCOME_TWIN = Object.freeze({
   اجاره: 'درآمد اجاره', 'تعمیر و نگهداری': 'خدمات', آموزش: 'خدمات', 'پیمانکار و خدمات بیرونی': 'خدمات', 'حمل‌ونقل': 'خدمات', 'نرم‌افزار و اشتراک': 'خدمات',
@@ -806,7 +807,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «اتو برقی برای خیاطی»: مدل دارایی را «برای تولید» نامید و موجودی کالا شد. دارایی ماده‌ای
     // نیست که در محصول مصرف شود؛ ابزارِ کار، استفادهٔ بلندمدت است.
     const durableUse = facts.subject.kind === 'asset' && ['internal', 'production'].includes(facts.subject.use) && !boughtService;
-    const intendedUse = (subjectHere ? (durableUse ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use]) : null)
+    const subjectIntent = durableUse ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use];
+    // پولِ تعمیر و سرویس، هر کاربردی که مدل برای خودِ دستگاه گفته باشد («بلندمدت»)، خریدِ
+    // دارایی نیست (محک دسته، دور دوم: تعمیر کولر، ماشین، آسانسور و پرینتر).
+    const intendedUse = (subjectHere ? (boughtService && subjectIntent === 'long-term-use' ? null : subjectIntent) : null)
       || (boughtService ? null : purposes.intendedUse) || null;
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
@@ -836,7 +840,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
         : type === 'income' && facts.subject.kind === 'service' ? SERVICE_INCOME_TWIN[facts.subject.category] || null : null;
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
     const matchedIn = (part) => (part ? classifyCategory(part, type) : null);
-    let category = modelCategory || [amount.evidence, scope.alone ? clause : scope.own, describe].map(matchedIn)
+    // عبارتِ دقیقِ فهرست واژه در گفتهٔ خودِ کاربر («پول گاز انبار»، «شارژ ساختمان») بر دستهٔ
+    // مدل مقدم است، اگر با نوعِ موضوع جور باشد؛ واژهٔ تکی («برق») نه. محک دسته، دور دوم: در
+    // ۹ اختلاف، عبارت دقیق ۵ بار درست بود و مدل غلط، و مدل فقط یک بار، که نقصِ خودِ فهرست بود.
+    const strong = [amount.evidence, scope.alone ? clause : scope.own].map(matchedIn)
+      .find((result) => result?.matched && result.confidence >= STRONG_KEYWORD && fits(result.category))?.category || null;
+    let category = strong || modelCategory || [amount.evidence, scope.alone ? clause : scope.own, describe].map(matchedIn)
       .find((result) => result?.matched && fits(result.category))?.category || null;
     // «اجاره ماهی ۸ میلیون، سه ماه آینده انبار رو یک‌جا ۲۴ میلیون»: نرخ همان خدمت را نام
     // می‌برد که پرداخت یک‌جا برایش است؛ «انبار»ِ بندِ پرداخت آن را «مواد و کالا» می‌کرد.
