@@ -341,3 +341,17 @@ test('تعمیر و سرویس با کاربرد «بلندمدت»ِ مدل ه�
     });
   }
 });
+
+test('اجاره، بیمه و تعمیرِ یک دارایی: موضوعِ «دارایی»ِ مدل دستهٔ خدمت را رد نمی‌کند؛ قبض و حقوق را چرا', async () => {
+  await inFreshWorkspace(async () => {
+    const item = await paid('اجاره مهر دفتر ۱۵ میلیون نقد دادیم', 15_000_000, '۱۵ میلیون', subject('دفتر', 'asset', 'اجاره'),
+      { event: { kind: 'expense', description: '', status: 'done' } });
+    assert.deepEqual(categories(item), ['اجاره']);
+    assert.notEqual(treatments(item)[0], 'fixed-asset');
+  });
+  // منفی: کالا با دستهٔ «قبوض»ِ مدل همچنان قبض نمی‌شود.
+  await inFreshWorkspace(async () => {
+    const item = await paid('یه کلید برق ۸۰۰ هزار تومن خریدیم', 800_000, '۸۰۰ هزار تومن', subject('کلید برق', 'goods', 'قبوض'));
+    assert.notEqual(categories(item)[0], 'قبوض');
+  });
+});

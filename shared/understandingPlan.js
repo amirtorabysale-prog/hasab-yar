@@ -231,6 +231,7 @@ function occurrences(keyed, evidence) {
  */
 const SERVICE_ONLY_CATEGORIES = new Set(['قبوض', 'اجاره', 'بیمه', 'حقوق و دستمزد', 'حمل‌ونقل', 'پیمانکار و خدمات بیرونی', 'کارمزد بانکی', 'مالیات و عوارض', 'جرایم مالیاتی', 'آموزش']);
 const SERVICE_ON_ASSET_CATEGORIES = new Set([...SERVICE_ONLY_CATEGORIES, 'تعمیر و نگهداری']);
+const SERVICE_ON_OBJECT_CATEGORIES = new Set(['اجاره', 'بیمه', 'تعمیر و نگهداری', 'حمل‌ونقل', 'پیمانکار و خدمات بیرونی']);
 const STRONG_KEYWORD = 0.94;
 const GENERIC_CATEGORIES = new Set(['سایر هزینه‌ها', 'سایر درآمدها']);
 const SERVICE_INCOME_TWIN = Object.freeze({
@@ -831,7 +832,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «قبوض» ثبت شد (گزارش مالک محصول، ۲۳ مهر ۱۴۰۵). دستهٔ مدل فقط وقتی پذیرفته است که
     // موضوع مالِ همین مبلغ باشد و دسته با نوعِ موضوع و جهتِ پول جور باشد؛ وگرنه همان
     // فهرست واژه، و آن هم فقط دسته‌ای که با فهمِ مدل در تضاد نیست.
-    const fits = (name) => categoryFits(name, subjectHere ? facts.subject.kind : null, type);
+    // «اجاره مهر دفتر»: مدل موضوع را «دفتر» (دارایی) و دسته را «اجاره» گفت؛ موضوع مفعولِ خدمت
+    // است، نه چیزی که خریده شد (محک دسته، دور سوم). «قبوض» و «حقوق» این‌طور نیستند: کالا قبض نیست.
+    const serviceOnObject = subjectHere && SERVICE_ON_OBJECT_CATEGORIES.has(facts.subject.category);
+    const fits = (name) => categoryFits(name, !subjectHere ? null : serviceOnObject ? 'service' : facts.subject.kind, type);
     // «سایر …»ِ مدل یعنی «دستهٔ خاصی ندیدم»؛ جای دستهٔ مشخصِ فهرست واژه را نمی‌گیرد.
     const modelCategory = !subjectHere ? null
       : fits(facts.subject.category) && !GENERIC_CATEGORIES.has(facts.subject.category) ? facts.subject.category
