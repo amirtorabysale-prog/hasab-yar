@@ -78,7 +78,7 @@ export function TaxPage({ access, notify }) {
   const ledger = report.ledger || {};
   const treatmentLabels = { taxable: 'مشمول', zero: 'نرخ صفر', exempt: 'معاف' };
   return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
-    <div><p className="text-[13px] font-bold text-accent">کنترل مدیریتی مالیات</p><h1 className="mt-1 text-xl font-extrabold">مالیات و ارزش افزوده</h1><p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">نرخ‌ها را مطابق وضعیت کسب‌وکارت تعریف کن. حساب‌یار مبلغ را شفاف محاسبه و در دفتر کل تفکیک می‌کند، اما به سامانه مودیان ارسال نمی‌کند.</p></div>
+    <div><h1 className="mt-1 text-xl font-extrabold">مالیات و ارزش افزوده</h1><p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">نرخ‌ها را مطابق وضعیت کسب‌وکارت تعریف کن. حساب‌یار مبلغ را شفاف محاسبه و در دفتر کل تفکیک می‌کند، اما به سامانه مودیان ارسال نمی‌کند.</p></div>
     <TaxAssistantPanel access={access} notify={notify} />
     {/* ارزش افزوده هزینهٔ شرکت نیست؛ پول سازمان است که شرکت جمعش کرده. تا
         تسویه نشود، دو حساب ارزش افزوده تا ابد بزرگ می‌شوند. */}

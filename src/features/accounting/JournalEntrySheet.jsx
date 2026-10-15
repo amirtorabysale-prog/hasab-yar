@@ -57,7 +57,7 @@ export function JournalEntrySheet({ line, close }) {
       {entryId && !entry && !error && <p role="status" className="mt-6 text-center text-sm text-muted">در حال خواندن سند…</p>}
 
       {entry && <>
-        {entry.memo && <p className="mt-3 rounded-lg border border-line bg-surface px-3 py-2 text-[13px] leading-6">{entry.memo}</p>}
+        {entry.memo && <p className="mt-3 rounded-lg border border-line bg-surface px-3 py-2 text-[13px] leading-6">{toPersianDigits(entry.memo)}</p>}
         <div className="mt-3 overflow-x-auto rounded-lg border border-line bg-surface">
           <table className="w-full min-w-[520px] text-[13px]">
             <thead className="bg-paper text-xs text-muted"><tr>

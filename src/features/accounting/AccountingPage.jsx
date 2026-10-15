@@ -80,7 +80,7 @@ export function AccountingPage({ access, notify, initialSection = '', onSectionC
   };
   const typeLabels = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
   return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[13px] font-bold text-accent">حسابداری / اسناد و دفاتر</p><h1 className="mt-1 text-xl font-extrabold">اسناد حسابداری</h1><p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">هر دریافت یا پرداخت به سند متوازن بدهکار و بستانکار تبدیل می‌شود. این دفتر هنوز جایگزین دفاتر قانونی و محاسبات مالیاتی نیست.</p></div><div className={`rounded-lg border px-3 py-2 text-xs font-bold ${trial.balanced ? 'border-income/30 bg-income/5 text-income' : 'border-expense/30 bg-warn-bg text-expense'}`}><Check size={16} className="ml-1 inline" />{trial.balanced ? 'جمع بدهکار و بستانکار برابر است' : 'عدم توازن نیازمند بررسی'}</div></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="mt-1 text-xl font-extrabold">اسناد حسابداری</h1><p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">هر دریافت یا پرداخت به سند متوازن بدهکار و بستانکار تبدیل می‌شود. این دفتر هنوز جایگزین دفاتر قانونی و محاسبات مالیاتی نیست.</p></div><div className={`rounded-lg border px-3 py-2 text-xs font-bold ${trial.balanced ? 'border-income/30 bg-income/5 text-income' : 'border-expense/30 bg-warn-bg text-expense'}`}><Check size={16} className="ml-1 inline" />{trial.balanced ? 'جمع بدهکار و بستانکار برابر است' : 'عدم توازن نیازمند بررسی'}</div></div>
     <nav className="section-navigation" aria-label="بخش‌های حسابداری">{[
       ['journals', 'اسناد ثبت‌شده'], ['trial', 'تراز آزمایشی'], ...(canWrite ? [['entry', 'ثبت سند']] : []),
       ['worklist', 'کارتابل اسناد'], ['payroll', 'حقوق و دستمزد'], ['period', 'دوره مالی'],
@@ -278,7 +278,7 @@ function JournalWorklistPanel({ worklist, canApprove, notify, refresh }) {
       {worklist.items.map((item) => <article key={item.id} className="flex flex-wrap items-center gap-3 py-3">
         <span className={`rounded border px-2 py-0.5 text-xs font-bold ${APPROVAL_STYLE[item.approvalState]}`}>{item.approvalLabel}</span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-bold">سند <span className="numbers">{toPersianDigits(item.documentNumber || '—')}</span> · {item.memo || 'بدون شرح'}</p>
+          <p className="truncate text-[13px] font-bold">سند <span className="numbers">{toPersianDigits(item.documentNumber || '—')}</span> · {toPersianDigits(item.memo || 'بدون شرح')}</p>
           <p className="mt-0.5 text-xs text-muted">{persianDate(item.occurredAt)} · <span className="numbers">{formatAmount(item.total)}</span> تومان</p>
           {item.returnReason && <p className="mt-1 text-xs leading-5 text-expense">دلیل برگشت: {item.returnReason}</p>}
         </div>

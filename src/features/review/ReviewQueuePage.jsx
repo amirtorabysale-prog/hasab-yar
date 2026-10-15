@@ -435,35 +435,35 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
 
   const needsAccountant = (items || []).filter((item) => item.route === 'accountant-review').length;
 
-  return <section className="mx-auto my-5 w-full max-w-[980px] rounded-2xl border border-line bg-surface p-4 sm:p-6">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <div><p className="text-xs font-bold text-accent">میز بررسی حسابدار</p><h1 className="mt-1 text-xl font-extrabold">صف بررسی</h1><p className="mt-2 text-xs leading-6 text-muted">متن اصلی را بخوانید، اطلاعات لازم را تکمیل کنید و سپس پیشنهاد ثبت را بررسی کنید.</p></div>
-      {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-[12px]">
-        <span className={`rounded border px-2 py-0.5 font-bold ${ROUTE_STYLE['accountant-review']}`}>نیازمند بررسی: <span className="numbers">{toPersianDigits(needsAccountant)}</span></span>
-        <span className={`rounded border px-2 py-0.5 font-bold ${ROUTE_STYLE.confirm}`}>در انتظار تأیید: <span className="numbers">{toPersianDigits(items.length - needsAccountant)}</span></span>
+  // ترتیب صفحه ترتیب کار حسابدار است: آنچه اقدام می‌خواهد بالا، تنظیم صف پایین.
+  return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
+    <header className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 className="text-xl font-extrabold">صف بررسی</h1>
+        <p className="mt-1 max-w-[640px] text-sm leading-7 text-muted">مواردی که سیستم به‌جای حدس زدن متوقفشان کرده. سند هیچ‌کدام هنوز زده نشده؛ متن اصلی را بخوان، کمبود را تکمیل کن و پیشنهاد ثبت را بسنج.</p>
+      </div>
+      {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-xs">
+        <span className={`rounded-full border px-2.5 py-1 font-bold ${ROUTE_STYLE['accountant-review']}`}>نیازمند بررسی: <span className="numbers">{toPersianDigits(needsAccountant)}</span></span>
+        <span className={`rounded-full border px-2.5 py-1 font-bold ${ROUTE_STYLE.confirm}`}>در انتظار تأیید: <span className="numbers">{toPersianDigits(items.length - needsAccountant)}</span></span>
       </div>}
-    </div>
-
-    <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
-      این‌ها مواردی‌اند که سیستم به‌جای حدس زدن، ثبتشان را متوقف کرده است. سند هیچ‌کدام هنوز زده نشده
-      ثبت سند تنها پس از تکمیل اطلاعات و کنترل‌های حسابداری انجام می‌شود.
-    </p>
-
-    {dnaSummary && <p className="mt-3 rounded border border-accent/30 bg-accent/5 p-3 text-xs leading-6"><b>DNA حسابداری همین شرکت</b> · {toPersianDigits(dnaSummary.accepted)} پیشنهاد تأییدشده · {toPersianDigits(dnaSummary.rejected)} اصلاح با دلیل · {toPersianDigits(dnaSummary.messages)} پیام حسابدار. تصمیم‌های شما در پیشنهادهای مرتبط بعدی استفاده می‌شوند.</p>}
-
-    <div id="automation-policy" className="scroll-mt-4"><AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} /></div>
+    </header>
 
     <RecognitionNotices notices={notices} navigate={navigate} notify={notify} onSeen={load} />
 
     <UnidentifiedFundsPanel notify={notify} />
 
-    {items === null && <p className="mt-3 text-[13px] text-muted">در حال خواندن صف…</p>}
-    {items?.length === 0 && <p className="mt-3 text-[13px] text-income">چیزی در صف بررسی نمانده است.</p>}
+    <section className="mt-4 rounded-2xl border border-line bg-surface px-4 sm:px-5">
+      {items === null && <p className="py-6 text-sm text-muted">در حال خواندن صف…</p>}
+      {items?.length === 0 && <p className="py-6 text-sm font-bold text-income">چیزی در صف بررسی نمانده است.</p>}
+      {items?.length > 0 && <div className="divide-y divide-line">
+        {items.map((item) => item.intake ? <UnquantifiedReviewCard key={item.id} item={item} notify={notify} onSaved={load} /> : <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
+          onApprove={approve} onReject={reject} onAnswered={load} notify={notify} navigate={navigate} />)}
+      </div>}
+    </section>
 
-    {items?.length > 0 && <div className="mt-1 divide-y divide-line">
-      {items.map((item) => item.intake ? <UnquantifiedReviewCard key={item.id} item={item} notify={notify} onSaved={load} /> : <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
-        onApprove={approve} onReject={reject} onAnswered={load} notify={notify} navigate={navigate} />)}
-    </div>}
-  </section>;
+    <h2 className="mt-8 text-sm font-extrabold text-muted">تنظیم صف</h2>
+    {dnaSummary && <p className="mt-2 rounded-xl border border-line bg-surface p-3 text-xs leading-6"><b>DNA حسابداری همین شرکت</b> · {toPersianDigits(dnaSummary.accepted)} پیشنهاد تأییدشده · {toPersianDigits(dnaSummary.rejected)} اصلاح با دلیل · {toPersianDigits(dnaSummary.messages)} پیام حسابدار. تصمیم‌های شما در پیشنهادهای مرتبط بعدی استفاده می‌شوند.</p>}
+    <div id="automation-policy" className="scroll-mt-20"><AutomationPolicyPanel canManage={['owner', 'manager'].includes(access?.workspace?.role)} notify={notify} onChanged={load} /></div>
+  </main>;
 }
 
