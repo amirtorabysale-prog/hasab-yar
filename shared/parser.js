@@ -644,6 +644,16 @@ function signalScore(text, words, verbs) {
  * فاکتور غیررسمی داده» درآمد ثبت می‌شد.
  */
 const ROLE_NOUNS = /فروشنده|فروشگاه|خریدار/g;
+// «پاداش فروش ویزیتورها»، «مدیر فروش»: «فروش» نام واحد یا مبنای پاداش است، نه پولی که
+// آمده؛ «پاداش فروش ویزیتورها ۱۲ میلیون» درآمد فروش ثبت می‌شد (محک دسته، E054).
+const SALES_ROLE = /(?:پاداش|پورسانت|کمیسیون|مدیر|کارشناس|تیم|واحد|نماینده|ویزیتور|بازاریاب)(?:\s*(?:ها|های|ی))?\s*فروش(?![آ-ی])/g;
+// «کتاب‌فروشی»، «لوازم‌فروشی»: نام مغازه است. «عمده‌فروشی» و «خرده‌فروشی» خودِ فروش‌اند
+// («کتاب … برای فروش در کتاب‌فروشی» درآمد ثبت می‌شد، محک دسته X015).
+const SHOP_NAME = /(?<![آ-ی])(?!(?:عمده|خرده|خورده)[\s‌]*فروشی)([آ-ی]{2,})[\s‌]*فروشی(?![آ-ی])/g;
+/** نام نقش، واحد فروش و نام مغازه را از متنِ جهت و دسته کنار می‌گذارد. */
+function maskRoleNouns(text) {
+  return text.replace(ROLE_NOUNS, ' ').replace(SALES_ROLE, (phrase) => phrase.replace(/فروش$/, ' ')).replace(SHOP_NAME, '$1 ');
+}
 
 /**
  * هدف خرید، نشانهٔ فروش نیست.
@@ -744,12 +754,16 @@ function thirdPersonGave(input) {
  * نه وقتی ما پرداخته‌ایم («ودیعهٔ مستاجر رو پس دادیم»، «به مستاجر برگردوندیم»)
  * و نه وقتی پول به کس دیگری رسیده («… به آقای رضایی داد»).
  */
-const PAYER_ROLE = '(?<![آ-ی])(?:مست[اأ]جر|مشتری|خریدار|کارفرما)(?:\\s*(?:مون|مان|ش|شون|مونو))?(?![آ-ی])';
+// شرکت‌کننده، هنرجو، دانشجو، شاگرد، مراجعه‌کننده و بیمار هم مشتریِ خدمت‌اند، و جمعِ هر نقش
+// همان نقش است: «شهریه … از شرکت‌کننده‌ها گرفتیم» هزینهٔ آموزش ثبت می‌شد (محک دسته، I018).
+const PAYER_ROLE = '(?<![آ-ی])(?:مست[اأ]جر|مشتری|خریدار|کارفرما|شرکت[\\s‌]*کننده|هنرجو|دانشجو|شاگرد|مراجعه[\\s‌]*کننده|بیمار)(?:[\\s‌]*(?:ها|های|ا|یان|ان|گان))?(?:\\s*(?:مون|مان|ش|شون|مونو))?(?![آ-ی])';
 const FROM_PAYER = new RegExp(`(?<![آ-ی])از\\s*${PAYER_ROLE}`);
 // «سفارش داد»، «قول داد»، «تحویل داد» کار یا تعهد است، نه پول.
 const NOT_MONEY_GAVE = /(?:سفارش|قول|تحویل|انجام|نشون|نشان|گزارش|اجازه|خبر|رضایت|فاکتور|ضمانت)\s*داد(?:ن|ه)?(?![آ-ی])/g;
 const PAYER_GAVE = new RegExp(`${PAYER_ROLE}(?:\\s+\\S+){0,16}?\\s+(?:نقد\\s*)?(?<!(?:پس|عودت)\\s*)(?:داد|دادن|پرداخت\\s*کرد(?:ن)?|واریز\\s*کرد(?:ن)?|کارت\\s*به\\s*کارت\\s*کرد(?:ن)?|تسویه\\s*کرد(?:ن)?|ریخت(?:ن)?)(?![آ-ی])`);
-const RECEIVED_AS_INCOME = /پیش\s*دریافت|درآمد\s*(?:اجاره|کرایه|اشتراک)|(?:اجاره|کرایه)\s*(?:بها\s*)?دریافتی|(?:حق\s*)?اشتراک\s*دریافتی|فروش\s*اشتراک|(?<![آ-ی])(?:دریافت|وصول)\s*(?:اجاره|کرایه)|(?<![آ-ی])(?:اجاره|کرایه)(?:\s+\S+){0,8}?\s+(?:دریافت|وصول)\s*(?:کرد(?:یم|م|ن|ند)?|شد)(?![آ-ی])/;
+// «۶ میلیون ثبت‌نام گرفتیم»، «۴ میلیون شهریه گرفتیم»: ثبت‌نام و شهریه را کسی نمی‌خرد؛
+// گرفتنش یعنی پولِ شرکت‌کننده آمده (محک دسته، I010). «شهریه … دادیم» پرداخت ماست.
+const RECEIVED_AS_INCOME = /(?<![آ-ی])(?:ثبت[\s‌]*نام|شهریه|ورودیه|حق[\s‌]*عضویت)(?:\s+\S+){0,3}?\s+گرفت(?:یم|م)(?![آ-ی])|پیش\s*دریافت|درآمد\s*(?:اجاره|کرایه|اشتراک)|(?:اجاره|کرایه)\s*(?:بها\s*)?دریافتی|(?:حق\s*)?اشتراک\s*دریافتی|فروش\s*اشتراک|(?<![آ-ی])(?:دریافت|وصول)\s*(?:اجاره|کرایه)|(?<![آ-ی])(?:اجاره|کرایه)(?:\s+\S+){0,8}?\s+(?:دریافت|وصول)\s*(?:کرد(?:یم|م|ن|ند)?|شد)(?![آ-ی])/;
 const PAID_BACK = /(?<![آ-ی])(?:پس|عودت)\s*داد(?:یم|م)|برگردوند(?:یم|م)|برگرداند(?:یم|م)/;
 
 /**
@@ -899,6 +913,7 @@ function rowsPaidUs(clauses, sentencePaid) {
  * مستاجر معنی می‌دهد و هم اجاره‌کردن ملک. پیش‌پرداخت اجارهٔ خودمان (پول بیرون)
  * و پیش‌دریافت از مستاجر (پول داخل) دو سند وارونه‌اند؛ هیچ‌کدام را حدس نمی‌زنیم.
  */
+const TAKEN_BY_US = /گرفت(?:یم|م)(?![آ-ی])/;
 const RENT_TAKEN = /(?<![آ-ی])(?:اجاره|کرایه)(?![آ-ی])(?:\s+\S+){0,8}?\s+گرفت(?:م|یم|ن|ند)?(?![آ-ی])/;
 /**
  * ودیعه یا رهنی که مستاجر به ما داده درآمد نیست؛ بدهیِ برگشت‌پذیر به اوست.
@@ -946,7 +961,9 @@ function thirdPersonIntoOurBank(text) {
  * پرداخت‌کننده («اجارهٔ مغازه رو گرفتم») دو معنی دارد؛ پس فقط وقتی پرداخت‌کننده
  * صریح است، موضوع به دستهٔ درآمدیِ همتایش می‌رود.
  */
-const INCOME_TWIN = Object.freeze({ اجاره: 'درآمد اجاره', 'نرم‌افزار و اشتراک': 'خدمات' });
+// «کلاس آموزش برگزار کردیم … ثبت‌نام گرفتیم»، «تعمیر گوشی مشتری … گرفتیم»: آموزش و تعمیری که ما
+// انجام دادیم و پولش آمده، درآمدِ خدمات است.
+const INCOME_TWIN = Object.freeze({ اجاره: 'درآمد اجاره', 'نرم‌افزار و اشتراک': 'خدمات', آموزش: 'خدمات', 'تعمیر و نگهداری': 'خدمات' });
 // «کرایه» بی ملک، قاعدهٔ حمل‌ونقل را می‌گیرد؛ کرایه‌ای که مستاجر می‌دهد اجارهٔ ملک است.
 const TENANT_RENT = /(?<![آ-ی])مست[اأ]جر(?:[\s‌]*\S+){0,10}?[\s‌]*(?:اجاره|کرایه)|(?<![آ-ی])(?:اجاره|کرایه)(?:[\s‌]*\S+){0,10}?[\s‌]*مست[اأ]جر/;
 export function incomeTwin(text) {
@@ -961,8 +978,8 @@ export function incomeTwin(text) {
 }
 
 function classify(context, learnings = [], categoryContext = '', { moneyIn = false, rentTaken = false, rowText = '' } = {}) {
-  const normalizedContext = normalizePersian(context).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
-  const normalizedCategoryContext = (normalizePersian(categoryContext) || normalizePersian(context)).replace(ROLE_NOUNS, ' ').replace(PURPOSE_PHRASES, ' ');
+  const normalizedContext = maskRoleNouns(normalizePersian(context)).replace(PURPOSE_PHRASES, ' ');
+  const normalizedCategoryContext = maskRoleNouns(normalizePersian(categoryContext) || normalizePersian(context)).replace(PURPOSE_PHRASES, ' ');
   // نگاشت تأییدشدهٔ «اجاره → اجاره» برای پرداخت اجارهٔ خودمان بود؛ وقتی جمله
   // صریح می‌گوید مستاجر یا مشتری به ما داده، همان نگاشت جهت را برنمی‌گرداند.
   const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword))
@@ -1065,7 +1082,9 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
   }
   // «اجاره … گرفتیم/گرفتم» بی پرداخت‌کننده و بی فعل پرداختِ ما: هزینه‌خواندنش
   // همان‌قدر حدس است که درآمدخواندنش؛ ردیف علامت می‌خورد تا حسابدار جهت را تعیین کند.
-  if (rentTaken && !learned && category === 'اجاره') directionUnclear = true;
+  // «کرایه دستگاه به یه شرکت دیگه ۵ میلیون گرفتیم»: «کرایه» دستهٔ حمل را می‌گیرد و هزینهٔ حمل
+  // بی‌سؤال ثبت می‌شد (محک دسته، I016)؛ کرایه‌ای که ما گرفتیم همان ابهامِ اجاره را دارد.
+  if (rentTaken && !learned && (category === 'اجاره' || (category === 'حمل‌ونقل' && TAKEN_BY_US.test(normalizedContext)))) directionUnclear = true;
   return {
     type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason,
     chartCode: chartCodeForCategory(category), categoryAmbiguous, categoryRunnerUp, directionUnclear,
@@ -1377,7 +1396,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (classified.type === 'expense' && !refundJudgment && (spans.length === 1
       ? (sentenceMoneyIn(input) || (classified.category === 'سایر هزینه‌ها' && thirdPersonGave(input)))
       : (classified.category === 'سایر هزینه‌ها' && Boolean(ownText) && thirdPersonGave(ownText)))) {
-      const incomeContext = normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' ');
+      const incomeContext = maskRoleNouns(normalizePersian(categoryContext || context));
       const matchedIncome = classifyCategory(incomeContext, 'income');
       const incomeCategory = matchedIncome.matched ? matchedIncome : incomeTwin(incomeContext) || matchedIncome;
       classified = {
@@ -1392,7 +1411,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (refundType) {
       // پولِ برگشتی به ما درآمد اجاره یا خدمت نیست؛ دوقلوی درآمدی اینجا به کار نمی‌رود.
       const refundCategory = classified.type === refundType && refundType === 'expense' ? null
-        : classifyCategory(normalizePersian(categoryContext || context).replace(ROLE_NOUNS, ' '), refundType);
+        : classifyCategory(maskRoleNouns(normalizePersian(categoryContext || context)), refundType);
       classified = {
         ...classified, type: refundType,
         ...(refundCategory ? { category: refundCategory.category, chartCode: chartCodeForCategory(refundCategory.category) } : {}),
