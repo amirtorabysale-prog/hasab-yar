@@ -34,7 +34,7 @@ export function TodayPage({ data, loading, manualText, setManualText, parseManua
   };
   return (
     <main className="mx-auto w-full max-w-[980px]">
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line/80 bg-paper/95 px-4 py-3 backdrop-blur-sm">
+      <header className="flex items-center justify-between border-b border-line px-4 py-3">
         <div><div className="flex items-center gap-2"><h1 className="text-xl font-extrabold">امروز</h1>{latestClosing && <span className="rounded-full bg-income/10 px-2 py-1 text-xs font-extrabold text-income">روز بسته شد</span>}</div><p className="mt-0.5 text-[13px] text-muted">{persianDate()}</p></div>
       </header>
 
