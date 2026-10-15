@@ -199,9 +199,13 @@ test('زنده S26: بیعانهٔ سفارشِ کالای تحویل‌نشده
       amounts: [amt('a1', 15_000_000, 'deposit', '۱۵ میلیون بیعانهٔ سفارش کالا')],
       movements: [mv('m1', 'a1', 'out', { kind: 'us', name: 'شرکت بتا' }, { kind: 'counterparty', name: 'ملت' }, '۱۵ میلیون بیعانهٔ سفارش کالا به ملت ریخت')],
       subject: { what: 'سفارش کالا', kind: 'goods', use: 'resale', delivered: 'no', usefulLifeMonths: null, evidence: 'سفارش کالا' },
+      // خروجی کامل مدل روی سایت: بانک در فهرست نام‌ها، تاریخ تحویلِ بی‌عدد، و وعدهٔ تحویل.
+      counterparties: [{ id: 'c1', name: 'ملت', role: 'bank', evidence: 'به ملت' }],
+      dates: [{ id: 'd1', role: 'delivery', expression: 'ماه بعد', relative: null, jalali: { year: null, month: null, day: null } }],
+      conditions: [{ kind: 'promise', text: 'جنس ماه بعد تحویل میشه', affects: ['a1'], evidence: 'جنس ماه بعد تحویل میشه' }],
     }), { answers: { 'counterparties.c-m1-from': { valueId: 'new' } } });
-    assert.notEqual(treatments(item)[0]?.[1], 'recognized-revenue', JSON.stringify([treatments(item), item.plan?.questions, item.plan?.reasons]));
-    if (posted) assert.equal(posted.lines.some(([account, value]) => /درآمد|فروش/.test(account) && value < 0), false, JSON.stringify(posted.lines));
+    assert.deepEqual(treatments(item).map(([amount, treatment]) => [amount, treatment]), [[15_000_000, 'customer-advance']], JSON.stringify([treatments(item), item.plan?.questions, item.plan?.reasons]));
+    assert.equal(posted.lines.some(([account, value]) => /درآمد|فروش/.test(account) && value < 0), false, JSON.stringify(posted.lines));
   });
 });
 
@@ -262,4 +266,17 @@ test('بی‌AI: «هر دو»، «هر سه تا» شمار است، نه مب�
   // منفی: «هر دو میلیون» خودِ مبلغ است.
   assert.deepEqual(amounts('هر دو میلیون رو دادیم'), [2_000_000]);
   assert.equal(runVoice('بیمه یک‌ساله تجهیزات ۱۲ میلیون و ناهار پرسنل ۲ میلیون، هر دو رو نقد دادیم', { today: NOW }).items.length, 2);
+});
+
+test('خانواده: پولِ آمده پیش از تحویلِ وعده‌داده‌شده پیش‌دریافت است؛ تحویلِ امروز یا گذشته درآمد', async () => {
+  const { classifyFamily, ECONOMIC_FAMILIES } = await import('../shared/economicFamily.js');
+  const paid = '2026-10-14T08:00:00.000Z';
+  const family = (deliveryDate, extra = {}) => classifyFamily({ moneyDirection: 'in', occurredAt: paid, deliveryDate, ...extra }).family;
+  assert.equal(family('2026-11-13T08:30:00.000Z'), ECONOMIC_FAMILIES.ADVANCE_RECEIVED, 'جنس ماه بعد تحویل میشه');
+  assert.equal(family('2026-10-20T08:00:00.000Z'), ECONOMIC_FAMILIES.ADVANCE_RECEIVED, 'هفتهٔ بعد تحویل');
+  // منفی: تحویلِ همان روز (حتی چند ساعت بعد) و تحویلِ گذشته، درآمدِ شناسایی‌شده است.
+  assert.equal(family('2026-10-14T18:00:00.000Z'), ECONOMIC_FAMILIES.REVENUE_RECOGNITION);
+  assert.equal(family('2026-10-01T08:00:00.000Z'), ECONOMIC_FAMILIES.REVENUE_RECOGNITION);
+  // بی تاریخ رویداد، همان خواندن قبلی.
+  assert.equal(classifyFamily({ moneyDirection: 'in', deliveryDate: '2026-11-13T08:30:00.000Z' }).family, ECONOMIC_FAMILIES.REVENUE_RECOGNITION);
 });

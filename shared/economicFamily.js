@@ -151,6 +151,19 @@ export function isFactPresent(value) {
 
 const has = (facts, key) => isFactPresent(facts?.[key]);
 const direction = (facts) => facts?.moneyDirection ?? null;
+/**
+ * تحویلی که انجام شده، نه تحویلِ وعده‌داده‌شده.
+ *
+ * «شرکت بتا ۱۵ میلیون بیعانهٔ سفارش کالا به ملت ریخت، جنس ماه بعد تحویل میشه»: تاریخ
+ * تحویل یک ماه بعد از دریافت است، ولی «تاریخ تحویل دارد» به‌تنهایی «تعهد انجام شده»
+ * خوانده می‌شد و بیعانه درآمدِ امروز ثبت شد — روی سایت (آزمون زندهٔ موتور ۵، ۲۳ مهر
+ * ۱۴۰۵). پولی که پیش از تحویل آمده پیش‌دریافت است تا کالا یا خدمت تحویل شود. یک روز
+ * فاصله برای ساعت و منطقهٔ زمانی است؛ بی تاریخ رویداد، همان خواندن قبلی می‌ماند.
+ */
+const DAY_MS = 86_400_000;
+const deliveryLater = (facts) => has(facts, 'deliveryDate') && has(facts, 'occurredAt')
+  && Date.parse(facts.deliveryDate) - Date.parse(facts.occurredAt) > DAY_MS;
+const delivered = (facts) => has(facts, 'deliveryDate') && !deliveryLater(facts);
 
 /**
  * دسته‌هایی که ذاتاً خدمت دوره‌دار می‌سازند.
@@ -490,14 +503,14 @@ export const FAMILY_RULES = Object.freeze([
     family: ECONOMIC_FAMILIES.ADVANCE_RECEIVED,
     weight: 70,
     reason: 'پول پیش از انجام تعهد دریافت شده است.',
-    test: (facts) => direction(facts) === 'in' && !has(facts, 'deliveryDate')
-      && (has(facts, 'contractReference') || has(facts, 'servicePeriodStart') || facts?.prepaymentSignal === true || facts?.receiptPurpose === 'advance'),
+    test: (facts) => direction(facts) === 'in' && !delivered(facts)
+      && (deliveryLater(facts) || has(facts, 'contractReference') || has(facts, 'servicePeriodStart') || facts?.prepaymentSignal === true || facts?.receiptPurpose === 'advance'),
   }),
   Object.freeze({
     family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,
     weight: 65,
     reason: 'تعهد انجام شده و پول هم دریافت شده است.',
-    test: (facts) => has(facts, 'deliveryDate') && direction(facts) === 'in',
+    test: (facts) => delivered(facts) && direction(facts) === 'in',
   }),
   Object.freeze({
     family: ECONOMIC_FAMILIES.REVENUE_RECOGNITION,
