@@ -68,7 +68,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
     amount: kind === 'replenish' ? String(fund.spent || '') : kind === 'ceiling' ? String(fund.ceiling) : '',
   });
 
-  return <main className="mx-auto max-w-[760px] px-4 py-5">
+  return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h1 className="text-xl font-extrabold">تنخواه‌گردان</h1>

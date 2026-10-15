@@ -98,7 +98,7 @@ export function FirmConsolePage({ access, notify, switchWorkspace, refreshAccess
   const clients = portfolio?.clients || [];
   const activeId = access?.workspace?.id;
 
-  return <section className="mx-auto max-w-[1100px] px-4 py-6">
+  return <section className="mx-auto w-full max-w-[980px] px-4 py-6">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="text-[13px] font-bold text-accent">میز کار دفتر حسابداری</p>

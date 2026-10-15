@@ -142,9 +142,8 @@ export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
   const mapping = overview?.mapping;
   const accounts = overview?.accounts || [];
 
-  return <section className="mx-auto max-w-[1100px] px-4 py-6">
+  return <section className="mx-auto w-full max-w-[980px] px-4 py-6">
     <div>
-      <p className="text-[13px] font-bold text-accent">فاز ۲ · کدینگ دفتر</p>
       <h1 className="mt-1 text-xl font-extrabold">کدینگ، تفصیلی شناور و مرکز هزینه</h1>
       <p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted">
         کدینگ دفتر خودت را وارد کن و حساب‌های حساب‌یار را به معین‌های آن نگاشت بده. کد داخلی حساب‌یار حذف نمی‌شود تا اسناد قبلی دست‌نخورده بمانند؛ خروجی حسابدار کد کدینگ تو را می‌برد.
