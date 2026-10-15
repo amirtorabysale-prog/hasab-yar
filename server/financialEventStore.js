@@ -2042,8 +2042,27 @@ export function releaseHeldRecognition(database, key, { reason = '', actor = nul
  * ثبت می‌شود به خبرِ همان ماه اضافه می‌شود — یک سطر برای هر ماه، با جمع هزینه و
  * درآمد و فهرست قراردادها — و خبرِ دیده‌شده با قلم تازه دوباره «دیده‌نشده» می‌شود.
  * در همان تراکنشِ سند نوشته می‌شود: سندی بی‌خبر یا خبری بی‌سند نمی‌ماند.
+ *
+ * ساختن جدول؛ `true` یعنی همین حالا ساخته شد و اقلامِ ثبت‌شدهٔ پیش از آن به خبرها
+ * منتقل شدند. اقلامی که پیش از این بخش خودکار ثبت شده بودند بی‌خبر نمی‌مانند، ولی
+ * فقط آخرین ماه «دیده‌نشده» می‌ماند تا صف حسابدار با خبرهای کهنه پر نشود.
  */
 function ensureRecognitionNoticeSchema(database) {
+  const existed = database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recognition_notices'").get();
+  createRecognitionNoticeTable(database);
+  if (existed) return false;
+  const posted = database.prepare(`SELECT i.event_id AS eventId,i.period_key AS periodKey,i.amount,e.payload
+    FROM recognition_schedule_items i JOIN financial_events e ON e.id=i.event_id
+    WHERE i.status='posted' ORDER BY i.period_key,i.key`).all();
+  for (const row of posted) addToNotice(database, { item: row, event: JSON.parse(row.payload), decision: decisionForEvent(database, row.eventId) });
+  if (posted.length) {
+    database.prepare("UPDATE recognition_notices SET seen_at=?,seen_by='backfill' WHERE period_key<?")
+      .run(new Date().toISOString(), posted.at(-1).periodKey);
+  }
+  return true;
+}
+
+function createRecognitionNoticeTable(database) {
   database.exec(`CREATE TABLE IF NOT EXISTS recognition_notices (
     period_key TEXT PRIMARY KEY,
     posted_items INTEGER NOT NULL DEFAULT 0,
@@ -2060,7 +2079,12 @@ const timingKindOf = (decision) => (decision?.treatment === 'deferred-revenue' ?
 const contractTitle = (event) => [event.category, event.counterparty].filter(Boolean).join(' — ') || 'قرارداد دوره‌دار';
 
 function noteRecognitionPosted(database, { item, event, decision }) {
-  ensureRecognitionNoticeSchema(database);
+  // جدولِ تازه‌ساخته همین قلم را هم منتقل کرده است (وضعیتش پیش از این «ثبت‌شده» شد).
+  if (ensureRecognitionNoticeSchema(database)) return;
+  addToNotice(database, { item, event, decision });
+}
+
+function addToNotice(database, { item, event, decision }) {
   const kind = timingKindOf(decision);
   const row = database.prepare('SELECT contracts FROM recognition_notices WHERE period_key=?').get(item.periodKey);
   const contracts = row ? JSON.parse(row.contracts) : [];

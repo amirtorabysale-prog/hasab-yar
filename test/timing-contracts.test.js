@@ -129,3 +129,17 @@ test('رابط: بخش با دادهٔ واقعیِ سرور، مانده‌ها
     assert.match(withAttention, /برنامهٔ ماهانه ندارد/);
   } finally { await vite.close(); }
 });
+
+test('اقلامی که پیش از این بخش ثبت شده بودند به خبرها منتقل می‌شوند؛ فقط آخرین ماه دیده‌نشده می‌ماند', () => inWorkspace(() => {
+  twoContracts();
+  const db = database.activeWorkspaceDatabase();
+  store.postDueRecognitionItems(db, { today: '2026-12-15T00:00:00.000Z' });
+  // دفتری که پیش از این بخش ثبت کرده بود: جدول خبر هنوز نیست.
+  db.exec('DROP TABLE recognition_notices');
+  const notices = contracts().notices;
+  assert.deepEqual(notices.map((notice) => [notice.periodKey, notice.postedItems, notice.seenAt === null]), [['1405-09', 2, true], ['1405-08', 2, false], ['1405-07', 2, false]]);
+  assert.deepEqual(database.reviewQueue().recognitionNotices.map((notice) => notice.periodKey), ['1405-09']);
+  // اجرای بعدی خبر را دوباره نمی‌سازد.
+  store.postDueRecognitionItems(db, { today: '2026-12-15T00:00:00.000Z' });
+  assert.equal(contracts().notices.find((notice) => notice.periodKey === '1405-09').postedItems, 2);
+}));
