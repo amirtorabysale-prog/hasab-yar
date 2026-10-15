@@ -114,7 +114,7 @@ function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
 
 const CHART_TABS = ['mapping', 'chart', 'dimensions', 'import'];
 
-export function ChartPage({ access, notify, initialTab = '' }) {
+export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [csv, setCsv] = useState('');
@@ -173,11 +173,11 @@ export function ChartPage({ access, notify, initialTab = '' }) {
       {canManage && <button onClick={() => run(() => api.installChartTemplate(), 'کدینگ پیشنهادی نصب شد.')} className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">نصب کدینگ پیشنهادی</button>}
     </div>}
 
-    <div className="mt-6 flex flex-wrap gap-1.5 border-b border-line pb-2 text-[13px] font-bold">
+    <nav aria-label="بخش‌های کدینگ" className="section-navigation">
       {[['mapping', 'نگاشت حساب‌ها'], ['chart', 'درخت کدینگ'], ['dimensions', 'تفصیلی و مرکز هزینه'], ['import', 'ورود کدینگ']].map(([id, label]) => (
-        <button key={id} onClick={() => setTab(id)} className={`tap rounded-lg px-3 ${tab === id ? 'bg-warn-bg text-accent' : 'text-muted hover:bg-surface'}`}>{label}</button>
+        <button key={id} type="button" aria-current={tab === id ? 'page' : undefined} onClick={() => { setTab(id); onTabChange?.(id); }}>{label}</button>
       ))}
-    </div>
+    </nav>
 
     {tab === 'mapping' && mapping && <div className="mt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
