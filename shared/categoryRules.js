@@ -215,6 +215,42 @@ export function legacyChartCodeForCategory(name) {
  * همهٔ دسته‌های سازگار با نوع تراکنش را امتیاز می‌دهد و مرتب‌شده برمی‌گرداند.
  * دسته‌های بدون امتیاز حذف می‌شوند تا صفر با صفر مقایسه نشود.
  */
+/**
+ * واژه‌ای که هستهٔ عبارت است، نه توصیفِ اسمِ دیگر.
+ *
+ * «کلید برق»، «مودم اینترنت»، «گوشی تلفن»، «اجاق گاز»، «مشاور مالیاتی» و «چرخ دستی
+ * حمل بار»: اسمِ اول چیزِ خریده‌شده است و واژهٔ دوم فقط توصیفش. تطبیقِ زیررشته‌ای،
+ * «برق» را هر جای جمله می‌دید — حتی درون «جاروبرقی» و «برقکار» — و خرید کالا «قبوض»
+ * ثبت می‌شد (گزارش مالک محصول، ۲۳ مهر ۱۴۰۵؛ سنجش `docs/testing/category-benchmark.json`).
+ *
+ * این واژه‌ها فقط وقتی شمرده می‌شوند که خودشان واژهٔ کامل باشند (نه بخشی از
+ * «برقی»، «گازوئیل»، «حقوقی») و پیش از آن‌ها اسمِ دیگری نیامده باشد. «قبض برق»،
+ * «هزینهٔ برق»، «پول گاز»، «بستهٔ اینترنت»، «برق کارگاه»، «۶ میلیون حقوق» همچنان هسته‌اند.
+ */
+const ATTRIBUTIVE_HEADS = new Set(['برق', 'گاز', 'تلفن', 'اینترنت', 'مخابرات', 'شارژ', 'حمل', 'حقوق', 'مالیات']);
+// پیش از هسته می‌تواند بیاید: حرف اضافه و ربط، اشاره، عدد و مقیاس، فعل، و نام‌هایی که خودِ
+// هزینه را می‌گویند (قبض، پول، هزینه، بها، حق، بسته، اشتراک).
+const BEFORE_HEAD = new Set(['و', 'از', 'به', 'با', 'برای', 'واسه', 'بابت', 'رو', 'را', 'که', 'هم', 'این', 'اون', 'آن', 'همین', 'همون', 'یه', 'یک', 'تا', 'هر',
+  'قبض', 'قبوض', 'پول', 'هزینه', 'هزینهٔ', 'هزینه‌ی', 'بهای', 'بها', 'حق', 'بسته', 'بستهٔ', 'اشتراک', 'شارژ', 'پرداخت', 'پرداختی', 'واریز',
+  'میلیون', 'هزار', 'میلیارد', 'تومن', 'تومان', 'ریال', 'دادیم', 'دادم', 'داد', 'شد', 'کردیم', 'کردم', 'گرفت', 'گرفتیم', 'ماه', 'ماهانه', 'امروز', 'دیروز']);
+const PERSIAN_LETTER = /[آ-یءأؤئ]/;
+function headOccurrence(text, word) {
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(word, from);
+    if (at < 0) return false;
+    from = at + 1;
+    const before = text[at - 1] || '';
+    // پسوند ضمیر و جمع همان واژه است («حقوقشون»، «برقش»، «تلفن‌ها»)؛ «برقی»، «گازی» و
+    // «حقوقی» صفت‌اند و توصیفِ اسمِ دیگر.
+    const rest = text.slice(at + word.length).replace(/^(?:شون|شان|مون|مان|تون|تان|هاشون|هاش|های|ها|شو|ش|ام|ات|اش)(?![آ-ی])/, '');
+    if (PERSIAN_LETTER.test(before) || PERSIAN_LETTER.test(rest[0] || '')) continue;
+    const previous = text.slice(0, at).replace(/[\s‌]+$/, '').split(/[\s‌]+/).pop() || '';
+    if (!previous || /[\d۰-۹،,.؛:!؟?()]$/.test(previous) || BEFORE_HEAD.has(previous)) return true;
+  }
+}
+const attributiveFirstWord = (word) => ATTRIBUTIVE_HEADS.has(String(word).split(/[\s‌]+/)[0]) ? String(word).split(/[\s‌]+/)[0] : null;
+
 export function scoreCategories(text, type) {
   const normalized = normalizePersian(text);
   if (!normalized) return [];
@@ -229,6 +265,9 @@ export function scoreCategories(text, type) {
       : definition.id === 'exp-delivery' ? normalized.replace(INSURANCE_OF_CARGO, (_match, head) => head) : normalized;
     for (const { word, pattern: keywordPattern, weight } of definition.keywords) {
       if (keywordPattern ? !keywordPattern.test(normalized) : !scoredText.includes(word)) continue;
+      // «کلید برق»: واژهٔ توصیفی پشتِ اسمِ دیگر، دستهٔ خودش را نمی‌سازد.
+      const head = keywordPattern ? null : attributiveFirstWord(word);
+      if (head && !headOccurrence(scoredText, word === head ? head : word)) continue;
       if (word === 'سنوات' && !/(?:^|[\s،,])سنوات(?:$|[\s،,.])/.test(normalized)) continue;
       score += weight;
       matched.push(word);

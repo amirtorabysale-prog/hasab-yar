@@ -20,7 +20,7 @@
  * تابع خالص است: شناسهٔ حساب و شخص از «تفکیک» سرور می‌آید و تاریخ امروز صریح
  * داده می‌شود.
  */
-import { classifyCategory } from './categoryRules.js';
+import { CATEGORY_DEFINITIONS, classifyCategory } from './categoryRules.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
 import { incomeTwin } from './parser.js';
 import { detectBank } from './banks.js';
@@ -220,6 +220,23 @@ function occurrences(keyed, evidence) {
     found.push({ start: map[at], end: map[end - 1] + 1 });
   }
   return found;
+}
+
+/**
+ * دسته با نوعِ موضوع و جهتِ پول جور است؟
+ *
+ * کالا و دارایی «قبوض»، «اجاره»، «بیمه»، حقوق، حمل، خدمت بیرونی، کارمزد، مالیات یا آموزش
+ * نیستند؛ خدمت «مواد و کالا» نیست. دستهٔ هزینه برای پولِ رفته و دستهٔ درآمد برای پولِ
+ * آمده. نوعِ نامعلوم یا «پول» قیدی نمی‌گذارد.
+ */
+const SERVICE_ONLY_CATEGORIES = new Set(['قبوض', 'اجاره', 'بیمه', 'حقوق و دستمزد', 'حمل‌ونقل', 'پیمانکار و خدمات بیرونی', 'کارمزد بانکی', 'مالیات و عوارض', 'جرایم مالیاتی', 'آموزش']);
+const SERVICE_ON_ASSET_CATEGORIES = new Set([...SERVICE_ONLY_CATEGORIES, 'تعمیر و نگهداری']);
+const CATEGORY_TYPES = new Map(CATEGORY_DEFINITIONS.map((definition) => [definition.name, definition.type]));
+function categoryFits(name, kind, type) {
+  if (!name || CATEGORY_TYPES.get(name) !== type) return false;
+  if (['goods', 'asset'].includes(kind) && SERVICE_ONLY_CATEGORIES.has(name)) return false;
+  if (kind === 'service' && name === 'مواد و کالا') return false;
+  return true;
 }
 
 /** بندِ یک شاهد در متنِ کامل: تکه‌ای میان دو نشانهٔ جداکننده. */
@@ -778,8 +795,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const ownText = normalizePersian(scope.own || '');
     const subjectHere = scope.alone || [facts.subject.evidence, facts.subject.what].filter(Boolean)
       .some((part) => ownText.includes(normalizePersian(part)));
-    const intendedUse = (subjectHere ? (facts.subject.kind === 'asset' && facts.subject.use === 'internal' ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use]) : null)
-      || purposes.intendedUse || null;
+    // «تعمیر کولر آبی دفتر»: مدل موضوع را خودِ کولر (دارایی) نامید و پولِ تعمیر دارایی
+    // ثابت شد (محک دسته، مهر ۱۴۰۵). وقتی دستهٔ خودِ مدل خدمت است، پول بابت خدمتی روی
+    // دارایی رفته، نه خریدِ آن.
+    const boughtService = subjectHere && SERVICE_ON_ASSET_CATEGORIES.has(facts.subject.category);
+    const intendedUse = (subjectHere ? (facts.subject.kind === 'asset' && facts.subject.use === 'internal' && !boughtService ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use]) : null)
+      || (boughtService ? null : purposes.intendedUse) || null;
     const cashSide = movement.direction === 'in' ? movement.to : movement.from;
     const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
     const answeredAccount = answers[`movements.${movement.id}.account`]?.valueId;
@@ -795,14 +816,19 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       continue;
     }
 
-    // دسته هم اول از شاهدِ خودِ مبلغ و بندِ آن (در جملهٔ چندمبلغی، بخشِ خودِ آن)،
-    // و فقط اگر چیزی نگفتند از شرحِ کل.
+    // دسته اول از فهمِ مدل: «کلید برق» را مدل کالا فهمید ولی فهرستِ واژه «برق» را دید و
+    // «قبوض» ثبت شد (گزارش مالک محصول، ۲۳ مهر ۱۴۰۵). دستهٔ مدل فقط وقتی پذیرفته است که
+    // موضوع مالِ همین مبلغ باشد و دسته با نوعِ موضوع و جهتِ پول جور باشد؛ وگرنه همان
+    // فهرست واژه، و آن هم فقط دسته‌ای که با فهمِ مدل در تضاد نیست.
+    const fits = (name) => categoryFits(name, subjectHere ? facts.subject.kind : null, type);
+    const modelCategory = subjectHere && fits(facts.subject.category) ? facts.subject.category : null;
     const describe = [facts.subject.what, facts.event.description, amount.evidence].filter(Boolean).join(' ');
     const matchedIn = (part) => (part ? classifyCategory(part, type) : null);
-    let category = [amount.evidence, scope.alone ? clause : scope.own, describe].map(matchedIn).find((result) => result?.matched)?.category || null;
+    let category = modelCategory || [amount.evidence, scope.alone ? clause : scope.own, describe].map(matchedIn)
+      .find((result) => result?.matched && fits(result.category))?.category || null;
     // «اجاره ماهی ۸ میلیون، سه ماه آینده انبار رو یک‌جا ۲۴ میلیون»: نرخ همان خدمت را نام
     // می‌برد که پرداخت یک‌جا برایش است؛ «انبار»ِ بندِ پرداخت آن را «مواد و کالا» می‌کرد.
-    if (scope.alone && !TIME_BOUND_SERVICE_CATEGORIES.includes(category)) {
+    if (!modelCategory && scope.alone && !TIME_BOUND_SERVICE_CATEGORIES.includes(category)) {
       const rated = amounts.filter((other) => other !== amount && other.accepted && other.role === 'unit-price')
         .map((other) => matchedIn(clauseOf(said, other.evidence))).find((result) => result?.matched && TIME_BOUND_SERVICE_CATEGORIES.includes(result.category));
       if (rated) category = rated.category;
@@ -810,7 +836,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «مستاجر اجارهٔ شش ماه آینده رو ریخت»: موضوعِ هزینه‌ایِ دریافتی دوقلوی درآمدی دارد
     // (اجاره ← درآمد اجاره)؛ بی آن درآمد اجاره در «سایر درآمدها» می‌نشست (همان قاعدهٔ پارسر).
     if (!category && type === 'income') category = incomeTwin(scope.alone ? said : `${scope.own} ${clause}`)?.category || null;
-    category = category || classifyCategory(describe, type).category;
+    const described = classifyCategory(describe, type).category;
+    category = category || (fits(described) ? described : (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها'));
     // «۶ میلیون اجارهٔ همین ماه»: پوششی که در ماهِ پرداخت تمام می‌شود هزینهٔ همین
     // دوره است. برای درآمد، پوششِ درونِ همین ماه چیزی را به بعد نمی‌برد.
     const paidMonth = paymentDate ? monthOf(paymentDate) : null;
@@ -891,7 +918,9 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       settlement: 'none',
       unpaidSignal: movement.direction === 'none',
       dueAt: movement.direction === 'none' ? dueAt : null,
-      intendedUse, ...purposes, ...(receiptPurpose ? { receiptPurpose } : {}),
+      // نوعِ «خرید دارایی» برای پولِ تعمیرِ آن دارایی، خرید نیست (`boughtService`).
+      intendedUse, ...(boughtService && purposes.paymentPurpose === 'goods' ? { paymentPurpose: 'expense' } : purposes),
+      ...(receiptPurpose ? { receiptPurpose } : {}),
       servicePeriodStart: periodStart, servicePeriodEnd: periodEnd,
       deliveryDate: deliveryDate || (facts.subject.delivered === 'yes' ? paymentDate : null),
       amountScaleAmbiguous: Boolean(amount.scaleAmbiguous),

@@ -32,6 +32,7 @@ import { detectBank } from './banks.js';
 import { readUnpaidSignal } from './accrualSpeech.js';
 import { mentionsPersonalMoney } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
+import { CATEGORY_DEFINITIONS } from './categoryRules.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
@@ -73,6 +74,12 @@ export const MOVEMENT_DIRECTIONS = Object.freeze(['in', 'out', 'transfer', 'none
 export const ENDPOINT_KINDS = Object.freeze(['bank', 'cash', 'petty-cash', 'counterparty', 'us', 'unknown']);
 export const SUBJECT_KINDS = Object.freeze(['goods', 'service', 'asset', 'money', 'other']);
 export const SUBJECT_USES = Object.freeze(['internal', 'resale', 'production', 'long-term', 'unknown']);
+/**
+ * دستهٔ موضوع، از فهرست ثابت دسته‌های برنامه. مدل «چه چیزی» را می‌فهمد — «کلید برق» کالاست،
+ * نه قبض — و فهرست واژه این را نمی‌فهمید (۲۳ مهر ۱۴۰۵). مدل فقط از همین فهرست انتخاب
+ * می‌کند؛ اینکه دسته با نوع موضوع جور است و کجا به کار می‌رود، کار طرح است، نه مدل.
+ */
+export const SUBJECT_CATEGORIES = Object.freeze(CATEGORY_DEFINITIONS.map((definition) => definition.name));
 export const DELIVERY_STATES = Object.freeze(['yes', 'no', 'unknown']);
 export const CONDITION_KINDS = Object.freeze(['negation', 'condition', 'promise', 'correction']);
 export const AMBIGUITY_KINDS = Object.freeze(['information', 'judgment']);
@@ -217,7 +224,7 @@ export function understandingSchema() {
       id: string, amountRef: string, direction: choice(MOVEMENT_DIRECTIONS), from: endpoint, to: endpoint, evidence: string,
     })),
     subject: object({
-      what: nullableString, kind: nullableChoice(SUBJECT_KINDS), use: choice(SUBJECT_USES),
+      what: nullableString, kind: nullableChoice(SUBJECT_KINDS), use: choice(SUBJECT_USES), category: nullableChoice(SUBJECT_CATEGORIES),
       delivered: choice(DELIVERY_STATES), usefulLifeMonths: nullableInteger, evidence: nullableString,
     }),
     conditions: array(object({ kind: choice(CONDITION_KINDS), text: string, affects: array(string), evidence: string })),
@@ -236,7 +243,7 @@ const ALLOWED_KEYS = new Set([
   'event', 'kind', 'description', 'status', 'amounts', 'id', 'value', 'currency', 'role', 'partOf', 'basis',
   'computedFrom', 'op', 'of', 'evidence', 'nonAmountNumbers', 'dates', 'expression', 'relative', 'jalali', 'year',
   'month', 'day', 'counterparties', 'name', 'movements', 'amountRef', 'direction', 'from', 'to', 'subject', 'what',
-  'use', 'delivered', 'usefulLifeMonths', 'conditions', 'text', 'affects', 'ambiguities', 'field', 'question', 'options',
+  'use', 'category', 'delivered', 'usefulLifeMonths', 'conditions', 'text', 'affects', 'ambiguities', 'field', 'question', 'options',
 ]);
 
 function structuralViolations(value, path = '', found = []) {
@@ -1054,6 +1061,7 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     what: raw.subject?.what ? cleanLabel(raw.subject.what, 120) : null,
     kind: pick(raw.subject?.kind, SUBJECT_KINDS, null),
     use: pick(raw.subject?.use, SUBJECT_USES, 'unknown'),
+    category: pick(raw.subject?.category, SUBJECT_CATEGORIES, null),
     delivered: pick(raw.subject?.delivered, DELIVERY_STATES, 'unknown'),
     usefulLifeMonths: Number.isInteger(raw.subject?.usefulLifeMonths) && raw.subject.usefulLifeMonths > 0 ? raw.subject.usefulLifeMonths : null,
     evidence: raw.subject?.evidence ? cleanLabel(raw.subject.evidence, 300) : null,
