@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 
 const KINDS = { normal: 'عادی', reversal: 'معکوس', adjustment: 'اصلاحی', opening: 'افتتاحیه' };
@@ -18,6 +19,7 @@ const KINDS = { normal: 'عادی', reversal: 'معکوس', adjustment: 'اصل�
 export function JournalEntrySheet({ line, close }) {
   const [entry, setEntry] = useState(null);
   const [error, setError] = useState('');
+  const sheetRef = useSheetA11y(close);
   const entryId = line?.entryId || '';
 
   useEffect(() => {
@@ -34,7 +36,7 @@ export function JournalEntrySheet({ line, close }) {
 
   const totals = (entry?.lines || []).reduce((sum, row) => ({ debit: sum.debit + row.debit, credit: sum.credit + row.credit }), { debit: 0, credit: 0 });
 
-  return <div className="fixed inset-0 z-[80] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center" onClick={close}>
+  return <div ref={sheetRef} className="fixed inset-0 z-[80] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center" onClick={close}>
     <section role="dialog" aria-modal="true" aria-label="سند حسابداری" onClick={(event) => event.stopPropagation()}
       className="sheet-in max-h-[90vh] w-full max-w-[680px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl sm:rounded-2xl">
       <div className="flex items-start justify-between gap-3">

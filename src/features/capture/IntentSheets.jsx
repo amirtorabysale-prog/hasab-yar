@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { invoiceLinesTotal } from '../../../shared/voiceIntent.js';
@@ -13,6 +14,7 @@ import { matchSettleTargets, ledgerBalanceTargets } from '../../../shared/settle
  */
 export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) {
   const [busy, setBusy] = useState(false);
+  const sheetRef = useSheetA11y(close);
   const [availableTaxRates, setAvailableTaxRates] = useState([]);
 
   // نرخ‌ها فقط وقتی گرفته می‌شوند که سند فاکتور باشد؛ بقیهٔ نیت‌ها مالیات ندارند.
@@ -57,7 +59,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
     await confirm(draft);
     setBusy(false);
   };
-  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
+  return <div ref={sheetRef} className="fixed inset-0 z-[77] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
     <section role="dialog" aria-modal="true" aria-label={isPetty ? 'تأیید پرداخت تنخواه' : isTransfer ? 'تأیید انتقال بین حساب‌ها' : isInvoice ? 'تأیید پیش‌نویس فاکتور' : 'تأیید طلب یا بدهی'} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">{label}</span>
@@ -290,6 +292,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
  */
 export function SettleSheet({ draft, obligations = [], contacts = [], close, confirm, queueReview }) {
   const [invoices, setInvoices] = useState([]);
+  const sheetRef = useSheetA11y(close);
   const [loadingInvoices, setLoadingInvoices] = useState(true);
   const [selectedId, setSelectedId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -323,7 +326,7 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
     setBusy(false);
   };
 
-  return <div className="fixed inset-0 z-[77] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
+  return <div ref={sheetRef} className="fixed inset-0 z-[77] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
     <section role="dialog" aria-modal="true" aria-label="تأیید تسویه" className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">تسویه</span>

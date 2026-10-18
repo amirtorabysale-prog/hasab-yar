@@ -19,7 +19,15 @@ export function assessTransactionReview(item = {}) {
   const hasSuppliedFields = Object.keys(supplied).length > 0;
   const fields = Object.fromEntries(Object.entries(DEFAULT_FIELDS).map(([key, fallback]) => [key, normalizedField(supplied[key], fallback)]));
   const weighted = fields.amount.score * 0.42 + fields.type.score * 0.24 + fields.category.score * 0.22 + fields.account.score * 0.12;
+  // P2 بازخورد UX — یکدستی اطمینان کلی با فیلدها در «نمایش»: کارت «چرا این
+  // تصمیم؟» عدد کلی را کنار درصد هر فیلد نشان می‌دهد؛ پیش از این «کلی ۹۱٪»
+  // کنار «دسته ۶۰٪» می‌نشست و با نشان «نیازمند بررسی» نمی‌خواند. عدد نمایشی
+  // حالا هرگز از ضعیف‌ترین فیلدِ سنجیده‌شده بالاتر نیست. مسیریابی (صف حسابدار
+  // یا آماده) با همان overallScore قبلی می‌ماند تا رفتار ثبت عوض نشود.
+  const measuredScores = Object.entries(fields).filter(([key]) => supplied[key] != null).map(([, detail]) => detail.score);
+  const weakestMeasured = measuredScores.length ? Math.min(...measuredScores) : 1;
   const overallScore = hasSuppliedFields ? clampScore(weighted, weighted) : clampScore(item.confidence ?? weighted, weighted);
+  const displayPercent = Math.round(clampScore(Math.min(overallScore, weakestMeasured), overallScore) * 100);
   const reasons = [...new Set([
     ...(Array.isArray(item.reviewReasons) ? item.reviewReasons : []),
     ...(item.warning ? [item.warning] : []),
@@ -31,7 +39,7 @@ export function assessTransactionReview(item = {}) {
     : item.needsReview || item.reviewCode || reasons.length > 0 || overallScore < 0.82
       ? 'review'
       : 'ready';
-  return { state, overallScore, percent: Math.round(overallScore * 100), fields, reasons };
+  return { state, overallScore, percent: Math.round(overallScore * 100), displayPercent, fields, reasons };
 }
 
 export function withReviewAssessment(item = {}) {

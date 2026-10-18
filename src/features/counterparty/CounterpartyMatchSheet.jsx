@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 import { COUNTERPARTY_PROMPT_EVENT } from '../../lib/counterpartyPrompt.js';
 
 /**
@@ -13,6 +14,10 @@ import { COUNTERPARTY_PROMPT_EVENT } from '../../lib/counterpartyPrompt.js';
  */
 export default function CounterpartyMatchSheet() {
   const [pending, setPending] = useState(null);
+  const pendingRef = useRef(null);
+  pendingRef.current = pending;
+  // Escape = انصراف؛ همان پاسخی که با کلیک بیرون برگه داده می‌شود.
+  const sheetRef = useSheetA11y(() => { const current = pendingRef.current; if (current) { pendingRef.current = null; setPending(null); current.resolve(null); } });
 
   useEffect(() => {
     const open = (event) => setPending(event.detail);
@@ -24,7 +29,7 @@ export default function CounterpartyMatchSheet() {
   const { details = {}, resolve } = pending;
   const answer = (resolution) => { setPending(null); resolve(resolution); };
 
-  return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]"
+  return <div ref={sheetRef} className="fixed inset-0 z-[90] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]"
     onMouseDown={(event) => { if (event.target === event.currentTarget) answer(null); }}>
     <section role="dialog" aria-modal="true" aria-label="تأیید طرف حساب"
       className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">

@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { PersianDateInput, digitsOnly } from '../../components/common.jsx';
 import { formatAmount, persianDate } from '../../lib/format.js';
 import { RecognitionNote } from '../../components/RecognitionNote.jsx';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 
 /**
  * برگهٔ پروندهٔ «فهم رویداد».
@@ -37,6 +38,7 @@ const LINE_ROLES = {
 const PROVENANCE = { computed: 'محاسبه از مبالغ گفته‌شده', 'explicit-scale-from-sentence': 'مقیاس از همین جمله', 'whole-balance': 'همهٔ ماندهٔ گفته‌شده', user: 'تعیین‌شده توسط تو' };
 
 export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted }) {
+  const sheetRef = useSheetA11y(close);
   const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState(false);
   useEffect(() => setAnswers({}), [draft?.id, draft?.version]);
@@ -66,7 +68,7 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
   };
   const extracting = draft.status === 'extracting' || !draft.id;
 
-  return <div className="fixed inset-0 z-[78] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
+  return <div ref={sheetRef} className="fixed inset-0 z-[78] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px]">
     <section role="dialog" aria-modal="true" aria-label="پروندهٔ فهم گفته" className="sheet-in max-h-[92vh] w-full max-w-[600px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl">
       <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-line" />
       <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-extrabold text-accent">فهم گفته</span>

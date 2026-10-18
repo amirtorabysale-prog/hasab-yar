@@ -1214,8 +1214,11 @@ export default function App() {
     <div dir="rtl" className="min-h-screen bg-paper text-ink">
       {!online && <div className="sticky top-0 z-50 flex h-9 items-center justify-center gap-2 bg-ink px-4 text-[13px] text-on-fill"><WifiOff size={15} /> آفلاین — ضبط ذخیره می‌شود و بعداً ارسال</div>}
       <div className="app-shell mx-auto min-h-screen w-full max-w-[1440px] bg-paper">
+        {/* P1 بازخورد UX: skip-link — نخستین عنصر قابل فوکوس صفحه؛ کاربر صفحه‌خوان
+            یا کیبوردی بدون رد شدن از ناوبری، مستقیم به محتوای اصلی می‌رود. */}
+        <a href="#main-content" className="skip-link">پرش به محتوای اصلی</a>
         <DesktopNav screen={screen} section={section} searchRef={menuSearchRef} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
-        <div className="safe-bottom min-w-0 lg:col-start-2">
+        <div id="main-content" className="safe-bottom min-w-0 lg:col-start-2">
           <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden hover:bg-paper hover:text-ink"><Menu size={21} /></button><div className="min-w-0"><p className="text-xs text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><div className="flex shrink-0 items-center gap-2"><span className="hidden rounded-full border border-line bg-paper px-3 py-1 text-xs text-muted sm:inline">مبالغ به تومان</span><ThemeToggle /></div></header>
           <Suspense fallback={<ScreenLoading />}>
           {screen === 'today' && (

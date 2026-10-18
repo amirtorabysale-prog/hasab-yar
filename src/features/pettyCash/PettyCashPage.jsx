@@ -2,6 +2,7 @@ import { ChevronDown, PiggyBank, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 import { formatAmount, persianDate } from '../../lib/format.js';
 
 /**
@@ -21,6 +22,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh, autoCrea
   const [showClosed, setShowClosed] = useState(false);
   const [creating, setCreating] = useState(null);
   const [action, setAction] = useState(null);
+  const actionSheetRef = useSheetA11y(action ? () => setAction(null) : null);
   const [busy, setBusy] = useState(false);
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -130,7 +132,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh, autoCrea
       <p>«تنخواه رضایی رو از بانک ملت شارژ کردیم» — شارژ؛ هزینه نیست.</p>
     </section>
 
-    {action && <div className="fixed inset-0 z-[80] grid place-items-center bg-scrim/40 p-4">
+    {action && <div ref={actionSheetRef} className="fixed inset-0 z-[80] grid place-items-center bg-scrim/40 p-4">
       <form onSubmit={submitAction} className="w-full max-w-[420px] rounded-2xl bg-paper p-4">
         <h2 className="text-lg font-extrabold">
           {action.kind === 'replenish' ? `شارژ تنخواه ${action.fund.holderName}` : action.kind === 'ceiling' ? 'تغییر سقف تنخواه' : `بستن تنخواه ${action.fund.holderName}`}

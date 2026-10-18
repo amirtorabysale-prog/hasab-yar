@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
 /**
@@ -35,13 +36,14 @@ const COPY = {
  * خودش را تأیید کند؛ درخواست به صف حسابدار می‌رود.
  */
 export function OverdraftApprovalSheet({ prompt, canApprove, close }) {
+  const sheetRef = useSheetA11y(() => close(null));
   const [reason, setReason] = useState('');
   const kind = COPY[prompt.kind] ? prompt.kind : 'cash';
   const copy = COPY[kind];
   const queue = prompt.mode === 'request';
   const inline = canApprove && !queue;
   const ready = reason.trim().length >= 3;
-  return <div className="fixed inset-0 z-[90] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center">
+  return <div ref={sheetRef} className="fixed inset-0 z-[90] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center">
     <section role="alertdialog" aria-modal="true" aria-label={copy.title} className="sheet-in w-full max-w-[560px] rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl sm:rounded-2xl">
       <span className="rounded-full bg-expense/10 px-2 py-1 text-xs font-extrabold text-expense">{copy.badge}</span>
       <h2 className="mt-3 text-lg font-extrabold">{copy.title}</h2>

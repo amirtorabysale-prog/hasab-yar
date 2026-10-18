@@ -1,5 +1,6 @@
 import { FileText } from 'lucide-react';
 import { useState } from 'react';
+import { useSheetA11y } from '../../components/sheetA11y.js';
 import { PRODUCT_POSITIONING, profileDefinition } from '../../../shared/product.js';
 
 export function LoginPage({ onLogin, error }) {
@@ -14,7 +15,18 @@ export function Onboarding({ initial, onDone }) {
   const [profileType, setProfileType] = useState(initial.profileType || 'business');
   const [businessName, setBusinessName] = useState(initial.businessName || '');
   const [saving, setSaving] = useState(false);
-  const submit = async () => { setSaving(true); await onDone({ profileType, businessName }); setSaving(false); };
+  const [error, setError] = useState('');
+  // این برگه اجباری است و دکمهٔ بستن ندارد؛ فقط تلهٔ فوکوس و فوکوس اولیه.
+  const sheetRef = useSheetA11y(null);
+  const submit = async () => {
+    setSaving(true); setError('');
+    try {
+      await onDone({ profileType, businessName });
+    } catch (cause) {
+      // خواستهٔ مالک (بازخورد UX): onboarding نباید بی‌پیام گیر کند.
+      setError(cause?.message || 'ذخیره انجام نشد؛ اتصال را بررسی کن و دوباره تلاش کن.');
+    } finally { setSaving(false); }
+  };
   const selectedProfile = profileDefinition(profileType);
-  return <div className="fixed inset-0 z-[90] grid place-items-center bg-scrim/45 p-4 backdrop-blur-[2px]"><section role="dialog" aria-modal="true" className="w-full max-w-[520px] rounded-2xl border border-line bg-paper p-5 shadow-2xl"><p className="text-sm font-bold text-accent">راه‌اندازی یک‌دقیقه‌ای</p><h2 className="mt-2 text-2xl font-extrabold">حساب‌یار را برای خودت تنظیم کن</h2><p className="mt-2 text-sm leading-7 text-muted">نوع استفاده، ابزارهای دفترت را مشخص می‌کند و هر زمان قابل تغییر است.</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => setProfileType('business')} className={`tap rounded-lg border px-3 text-sm font-bold ${profileType === 'business' ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface'} hover:bg-paper hover:text-ink`}>کسب‌وکار کوچک</button><button onClick={() => setProfileType('personal')} className={`tap rounded-lg border px-3 text-sm font-bold ${profileType === 'personal' ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface'} hover:bg-paper hover:text-ink`}>حساب شخصی</button></div><div className="mt-3 rounded-lg border border-line bg-surface px-3 py-3"><p className="text-sm font-bold">{selectedProfile.label}</p><p className="mt-1 text-[13px] leading-6 text-muted">{selectedProfile.description}</p></div><label className="mt-4 block text-[13px] text-muted">{profileType === 'business' ? 'نام کسب‌وکار' : 'نام دفتر شخصی'}<input value={businessName} onChange={(event) => setBusinessName(event.target.value)} placeholder={profileType === 'business' ? 'مثلاً فروشگاه آبان' : 'مثلاً حساب‌های امیر'} className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3 text-ink outline-none focus:border-accent" /></label><p className="mt-3 text-[12px] leading-6 text-muted">{PRODUCT_POSITIONING.accountingDisclaimer}</p><button disabled={saving} onClick={submit} className="tap mt-5 w-full rounded-lg bg-accent font-extrabold text-on-fill hover:bg-accent/90 active:bg-accent/80">{saving ? 'در حال ذخیره…' : 'شروع کار'}</button></section></div>;
+  return <div ref={sheetRef} className="fixed inset-0 z-[90] grid place-items-center bg-scrim/45 p-4 backdrop-blur-[2px]"><section role="dialog" aria-modal="true" className="w-full max-w-[520px] rounded-2xl border border-line bg-paper p-5 shadow-2xl"><p className="text-sm font-bold text-accent">راه‌اندازی یک‌دقیقه‌ای</p><h2 className="mt-2 text-2xl font-extrabold">حساب‌یار را برای خودت تنظیم کن</h2><p className="mt-2 text-sm leading-7 text-muted">نوع استفاده، ابزارهای دفترت را مشخص می‌کند و هر زمان قابل تغییر است.</p><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => setProfileType('business')} className={`tap rounded-lg border px-3 text-sm font-bold ${profileType === 'business' ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface'} hover:bg-paper hover:text-ink`}>کسب‌وکار کوچک</button><button onClick={() => setProfileType('personal')} className={`tap rounded-lg border px-3 text-sm font-bold ${profileType === 'personal' ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface'} hover:bg-paper hover:text-ink`}>حساب شخصی</button></div><div className="mt-3 rounded-lg border border-line bg-surface px-3 py-3"><p className="text-sm font-bold">{selectedProfile.label}</p><p className="mt-1 text-[13px] leading-6 text-muted">{selectedProfile.description}</p></div><label className="mt-4 block text-[13px] text-muted">{profileType === 'business' ? 'نام کسب‌وکار' : 'نام دفتر شخصی'}<input value={businessName} onChange={(event) => setBusinessName(event.target.value)} placeholder={profileType === 'business' ? 'مثلاً فروشگاه آبان' : 'مثلاً حساب‌های امیر'} className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3 text-ink outline-none focus:border-accent" /></label><p className="mt-3 text-[12px] leading-6 text-muted">{PRODUCT_POSITIONING.accountingDisclaimer}</p>{error && <p role="alert" className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-sm leading-6 text-expense">{error}</p>}<button disabled={saving} onClick={submit} className="tap mt-5 w-full rounded-lg bg-accent font-extrabold text-on-fill hover:bg-accent/90 active:bg-accent/80">{saving ? 'در حال ذخیره…' : 'شروع کار'}</button></section></div>;
 }

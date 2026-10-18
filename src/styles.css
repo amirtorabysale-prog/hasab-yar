@@ -53,7 +53,12 @@ html { background: rgb(var(--c-paper)); color: rgb(var(--c-ink)); }
 body { margin: 0; min-width: 320px; min-height: 100vh; overscroll-behavior: none; -webkit-font-smoothing: antialiased; }
 button, input, select, textarea { font: inherit; }
 input, select, textarea { color: inherit; background-color: rgb(var(--c-surface)); }
-input::placeholder, textarea::placeholder { color: rgb(var(--c-muted) / 0.75); }
+/* P2 بازخورد UX: کنتراست placeholder در حالت روشن ۳٫۴۶:۱ بود (زیر حد AA
+   ۴٫۵:۱). با رنگ کامل muted روشن ≈۵٫۶:۱ و در حالت تاریک ≈۶٫۹:۱ می‌شود. */
+input::placeholder, textarea::placeholder { color: rgb(var(--c-muted)); }
+/* P1 بازخورد UX: skip-link — فقط با فوکوس دیده می‌شود و اولین tab-stop صفحه است. */
+.skip-link { position: fixed; top: -100px; right: 12px; z-index: 200; transition: top .12s ease; padding: 10px 16px; border-radius: 10px; background: rgb(var(--c-accent)); color: rgb(var(--c-on-fill, 255 255 255)); font-weight: 800; font-size: 13px; box-shadow: 0 8px 24px rgb(0 0 0 / .18); }
+.skip-link:focus-visible { top: 12px; }
 button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 [hidden] { display: none !important; }

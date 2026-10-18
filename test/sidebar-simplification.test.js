@@ -85,6 +85,6 @@ test('کلیک روی هر سند، برگهٔ جزئیات کامل را باز
   assert.match(explorer, /role="dialog"/, 'مدال با نقش dialog');
   assert.match(explorer, /aria-modal="true"/, 'مدال معلولیت‌پسند');
   assert.match(explorer, /setOpenEntry\(entry\)/, 'کلیک روی ردیف، سند را باز می‌کند');
-  assert.match(explorer, /Escape/, 'بستن با Escape');
+  assert.match(explorer, /useSheetA11y/, 'بستن با Escape و تلهٔ فوکوس از قلاب مشترک');
   assert.doesNotMatch(explorer, /setSelected\(result\.items\[0\]/, 'انتخاب خودکار اولین سند و پنل پایین فهرست حذف شد');
 });
