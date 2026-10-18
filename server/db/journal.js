@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, parseStoredJson } from './core.js';
-import { createJournalBatch, ensureAccountingSchema, journalWorklist, setJournalApproval } from '../accounting.js';
+import { activeWorkspaceDatabase, audit, controlDb, currentTimeZone, currentWorkspace, parseStoredJson } from './core.js';
+import { createJournalBatch, ensureAccountingSchema, journalWorklist, listJournal, setJournalApproval } from '../accounting.js';
 import { listWorkspaceMembers } from './workspaces.js';
 import { normalizeTemplateLines } from '../journalWorkflow.js';
 import { roleAllows } from '../access.js';
@@ -8,6 +8,30 @@ import { roleAllows } from '../access.js';
 // ---------------------------------------------------------------------------
 // فاز ۳ — ثبت انبوه، کارتابل تأیید و الگوی سند
 // ---------------------------------------------------------------------------
+
+/** نام نمایشی کاربر برای «ثبت‌کنندهٔ سند»؛ شناسهٔ خام در دفتر اسناد جایی ندارد. */
+function actorName(id) {
+  if (!id) return null;
+  const row = controlDb.prepare('SELECT display_name,username FROM users WHERE id=?').get(id);
+  return row?.display_name || row?.username || id;
+}
+
+const journalActorNames = (item) => ({
+  ...item,
+  createdByName: actorName(item.createdBy),
+  submittedByName: actorName(item.submittedBy),
+  reviewedByName: actorName(item.reviewedBy),
+});
+
+/**
+ * فهرست اسناد برای دفتر اسناد — همان `listJournal` با نام ثبت‌کننده و بررسی‌کننده.
+ * خواستهٔ مالک محصول: «ساعت و دقیقه باید ذکر بشه؛ ثبت‌کننده باید ذکر بشه» —
+ * زمان خام (`createdAt`) از سرور می‌آید و نمایش ساعت:دقیقه کار فرانت‌اند است.
+ */
+export function journalOverview(query = {}) {
+  const result = listJournal(activeWorkspaceDatabase(), query);
+  return { ...result, items: result.items.map(journalActorNames) };
+}
 
 export function journalWorklistOverview(query = {}) {
   const workspace = currentWorkspace();

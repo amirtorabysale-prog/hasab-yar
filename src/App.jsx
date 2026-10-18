@@ -1231,7 +1231,7 @@ export default function App() {
               notify={notify} refreshToday={load} experience={access.experience}
             />
           )}
-          {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={LEDGER_SECTIONS[section] || 'transactions'} cardSection={CARD_SECTIONS[section] || ''} onTabChange={(id) => { setSection(id); writeRoute('ledger', id); }} />}
+          {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={LEDGER_SECTIONS[section] || 'transactions'} cardSection={CARD_SECTIONS[section] || ''} onTabChange={(id) => { setSection(id); writeRoute('ledger', id); }} navigate={navigate} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
           {screen === 'review' && <ReviewQueuePage notify={notify} access={access} navigate={navigate} refresh={load} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} initialSection={section} onSectionChange={(id) => { setSection(id); writeRoute('accounting', id); }} />}
@@ -1239,7 +1239,7 @@ export default function App() {
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} />}
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} initialTab={section} onTabChange={(id) => { setSection(id); writeRoute('chart', id); }} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} initialTab={section} />}
-          {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} />}
+          {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} autoCreate={section === 'new'} />}
           {screen === 'settings' && (() => {
             // تنظیمات یک ستون بلند بود: پشتیبان و رمز ته صفحه گم می‌شدند. حالا هر
             // بخش زبانهٔ خودش را دارد و از منو مستقیم باز می‌شود.

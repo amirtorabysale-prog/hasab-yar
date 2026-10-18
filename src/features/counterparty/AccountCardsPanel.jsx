@@ -1,4 +1,4 @@
-import { ArrowRight, Landmark, Plus, TriangleAlert, Users, Wallet } from 'lucide-react';
+import { ArrowRight, Landmark, PiggyBank, Plus, TriangleAlert, Users, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BANKS, bankById } from '../../../shared/banks.js';
 import { api } from '../../lib/api.js';
@@ -236,7 +236,7 @@ function AccountList({ items, empty, onOpen }) {
   );
 }
 
-export function AccountCardsPanel({ accounts = [], contacts = [], notify, refresh, initialSection = '' }) {
+export function AccountCardsPanel({ accounts = [], contacts = [], notify, refresh, initialSection = '', pettyAvailable = false, onNewPetty = null }) {
   const [section, setSection] = useState(initialSection || 'banks');
   // برگ منو («کارت بانک‌ها»، «کارت اشخاص» …) همان بخش را باز می‌کند.
   useEffect(() => { if (initialSection) setSection(initialSection); }, [initialSection]);
@@ -264,11 +264,18 @@ export function AccountCardsPanel({ accounts = [], contacts = [], notify, refres
         <p className="text-xs text-muted">
           {section === 'banks' ? `${toPersianDigits(banks.length)} حساب بانکی` : section === 'cash' ? `${toPersianDigits(boxes.length)} صندوق و تنخواه` : `${toPersianDigits(contacts.length)} طرف حساب`}
         </p>
-        {!adding && (
+        {!adding && <div className="flex shrink-0 gap-2">
+          {/* خواستهٔ مالک محصول: کارت صندوق و تنخواه دکمهٔ «تنخواه تازه» هم دارد،
+              نه فقط «تعریف صندوق» — ساخت تنخواه با فرم صفحهٔ تنخواه‌گردان است. */}
+          {section === 'cash' && pettyAvailable && onNewPetty && (
+            <button onClick={onNewPetty} className="tap flex items-center gap-1 rounded-lg border border-accent/40 bg-surface px-3 text-[12px] font-bold text-accent hover:bg-accent/10">
+              <PiggyBank size={15} /> تنخواه تازه
+            </button>
+          )}
           <button onClick={() => setAdding(true)} className="tap flex items-center gap-1 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">
             <Plus size={15} /> {section === 'banks' ? 'تعریف بانک' : section === 'cash' ? 'تعریف صندوق' : 'تعریف شخص یا شرکت'}
           </button>
-        )}
+        </div>}
       </div>
 
       {adding && section !== 'people' && (

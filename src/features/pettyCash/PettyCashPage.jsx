@@ -11,8 +11,11 @@ import { formatAmount, persianDate } from '../../lib/format.js';
  * اندازهٔ خرج‌شده شارژ می‌شود. پرداخت، شارژ و بستن هزینه نیستند و فقط پول را
  * میان حساب‌های خود شرکت جابه‌جا می‌کنند؛ هزینه همان خرج‌هایی است که با «از
  * تنخواه…» ثبت می‌شوند.
+ *
+ * `autoCreate` فرم «تنخواه تازه» را همین اول باز می‌کند — برای وقتی که از کارت
+ * صندوق و تنخواه با دکمهٔ «تنخواه تازه» این‌جا آمده (`#/petty-cash/new`).
  */
-export function PettyCashPage({ accounts = [], access, notify, refresh }) {
+export function PettyCashPage({ accounts = [], access, notify, refresh, autoCreate = false }) {
   const canManage = ['owner', 'manager'].includes(access?.workspace?.role);
   const [funds, setFunds] = useState(null);
   const [showClosed, setShowClosed] = useState(false);
@@ -30,6 +33,8 @@ export function PettyCashPage({ accounts = [], access, notify, refresh }) {
     catch (error) { setFunds([]); notifyRef.current?.(error.message); }
   }, [showClosed]);
   useEffect(() => { void load(); }, [load]);
+  // دکمهٔ «تنخواه تازه» در کارت صندوق و تنخواه مستقیم این فرم را باز می‌کند.
+  useEffect(() => { if (autoCreate && canManage) setCreating({ holderName: '', ceiling: '', fromAccountId: sources[0]?.id || '' }); }, [autoCreate]);
 
   const run = async (work, message) => {
     setBusy(true);

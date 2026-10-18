@@ -22,7 +22,7 @@ import {
   closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling,
   listUnidentifiedReceipts, resolveUnidentifiedReceipt, reverseUnidentifiedReceiptResolution,
   saveAccountingTransferTemplate,
-  createJournalDocuments, deleteJournalTemplate, journalWorklistOverview, listJournalTemplates,
+  createJournalDocuments, deleteJournalTemplate, journalOverview, journalWorklistOverview, listJournalTemplates,
   fillTransferMappingsFromChart,
   saveJournalTemplate, submitJournalApproval,
   attachCounterpartyAnalytics, clearChartMappings, mapLedgerAccount, mapLedgerAccountsInBulk, saveAnalytic,
@@ -45,7 +45,7 @@ import {
   openEncryptedBackup, restorePortableBackup, writeServerBackup,
 } from './backup.js';
 import {
-  accountingPeriods, createAdjustingJournal, listJournal, listLedgerAccounts, lockAccountingPeriod,
+  accountingPeriods, createAdjustingJournal, listLedgerAccounts, lockAccountingPeriod,
   periodForDate, reopenAccountingPeriod, trialBalance,
 } from './accounting.js';
 import { accountLoginFingerprint, csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders, validateSecurityConfiguration } from './security.js';
@@ -471,7 +471,7 @@ app.get('/api/accounting/trial-balance', (request, response, next) => {
   try { return response.json(trialBalance(activeWorkspaceDatabase(), request.query.through)); }
   catch (error) { return next(error); }
 });
-app.get('/api/accounting/journal', (request, response) => response.json(listJournal(activeWorkspaceDatabase(), request.query)));
+app.get('/api/accounting/journal', (request, response) => response.json(journalOverview(request.query)));
 app.post('/api/accounting/journal', (request, response, next) => {
   try {
     const item = createAdjustingJournal(activeWorkspaceDatabase(), request.body || {}, { createdBy: request.user.id, timeZone: getSettings().timezone });

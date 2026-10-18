@@ -27,9 +27,11 @@ const OPEN_GROUPS_KEY = 'hesab-yar-menu-open';
 const readOpenGroups = () => { try { return JSON.parse(localStorage.getItem(OPEN_GROUPS_KEY) || 'null'); } catch { return null; } };
 
 /**
- * منوی درختی: گروه‌ها باز و بسته می‌شوند و هر برگ مستقیم همان زبانه را باز
- * می‌کند. گروهِ صفحهٔ فعلی همیشه باز است تا کاربر بداند کجاست. با جست‌وجو، همهٔ
- * برگ‌های پیدا‌شده یک‌جا نشان داده می‌شوند و Enter اولی را باز می‌کند.
+ * منوی درختی: گروهی که بیش از یک برگ دارد باز و بسته می‌شود و هر برگ مستقیم
+ * همان زبانه را باز می‌کند. گروهِ صفحهٔ فعلی همیشه باز است تا کاربر بداند کجاست.
+ * گروه تک‌برگ دیگر درخت نیست — خودش دکمهٔ رفتن است؛ زبانه‌های هر صفحه بالای
+ * همان صفحه‌اند و تکرارشان در سایدبار فقط کاربر را گیج می‌کند. با جست‌وجو،
+ * همهٔ برگ‌های پیدا‌شده یک‌جا نشان داده می‌شوند و Enter اولی را باز می‌کند.
  */
 export function MenuTree({ access, screen, section = '', navigate, profileType = 'business', searchRef = null }) {
   const groups = useMemo(() => visibleMenu(allowedScreens(access), { ledgerTabs: profileDefinition(profileType).ledgerTabs }), [access, profileType]);
@@ -57,6 +59,17 @@ export function MenuTree({ access, screen, section = '', navigate, profileType =
         : <p className="menu-empty">بخشی با این نام پیدا نشد.</p>}
     </div> : groups.map((group) => {
       const Icon = GROUP_ICONS[group.icon] || Home;
+      // تک‌برگ = یک مقصد، نه یک دسته. کلیک مستقیم می‌رود به صفحه؛ زبانه‌هایش
+      // بالای خود صفحه‌اند (خواستهٔ مالک محصول: نوار بالایی کافی است).
+      if (group.items.length === 1) {
+        const item = group.items[0];
+        return <div className="nav-group" key={group.id}>
+          <button type="button" className={`menu-group is-direct${current?.group.id === group.id ? ' is-active' : ''}`}
+            aria-current={current?.item === item ? 'page' : undefined} onClick={() => go(item)}>
+            <Icon size={18} aria-hidden="true" /><span>{group.label}</span>
+          </button>
+        </div>;
+      }
       const expanded = open.has(group.id);
       const active = current?.group.id === group.id;
       return <div className="nav-group" key={group.id}>

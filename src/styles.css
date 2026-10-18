@@ -121,6 +121,9 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
 .menu-group:hover { background: rgb(var(--c-subtle)); }
 .menu-group.is-active { color: rgb(var(--c-accent)); }
 .menu-group > span { flex: 1; }
+/* گروه تک‌برگ: دکمهٔ مستقیم رفتن به صفحه — مثل برگ، نه دسته. */
+.menu-group.is-direct { justify-content: flex-start; }
+.menu-group.is-direct[aria-current="page"] { background: rgb(var(--c-accent) / .12); }
 .menu-chevron { color: rgb(var(--c-muted)); transition: transform .15s ease; }
 .menu-chevron.is-open { transform: rotate(180deg); }
 .menu-leaves { margin: 2px 22px 8px 0; padding-right: 10px; border-right: 1px solid rgb(var(--c-line)); }
