@@ -119,10 +119,16 @@ test('رابط: بخش با دادهٔ واقعیِ سرور، مانده‌ها
   const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
   try {
     const { TimingContractsView } = await vite.ssrLoadModule('/src/features/ledger/TimingContractsPanel.jsx');
+    // خواستهٔ مالک (۲۶ مهر ۱۴۰۵): دو زبانهٔ جدای پیش‌پرداخت/پیش‌دریافت در بالای صفحه.
     const html = renderToStaticMarkup(React.createElement(TimingContractsView, { data }));
-    for (const text of ['پیش‌پرداخت‌ها', 'پیش‌دریافت‌ها', 'ماندهٔ پیش‌پرداخت‌ها', 'قسط بعدی: آبان ۱۴۰۵', 'مهر ۱۴۰۵: ۲ قسط خودکار ثبت شد', 'دیدم', 'شرکت آلفا']) {
+    for (const text of ['پیش‌پرداخت‌ها', 'پیش‌دریافت‌ها', 'ماندهٔ پیش‌پرداخت‌ها', 'قسط بعدی: آبان ۱۴۰۵', 'مهر ۱۴۰۵: ۲ قسط خودکار ثبت شد', 'دیدم']) {
       assert.ok(html.includes(text), text);
     }
+    // زبانهٔ پیش‌فرض پیش‌پرداخت است؛ فهرست پیش‌دریافت (راهنمای زبانهٔ دیگر) نباید بیرون بیاید.
+    assert.ok(!html.includes('برای خدمت آینده گرفته‌ایم'), 'زبانهٔ پیش‌فرض فقط پیش‌پرداخت‌ها را نشان می‌دهد');
+    const deferredTab = renderToStaticMarkup(React.createElement(TimingContractsView, { data, initialKind: 'deferred' }));
+    for (const text of ['ماندهٔ پیش‌دریافت‌ها', 'شرکت آلفا']) assert.ok(deferredTab.includes(text), text);
+    assert.ok(!deferredTab.includes('برای پوشش آینده داده‌ایم'), 'زبانهٔ پیش‌دریافت فقط پیش‌دریافت‌ها را نشان می‌دهد');
     assert.doesNotMatch(html, /نیاز به اقدام حسابدار/, 'موردی برای اقدام نیست');
     const withAttention = renderToStaticMarkup(React.createElement(TimingContractsView, { data: { ...data, attention: { blocked: [], held: [], unscheduled: [{ accountId: 'a1', accountName: 'پیش‌پرداخت‌ها', residual: 5_000_000 }] } } }));
     assert.match(withAttention, /نیاز به اقدام حسابدار/);

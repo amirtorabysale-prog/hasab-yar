@@ -46,8 +46,10 @@ function NoticeCard({ notice, onSeen }) {
   </article>;
 }
 
-function ContractRow({ item }) {
-  const [open, setOpen] = useState(false);
+function ContractRow({ item, defaultOpen = true }) {
+  // خواستهٔ مالک محصول (۲۶ مهر ۱۴۰۵): «همه موارد با جزئیات مشخص بشه» —
+  // جزئیات هر قرارداد به‌صورت پیش‌فرض باز است؛ کلیک، بازوبند می‌کند.
+  const [open, setOpen] = useState(defaultOpen);
   const [label, tone] = STATE_LABELS[item.state] || STATE_LABELS.active;
   const progress = item.total ? Math.round((item.recognized / item.total) * 100) : 0;
   return <article className="py-3">
@@ -106,25 +108,43 @@ export function TimingContractsPanel({ notify }) {
   return <TimingContractsView data={data} showClosed={showClosed} onToggleClosed={setShowClosed} onSeen={seen} />;
 }
 
-/** نمای خالص بخش، برای آزمون رندر با دادهٔ واقعی. */
-export function TimingContractsView({ data, showClosed = false, onToggleClosed = () => {}, onSeen = () => {} }) {
+/**
+ * نمای خالص بخش، برای آزمون رندر با دادهٔ واقعی.
+ *
+ * خواستهٔ مالک محصول (۲۶ مهر ۱۴۰۵): «بالای صفحه این دو تا باید تفکیک بشه که
+ * وقتی روی پیش‌دریافت می‌زنیم پیش‌دریافت‌ها بیاد و همه موارد با جزئیات مشخص بشه» —
+ * دو زبانهٔ جدا در بالای صفحه؛ هر زبانه با کارت ماندهٔ خودش و فهرست کامل با جزئیات باز.
+ */
+const KIND_META = {
+  prepaid: { label: 'پیش‌پرداخت‌ها', title: 'پیش‌پرداخت‌ها', hint: 'پولی که برای پوشش آینده داده‌ایم (بیمه، اجاره، اشتراک و …). دارایی است و ماه‌به‌ماه هزینه می‌شود.', empty: 'پیش‌پرداخت در جریانی نیست.' },
+  deferred: { label: 'پیش‌دریافت‌ها', title: 'پیش‌دریافت‌ها', hint: 'پولی که برای خدمت آینده گرفته‌ایم (اجارهٔ مستاجر، پشتیبانی، اشتراک). بدهی است و ماه‌به‌ماه درآمد می‌شود.', empty: 'پیش‌دریافت در جریانی نیست.' },
+};
+
+export function TimingContractsView({ data, showClosed = false, onToggleClosed = () => {}, onSeen = () => {}, initialKind = 'prepaid' }) {
   const seen = onSeen;
   const setShowClosed = onToggleClosed;
+  const [kind, setKind] = useState(initialKind);
   const visible = data.items.filter((item) => showClosed || !['cancelled', 'done'].includes(item.state));
   const prepaid = visible.filter((item) => item.kind === 'prepaid');
   const deferred = visible.filter((item) => item.kind === 'deferred');
   const unseen = data.notices.filter((notice) => !notice.seenAt);
   const { blocked, held, unscheduled } = data.attention;
   const attentionCount = blocked.length + held.length + unscheduled.length;
+  const activeKind = KIND_META[kind] ? kind : 'prepaid';
+  const meta = KIND_META[activeKind];
+  const activeItems = activeKind === 'prepaid' ? prepaid : deferred;
+  const remaining = activeKind === 'prepaid' ? data.summary.prepaidRemaining : data.summary.deferredRemaining;
+  const activeCount = activeKind === 'prepaid' ? data.summary.prepaidActive : data.summary.deferredActive;
+  const tabs = [['prepaid', KIND_META.prepaid.label, prepaid.length], ['deferred', KIND_META.deferred.label, deferred.length]];
   return <section className="mt-5 space-y-6">
     <div>
       <h2 className="font-extrabold">پیش‌پرداخت و پیش‌دریافت</h2>
       <p className="mt-1 text-sm leading-7 text-muted">پولی که برای ماه‌های آینده داده یا گرفته شده، ماه‌به‌ماه سر موعد خودش هزینه یا درآمد می‌شود. ثبت هر ماه خودکار است و حسابدار خبرش را همین‌جا و در صف بررسی می‌بیند.</p>
     </div>
-    <div className="grid grid-cols-2 gap-2">
-      <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌پرداخت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.prepaidRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.prepaidActive)} قرارداد در جریان</span></div>
-      <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ پیش‌دریافت‌ها</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(data.summary.deferredRemaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(data.summary.deferredActive)} قرارداد در جریان</span></div>
-    </div>
+    <nav aria-label="تفکیک پیش‌پرداخت و پیش‌دریافت" className="section-navigation">
+      {tabs.map(([id, label, count]) => <button key={id} type="button" aria-current={activeKind === id ? 'page' : undefined} onClick={() => setKind(id)}>{label}{count > 0 && <span className="mr-1 text-xs opacity-70">({toPersianDigits(count)})</span>}</button>)}
+    </nav>
+    <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ {meta.label}</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(remaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(activeCount)} قرارداد در جریان</span></div>
     {data.notices.length > 0 && <div className="space-y-2">
       <h3 className="font-extrabold">خبر ثبت‌های ماهانه {unseen.length > 0 && <span className="text-xs font-bold text-accent">({toPersianDigits(unseen.length)} دیده‌نشده)</span>}</h3>
       {data.notices.slice(0, 4).map((notice) => <NoticeCard key={notice.periodKey} notice={notice} onSeen={seen} />)}
@@ -140,8 +160,7 @@ export function TimingContractsView({ data, showClosed = false, onToggleClosed =
       </ul>
       <p className="mt-2 text-xs text-muted">این موارد در «صف بررسی حسابدار» با دکمهٔ اقدام آمده‌اند.</p>
     </div>}
-    <ContractList title="پیش‌پرداخت‌ها" hint="پولی که برای پوشش آینده داده‌ایم (بیمه، اجاره، اشتراک و …). دارایی است و ماه‌به‌ماه هزینه می‌شود." items={prepaid} emptyText="پیش‌پرداخت در جریانی نیست." />
-    <ContractList title="پیش‌دریافت‌ها" hint="پولی که برای خدمت آینده گرفته‌ایم (اجارهٔ مستاجر، پشتیبانی، اشتراک). بدهی است و ماه‌به‌ماه درآمد می‌شود." items={deferred} emptyText="پیش‌دریافت در جریانی نیست." />
+    <ContractList title={meta.title} hint={meta.hint} items={activeItems} emptyText={meta.empty} />
     <label className="flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} />قراردادهای تمام‌شده و لغوشده را هم نشان بده</label>
   </section>;
 }

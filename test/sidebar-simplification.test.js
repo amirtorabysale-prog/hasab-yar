@@ -76,3 +76,15 @@ test('دفتر اسناد: زمان ثبت با ساعت و دقیقه و نام
   const index = source('server/index.js');
   assert.match(index, /journalOverview\(request\.query\)/);
 });
+
+test('کلیک روی هر سند، برگهٔ جزئیات کامل را باز می‌کند', () => {
+  // خواستهٔ مالک (۲۶ مهر ۱۴۰۵): «روی سند که می‌زنم می‌خوام باز بشه و جزئیاتش
+  // قشنگ نمایش داده بشه» — برگهٔ مدالی با همهٔ سطرها، نه پنل انتهای فهرست.
+  const explorer = source('src/features/accounting/JournalExplorer.jsx');
+  assert.match(explorer, /JournalDocumentSheet/, 'برگهٔ بازشوی سند وجود دارد');
+  assert.match(explorer, /role="dialog"/, 'مدال با نقش dialog');
+  assert.match(explorer, /aria-modal="true"/, 'مدال معلولیت‌پسند');
+  assert.match(explorer, /setOpenEntry\(entry\)/, 'کلیک روی ردیف، سند را باز می‌کند');
+  assert.match(explorer, /Escape/, 'بستن با Escape');
+  assert.doesNotMatch(explorer, /setSelected\(result\.items\[0\]/, 'انتخاب خودکار اولین سند و پنل پایین فهرست حذف شد');
+});
