@@ -4,6 +4,36 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 
+/** برچسب فارسی نقش‌ها — همان واژه‌هایی که «فهم رویداد» هم به کاربر نشان می‌دهد. */
+const ROLE_LABELS = {
+  cash: 'بانک یا صندوق', receivable: 'طلب از مشتری', payable: 'بدهی به تأمین‌کننده', 'expense-category': 'هزینه', 'income-category': 'درآمد',
+  'fixed-asset': 'دارایی ثابت', 'prepaid-asset': 'پیش‌پرداخت', 'refundable-deposit': 'ودیعه', 'loan-payable': 'وام پرداختنی',
+  'customer-advance': 'پیش‌دریافت مشتری', 'deferred-revenue': 'درآمد انتقالی', 'supplier-advance': 'پیش‌پرداخت به تأمین‌کننده',
+  'employee-advance': 'مساعده کارکنان', 'inventory-asset': 'کالای انبار', 'inventory-unsplit': 'کالای تفکیک‌نشده',
+  'cheque-receivable': 'چک دریافتنی', 'cheque-payable': 'چک پرداختنی', 'tax-receivable': 'طلب مالیات',
+  'vat-input': 'مالیات ارزش افزوده خرید', 'vat-output': 'مالیات ارزش افزوده فروش', 'partner-payable': 'بدهی به شریک',
+  'partner-receivable': 'طلب از شریک', 'owner-capital': 'سرمایه مالک', 'owner-drawing': 'برداشت مالک',
+  'accumulated-depreciation': 'استهلاک انباشته', 'depreciation-expense': 'هزینه استهلاک', 'unidentified-receipt': 'وجه ناشناس',
+};
+
+/** هر گیرهٔ ثبت یک راهنمای «از کجا حل می‌شود؟» دارد تا حسابدار نداند گم نشود. */
+function blockerHint(text) {
+  const t = String(text || '');
+  if (/بانک|صندوق/.test(t)) return 'از بخش «مشاهده یا اصلاح تاریخ، طرف‌حساب و بانک» یا پاسخ سؤالِ بانک، حساب واقعی را انتخاب کن.';
+  if (/تاریخ/.test(t)) return 'تاریخ رویداد را در همان بخش پایین گفت‌وگو اصلاح کن.';
+  if (/سؤال|نام واقعی|مشخص کن|پاسخ/.test(t)) return 'پاسخ سؤال‌های پایین همین کارت را بده؛ پاسخ‌ها ذخیره می‌مانند.';
+  return 'اصلاح را در گفت‌وگو بنویس و «ارسال و بازبینی پیشنهاد» را بزن تا پیشنهاد تازه بدهد.';
+}
+
+/** نقشهٔ سه‌گامیِ مسیر: گام فعال بسته به وضعیت پیشنهاد روشن است. */
+function StepPath({ ai }) {
+  const active = ai.canPost ? 2 : 1;
+  return <ol aria-label="مسیر تکمیل سند" className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+    {['۱. پیش‌نویس را بخوان', '۲. غلط یا ناقص بود؟ در گفت‌وگو اصلاحش کن', '۳. درست شد؟ تأیید و ثبت'].map((step, index) =>
+      <li key={step} className={`rounded-full border px-2 py-0.5 font-bold ${index === active ? 'border-accent bg-accent/10 text-accent' : 'border-line text-muted'}`}>{step}</li>)}
+  </ol>;
+}
+
 export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
   const [open,setOpen] = useState(false), [loading,setLoading] = useState(false), [error,setError] = useState('');
   const [message,setMessage] = useState(''), [history,setHistory] = useState([]), [contacts,setContacts] = useState([]), [accounts,setAccounts] = useState([]);
@@ -97,6 +127,7 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
   return <section className="mt-3 rounded-lg border border-accent/30 bg-paper p-3 text-xs leading-6">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <b>دستیار حسابدار و DNA شرکت</b>
+      {ai?.state === 'proposed' && <span className="rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] font-bold text-muted">پیش‌نویس — تا تأیید تو هیچ چیزی ثبت نشده</span>}
       <div className="flex gap-2">
         {(!ai || ai.state==='rejected' || !ai.canPost) && <button disabled={loading || busy} onClick={analyze} className="tap rounded border border-accent px-3 text-accent disabled:opacity-40">{loading?'در حال تحلیل…':'تحلیل کن'}</button>}
         <button disabled={loading} onClick={toggle} className="tap rounded border border-line px-3 hover:bg-paper hover:text-ink">{open?'بستن گفت‌وگو':'گفت‌وگو و تکمیل اطلاعات'}</button>
@@ -104,7 +135,14 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
     </div>
     {!ai && item.dnaMatches?.length>0 && <div className="mt-2 rounded bg-accent/5 p-2"><b>DNA شرکت {item.dnaMatches.length} تجربهٔ مشابه پیدا کرده است.</b>{item.dnaMatches.map(d=><p key={d.id}>{d.summary} · {d.actorName || d.actor} · {persianDate(d.date)} — {d.reason || 'تأیید قبلی'}</p>)}<p>با «تحلیل کن» تطبیق رویداد تازه را درخواست کن؛ تجربهٔ قبلی مجوز ثبت خودکار نیست.</p></div>}
     {ai?.state==='proposed' && <>
+      <StepPath ai={ai} />
       <p className="mt-2 font-bold">{ai.summary}</p><p className="text-muted">{ai.explanation}</p>
+      {!ai.canPost && <div role="status" className="mt-2 rounded-lg border border-expense/40 bg-expense/5 p-2.5">
+        <b>چرا هنوز قابل ثبت نیست؟</b>
+        {conditions.length > 0
+          ? <ol className="mt-1 list-decimal space-y-1 ps-4">{conditions.map((text, index) => <li key={index}>{text} <span className="text-muted">— {blockerHint(text)}</span></li>)}</ol>
+          : <p className="mt-1">{questions.length > 0 ? 'تأیید تا پاسخ سؤال‌های پایین همین کارت قفل است.' : 'این پیش‌نویس قابل ثبت نیست؛ اصلاح را در گفت‌وگو بنویس و بازبینی بگیر.'}</p>}
+      </div>}
       {ai.tradeSettlement && <div className="my-2 rounded border border-line p-2"><b>مانده واقعی طرف‌حساب: {formatAmount(ai.tradeSettlement.available)} تومان</b><p>مبلغ پرداخت/وصول این سند: {formatAmount(ai.tradeSettlement.amount)} تومان</p><p>مانده پس از اعمال: {formatAmount(ai.tradeSettlement.available-ai.tradeSettlement.amount)} تومان</p><p className="text-muted">پرداخت بدهی و وصول طلب درآمد یا هزینه تازه نیستند.</p></div>}
       {ai.taxRefundClaim && <div className="my-2 rounded border border-line bg-paper p-2">
         <b>سند مبنای طلب مالیاتی: <span className="numbers" dir="ltr">{toPersianDigits(ai.taxRefundClaim.reference)}</span></b>
@@ -118,12 +156,12 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       </div>}
       {ai.newCounterparty && <div className="mt-2 rounded border border-accent/30 bg-accent/5 p-2"><b>طرف‌حساب تازه: {ai.newCounterparty.name}</b><p>با تأیید شما، شخص و تفصیلی مربوط به سند ایجاد می‌شوند؛ پیش‌نمایش هنوز چیزی نساخته است.</p></div>}
       {ai.inventoryItems?.length>0 && <div className="mt-2 rounded border border-line p-2"><b>ورود انبار همراه سند</b>{ai.inventoryItems.map((i,n)=><p key={n}>{i.name} · {i.quantity} {i.unit} · بهای کل {formatAmount(i.total)} تومان{i.newProduct?' · ایجاد کالای تازه':''}</p>)}</div>}
-      {ai.lines?.length>0 && <div className="mt-2 overflow-x-auto"><table className="w-full text-right"><thead><tr className="border-b border-line"><th>حساب پیشنهادی</th><th>بدهکار (تومان)</th><th>بستانکار (تومان)</th></tr></thead><tbody>{ai.lines.map((l,i)=><tr key={i} className="border-b border-line"><td>{l.accountCode} {l.accountName || l.key || l.role}{l.newAccount && <p className="text-accent">ساخت همراه سند · {l.newAccount.type==='asset'?'دارایی':l.newAccount.type==='liability'?'بدهی':l.newAccount.type==='expense'?'هزینه':l.newAccount.type==='income'?'درآمد':'سرمایه'} · {l.newAccount.normalSide==='debit'?'ماهیت بدهکار':'ماهیت بستانکار'}{l.newAccount.chartCode && ` · معین ${l.newAccount.chartCode} ${l.newAccount.chartName}`}</p>}</td><td className="numbers">{l.debit?formatAmount(l.debit):'—'}</td><td className="numbers">{l.credit?formatAmount(l.credit):'—'}</td></tr>)}</tbody></table></div>}
-      {!ai.canPost && <p className="mt-2 text-muted">اطلاعات تکمیلی را در بخش پایین وارد کن؛ پیشنهاد پس از بازبینی برای تأیید آماده می‌شود.</p>}
+      {ai.lines?.length>0 && <div className="mt-2 overflow-x-auto"><table className="w-full text-right"><thead><tr className="border-b border-line"><th>حساب پیشنهادی</th><th>بدهکار (تومان)</th><th>بستانکار (تومان)</th></tr></thead><tbody>{ai.lines.map((l,i)=><tr key={i} className="border-b border-line"><td>{l.accountCode} {l.accountName || l.key || l.role} <span className="text-muted">({ROLE_LABELS[l.role] || l.role})</span>{l.newAccount && <p className="text-accent">ساخت همراه سند · {l.newAccount.type==='asset'?'دارایی':l.newAccount.type==='liability'?'بدهی':l.newAccount.type==='expense'?'هزینه':l.newAccount.type==='income'?'درآمد':'سرمایه'} · {l.newAccount.normalSide==='debit'?'ماهیت بدهکار':'ماهیت بستانکار'}{l.newAccount.chartCode && ` · معین ${l.newAccount.chartCode} ${l.newAccount.chartName}`}</p>}</td><td className="numbers">{l.debit?formatAmount(l.debit):'—'}</td><td className="numbers">{l.credit?formatAmount(l.credit):'—'}</td></tr>)}</tbody></table></div>}
       {hasUnreviewedChanges && <p role="status" className="text-accent">اطلاعات تغییر کرده؛ پیش از تأیید سند، پاسخ‌ها را ذخیره و پیشنهاد را بازبینی کن.</p>}
-      <p className="mt-2 text-muted">با تأیید شما سند، اثرهای عملیاتی پشتیبانی‌شده و ردپای تصمیم حسابدار با هم ثبت می‌شوند.</p>
-      <div className="mt-2 flex flex-wrap gap-2">
+      <p className="mt-2 text-muted">{ai.canPost ? 'پیش‌نویس کامل است. با تأیید تو سند ثبت می‌شود و تصمیمت با نام تو در تاریخچهٔ همین پرونده می‌ماند.' : 'تا رفع موارد «چرا هنوز قابل ثبت نیست؟» دکمهٔ تأیید قفل است؛ با یک اصلاح در گفت‌وگو پیشنهاد تازه می‌گیری.'}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <button disabled={loading || busy || !ai.canPost || hasUnreviewedChanges} onClick={()=>feedback(true)} className="tap rounded bg-accent px-3 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{ai.newCounterparty || ai.inventoryItems?.length || ai.lines?.some(l=>l.newAccount)?'تأیید ایجاد موارد لازم و ثبت سند':'تأیید و اعمال سند'}</button>
+        {!ai.canPost && <span className="text-[11px] font-bold text-muted">قفل — تا رفع موارد بالا</span>}
         <button disabled={loading || busy} onClick={()=>feedback(false)} className="tap rounded border border-expense px-3 text-expense">رد با دلیل</button>
         {!ai.canPost && <button disabled={loading} onClick={()=>open?null:toggle()} className="tap rounded border border-accent px-3 text-accent">پاسخ به ابهام و اصلاح پیشنهاد</button>}
       </div>
@@ -140,7 +178,6 @@ export function ReviewAssistant({item,ai,setAi,onSaved,notify,busy}) {
       {unanswered.map(q=><label key={q.id} className="block rounded-lg border border-accent/30 bg-accent/5 p-3"><span className="block font-bold">{q.text}</span>{questionInput(q,answers[q.id] ?? '')}</label>)}
       {Object.keys(savedAnswers).length>0 && <details className="rounded border border-line p-3"><summary className="cursor-pointer font-bold">پاسخ‌های ذخیره‌شده ({Object.keys(savedAnswers).length}) · مشاهده و اصلاح</summary><p className="text-muted">این اطلاعات دوباره پرسیده نمی‌شوند. اگر واقعیت تغییر کرده، پاسخ را اصلاح و بازبینی کن.</p>{Object.entries(savedAnswers).map(([id,answer])=><label key={id} className="mt-2 block"><span>{answer.question}</span>{questionInput({id,text:answer.question,field:answer.field},answers[id] ?? answer.value)}</label>)}</details>}
       {questions.some(q=>savedAnswers[q.id]) && <p role="status" className="rounded bg-surface p-2">پاسخ شما محفوظ است؛ دستیار هنوز پیشنهاد قابل ثبت تهیه نکرده است. با بازبینی مجدد، پاسخ ذخیره‌شده دوباره به آن داده می‌شود.</p>}
-      {conditions.length>0 && <div className="rounded bg-surface p-2"><b>موارد لازم برای آماده شدن سند</b>{conditions.map((text,i)=><p key={i}>{text}</p>)}</div>}
       {(questions.length>0 || hasAnswerChanges) && <button disabled={loading || busy || (!hasAnswerChanges && !questions.some(q=>savedAnswers[q.id]))} onClick={analyze} className="tap rounded bg-accent px-3 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{loading?'در حال ذخیره و بازبینی…':hasAnswerChanges?'ذخیره پاسخ‌ها و بازبینی پیشنهاد':'بازبینی با پاسخ‌های ذخیره‌شده'}</button>}
     </div>}
     {open && <div className="mt-3 space-y-2 border-t border-line pt-3">

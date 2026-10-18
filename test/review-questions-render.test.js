@@ -24,7 +24,8 @@ test('questions render below proposal with individual boxes, typed dates and per
     assert.doesNotMatch(html,/برای فعال شدن ثبت، فقط موارد مشخص‌شدهٔ بالا/);
     assert.doesNotMatch(html,/پاسخ این سؤال را اینجا بنویس…[^>]*aria-label="چند متر خریدید؟"/);
     assert.match(html,/پاسخ‌های ذخیره‌شده/);assert.match(html,/۶۰ متر/);
-    assert.match(html,/موارد لازم برای آماده شدن سند/);
+    assert.match(html,/چرا هنوز قابل ثبت نیست\؟/);
+    assert.match(html,/مسیر تخصصی لازم است\./);
     assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
     const answerPanel=html.slice(html.indexOf('aria-label="سؤال‌ها و پاسخ‌های این پرونده"'));
     assert.doesNotMatch(answerPanel,/text-expense/);
