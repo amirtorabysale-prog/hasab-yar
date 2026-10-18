@@ -57,6 +57,30 @@ export const ANALYTIC_KINDS = Object.freeze({
   custom: 'سایر',
 });
 
+/**
+ * برچسب موضوعی (طرح ترکیبی) — تفصیلیِ شناورِ «بابت چه؟»
+ *
+ * وقتی مدل یا حسابدار می‌گوید این هزینه «کلید برق» بود، آن «کلید برق» دستهٔ
+ * جدید نمی‌شود؛ یک تفصیلی روی سطرِ دسته می‌نشیند. کدینگ دست‌نخورده می‌ماند،
+ * سند همان‌جا که باید ثبت می‌شود، و موضوع در گزارش ابعاد و در فایل انتقال
+ * پارسیان (ستون تفصیلی) زنده می‌ماند. اگر همان برچسب در ماه تکرار شود، موتور
+ * شمارش پیشنهاد ارتقا به دسته می‌دهد — تصمیم با حسابدار است، نه با این تابع.
+ *
+ * کلید منشأ (`topic-label` + متن یک‌نرمال‌شده) همان برچسب را دوباره می‌سازد،
+ * پس یک موضوع همیشه یک تفصیلی است؛ «کلید برق» و «کلید  برق» یکی‌اند.
+ */
+export const TOPIC_SOURCE_KIND = 'topic-label';
+
+export function normalizeTopicLabel(value) {
+  return String(value || '').replace(/[\u200c\s]+/g, ' ').trim().slice(0, 60);
+}
+
+export function topicAnalytic(database, label) {
+  const clean = normalizeTopicLabel(label);
+  if (!clean) throw chartError('برچسب موضوعی خالی است.');
+  return saveAnalyticAccount(database, { name: clean, kind: 'custom', sourceKind: TOPIC_SOURCE_KIND, sourceKey: clean });
+}
+
 function chartError(message, code = 'CHART_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
 }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { approvalRequiredError, currentApproval, recordOverdraftApproval } from './balanceGuard.js';
 import {
   analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart,
-  resolveLineDimensions, saveAnalyticAccount, suggestChartAccount,
+  resolveLineDimensions, saveAnalyticAccount, suggestChartAccount, topicAnalytic,
 } from './chartOfAccounts.js';
 import { ensurePayrollSchema, payrollJournalLines } from './payroll.js';
 import {
@@ -146,7 +146,14 @@ function operationalLedgerAccount(database, accountId) {
   return linkedLedgerAccount(database, 'operational-account', account.id, account.name, 'asset', null, { operationalKind: isPettyCashAccount(database, account.id) ? 'petty' : account.kind, bankId: account.bank_id });
 }
 
-function categoryLedgerAccount(database, type, category) {
+/**
+ * حساب دفتر کلِ یک دسته — کلیدش نام دسته است (`source_key`).
+ *
+ * برای موتور ارتقای برچسب هم صادر شده: دستهٔ تازه باید همان کلیدی را بگیرد که
+ * ثبت‌های عادی می‌گیرند، وگرنه «سایر هزینه‌ها» و دستهٔ جدید دو حساب جدا می‌شدند
+ * و انتقال ثبت‌های قبلی بی‌معنا می‌شد.
+ */
+export function categoryLedgerAccount(database, type, category) {
   const clean = String(category || (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها')).trim().slice(0, 80);
   ensureAccountingSchema(database);
   const accountType = type === 'income' ? 'income' : 'expense';
@@ -437,7 +444,11 @@ export function syncTransactionJournal(database, transaction, { createdBy = null
     ? counterpartyLedgerAccount(database, settlement.contactId, settlement.contactName, settlement.direction === 'payable' ? 'purchase' : 'sales')
     : null;
   const category = counterparty || categoryLedgerAccount(database, transaction.type, transaction.category);
-  const analyticId = settlement ? analyticForContact(database, settlement.contactId, settlement.contactName)?.id || null : null;
+  // طرح ترکیبی: برچسبِ موضوع («کلید برق») روی سطرِ دسته تفصیلی می‌شود؛ دستهٔ
+  // جدید نمی‌سازد و کدینگ را تکان نمی‌دهد. تسویهٔ طرف حساب، تفصیلیِ شخص می‌گیرد.
+  const topicLabel = String(transaction.topicLabel || transaction.topic_label || '').trim();
+  const topicAnalyticId = !counterparty && topicLabel ? topicAnalytic(database, topicLabel).id : null;
+  const analyticId = settlement ? analyticForContact(database, settlement.contactId, settlement.contactName)?.id || null : topicAnalyticId;
   const lines = transaction.type === 'income'
     ? [{ accountId: cash, debit: amount }, { accountId: category, credit: amount, analyticId }]
     : [{ accountId: category, debit: amount, analyticId }, { accountId: cash, credit: amount }];

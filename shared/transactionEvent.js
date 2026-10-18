@@ -126,6 +126,8 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
     amount: item.amount,
     occurredAt: item.occurredAt,
     category: item.category,
+    // برچسب موضوعی (طرح ترکیبی): «بابت چه بود؟» — از فهم رویداد یا ثبت‌کننده.
+    topicLabel: item.topicLabel || null,
     description: item.category,
     counterparty: lender || item.contactName || '',
     counterpartyId: item.contactId || null,

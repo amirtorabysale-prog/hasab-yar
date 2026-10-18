@@ -122,6 +122,10 @@ export function normalizeFinancialEvent(raw = {}) {
     dueAt,
     // دسته فقط برچسب کسب‌وکاری است؛ نگاشتش به حساب، کار موتور حسابداری است.
     category: cleanText(raw.category, 80) || null,
+    // برچسب موضوعی (طرح ترکیبی): «بابت چه بود؟» در یک عبارت کوتاه. دستهٔ
+    // جدید نمی‌سازد؛ روی سطرِ دسته به‌عنوان تفصیلی می‌نشیند و اگر در ماه
+    // تکرار شود، پیشنهاد ارتقایش با حسابدار است.
+    topicLabel: cleanText(raw.topicLabel, 60) || null,
     counterparty: cleanText(raw.counterparty, 120) || null,
     counterpartyId: cleanText(raw.counterpartyId, 64) || null,
     // حساب نقدی فقط برای رویدادهای پول‌جابه‌جاکن؛ بقیه خودشان طرف حساب دارند.

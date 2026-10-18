@@ -56,6 +56,11 @@ import { extractReceiptData, receiptOcrConfigured } from './receiptOcr.js';
 import { SUPPORTED_RECEIPT_TYPES, acceptReceiptImage } from './imageIntake.js';
 import { audioDurationMs } from './collaboration.js';
 import { healthPayload } from './release.js';
+import {
+  topicLabelStats, topicPromotionSweep, listTopicPromotions, decideTopicPromotion,
+  saveTopicPromotionThreshold, topicPromotionThreshold, setTransactionTopicLabel, setEventTopicLabel,
+} from './topicPromotion.js';
+import { db as activeDb, currentTimeZone } from './db/core.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4173);
@@ -716,7 +721,11 @@ app.post('/api/financial-events/unidentified/resolutions/:id/reverse', (request,
   try { return response.json({ item: reverseUnidentifiedReceiptResolution(request.params.id) }); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/review-queue', (request, response, next) => {
-  try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }
+  try {
+    // پیشنهادهای ارتقای برچسب همین‌جا تازه می‌شوند تا صف حسابدار کامل باشد.
+    try { topicPromotionSweep(activeDb, { timeZone: currentTimeZone() }); } catch { /* پیشنهاد، مانع صف نیست. */ }
+    return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 }));
+  } catch (error) { return next(error); }
 });
 app.get('/api/accounting/journal/:id/review-history', (request,response,next) => {
   try { return response.json(reviewAssistantForJournal(request.params.id)); } catch(error) {return next(error);}
@@ -806,6 +815,28 @@ app.post('/api/chart/cost-centers', (request, response, next) => {
 });
 app.put('/api/chart/cost-centers/:id', (request, response, next) => {
   try { return response.json({ item: saveCostCenterEntry({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
+});
+// موتور برچسب موضوعی (طرح ترکیبی): شمارش، پیشنهاد ارتقا و تصمیم حسابدار.
+// گشتِ شمارش عمداً بی‌صدا و بی‌اثر روی خطاست: پیشنهاد ارتقا هرگز نباید صف
+// حسابدار یا صفحهٔ کدینگ را بشکند.
+app.get('/api/topics/overview', (request, response, next) => {
+  try {
+    try { topicPromotionSweep(activeDb, { timeZone: currentTimeZone() }); } catch { /* پیشنهاد، مانع صفحه نیست. */ }
+    return response.json({ ...topicLabelStats(activeDb, { timeZone: currentTimeZone() }), promotions: listTopicPromotions(activeDb) });
+  } catch (error) { return next(error); }
+});
+app.post('/api/topics/promotions/:id/decide', (request, response, next) => {
+  try { return response.json({ item: decideTopicPromotion(activeDb, request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+});
+app.post('/api/topics/threshold', (request, response, next) => {
+  try { return response.json({ threshold: saveTopicPromotionThreshold(request.body?.threshold) }); } catch (error) { return next(error); }
+});
+app.get('/api/topics/threshold', (_request, response) => response.json({ threshold: topicPromotionThreshold(activeDb) }));
+app.post('/api/transactions/:id/topic-label', (request, response, next) => {
+  try { return response.json({ item: setTransactionTopicLabel(request.params.id, request.body?.label || '') }); } catch (error) { return next(error); }
+});
+app.post('/api/financial-events/:id/topic-label', (request, response, next) => {
+  try { return response.json({ item: setEventTopicLabel(request.params.id, request.body?.label || '') }); } catch (error) { return next(error); }
 });
 app.get('/api/tax/rates', (_request, response) => response.json({ items: listTaxRates() }));
 app.post('/api/tax/rates', (request, response, next) => { try { response.status(201).json({ item: saveTaxRate(request.body) }); } catch (error) { next(error); } });

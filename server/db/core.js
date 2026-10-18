@@ -375,6 +375,9 @@ function ensureTransactionReviewSchema(database) {
   ensureColumnOn(database, 'transactions', 'restored_from TEXT');
   ensureColumnOn(database, 'transactions', "capital_flow TEXT NOT NULL DEFAULT ''");
   ensureColumnOn(database, 'transactions', "accounting_role TEXT NOT NULL DEFAULT ''");
+  // برچسب موضوعی (طرح ترکیبی): «بابت چه بود؟» در یک عبارت کوتاه؛ روی سطرِ
+  // دسته در سند، تفصیلی می‌شود. دستهٔ جدید نمی‌سازد.
+  ensureColumnOn(database, 'transactions', "topic_label TEXT NOT NULL DEFAULT ''");
   database.exec('CREATE INDEX IF NOT EXISTS idx_transactions_restored_from ON transactions(restored_from)');
 }
 

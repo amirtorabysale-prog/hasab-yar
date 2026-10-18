@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLES } from '../shared/accountingRules.js';
 import {
-  analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount,
+  analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount, topicAnalytic,
 } from './chartOfAccounts.js';
 import { counterpartyAnalyticForKey } from './chartOfAccounts.js';
 import { counterpartyAccountKey, inputTaxLedgerAccount, outputTaxLedgerAccount } from './accounting.js';
@@ -194,8 +194,9 @@ export function resolveEventRole(database, role, key, event = {}) {
  * روی معین می‌نشیند و طرف حساب کاملاً گم می‌شود — همان چیزی که در فایل انتقال
  * دیده شد: هفتادوهشت ردیف با تفصیلی صفر.
  *
- * فقط نقش‌هایی تفصیلی می‌گیرند که واقعاً طرف حساب دارند. گذاشتن تفصیلی روی
- * صندوق یا حساب هزینه، داده‌ای می‌سازد که هیچ معنایی ندارد.
+ * نقش‌هایی که طرف حساب دارند تفصیلیِ شخص می‌گیرند. سطرِ دسته (طرح ترکیبی،
+ * مالک محصول) برچسبِ موضوع می‌گیرد: «کلید برق» روی سطر «سایر هزینه‌ها».
+ * تفصیلیِ صندوق همچنان بی‌معناست و ساخته نمی‌شود.
  */
 const COUNTERPARTY_ROLES = new Set([
   ROLES.PARTNER_PAYABLE,ROLES.PARTNER_RECEIVABLE,
@@ -203,7 +204,12 @@ const COUNTERPARTY_ROLES = new Set([
   ROLES.SUPPLIER_ADVANCE, ROLES.EMPLOYEE_ADVANCE,
 ]);
 
+const CATEGORY_ROLES = new Set([ROLES.EXPENSE_CATEGORY, ROLES.INCOME_CATEGORY]);
+
 export function resolveEventAnalytic(database, role, event = {}, key = '') {
+  // برچسب موضوعی فقط روی سطر دسته می‌نشیند؛ رویداد بدون برچسب، رفتار قبلی دارد.
+  const topicLabel = String(event.topicLabel || '').trim();
+  if (CATEGORY_ROLES.has(role) && topicLabel) return topicAnalytic(database, topicLabel).id;
   if (!COUNTERPARTY_ROLES.has(role) && !(role===ROLES.PREPAID_ASSET && event.reviewSupplierAdvance)) return null;
   const contactId = String(event.counterpartyId || '').trim();
   // کلید از شناسهٔ شخص می‌آید نه از نامش، تا تغییر نام تفصیلی تازه‌ای نسازد.

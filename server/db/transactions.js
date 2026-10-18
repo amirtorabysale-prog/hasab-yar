@@ -8,6 +8,7 @@ import { settlementDirection } from '../../shared/counterpartySettlement.js';
 import { addLocalDays, audit, cleanAmount, currentTimeZone, currentWorkspace, dayBounds, db, invalidInput, localDay, parseStoredJson } from './core.js';
 import { assertAccountingPeriodOpen, periodForDate, postCapitalJournal, reverseTransactionJournal, syncTransactionJournal, transactionJournalIsPlain } from '../accounting.js';
 import { automationPolicy } from './settings.js';
+import { normalizeTopicLabel } from '../chartOfAccounts.js';
 import { extractContactName } from '../../shared/voiceIntent.js';
 import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts, normalizePersian, describesUnperformedCondition, UNPERFORMED_CONDITION_MESSAGE } from '../../shared/parser.js';
 import { priorSettlementDirection } from '../../shared/priorSettlement.js';
@@ -105,7 +106,13 @@ export function jsonText(value, fallback) {
  * تصمیم بگیرد ولی «سند چه شکلی باشد» همان‌جا بماند که هست و آزمون دارد.
  */
 export function transactionJournalPoster(row, settlement = null) {
-  return (database) => syncTransactionJournal(database, row, { createdBy: currentWorkspace()?.userId, settlement });
+  return (database, payload = {}) => syncTransactionJournal(database, {
+    ...row,
+    // برچسب موضوعی ممکن است پس از ثبتِ رویداد و پیش از تأیید، از صف بررسی
+    // تنظیم شده باشد (طرح ترکیبی). سند باید همان برچسبِ آخرِ رویداد را بگیرد،
+    // نه برچسبِ لحظهٔ ثبت که خالی بوده است.
+    topicLabel: normalizeTopicLabel(payload?.event?.topicLabel ?? row.topicLabel) || '',
+  }, { createdBy: currentWorkspace()?.userId, settlement });
 }
 
 /**
@@ -395,8 +402,8 @@ export function queueUnmatchedSettlement(transcript, { clientId = '', source = '
 // دارند؛ صف کردنشان بدون ردیف آن مسیرها را می‌شکست.
 export function insertTransactionRows({ transcript, transactions, counterpartyResolution = '', fromUtterance = false }) {
   const insert = db.prepare(`INSERT OR IGNORE INTO transactions
-    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at,settlement_choice)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (id,client_id,amount,type,category,raw_text,source,confidence,needs_review,confidence_details,review_reasons,review_state,restored_from,capital_flow,occurred_at,contact_id,account,account_id,note,status,due_at,updated_at,settlement_choice,topic_label)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const ids = [];
   let queuedForAccountant = 0;
   const queuedReasons = [];
@@ -488,6 +495,8 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
       occurredAt, contactId || null, accountId, accountId,
       String(item.note || '').slice(0, 500), item.status || 'confirmed', item.dueAt || null, occurredAt,
       ['none', 'payable', 'receivable'].includes(item.settlement) ? item.settlement : '',
+      // برچسب موضوعیِ فهم رویداد (طرح ترکیبی): روی سطر دسته تفصیلی می‌شود.
+      normalizeTopicLabel(item.topicLabel) || '',
     );
     if (result.changes) {
       ids.push(id);
@@ -495,7 +504,7 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
       if (!item.journalManaged) {
         // شناسهٔ طرف حساب هم می‌رود: بدون آن، سند هرگز نمی‌فهمد این پرداخت
         // تسویهٔ بدهی همان شخص است و همیشه روی دستهٔ هزینه می‌نشیند.
-        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt, contactId: contactId || null, settlement: item.settlement || null };
+        const row = { id, amount, type: item.type, category: item.category, rawText: item.rawText || transcript, accountId, occurredAt, contactId: contactId || null, settlement: item.settlement || null, topicLabel: normalizeTopicLabel(item.topicLabel) || '' };
         // اگر لایهٔ رویداد کار را به عهده گرفت، سند اینجا زده نمی‌شود؛ یا خودش
         // زده یا عمداً نگه داشته است.
         // جملهٔ کامل فقط وقتی شاهد همین ردیف است که جمله یک ردیف بیشتر نساخته.

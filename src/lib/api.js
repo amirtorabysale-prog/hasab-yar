@@ -393,6 +393,12 @@ export const api = {
   eventDecision: (id) => request(`/api/financial-events/${encodeURIComponent(id)}/decision`),
   answerEvent: (id, answer) => request(`/api/financial-events/${encodeURIComponent(id)}/answer`, { method: 'POST', body: JSON.stringify(answer) }),
   approveEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
+  // موتور برچسب موضوعی (طرح ترکیبی): آمار برچسب‌ها، پیشنهاد ارتقا و برچسب‌گذاری دستی.
+  topicsOverview: () => request('/api/topics/overview'),
+  decideTopicPromotion: (id, payload = {}) => request(`/api/topics/promotions/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify(payload) }),
+  saveTopicThreshold: (threshold) => request('/api/topics/threshold', { method: 'POST', body: JSON.stringify({ threshold }) }),
+  setTransactionTopicLabel: (id, label) => request(`/api/transactions/${encodeURIComponent(id)}/topic-label`, { method: 'POST', body: JSON.stringify({ label }) }),
+  setEventTopicLabel: (id, label) => request(`/api/financial-events/${encodeURIComponent(id)}/topic-label`, { method: 'POST', body: JSON.stringify({ label }) }),
   reverseEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) }),
   rejectEvent: (id, reason = '') => request(`/api/financial-events/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
   // شناسایی ماهانهٔ پیش‌پرداخت و درآمد انتقالی: اجرای اقلام سررسیدرسیده، اقلامی

@@ -1,6 +1,7 @@
 import { ReviewAssistant } from './ReviewAssistant.jsx';
 import { UnderstandingPolicyBox } from '../understanding/UnderstandingSheet.jsx';
 import { UnidentifiedFundsPanel } from './UnidentifiedFundsPanel.jsx';
+import { TopicPromotionsCard } from './TopicPromotionsCard.jsx';
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
@@ -109,6 +110,33 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
   </div>;
 }
 
+/**
+ * برچسب موضوعیِ رویدادِ در صف — ورودیِ برچسب برای موتور تکرار.
+ *
+ * طرح ترکیبی: موضوعِ ثبت («کلید برق») دسته نمی‌شود؛ برچسب می‌شود. حسابدار
+ * همین‌جا برچسب می‌گذارد و بعد از تأیید، روی سطرِ دسته تفصیلی می‌نشیند. وقتی
+ * همین برچسب در ماه تکرار شد، کارت پیشنهاد ارتقا در همین صفحه بالای ظاهر می‌شود.
+ */
+function TopicLabelField({ item, notify }) {
+  const current = item.event?.topicLabel || '';
+  const [draft, setDraft] = useState(current);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setDraft(item.event?.topicLabel || ''); }, [item.id, item.event?.topicLabel]);
+  if (!item.event?.id) return null;
+  const save = async () => {
+    if ((draft || '').trim() === current.trim()) return;
+    setBusy(true);
+    try { await api.setEventTopicLabel(item.id, draft.trim()); notify('برچسب موضوعی ثبت شد؛ روی سطر دسته تفصیلی می‌نشیند.'); }
+    catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+  return <div className="mt-2 flex flex-wrap items-center gap-1.5">
+    <label htmlFor={`topic-${item.id}`} className="text-[11px] font-bold text-muted">برچسب موضوع (بابت چه بود؟)</label>
+    <input id={`topic-${item.id}`} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="مثلاً کلید برق" className="min-w-0 flex-1 rounded border border-line bg-paper px-2 py-1 text-[12px]" />
+    <button disabled={busy || draft.trim() === current.trim()} onClick={save} className="tap rounded border border-accent px-2 py-1 text-[11px] font-bold text-accent disabled:opacity-40">ثبت برچسب</button>
+  </div>;
+}
+
 function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, navigate }) {
   const [open, setOpen] = useState(false);
   const [trail, setTrail] = useState(null);
@@ -164,6 +192,7 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
     </div>
 
     <OriginalTranscript text={item.originalTranscript || item.event?.utterance || item.event?.evidence} />
+    <TopicLabelField item={item} notify={notify} />
     {item.approvalBlocked && <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-xs leading-6">
       <p>{item.approvalNextStep === 'answer-question' ? 'ابتدا به سؤال پایین کارت پاسخ بده؛ بعد از تکمیل، امکان ثبت دوباره بررسی می‌شود.' : 'سطرهای این سند هنوز قطعی نیست. پیشنهاد AI را با «تحلیل کن» بگیر و حساب‌ها را بررسی کن.'}</p>
     </div>}
@@ -449,6 +478,8 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
     </header>
 
     <RecognitionNotices notices={notices} navigate={navigate} notify={notify} onSeen={load} />
+
+    <TopicPromotionsCard notify={notify} onChanged={refresh} />
 
     <UnidentifiedFundsPanel notify={notify} />
 

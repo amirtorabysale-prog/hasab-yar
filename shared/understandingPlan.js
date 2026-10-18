@@ -952,6 +952,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       eventNature: 'new', factSource: 'understanding', userConfirmed: true, needsReview: false, reviewReasons: [],
       confidenceDetails: { amount: { score: 1, reason: amount.provenance === 'user' ? 'مبلغ را ثبت‌کننده تعیین کرد.' : 'مبلغ از شاهدِ جمله خوانده و کنترل شد.' } },
       usefulLifeMonths: facts.subject.usefulLifeMonths || null,
+      // طرح ترکیبی: موضوعِ فهم‌شده («کلید برق») دستهٔ جدید نمی‌شود؛ برچسبی است
+      // که روی سطرِ دسته تفصیلی می‌شود. فقط وقتی موضوع در بخشِ خودِ همین مبلغ
+      // آمده باشد، وگرنه برچسبِ یک ردیف به ردیفِ دیگر نمی‌چسبد.
+      ...(subjectHere && facts.subject.what ? { topicLabel: facts.subject.what } : {}),
       ...(funder && type === 'expense' && movement.direction !== 'none' ? { fundedBy: funder } : {}),
     };
     const verb = movement.direction === 'none' ? (type === 'income' ? 'طلب' : 'بدهی') : type === 'income' ? 'دریافت' : 'پرداخت';
