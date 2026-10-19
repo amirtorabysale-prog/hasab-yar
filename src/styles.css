@@ -341,4 +341,10 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
   .hs.is-success .hs-sparks, .hs.is-worried .hs-neg, .hs.is-worried .hs-sweat { opacity: 1; }
   .hs-bar { transform: scaleY(.6); }
 }
+/* گوشی: حسابی کوچک‌تر و نشانِ وضعیت زیرِ آن، تا عنوانِ نوار ضبط در ۳۲۰px جا داشته باشد.
+   حسابی تزئینی و بی‌فوکوس است؛ جابه‌جاییِ دیداری ترتیبِ خواندن و فوکوس را عوض نمی‌کند. */
+@media (max-width: 639px) {
+  .hs { --hs-u: 2.6px; }
+  .composer-status { flex-direction: column-reverse; align-items: center; gap: 4px; }
+}
 @media print { .hs { display: none; } }

@@ -67,6 +67,9 @@ test('حرکت‌ها: پلک‌زدن پایان دارد، hover فقط با �
   assert.match(css, /prefers-reduced-motion: reduce\) \{\s*\.hs-svg \* \{ animation: none !important; transition: none !important; \}/);
   for (const mood of ['listening', 'typing', 'thinking', 'question', 'success', 'worried']) assert.match(css, new RegExp(`\\.hs\\.is-${mood} `));
   assert.match(css, /\.hs\.is-typing\.hs-has-num \.hs-face \{ opacity: 0; \}/);
+  // گوشی: کوچک‌تر و نشانِ وضعیت زیرش؛ دسکتاپ همان ۳px.
+  assert.match(css, /\.hs \{ --hs-u: 3px;/);
+  assert.match(css, /@media \(max-width: 639px\) \{\s*\.hs \{ --hs-u: 2\.6px; \}\s*\.composer-status \{ flex-direction: column-reverse;/);
   const today = readFileSync(new URL('../src/features/today/TodayPage.jsx', import.meta.url), 'utf8');
   assert.match(today, /<span aria-live="polite"[^>]*>\{composerLabels\[composerState\]\[0\]\}<\/span><HesabiMascot /);
   assert.match(readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8'), /mascot=\{mascot\}/);

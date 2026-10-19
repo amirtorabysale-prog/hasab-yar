@@ -48,8 +48,8 @@ export function TodayPage({ data, loading, manualText, setManualText, parseManua
       <div className="space-y-5 px-4 py-4 sm:py-5">
         <section className={`voice-composer rounded-2xl border p-4 shadow-paper sm:p-5 voice-state-${composerState}`} aria-label="ثبت سریع امروز">
           <div className="flex items-start justify-between gap-3">
-            <div><p className="text-[12px] font-extrabold text-accent">ثبت سریع</p><h2 className="mt-1 text-xl font-extrabold sm:text-2xl">امروز چه اتفاقی افتاد؟</h2><p className="mt-1 text-[13px] leading-6 text-muted">{composerLabels[composerState][1]}</p></div>
-            <div className="flex shrink-0 items-end gap-2"><span aria-live="polite" className="rounded-full border border-line bg-surface/80 px-2.5 py-1 text-xs font-extrabold">{composerLabels[composerState][0]}</span><HesabiMascot mood={mascot.mood} alert={mascot.alert} typed={manualText} amount={typedMoney} levels={levels} /></div>
+            <div className="min-w-0"><p className="text-[12px] font-extrabold text-accent">ثبت سریع</p><h2 className="mt-1 text-xl font-extrabold sm:text-2xl">امروز چه اتفاقی افتاد؟</h2><p className="mt-1 text-[13px] leading-6 text-muted">{composerLabels[composerState][1]}</p></div>
+            <div className="composer-status flex shrink-0 items-end gap-2"><span aria-live="polite" className="rounded-full border border-line bg-surface/80 px-2.5 py-1 text-xs font-extrabold">{composerLabels[composerState][0]}</span><HesabiMascot mood={mascot.mood} alert={mascot.alert} typed={manualText} amount={typedMoney} levels={levels} /></div>
           </div>
 
           {readOnly && <div className="mt-3 rounded-xl border-r-4 border-accent bg-warn-bg px-3 py-3 text-sm leading-6">دسترسی تو «فقط مشاهده» است؛ می‌توانی گزارش‌ها و ثبت‌ها را ببینی اما چیزی تغییر نمی‌کند.</div>}
