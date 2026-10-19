@@ -13,6 +13,8 @@
    سه‌تایی RGB تا شفافیت (`bg-accent/10`) هم کار کند. هر جفت متن و زمینه کنتراست
    ۴٫۵ به ۱ یا بیشتر دارد؛ `on-fill` متن روی رنگ پر است و در تاریک، تیره می‌شود. */
 :root {
+  /* منحنی حرکت رابط (Emil Kowalski): شروع سریع، نشستن نرم. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --c-paper: 244 246 247;
   --c-surface: 255 255 255;
   --c-ink: 19 35 44;
@@ -65,7 +67,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 :focus-visible { outline: 3px solid rgb(var(--c-accent) / .55); outline-offset: 2px; border-radius: 6px; }
 a { color: rgb(var(--c-accent)); }
 /* جابه‌جایی رنگ‌ها نرم، نه پرش؛ فقط رنگ و حاشیه، هرگز اندازه. */
-button, a, input, select, textarea, .menu-leaf, .menu-group { transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease; }
+button, a, input, select, textarea, .menu-leaf, .menu-group { transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, scale .16s var(--ease-out); }
+/* فشردن دکمه حس فیزیکیِ «شنیده شد» می‌دهد؛ لمس هم :active واقعی دارد، پس دروازهٔ hover ندارد. */
+button:not(:disabled):active { scale: .97; }
 
 /* عدد باید از متن فارسی جدا بماند ولی چینشش را عوض نکند.
    `direction: ltr` روی یک بلوک، چینش پیش‌فرضش را هم چپ می‌کرد: مبلغ به لبهٔ
@@ -101,6 +105,35 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
 .sheet-in { animation: sheet-in .22s cubic-bezier(.2, .8, .2, 1); }
 @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+/* ── آیکن‌های زنده ──────────────────────────────────────────────────────
+   آیکنِ داخل یک کنترل، وقتی ماوس رویش می‌رود، حرکتِ معنای خودش را نشان می‌دهد:
+   پیکان به سمت خودش می‌رود، «+» و «×» می‌چرخند، «بازگشت» به عقب می‌چرخد، دانلود
+   پایین می‌آید. hover روزی ده‌ها بار رخ می‌دهد، پس حرکت ریز و سریع است (۱۶۰ms،
+   یکی دو پیکسل یا چند درجه). فقط با ماوس واقعی، چون لمس hover کاذب می‌سازد؛ و با
+   «کاهش حرکت» اصلاً انجام نمی‌شود. translate/rotate/scale خاصیت‌های جدای
+   transform‌اند و با چرخشِ پیکان منو یا جاگذاریِ دکمه تداخل ندارند. آیکنِ وضعیت
+   (هشدار، آفلاین) که داخل کنترل نیست تکان نمی‌خورد. */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf) .lucide { transition: translate .16s var(--ease-out), rotate .16s var(--ease-out), scale .16s var(--ease-out); }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide { translate: 0 -1px; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover :is(.lucide-chevron-left, .lucide-arrow-left) { translate: -2px 0; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover :is(.lucide-chevron-right, .lucide-arrow-right) { translate: 2px 0; }
+  /* پیکانِ باز و بستهٔ منو خودش با باز شدن می‌چرخد؛ hover چیزی رویش نمی‌گذارد. */
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover :is(.lucide-chevron-down, .lucide-chevron-up) { translate: none; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover :is(.lucide-plus, .lucide-x) { translate: none; rotate: 90deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-rotate-ccw { translate: none; rotate: -40deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-search { rotate: -12deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-download { translate: 0 2px; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-pencil { rotate: -14deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-trash-2 { rotate: -8deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover :is(.lucide-check, .lucide-check-check) { translate: none; scale: 1.12; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover :is(.lucide-settings, .lucide-sun) { translate: none; rotate: 45deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-moon { translate: none; rotate: -15deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf) .lucide-bell-ring { transform-origin: 50% 12%; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-bell-ring { translate: none; rotate: 14deg; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-sparkles { rotate: 12deg; scale: 1.1; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-mic { scale: 1.1; }
+}
 
 /* ── پوستهٔ برنامه: منو و نوار بالا ───────────────────────────────────── */
 .desktop-nav { background: rgb(var(--c-surface)); border-left: 1px solid rgb(var(--c-line)); padding: 20px 12px; }
