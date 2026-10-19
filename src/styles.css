@@ -139,6 +139,34 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
 .menu-result small { color: rgb(var(--c-muted)); font-size: 12px; font-weight: 600; }
 .menu-empty { margin: 8px 12px; color: rgb(var(--c-muted)); font-size: 12px; }
 
+/* ── هاور منو: واکنش نمادها ────────────────────────────────────────────────
+   هاور منو تعاملِ «روزانه» است؛ بنابراین حرکت کوتاه می‌ماند (زیر ۳۰۰ms) و
+   فقط transform و رنگ را جابه‌جا می‌کند، هرگز چیدمان را. هدف بازخورد است:
+   کاربر در یک نگاه بفهمد موس روی کدام مقصد ایستاده. منحنی جهش، easeOutBack
+   استاندارد (easings.net) است — اضافه‌گردان کوچکی که حس فنری می‌دهد؛ چیزی
+   که «ease» ساده هرگز نمی‌سازد. حرکت‌ها فقط برای اشاره‌گر دقیق فعال‌اند تا
+   لمس هاورِ کاذب نگیرد، و با prefers-reduced-motion فقط بازخورد رنگی می‌ماند. */
+:root { --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1); }
+.menu-group { position: relative; }
+.menu-group > svg:not(.menu-chevron) { transition: transform .26s var(--ease-pop), color .18s ease; }
+@media (hover: hover) and (pointer: fine) {
+  .menu-group:hover { background: rgb(var(--c-accent) / .08); }
+  .menu-leaf:hover { background: rgb(var(--c-accent) / .06); }
+  .menu-group:hover > svg:not(.menu-chevron) { transform: scale(1.18) rotate(-5deg); color: rgb(var(--c-accent)); }
+  /* نشانِ لبه: نواری باریک در سمت نماد (راست، در RTL) که با هاور باز می‌شود. */
+  .menu-group::before { content: ''; position: absolute; inset-inline-start: 0; top: 50%; width: 3px; height: 18px; border-radius: 999px; background: rgb(var(--c-accent)); opacity: 0; transform: translateY(-50%) scaleY(.4); transition: transform .22s cubic-bezier(0.23, 1, 0.32, 1), opacity .18s ease; }
+  .menu-group:hover::before { opacity: 1; transform: translateY(-50%) scaleY(1); }
+}
+/* فشردن: ورود تند (۹۰ms) و بازگشت فنری؛ روی لمس هم :active واقعی است. */
+.menu-group:active > svg:not(.menu-chevron) { transform: scale(1.06) rotate(-3deg); transition-duration: .09s; }
+/* پیمایش با صفحه‌کلید: هم‌ترازی رنگی با هاور، بدون هیچ حرکتی. */
+.menu-group:focus-visible { background: rgb(var(--c-accent) / .08); }
+@media (prefers-reduced-motion: reduce) {
+  .menu-group > svg:not(.menu-chevron) { transition-property: color; }
+  .menu-group:hover > svg:not(.menu-chevron), .menu-group:active > svg:not(.menu-chevron) { transform: none; }
+  .menu-group::before { display: none; }
+}
+
 /* ── زبانه‌ها و شاخص‌ها ───────────────────────────────────────────────── */
 .section-navigation { display: flex; gap: 4px; overflow-x: auto; margin: 20px 0 12px; padding: 4px; border: 1px solid rgb(var(--c-line)); border-radius: 12px; background: rgb(var(--c-surface)); scrollbar-width: none; }
 .section-navigation button { flex-shrink: 0; min-height: 40px; padding: 8px 14px; border-radius: 9px; color: rgb(var(--c-muted)); font-size: 13px; font-weight: 700; }
