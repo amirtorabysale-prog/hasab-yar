@@ -1,5 +1,5 @@
 import { Check, CircleAlert, Mic, ReceiptText, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { buildTodayPulse, buildTodayTasks, closingDifference, todayComposerState, todayExamples } from '../../lib/todayExperience.js';
 import { clock, formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
@@ -8,11 +8,17 @@ import { liveSpeechSupported } from '../../lib/liveSpeech.js';
 import { profileDefinition } from '../../../shared/product.js';
 import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
 import { useSheetA11y } from '../../components/sheetA11y.js';
+import { HesabiMascot } from '../../components/HesabiMascot.jsx';
+import { typedAmount } from '../../lib/mascotMood.js';
 
-export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple', aiForAll = null, onToggleAiForAll }) {
+const IDLE_MASCOT = Object.freeze({ mood: 'idle', alert: '' });
+
+export function TodayPage({ data, loading, manualText, setManualText, parseManual, recordState, beginRecording, stopRecording, cancelProcessing, levels, liveTranscript, liveVoiceNote, livePreview, fastVoiceAvailable, voicePath, voiceSystemStatus, readOnly = false, reviewing = false, savedRecently = false, pendingAudioCount = 0, navigate, onOpenClosing, onSelectTransaction, onSnoozeAlert, notify, refreshToday, experience = 'simple', aiForAll = null, onToggleAiForAll, mascot = IDLE_MASCOT }) {
   const profileType = data.settings.profileType || 'business';
   const examples = todayExamples(profileType);
   const composerState = todayComposerState({ recordState, manualText, reviewing, savedRecently });
+  // حسابی مبلغی را که کاربر می‌نویسد روی LCDِ خودش نشان می‌دهد («۱۵ میلیون» ← ۱۵٬۰۰۰٬۰۰۰).
+  const typedMoney = useMemo(() => typedAmount(manualText), [manualText]);
   const composerLabels = {
     ready: ['آماده', 'یک اتفاق مالی را بگو یا بنویس'],
     listening: ['در حال شنیدن', 'هم‌زمان متن و عدد را می‌سازم'],
@@ -43,7 +49,7 @@ export function TodayPage({ data, loading, manualText, setManualText, parseManua
         <section className={`voice-composer rounded-2xl border p-4 shadow-paper sm:p-5 voice-state-${composerState}`} aria-label="ثبت سریع امروز">
           <div className="flex items-start justify-between gap-3">
             <div><p className="text-[12px] font-extrabold text-accent">ثبت سریع</p><h2 className="mt-1 text-xl font-extrabold sm:text-2xl">امروز چه اتفاقی افتاد؟</h2><p className="mt-1 text-[13px] leading-6 text-muted">{composerLabels[composerState][1]}</p></div>
-            <span aria-live="polite" className="shrink-0 rounded-full border border-line bg-surface/80 px-2.5 py-1 text-xs font-extrabold">{composerLabels[composerState][0]}</span>
+            <div className="flex shrink-0 items-end gap-2"><span aria-live="polite" className="rounded-full border border-line bg-surface/80 px-2.5 py-1 text-xs font-extrabold">{composerLabels[composerState][0]}</span><HesabiMascot mood={mascot.mood} alert={mascot.alert} typed={manualText} amount={typedMoney} levels={levels} /></div>
           </div>
 
           {readOnly && <div className="mt-3 rounded-xl border-r-4 border-accent bg-warn-bg px-3 py-3 text-sm leading-6">دسترسی تو «فقط مشاهده» است؛ می‌توانی گزارش‌ها و ثبت‌ها را ببینی اما چیزی تغییر نمی‌کند.</div>}

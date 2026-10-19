@@ -214,3 +214,129 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
   :root, .dark { --c-paper: 255 255 255; --c-surface: 255 255 255; --c-ink: 0 0 0; --c-muted: 60 60 60; --c-line: 200 200 200; }
   body, html, .app-shell { background: white !important; }
 }
+
+/* ── حسابی، نماد ماشین‌حساب ─────────────────────────────────────────────
+   روی نوار ضبط، کنار نشانِ وضعیت. هر حالِ برنامه یک ژست دارد (HesabiMascot.jsx)؛
+   حرکت‌ها transform و opacity‌اند، روی SVG با واحدِ viewBox (۱px = یک خانهٔ پیکسل).
+   پلک‌زدنِ بیکاری شش بار است و می‌ایستد؛ با «کاهش حرکت» هر حال ژستی ثابت دارد. */
+.hs { --hs-u: 3px; --hs-body: rgb(var(--c-accent)); --hs-body-l: color-mix(in srgb, var(--hs-body) 70%, #fff); --hs-body-d: color-mix(in srgb, var(--hs-body) 60%, #000); --hs-op-top: color-mix(in srgb, var(--hs-body) 32%, #fff); --hs-op-side: color-mix(in srgb, var(--hs-body) 58%, #000); --hs-on-body: rgb(var(--c-on-fill)); --hs-bezel: #23383C; --hs-lcd-bg: #CFE3D6; --hs-lcd-fg: #173A33; --hs-glow: none; --hs-warn: #B5521C; --hs-key-top: #FFFFFF; --hs-key-side: #A7B8BC; --hs-eq-top: #F4B860; --hs-eq-side: #A86F25; --hs-paper: #FFFDF7; --hs-ink: #6E6B63; --hs-solar: #26393C; --hs-solar-lit: #4F8A82; --hs-drop: #8ED8F2; display: inline-block; line-height: 0; flex: none; }
+.dark .hs { --hs-bezel: #0A1315; --hs-lcd-bg: #0E2724; --hs-lcd-fg: #9AF5D6; --hs-glow: drop-shadow(0 0 .5px #9AF5D6); --hs-warn: #FFB547; --hs-key-top: #EEF3F4; --hs-key-side: #93A8AC; --hs-paper: #F7F4EC; --hs-solar: #142326; --hs-solar-lit: #3C6E68; }
+.hs-svg { display: block; overflow: visible; width: calc(26 * var(--hs-u)); height: calc(39 * var(--hs-u)); margin-top: calc(-11 * var(--hs-u)); }
+.hs-svg text { font-family: inherit; font-weight: 700; }
+.hs-b { fill: var(--hs-body); }
+.hs-bl { fill: var(--hs-body-l); }
+.hs-bd { fill: var(--hs-body-d); }
+.hs-slot, .hs-bezel { fill: var(--hs-bezel); }
+.hs-cell { fill: var(--hs-solar); }
+.hs-lcd { fill: var(--hs-lcd-bg); }
+.hs-glass { fill: #fff; fill-opacity: .06; }
+.hs-fg { fill: var(--hs-lcd-fg); filter: var(--hs-glow); }
+.hs-fg-line { stroke: var(--hs-lcd-fg); stroke-width: .65; fill: none; stroke-linecap: round; stroke-linejoin: round; filter: var(--hs-glow); }
+.hs-track { fill: var(--hs-lcd-fg); fill-opacity: .16; }
+.hs-warn { fill: var(--hs-warn); filter: var(--hs-glow); }
+.hs-k-top { fill: var(--hs-key-top); }
+.hs-k-side { fill: var(--hs-key-side); }
+.hs-k-op .hs-k-top { fill: var(--hs-op-top); }
+.hs-k-op .hs-k-side { fill: var(--hs-op-side); }
+.hs-k-eq .hs-k-top { fill: var(--hs-eq-top); }
+.hs-k-eq .hs-k-side { fill: var(--hs-eq-side); }
+.hs-paper { fill: var(--hs-paper); }
+.hs-ink { fill: var(--hs-ink); }
+.hs-tick { stroke: var(--hs-body); stroke-width: .35; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.hs-drop { fill: var(--hs-drop); }
+.hs-spark { fill: var(--hs-body-l); }
+.hs-bubble { fill: var(--hs-body); }
+.hs-q { fill: var(--hs-on-body); font-weight: 800; }
+.hs-shadow { fill: #000; fill-opacity: .22; }
+.hs-fig, .hs-core, .hs-arm, .hs-eyes, .hs-face, .hs-curious, .hs-bar, .hs-tape, .hs-bubble-g, .hs-sweat, .hs-sparks, .hs-k-cap, .hs-shadow, .hs-progress { transform-box: fill-box; }
+.hs-fig { transform-origin: 50% 100%; transition: transform 260ms var(--ease-out); }
+.hs-face { transition: transform 120ms var(--ease-out), opacity 140ms var(--ease-out); }
+.hs-eyes { transform-origin: 50% 50%; animation: hs-blink 5.4s steps(1, end) 6; }
+.hs-arm { transform-origin: 50% 0%; transition: transform 280ms cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.hs-k-cap { transition: transform 90ms var(--ease-out); }
+.hs-k.is-down .hs-k-cap { transform: translateY(.45px); transition-duration: 40ms; }
+.hs-shadow, .hs-bar { transform-origin: 50% 50%; }
+.hs-progress { transform-origin: 100% 50%; transition: transform 90ms linear; }
+.hs-happy, .hs-worry, .hs-curious, .hs-wave, .hs-num, .hs-neg, .hs-rec, .hs-cursor, .hs-progress-g, .hs-sparks, .hs-sweat, .hs-bubble-g { opacity: 0; transition: opacity 140ms var(--ease-out); }
+.hs-tape { transform: translateY(9px); }
+.hs-bubble-g { transform-origin: 12% 100%; transform: scale(.85); transition: opacity 140ms var(--ease-out), transform 260ms var(--ease-out); }
+.hs-curious { transition: opacity 140ms var(--ease-out), transform 260ms var(--ease-out); }
+@keyframes hs-blink { 0%, 94% { transform: scaleY(1); } 95%, 97% { transform: scaleY(.12); } 98%, 100% { transform: scaleY(1); } }
+@keyframes hs-hop { 0% { transform: translateY(0) scale(1, 1); } 18% { transform: translateY(0) scale(1.06, .92); } 48% { transform: translateY(-2.6px) scale(.96, 1.05); } 76% { transform: translateY(0) scale(1.04, .96); } 100% { transform: translateY(0) scale(1, 1); } }
+@keyframes hs-shadow { 0%, 100% { transform: scaleX(1); opacity: 1; } 48% { transform: scaleX(.72); opacity: .55; } }
+@keyframes hs-bar { 0%, 100% { transform: scaleY(.25); } 50% { transform: scaleY(1); } }
+@keyframes hs-blinkdot { 0% { opacity: 1; } 50% { opacity: .15; } }
+@keyframes hs-tap-l { 0% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-.6px) rotate(10deg); } }
+@keyframes hs-tap-r { 0% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-.6px) rotate(-10deg); } }
+@keyframes hs-cell { 0% { fill: var(--hs-solar-lit); } 25%, 100% { fill: var(--hs-solar); } }
+@keyframes hs-pop { 0% { opacity: 0; transform: scale(.85); } 60% { opacity: 1; transform: scale(1.05); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes hs-print { 0% { transform: translateY(9px); } 100% { transform: translateY(0); } }
+@keyframes hs-spark { 0% { opacity: 0; transform: scale(.6); } 35% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.1); } }
+@keyframes hs-shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-.6px); } 40% { transform: translateX(.6px); } 60% { transform: translateX(-.4px); } 80% { transform: translateX(.4px); } }
+@keyframes hs-tremble { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(.12px); } }
+@keyframes hs-worry-eyes { 0% { opacity: 1; } 32%, 100% { opacity: 0; } }
+@keyframes hs-neg { 0% { opacity: 0; } 32% { opacity: 1; } 42% { opacity: .2; } 52% { opacity: 1; } 62% { opacity: .2; } 72%, 100% { opacity: 1; } }
+@keyframes hs-sweat { 0% { opacity: 0; transform: translateY(-.4px); } 15% { opacity: 1; transform: translateY(0); } 75% { opacity: 1; transform: translateY(1.6px); } 100% { opacity: 0; transform: translateY(2.4px); } }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .hs.is-idle:hover .hs-fig { animation: hs-hop 600ms var(--ease-out); }
+  .hs.is-idle:hover .hs-shadow { animation: hs-shadow 600ms var(--ease-out); }
+  .hs .hs-k:hover .hs-k-cap { transform: translateY(.45px); }
+}
+.hs.is-listening .hs-face { opacity: 0; }
+.hs.is-listening .hs-wave, .hs.is-listening .hs-rec { opacity: 1; }
+.hs.is-listening .hs-fig { transform: rotate(-4deg); }
+.hs.is-listening .hs-bar { animation: hs-bar 900ms cubic-bezier(0.37, 0, 0.63, 1) infinite; }
+.hs.is-listening .hs-bar:nth-child(even) { animation-duration: 780ms; }
+.hs-bar:nth-child(2) { animation-delay: -.45s; }
+.hs-bar:nth-child(3) { animation-delay: -.2s; }
+.hs-bar:nth-child(4) { animation-delay: -.65s; }
+.hs-bar:nth-child(5) { animation-delay: -.1s; }
+.hs-bar:nth-child(6) { animation-delay: -.55s; }
+.hs-bar:nth-child(7) { animation-delay: -.3s; }
+.hs-bar:nth-child(8) { animation-delay: -.75s; }
+.hs-bar:nth-child(9) { animation-delay: -.15s; }
+/* صدای واقعیِ میکروفون: هر میله ارتفاعش را از سطحِ صدا می‌گیرد، نه از حلقهٔ ساختگی. */
+.hs.hs-live .hs-bar { animation: none; transition: transform 80ms linear; }
+.hs.is-listening .hs-rec { animation: hs-blinkdot 1.2s steps(1, end) infinite; }
+.hs.is-typing .hs-face { transform: translate(0, .5px); }
+.hs.is-typing .hs-num { opacity: 1; }
+.hs.is-typing .hs-arm-l { animation: hs-tap-l 340ms steps(1, end) infinite; }
+.hs.is-typing .hs-arm-r { animation: hs-tap-r 340ms steps(1, end) -170ms infinite; }
+.hs.is-thinking .hs-face { opacity: 0; }
+.hs.is-thinking .hs-num, .hs.is-thinking .hs-progress-g { opacity: 1; }
+.hs.is-thinking .hs-fig { transform: rotate(3deg); }
+.hs.is-thinking .hs-arm-r { transform: rotate(140deg); }
+.hs.is-thinking .hs-cell { animation: hs-cell 1.08s steps(1, end) infinite; }
+.hs-cell:nth-child(2) { animation-delay: .27s; }
+.hs-cell:nth-child(3) { animation-delay: .54s; }
+.hs-cell:nth-child(4) { animation-delay: .81s; }
+.hs.is-question .hs-face { opacity: 0; }
+.hs.is-question .hs-curious, .hs.is-question .hs-cursor { opacity: 1; }
+.hs.is-question .hs-curious { transform: translate(.35px, -.25px); }
+.hs.is-question .hs-bubble-g { opacity: 1; transform: scale(1); animation: hs-pop 420ms var(--ease-out) 120ms both; }
+.hs.is-question .hs-fig { transform: rotate(6deg); }
+.hs.is-question .hs-arm-r { transform: rotate(-150deg); }
+.hs.is-question .hs-cursor { animation: hs-blinkdot 1s steps(1, end) infinite; }
+.hs.is-success .hs-face { opacity: 0; }
+.hs.is-success .hs-happy { opacity: 1; }
+.hs.is-success .hs-tape { animation: hs-print 1s steps(9, end) forwards; }
+.hs.is-success .hs-fig { animation: hs-hop 600ms var(--ease-out) 1s; }
+.hs.is-success .hs-shadow { animation: hs-shadow 600ms var(--ease-out) 1s; }
+.hs.is-success .hs-arm-l { transform: rotate(150deg); transition-delay: .9s; }
+.hs.is-success .hs-arm-r { transform: rotate(-150deg); transition-delay: .9s; }
+.hs.is-success .hs-sparks { animation: hs-spark 900ms var(--ease-out) 1.05s both; }
+.hs.is-worried .hs-face { opacity: 0; }
+.hs.is-worried .hs-worry { animation: hs-worry-eyes 2.6s steps(1, end) forwards; }
+.hs.is-worried .hs-neg { animation: hs-neg 2.6s steps(1, end) forwards; }
+.hs.is-worried .hs-fig { animation: hs-shake 420ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+.hs.is-worried .hs-core { animation: hs-tremble 90ms linear 420ms 18; }
+.hs.is-worried .hs-arm-l { transform: rotate(-160deg); transition-delay: .75s; }
+.hs.is-worried .hs-arm-r { transform: rotate(160deg); transition-delay: .75s; }
+.hs.is-worried .hs-sweat { animation: hs-sweat 1.4s cubic-bezier(0.55, 0.085, 0.68, 0.53) .9s both; }
+@media (prefers-reduced-motion: reduce) {
+  .hs-svg * { animation: none !important; transition: none !important; }
+  .hs.is-success .hs-tape { transform: translateY(0); }
+  .hs.is-success .hs-sparks, .hs.is-worried .hs-neg, .hs.is-worried .hs-sweat { opacity: 1; }
+  .hs-bar { transform: scaleY(.6); }
+}
+@media print { .hs { display: none; } }
