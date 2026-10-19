@@ -575,7 +575,10 @@ test('دفتر، مسیر فهم: «۲۰ مهر» + «سه ماه» همان س�
     assert.ok(end, JSON.stringify(half.plan.questions));
     const ready = await database.answerUnderstandingCase(item.id, { [end.id]: { value: 'three-months' } }, aiOptions);
     assert.equal(ready.status, 'ready');
-    database.commitUnderstandingCase(item.id, { now: new Date(NOW) });
+    // «بیمه آتش سوزی ۱۲ میلیون از تجارت» در همین دفتر و همین ماه ثبت شده؛ هم‌مبلغ و
+    // هم‌دسته است و هشدار «شاید تکراری» می‌گیرد. کاربر می‌گوید «تکراری نیست».
+    await database.runInWorkspace(workspace.id, { overdraftApproval: FIXTURE_OVERDRAFT, role: 'owner', userId: owner.id, allowDuplicate: true },
+      () => database.commitUnderstandingCase(item.id, { now: new Date(NOW) }));
     const rows = db().prepare("SELECT period_key AS key, amount FROM recognition_schedule_items WHERE event_id=(SELECT event_id FROM recognition_schedule_items ORDER BY rowid DESC LIMIT 1) ORDER BY period_key").all();
     assert.deepEqual(rows.map((row) => [row.key, row.amount]), [['1405-07', 4_000_000], ['1405-08', 4_000_000], ['1405-09', 4_000_000]]);
   });
