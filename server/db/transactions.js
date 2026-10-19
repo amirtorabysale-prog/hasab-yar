@@ -25,6 +25,7 @@ import { planJournal } from '../../shared/accountingRules.js';
 import { factsFromEvent } from '../../shared/eventFacts.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
 import { recognitionPreview, servicePeriodPreview } from '../../shared/recognitionPreview.js';
+import { likelyDuplicates } from '../duplicateGuard.js';
 
 export function getToday() {
   const today = localDay();
@@ -611,12 +612,15 @@ export function findPotentialDuplicates(transactions = [], { windowMinutes = 5 }
       WHERE status!='deleted' AND amount=? AND type=? AND account_id=?
         AND ABS((julianday(occurred_at)-julianday(?))*1440)<=?
       ORDER BY occurred_at DESC LIMIT 8`).all(amount, item.type, accountId, occurredAt, Math.max(1, Number(windowMinutes) || 5));
-    for (const candidate of candidates) {
-      const similarity = textSimilarity(`${incomingText} ${item.category || ''}`, `${candidate.rawText} ${candidate.category || ''}`);
-      if (similarity < 0.42) continue;
-      duplicates.push({ inputIndex, ...candidate, similarity: Math.round(similarity * 100) });
-      break;
+    const recent = candidates.map((candidate) => ({ candidate, similarity: textSimilarity(`${incomingText} ${item.category || ''}`, `${candidate.rawText} ${candidate.category || ''}`) }))
+      .find((entry) => entry.similarity >= 0.42);
+    if (recent) {
+      duplicates.push({ inputIndex, ...recent.candidate, similarity: Math.round(recent.similarity * 100), reason: 'recent' });
+      continue;
     }
+    // «اجارهٔ مهر» که روز قبل یا از صف حسابدار ثبت شده: همان مبلغ و دسته در همین دوره.
+    const earlier = likelyDuplicates(db, { ...item, amount, accountId, occurredAt }, { timeZone: currentTimeZone() })[0];
+    if (earlier) duplicates.push({ inputIndex, ...earlier });
   }
   return duplicates;
 }

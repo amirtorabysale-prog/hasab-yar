@@ -6,6 +6,7 @@ import { reviewQuestions, reviewSavedAnswers } from '../shared/reviewQuestions.j
 import { isReviewAccountSetupQuestion } from '../shared/reviewQuestions.js';
 import { tradeCollectionProposal, tradeSettlementValidation } from '../server/reviewTradeSettlement.js';
 import { bindReviewProposal } from '../server/reviewProposalBindings.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 process.env.DATABASE_PATH=tempDatabase('trade-settlement');
 process.env.ADMIN_USERNAME='trade-owner';process.env.ADMIN_PASSWORD=`trade-${crypto.randomUUID()}`;
 process.env.OPENAI_API_KEY='test-key';
@@ -14,7 +15,7 @@ const ai=await import('../server/accountingReviewAi.js'),assistant=await import(
 const accounting=await import('../server/accounting.js'),resolver=await import('../server/roleResolver.js');
 const chart=await import('../server/chartOfAccounts.js');
 db.ensureAdmin();const owner=db.authenticateUser(process.env.ADMIN_USERNAME,process.env.ADMIN_PASSWORD);
-const run=f=>db.runInWorkspace('primary',{role:'owner',userId:owner.id},f),database=()=>db.activeWorkspaceDatabase();
+const run=f=>db.runInWorkspace('primary', { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },f),database=()=>db.activeWorkspaceDatabase();
 const text='به تامین‌کننده کارتن هشتاد میلیون بدهکار بودیم، پنجاه میلیون دادیم، گفت ده تومن دیگه بدی بقیه‌شو می‌بخشم، ما هم قبول کردیم.';
 const fake=p=>async()=>({ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(p)}]}]})});
 const noNetwork=async()=>{throw Error('Conditional payment should not spend API tokens');};

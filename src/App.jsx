@@ -7,13 +7,13 @@ import { readRoute, writeRoute } from './app/route.js';
 import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_REQUIRES, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
 import { profileDefinition } from '../shared/product.js';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
-import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet } from './features/capture/CaptureSheets.jsx';
+import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet, PossibleDuplicateSheet } from './features/capture/CaptureSheets.jsx';
 import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
 import { EMPTY_SUMMARY } from './components/common.jsx';
 import { IntentSheet, SettleSheet } from './features/capture/IntentSheets.jsx';
 import { inUnderstandingScope } from '../shared/understandingScope.js';
 import { LoginPage, Onboarding } from './features/auth/AuthScreens.jsx';
-import { api, flushTransactionQueue, queueTransactions, setOverdraftApprover } from './lib/api.js';
+import { api, flushTransactionQueue, queueTransactions, setDuplicateConfirmer, setOverdraftApprover } from './lib/api.js';
 import { OverdraftApprovalSheet } from './features/capture/OverdraftApprovalSheet.jsx';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
@@ -151,6 +151,12 @@ export default function App() {
   useEffect(() => {
     setOverdraftApprover((info) => new Promise((resolve) => setOverdraftPrompt({ ...info, resolve })));
     return () => setOverdraftApprover(null);
+  }, []);
+  // برگهٔ «شاید تکراری» برای کارت AI و تأیید صف؛ ثبت روزانه برگهٔ خودش را دارد.
+  const [possibleDuplicate, setPossibleDuplicate] = useState(null);
+  useEffect(() => {
+    setDuplicateConfirmer((info) => new Promise((resolve) => setPossibleDuplicate({ ...info, resolve })));
+    return () => setDuplicateConfirmer(null);
   }, []);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
@@ -1280,6 +1286,7 @@ export default function App() {
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}
       {correctionDraft && <CorrectionSheet draft={correctionDraft} accounts={data.accounts} close={() => setCorrectionDraft(null)} confirm={applyCorrection} />}
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
+      {possibleDuplicate && <PossibleDuplicateSheet prompt={possibleDuplicate} close={(confirmed) => { possibleDuplicate.resolve(confirmed); setPossibleDuplicate(null); }} />}
       {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
       {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} accounts={data.accounts || []} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
       {understandingDraft && <Suspense fallback={null}><UnderstandingSheet draft={understandingDraft} setDraft={setUnderstandingDraft} close={() => setUnderstandingDraft(null)} notify={notify}

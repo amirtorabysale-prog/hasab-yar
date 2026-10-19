@@ -45,11 +45,18 @@ const workspaceConnections = new Map();
 // حسابدار» روی هر تراکنشی که با `db` باز و بسته می‌شود بنشیند (`balanceGuard.js`):
 // عکسِ مانده‌ها در BEGIN، سنجش پیش از COMMIT، و برگرداندن کل عملیات اگر حسابی
 // با همین عملیات منفی‌تر شده و تأییدی نیامده.
+//
+// نگهبان روی خودِ اتصال هر دفتر هم می‌نشیند (`guardConnection`)، نه فقط روی `db`:
+// مسیرهای صف حسابدار (`financialEvents.js`، `financialEventStore.js`) با اتصال خام
+// (`activeWorkspaceDatabase()`) تراکنش باز می‌کردند و ثبتِ مورد صف، جاری سامان را
+// بی‌تأیید به منفی ۱۵ میلیون رساند (گزارش مالک محصول، ۲۳ مهر ۱۴۰۵).
 const openTransactions = new WeakMap();
+const rawExec = new WeakMap();
 function guardedExec(active, sql) {
+  const exec = rawExec.get(active) || ((statementSql) => active.exec(statementSql));
   const statement = String(sql || '').trim().toUpperCase();
   if (/^BEGIN\b/.test(statement) && !openTransactions.has(active)) {
-    const result = active.exec(sql);
+    const result = exec(sql);
     openTransactions.set(active, balanceSnapshot(active));
     return result;
   }
@@ -60,23 +67,31 @@ function guardedExec(active, sql) {
     if (violations.length) {
       const approval = currentApproval(active);
       if (!approval) {
-        active.exec('ROLLBACK');
+        exec('ROLLBACK');
         throw withApprovalMode(overdraftError(violations));
       }
       recordOverdraftApproval(active, violations, approval);
     }
-    return active.exec(sql);
+    return exec(sql);
   }
   if (/^ROLLBACK\b/.test(statement)) {
     openTransactions.delete(active);
     // نگهبان خودش برگردانده باشد، ROLLBACK دومِ فراخوان نباید خطای «تراکنشی باز
     // نیست» بسازد و خطای اصلی را بپوشاند.
-    try { return active.exec(sql); } catch (error) {
+    try { return exec(sql); } catch (error) {
       if (/no transaction is active/i.test(error.message)) return undefined;
       throw error;
     }
   }
-  return active.exec(sql);
+  return exec(sql);
+}
+
+/** `exec` خودِ اتصال را نگهبان‌دار می‌کند؛ هر BEGIN/COMMIT روی آن، از هر مسیری، سنجیده می‌شود. */
+export function guardConnection(connection) {
+  if (rawExec.has(connection)) return connection;
+  rawExec.set(connection, connection.exec.bind(connection));
+  connection.exec = (sql) => guardedExec(connection, sql);
+  return connection;
 }
 
 /**
@@ -684,6 +699,7 @@ ensureColumn('accounts', 'bank_id TEXT');
 
 // اجازهٔ منفی شدن (اضافه‌برداشت) برای هر حساب، و ردِ تأییدهای حسابدار.
 ensureOverdraftSchema(controlDb);
+guardConnection(controlDb);
 
 ensureColumn('users', "role TEXT NOT NULL DEFAULT 'owner'");
 
@@ -842,7 +858,7 @@ export function workspaceDatabase(workspaceId) {
   migrateAccountingLedger(database);
   migrateInventory(database, { timeZone: defaults.timezone });
   repairWorkspaceProfileType(workspaceId, database);
-  workspaceConnections.set(workspaceId, database);
+  workspaceConnections.set(workspaceId, guardConnection(database));
   return database;
 }
 
@@ -862,6 +878,11 @@ export function approveOverdraftsForScript(reason) {
   workspaceContext.enterWith(store
     ? { ...store, member: { ...store.member, overdraftApproval } }
     : { workspaceId: 'primary', member: { role: 'owner', overdraftApproval }, database: controlDb });
+}
+
+/** کاربر هشدار «شاید تکراری» را دیده و گفته «تکراری نیست، ثبت کن» (`X-Allow-Duplicate`). */
+export function duplicateAllowed() {
+  return Boolean(workspaceContext.getStore()?.member?.allowDuplicate);
 }
 
 export function currentWorkspace() {

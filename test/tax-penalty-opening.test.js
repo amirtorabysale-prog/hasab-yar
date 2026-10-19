@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase } from './helpers/tempPath.js';
 import { taxPenaltyProposal } from '../shared/reviewTaxPenalty.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 process.env.DATABASE_PATH=tempDatabase('tax-penalty-opening');
 process.env.ADMIN_USERNAME='penalty-owner';
 process.env.ADMIN_PASSWORD=`penalty-${crypto.randomUUID()}`;
@@ -10,7 +11,7 @@ const ai=await import('../server/accountingReviewAi.js'),assistant=await import(
 const accounting=await import('../server/accounting.js'),chart=await import('../server/chartOfAccounts.js');
 db.ensureAdmin();const owner=db.authenticateUser(process.env.ADMIN_USERNAME,process.env.ADMIN_PASSWORD);
 const database=()=>db.activeWorkspaceDatabase();
-const run=f=>db.runInWorkspace('primary',{role:'owner',userId:owner.id},f);
+const run=f=>db.runInWorkspace('primary', { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },f);
 const noNetwork=()=>{throw Error('Deterministic fine must not call AI');};
 
 test('paid standalone tax fine posts dedicated mapped expense, actual cash, DNA and reverses without duplicate expense',()=>run(async()=>{
@@ -62,7 +63,7 @@ test('legacy template receives only missing fine subsidiary; collision or custom
  accounting.ensureAccountingSchema(database());
  assert.equal(database().prepare("SELECT name FROM chart_accounts WHERE code='8120'").get().name,'معین اختصاصی دفتر');
  const custom=db.createWorkspace(owner.id,{name:'کدینگ سفارشی جریمه',profileType:'business'});
- db.runInWorkspace(custom.id,{role:'owner',userId:owner.id},()=>{
+ db.runInWorkspace(custom.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },()=>{
   chart.importChartOfAccounts(database(),[{code:'8',name:'هزینه',level:'group',type:'expense'},{code:'81',name:'هزینه اداری',level:'general',parentCode:'8',type:'expense'},{code:'8114',name:'مالیات و عوارض',level:'subsidiary',parentCode:'81',type:'expense'}]);
   accounting.ensureAccountingSchema(database());assert.equal(database().prepare("SELECT 1 FROM chart_accounts WHERE code='8120'").get(),undefined);
  });

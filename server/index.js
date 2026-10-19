@@ -180,8 +180,10 @@ app.use('/api', (request, response, next) => {
   const overdraftApproval = approvalMode === 'inline'
     ? readOverdraftApproval(request.get('x-overdraft-approval'), { role: workspace.role, userId: user.id }) : null;
   const approvalRequestId = String(request.get('x-approval-request-id') || '').trim().slice(0, 64) || null;
+  // هشدار «شاید تکراری» را کاربر دیده و ثبت را خواسته (`duplicateGuard.js`).
+  const allowDuplicate = mutating && request.get('x-allow-duplicate') === '1';
   return runInWorkspace(workspace.id, {
-    ...workspace, userId: user.id, overdraftApproval, approvalMode, approvalRequestId,
+    ...workspace, userId: user.id, overdraftApproval, approvalMode, approvalRequestId, allowDuplicate,
     requestMethod: request.method, requestPath: `${request.baseUrl}${request.path}`, requestBody: request.body,
   }, next);
 });
@@ -434,9 +436,13 @@ app.post('/api/transactions', (request, response, next) => {
   try {
     const transactions = request.body?.transactions;
     if (!Array.isArray(transactions) || !transactions.length || transactions.length > 20) return response.status(400).json({ message: 'حداقل یک تراکنش معتبر لازم است.' });
-    if (!request.body?.allowDuplicates) {
+    if (!request.body?.allowDuplicates && request.get('x-allow-duplicate') !== '1') {
       const duplicates = findPotentialDuplicates(transactions);
-      if (duplicates.length) throw Object.assign(new Error('یک ثبت بسیار مشابه در چند دقیقهٔ اخیر پیدا شد.'), { code: 'POSSIBLE_DUPLICATE', status: 409, details: { duplicates } });
+      if (duplicates.length) {
+        const message = duplicates[0].reason === 'recent' ? 'یک ثبت بسیار مشابه در چند دقیقهٔ اخیر پیدا شد.'
+          : 'یک ثبت با همین مبلغ و همین دسته در همین دوره هست؛ شاید این تکراری باشد.';
+        throw Object.assign(new Error(message), { code: 'POSSIBLE_DUPLICATE', status: 409, details: { duplicates } });
+      }
     }
     const ids = insertTransactions({ transcript: request.body.transcript, transactions, counterpartyResolution: request.body.counterpartyResolution });
     shadowUnderstanding(request.body.transcript, transactions[0]?.source, () => legacySnapshot('transactions', { ids, queued: ids.queuedForAccountant }), transactions[0]?.clientId);
