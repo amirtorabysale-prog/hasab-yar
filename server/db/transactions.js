@@ -679,7 +679,7 @@ function transactionQuery(includeDeleted = false) {
     transactions.raw_text AS rawText,transactions.source,transactions.confidence,transactions.needs_review AS needsReview,
     transactions.confidence_details AS confidenceDetails,transactions.review_reasons AS reviewReasons,
     transactions.review_state AS reviewState,transactions.restored_from AS restoredFrom,
-    transactions.journal_deferred AS journalDeferred,
+    transactions.journal_deferred AS journalDeferred,transactions.topic_label AS topicLabel,
     transactions.occurred_at AS occurredAt,transactions.created_at AS createdAt,transactions.note,transactions.account,transactions.status,
     transactions.capital_flow AS capitalFlow, transactions.accounting_role AS accountingRole,
     transactions.account_id AS accountId,accounts.name AS accountName,
@@ -788,7 +788,8 @@ export function updateTransaction(id, values = {}) {
         title: capitalEntryTitle({ ...current, category }),
       }, { createdBy: currentWorkspace()?.userId });
     } else {
-      syncTransactionJournal(db, { id, amount, type, category, rawText, accountId, occurredAt }, { createdBy: currentWorkspace()?.userId });
+      // برچسب موضوعی با ویرایش نمی‌افتد: نسخهٔ تازهٔ سند همان تفصیلیِ موضوع را می‌گیرد.
+      syncTransactionJournal(db, { id, amount, type, category, rawText, accountId, occurredAt, topicLabel: current.topicLabel }, { createdBy: currentWorkspace()?.userId });
     }
     audit('update', 'transaction', id, { before: current, after: values });
     db.exec('COMMIT');
@@ -883,7 +884,7 @@ export function redoTransaction(id) {
       source: current.source, confidence: current.confidence, confidenceDetails: current.confidenceDetails,
       reviewReasons: [...(current.reviewReasons || []), 'ثبت حذف‌شده با درخواست کاربر دوباره ایجاد شد.'],
       reviewState: 'reviewed', needsReview: false, accountId: current.accountId, contactId: current.contactId,
-      note: current.note, dueAt: current.dueAt, occurredAt: current.occurredAt, restoredFrom: id,
+      note: current.note, dueAt: current.dueAt, occurredAt: current.occurredAt, restoredFrom: id, topicLabel: current.topicLabel,
     }] });
     audit('redo', 'transaction', restoredId, { restoredFrom: id });
     db.exec('COMMIT');

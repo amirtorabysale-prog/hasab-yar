@@ -12,17 +12,20 @@ import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js'
  * قابل ویرایش. رد یعنی همین برچسب بماند و دیگر پرسیده نشود.
  */
 
-function PromotionCard({ promotion, notify, onDecided }) {
+function PromotionCard({ promotion, notify, onDecided, canDecide }) {
   const [name, setName] = useState(promotion.categoryName || promotion.label);
   const [code, setCode] = useState(promotion.suggestedCode || '');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  // واژه از قبل به دستهٔ دیگری یاد داده شده؟ بی تیکِ صریح عوض نمی‌شود.
+  const [replaceLearning, setReplaceLearning] = useState(false);
+  const learnedElsewhere = promotion.existingLearning && promotion.existingLearning !== name.trim();
   const decide = async (decision) => {
     setBusy(true);
     try {
-      const result = await api.decideTopicPromotion(promotion.id, { decision, reason: reason.trim(), categoryName: name, chartCode: code });
+      const result = await api.decideTopicPromotion(promotion.id, { decision, reason: reason.trim(), categoryName: name, chartCode: code, replaceLearning });
       notify(decision === 'approve'
-        ? `دستهٔ «${result.item.categoryName}» ساخته شد${result.item.migratedLines ? ` و ${toPersianDigits(result.item.migratedLines)} سطر قبلی منتقل شد` : ''}${result.item.keptLockedLines ? `؛ ${toPersianDigits(result.item.keptLockedLines)} سطر در دورهٔ بسته سر جایش ماند` : ''}.`
+        ? `دستهٔ «${result.item.categoryName}» ساخته شد${result.item.migratedLines ? ` و ${toPersianDigits(result.item.migratedLines)} سطر قبلی منتقل شد` : ''}${result.item.keptLockedLines ? `؛ ${toPersianDigits(result.item.keptLockedLines)} سطر در دورهٔ بسته سر جایش ماند` : ''}${result.item.learning === 'kept' ? `؛ واژه همچنان به دستهٔ «${promotion.existingLearning}» می‌رود` : ''}.`
         : 'برچسب دسته نشد و دیگر پرسیده نمی‌شود.');
       onDecided();
     } catch (error) { notify(error.message); }
@@ -30,7 +33,7 @@ function PromotionCard({ promotion, notify, onDecided }) {
   };
   return <article className="rounded-xl border border-accent/40 bg-accent/5 p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-[13px] font-extrabold">برچسب «{promotion.label}» این ماه <span className="numbers">{toPersianDigits(promotion.occurrences)}</span> بار ثبت شده است</p>
+      <p className="text-[13px] font-extrabold">برچسب «{promotion.label}» در ماه <span className="numbers">{toPersianDigits(promotion.period)}</span> <span className="numbers">{toPersianDigits(promotion.occurrences)}</span> بار ثبت شده است</p>
       <span className="rounded-full border border-accent/40 bg-surface px-2 py-0.5 text-[11px] font-bold text-accent">آستانه: <span className="numbers">{toPersianDigits(promotion.threshold)}</span></span>
     </div>
     <p className="mt-1 text-xs leading-6 text-muted">دستهٔ مستقل بسازیم؟ با تأیید، دسته و معین کدینگ ساخته می‌شود، <b className="text-ink">{toPersianDigits(promotion.migrationCount)} سطر قبلیِ همین برچسب</b> به دستهٔ تازه منتقل می‌شود و واژه یاد گرفته می‌شود. مبالغ و توازن سندها عوض نمی‌شود.{promotion.lockedLineCount > 0 && <> <b className="text-ink">{toPersianDigits(promotion.lockedLineCount)} سطر</b> در دورهٔ بسته است و جابه‌جا نمی‌شود.</>}</p>
@@ -40,19 +43,26 @@ function PromotionCard({ promotion, notify, onDecided }) {
       </li>)}
       {promotion.occurrences > promotion.samples.length && <li>… و <span className="numbers">{toPersianDigits(promotion.occurrences - promotion.samples.length)}</span> سطر دیگر</li>}
     </ul>}
+    {!canDecide && <p className="mt-2 text-xs font-bold text-muted">تصمیم دربارهٔ ساخت دسته با مدیر دفتر است.</p>}
+    {canDecide && <>
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <input value={name} onChange={(event) => setName(event.target.value)} aria-label="نام دستهٔ جدید" className="min-w-0 flex-1 rounded border border-line bg-paper p-2 text-[13px]" placeholder="نام دستهٔ جدید" />
       <input value={code} onChange={(event) => setCode(event.target.value)} aria-label="کد معین کدینگ" inputMode="numeric" className="w-24 rounded border border-line bg-paper p-2 text-[13px] numbers" placeholder="کد معین" />
     </div>
+    {learnedElsewhere && <label className="mt-2 flex items-start gap-2 text-xs leading-6">
+      <input type="checkbox" checked={replaceLearning} onChange={(event) => setReplaceLearning(event.target.checked)} className="mt-1" />
+      <span>واژهٔ «{promotion.label}» الان به دستهٔ «{promotion.existingLearning}» یاد داده شده است. از این پس به دستهٔ تازه برود؟</span>
+    </label>}
     <input value={reason} onChange={(event) => setReason(event.target.value)} aria-label="دلیل تصمیم" className="mt-2 w-full rounded border border-line bg-paper p-2 text-[13px]" placeholder="دلیل تصمیم (با سند می‌ماند)" />
     <div className="mt-2 flex gap-2">
       <button disabled={busy || reason.trim().length < 3 || !name.trim()} onClick={() => decide('approve')} className="tap rounded bg-accent px-3 py-1.5 text-[12px] font-bold text-on-fill disabled:opacity-40">تأیید و ساخت دسته + انتقال ثبت‌ها</button>
       <button disabled={busy || reason.trim().length < 3} onClick={() => decide('reject')} className="tap rounded border border-expense/50 px-3 py-1.5 text-[12px] font-bold text-expense disabled:opacity-40">همین برچسب بماند</button>
     </div>
+    </>}
   </article>;
 }
 
-export function TopicPromotionsCard({ notify, onChanged }) {
+export function TopicPromotionsCard({ notify, onChanged, canDecide = false }) {
   const [data, setData] = useState(null);
   const [thresholdDraft, setThresholdDraft] = useState('');
   // نقش در سرور کنترل می‌شود؛ تصمیم ارتقا فقط با مدیر و بالاتر می‌نشیند.
@@ -76,18 +86,19 @@ export function TopicPromotionsCard({ notify, onChanged }) {
   return <section aria-label="برچسب‌های موضوعی و پیشنهاد ارتقا" className="mt-4 space-y-2">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="text-sm font-extrabold">برچسب‌های موضوعی</h2>
-      <div className="flex items-center gap-1.5 text-xs text-muted">
+      {!canDecide && <span className="text-xs text-muted">آستانهٔ ارتقا: <span className="numbers">{toPersianDigits(data.threshold)}</span> تکرار در ماه</span>}
+      {canDecide && <div className="flex items-center gap-1.5 text-xs text-muted">
         <span>آستانهٔ ارتقا (تکرار در ماه):</span>
         <input value={thresholdDraft} onChange={(event) => setThresholdDraft(event.target.value)} inputMode="numeric" aria-label="آستانهٔ ارتقا" className="numbers w-14 rounded border border-line bg-paper px-2 py-1 text-center text-[12px]" />
         <button onClick={saveThreshold} className="tap rounded border border-line bg-surface px-2 py-1 font-bold">ثبت</button>
-      </div>
+      </div>}
     </div>
     {labeled.length > 0 && <p className="rounded-lg border border-line bg-surface p-2.5 text-xs leading-6 text-muted">
       برچسب، تفصیلیِ «بابت چه بود؟» است و کدینگ را عوض نمی‌کند: {' '}
       {labeled.slice(0, 6).map((label) => `${label.name} (${toPersianDigits(label.current)})`).join(' · ')}
       {labeled.length > 6 ? ' …' : ''}
     </p>}
-    {pending.map((promotion) => <PromotionCard key={promotion.id} promotion={promotion} notify={notify} onDecided={reload} />)}
+    {pending.map((promotion) => <PromotionCard key={promotion.id} promotion={promotion} notify={notify} onDecided={reload} canDecide={canDecide} />)}
     {decided.length > 0 && <details className="rounded-lg border border-line bg-surface p-2.5 text-xs leading-6">
       <summary className="cursor-pointer font-bold text-muted">تصمیم‌های قبلی (<span className="numbers">{toPersianDigits(decided.length)}</span>)</summary>
       <ul className="mt-1.5 space-y-1 text-muted">

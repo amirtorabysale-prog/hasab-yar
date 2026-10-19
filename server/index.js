@@ -727,11 +727,7 @@ app.post('/api/financial-events/unidentified/resolutions/:id/reverse', (request,
   try { return response.json({ item: reverseUnidentifiedReceiptResolution(request.params.id) }); } catch (error) { return next(error); }
 });
 app.get('/api/financial-events/review-queue', (request, response, next) => {
-  try {
-    // پیشنهادهای ارتقای برچسب همین‌جا تازه می‌شوند تا صف حسابدار کامل باشد.
-    try { topicPromotionSweep(activeDb, { timeZone: currentTimeZone() }); } catch { /* پیشنهاد، مانع صف نیست. */ }
-    return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 }));
-  } catch (error) { return next(error); }
+  try { return response.json(reviewQueue({ limit: Number(request.query.limit) || 50 })); } catch (error) { return next(error); }
 });
 app.get('/api/accounting/journal/:id/review-history', (request,response,next) => {
   try { return response.json(reviewAssistantForJournal(request.params.id)); } catch(error) {return next(error);}
@@ -822,12 +818,11 @@ app.post('/api/chart/cost-centers', (request, response, next) => {
 app.put('/api/chart/cost-centers/:id', (request, response, next) => {
   try { return response.json({ item: saveCostCenterEntry({ ...request.body, id: request.params.id }) }); } catch (error) { return next(error); }
 });
-// موتور برچسب موضوعی (طرح ترکیبی): شمارش، پیشنهاد ارتقا و تصمیم حسابدار.
-// گشتِ شمارش عمداً بی‌صدا و بی‌اثر روی خطاست: پیشنهاد ارتقا هرگز نباید صف
-// حسابدار یا صفحهٔ کدینگ را بشکند.
+// موتور برچسب موضوعی (طرح ترکیبی): شمارش، پیشنهاد ارتقا و تصمیم حسابدار. گشتِ
+// پیشنهاد در کار دقیقه‌ای است، نه در خواندن صفحه: دیدنِ صف، حتی با نقش «فقط مشاهده»،
+// چیزی در دفتر نمی‌نویسد و برچسبی که کسی صفحه‌اش را باز نکرده هم پیشنهاد می‌شود.
 app.get('/api/topics/overview', (request, response, next) => {
   try {
-    try { topicPromotionSweep(activeDb, { timeZone: currentTimeZone() }); } catch { /* پیشنهاد، مانع صفحه نیست. */ }
     return response.json({ ...topicLabelStats(activeDb, { timeZone: currentTimeZone() }), promotions: listTopicPromotions(activeDb) });
   } catch (error) { return next(error); }
 });
@@ -1315,8 +1310,16 @@ function runRecurringJob() {
     catch (error) { console.error(`Recurring materialization failed for workspace ${workspace.id}:`, error); }
     try { runInWorkspace(workspace.id, { role: 'owner' }, () => runRecognition()); }
     catch (error) { console.error(`Recognition run failed for workspace ${workspace.id}:`, error); }
+    // پیشنهاد ارتقای برچسب: هر ده دقیقه بس است؛ هر برچسب فقط یک بار پرسیده می‌شود.
+    if (Date.now() - (lastTopicSweep.get(workspace.id) || 0) >= TOPIC_SWEEP_EVERY_MS) {
+      lastTopicSweep.set(workspace.id, Date.now());
+      try { runInWorkspace(workspace.id, { role: 'owner' }, () => topicPromotionSweep(activeDb, { timeZone: currentTimeZone() })); }
+      catch (error) { console.error(`Topic promotion sweep failed for workspace ${workspace.id}:`, error); }
+    }
   }
 }
+const TOPIC_SWEEP_EVERY_MS = 10 * 60_000;
+const lastTopicSweep = new Map();
 
 runRecurringJob();
 const recurringTimer = setInterval(runRecurringJob, 60_000);

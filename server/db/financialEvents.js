@@ -308,7 +308,7 @@ export function approveEvent(eventId, { reason = '', withinTransaction = false }
     // می‌شود روی دستهٔ هزینه می‌نشیند درحالی‌که همان ثبت اگر خودکار رفته بود
     // بدهی همان شخص را می‌بست. دو سند متفاوت برای یک ثبت، بسته به اینکه
     // حسابدار تأییدش کرده یا نه.
-    const transaction = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,
+    const transaction = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,topic_label AS topicLabel,
       account_id AS accountId,occurred_at AS occurredAt,contact_id AS contactId,
       settlement_choice AS settlement FROM transactions WHERE id=?`).get(source.id);
     if (transaction) postJournal = transactionJournalPoster(transaction, settlementFor(transaction));

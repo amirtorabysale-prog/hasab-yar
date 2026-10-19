@@ -119,7 +119,7 @@ function accountingTransferJournalRows(range) {
     -- کد مقصد، نه کد داخلی. کد داخلی خودکار ساخته می‌شود و در پارسیان یعنی
     -- شخص دیگری؛ تا وقتی نگاشت نشده، خالی می‌رود و هشدار داده می‌شود.
     analytic_accounts.external_code AS tafsiliCode,analytic_accounts.name AS tafsiliName,
-    analytic_accounts.id AS analyticId,
+    analytic_accounts.id AS analyticId,analytic_accounts.source_kind AS analyticSourceKind,
     analytic_accounts.code AS analyticCode,analytic_accounts.name AS analyticName,
     cost_centers.code AS costCenterCode,cost_centers.name AS costCenterName
     FROM journal_entries JOIN journal_lines ON journal_lines.entry_id=journal_entries.id

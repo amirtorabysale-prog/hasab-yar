@@ -56,7 +56,7 @@ function promotionError(message, code = 'TOPIC_PROMOTION_INVALID', status = 400)
   return Object.assign(new Error(message), { code, status });
 }
 
-const schema = () => { ensureTopicPromotionSchema(db); repairPromotionChartAccounts(db); };
+const schema = () => ensureTopicPromotionSchema(db);
 
 // سندی که سند معکوس دارد زنده نیست: حذف یا ویرایشِ ثبت، سند قبلی را با معکوسش
 // خنثی می‌کند و هر دو در دفتر می‌مانند. شمردنِ سند اصلی، برچسبِ حذف‌شده را به
@@ -259,15 +259,25 @@ function labeledLines(database, analyticId, { timeZone, period }) {
  */
 export function topicPromotionSweep(database, { timeZone = currentTimeZone(), threshold = null } = {}) {
   schema();
+  repairPromotionChartAccounts(database);
   const limit = threshold || topicPromotionThreshold(database);
   const currentPeriod = periodForDate(new Date().toISOString(), timeZone);
+  const [year, month] = currentPeriod.split('-').map(Number);
+  const previousPeriod = month > 1 ? `${year}-${String(month - 1).padStart(2, '0')}` : `${year - 1}-12`;
   const labels = database.prepare(`SELECT id,name FROM analytic_accounts WHERE source_kind=? AND active=1`).all(TOPIC_SOURCE_KIND);
   const created = [];
   for (const label of labels) {
     if (database.prepare(`SELECT id FROM topic_promotions WHERE analytic_id=?`).get(label.id)) continue;
     // دسته‌ای با همین نام از قبل هست؟ برچسب چیزی برای ارتقا ندارد.
     if (database.prepare(`SELECT id FROM categories WHERE name=?`).get(label.name)) continue;
-    const lines = labeledLines(database, label.id, { timeZone, period: currentPeriod });
+    // ماه جاری، و اگر آن‌جا به آستانه نرسیده، ماه پیش: برچسبی که روزهای آخر ماه به
+    // آستانه رسید و گشت پیش از پایان ماه به آن نرسید، گم نمی‌شود.
+    let period = currentPeriod;
+    let lines = labeledLines(database, label.id, { timeZone, period });
+    if (lines.length < limit) {
+      period = previousPeriod;
+      lines = labeledLines(database, label.id, { timeZone, period });
+    }
     if (lines.length < limit) continue;
     const byType = new Map();
     for (const line of lines) byType.set(line.type, (byType.get(line.type) || 0) + 1);
@@ -294,7 +304,7 @@ export function topicPromotionSweep(database, { timeZone = currentTimeZone(), th
     const id = randomUUID();
     database.prepare(`INSERT INTO topic_promotions (id,analytic_id,label,period,occurrences,threshold,payload,requested_by)
       VALUES (?,?,?,?,?,?,?,?)`)
-      .run(id, label.id, label.name, currentPeriod, lines.length, limit, JSON.stringify(payload), currentWorkspace()?.userId || null);
+      .run(id, label.id, label.name, period, lines.length, limit, JSON.stringify(payload), currentWorkspace()?.userId || null);
     audit('request', 'topic_promotion', id, { label: label.name, occurrences: lines.length, threshold: limit });
     created.push(id);
   }
@@ -323,7 +333,10 @@ export function listTopicPromotions(database, { status = '' } = {}) {
   const rows = status
     ? database.prepare(`SELECT * FROM topic_promotions ${where} ORDER BY created_at DESC LIMIT 50`).all(status)
     : database.prepare(`SELECT * FROM topic_promotions ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC LIMIT 50`).all();
-  return rows.map(hydratePromotion);
+  // پیشنهادِ در انتظار، یادگیریِ فعلیِ همان واژه را نشان می‌دهد تا تأییدکننده بداند چه عوض می‌شود.
+  const learned = database.prepare('SELECT category FROM learnings WHERE keyword=?');
+  return rows.map(hydratePromotion).map((item) => (item.status === 'pending'
+    ? { ...item, existingLearning: learned.get(normalizeTopicLabel(item.label))?.category || null } : item));
 }
 
 export function getTopicPromotion(database, id) {
@@ -337,7 +350,7 @@ export function getTopicPromotion(database, id) {
  * تراکنش** انجام می‌دهد: یا همه چیز می‌نشیند یا هیچ‌کدام. رد کردن هیچ ساختاری
  * نمی‌سازد و فقط سؤال را می‌بندد.
  */
-export function decideTopicPromotion(database, id, { decision, reason = '', categoryName = '', chartCode = '' } = {}) {
+export function decideTopicPromotion(database, id, { decision, reason = '', categoryName = '', chartCode = '', replaceLearning = false } = {}) {
   schema();
   const promotion = database.prepare('SELECT * FROM topic_promotions WHERE id=?').get(String(id || ''));
   if (!promotion) throw promotionError('درخواست ارتقا پیدا نشد.', 'TOPIC_PROMOTION_NOT_FOUND', 404);
@@ -439,16 +452,26 @@ export function decideTopicPromotion(database, id, { decision, reason = '', cate
       audit('migrate', 'topic_promotion', promotion.id, { label, lines: migrated, entries: entryIds.size });
     }
 
-    // ۵. یادگیری واژه: ثبت‌های بعدی خودشان به دستهٔ تازه می‌روند.
-    database.prepare(`INSERT INTO learnings (id,keyword,category) VALUES (?,?,?)
-      ON CONFLICT(keyword) DO UPDATE SET category=excluded.category, updated_at=CURRENT_TIMESTAMP`)
-      .run(randomUUID(), label, name);
-    audit('learn', 'learning', label, { category: name, source: 'topic-promotion' });
+    // ۵. یادگیری واژه: ثبت‌های بعدی خودشان به دستهٔ تازه می‌روند. واژه‌ای که کاربر
+    //    قبلاً به دستهٔ دیگری یاد داده، بی‌صدا بازنویسی نمی‌شود؛ فقط با «جایگزین شود».
+    const learned = database.prepare('SELECT category FROM learnings WHERE keyword=?').get(label);
+    let learning = 'created';
+    if (!learned) {
+      database.prepare('INSERT INTO learnings (id,keyword,category) VALUES (?,?,?)').run(randomUUID(), label, name);
+    } else if (learned.category === name) {
+      learning = 'unchanged';
+    } else if (replaceLearning === true) {
+      database.prepare('UPDATE learnings SET category=?, updated_at=CURRENT_TIMESTAMP WHERE keyword=?').run(name, label);
+      learning = 'replaced';
+    } else {
+      learning = 'kept';
+    }
+    if (learning !== 'kept') audit('learn', 'learning', label, { category: name, previous: learned?.category || null, source: 'topic-promotion' });
 
     database.prepare(`UPDATE topic_promotions SET status='approved',category_name=?,chart_code=?,migrated_lines=?,payload=?,
       decided_by=?,decision_reason=?,decided_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(name, chart?.code || null, migrated, JSON.stringify({ ...payload, keptLockedLines }), actor, cleanReason, promotion.id);
-    audit('approve', 'topic_promotion', promotion.id, { label, category: name, chartCode: chart?.code || null, migrated, keptLockedLines });
+      .run(name, chart?.code || null, migrated, JSON.stringify({ ...payload, keptLockedLines, learning }), actor, cleanReason, promotion.id);
+    audit('approve', 'topic_promotion', promotion.id, { label, category: name, chartCode: chart?.code || null, migrated, keptLockedLines, learning });
     database.exec('COMMIT');
   } catch (error) {
     try { database.exec('ROLLBACK'); } catch { /* تراکنش باز نبوده است. */ }
@@ -460,6 +483,24 @@ export function decideTopicPromotion(database, id, { decision, reason = '', cate
 // ---------------------------------------------------------------------------
 // برچسب‌گذاری دستی — روی تراکنش و رویدادِ در انتظار یا سندِ ثبت‌شده
 // ---------------------------------------------------------------------------
+
+function parseJson(value) {
+  try { return JSON.parse(value || '{}') || {}; } catch { return {}; }
+}
+
+/** رویدادِ مالیِ یک تراکنش، اگر لایهٔ رویداد آن را ثبت کرده باشد. */
+function eventOfTransaction(transactionId) {
+  try { return db.prepare('SELECT id,payload FROM financial_events WHERE source_event_id=?').get(`transaction:${transactionId}`) || null; }
+  catch { return null; }
+}
+
+/** تراکنشی که رویداد از آن آمده، یا null. */
+function transactionOfEvent(row) {
+  const source = parseJson(row.journalSource);
+  if (source.type === 'transaction' && source.id) return String(source.id);
+  const match = /^transaction:(.+)$/.exec(String(row.sourceEventId || ''));
+  return match ? match[1] : null;
+}
 
 /** دستهٔ پذیرفته‌شدهٔ یک برچسب — پس از ارتقا، برچسب‌زدن یعنی رفتن به همین حساب. */
 function promotedLedgerFor(database, analyticId, type) {
@@ -513,6 +554,13 @@ function labelTransaction(row, clean) {
     ORDER BY je.revision DESC LIMIT 1`).get(row.id);
   const entry = labelableEntry(db, live?.id);
   db.prepare('UPDATE transactions SET topic_label=? WHERE id=?').run(clean, row.id);
+  // رویدادِ همین تراکنش (صف حسابدار) همان برچسب را نشان می‌دهد و با همان سند می‌خورد.
+  const event = eventOfTransaction(row.id);
+  if (event) {
+    const payload = parseJson(event.payload);
+    payload.topicLabel = clean || null;
+    db.prepare('UPDATE financial_events SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(JSON.stringify(payload), event.id);
+  }
   let attached = 0;
   let migrated = 0;
   if (entry) {
@@ -542,20 +590,29 @@ function labelTransaction(row, clean) {
 export function setEventTopicLabel(eventId, label) {
   schema();
   const clean = normalizeTopicLabel(label);
-  const row = db.prepare('SELECT id,payload,journal_entry_id AS journalEntryId FROM financial_events WHERE id=?').get(String(eventId || ''));
+  const row = db.prepare(`SELECT id,payload,journal_entry_id AS journalEntryId,source_event_id AS sourceEventId,journal_source AS journalSource
+    FROM financial_events WHERE id=?`).get(String(eventId || ''));
   if (!row) throw promotionError('رویداد پیدا نشد.', 'EVENT_NOT_FOUND', 404);
   return inTransaction(db, () => {
     // سند رویدادِ برگشت‌خورده زنده نیست و دست نمی‌خورد؛ دورهٔ بسته پیش از هر نوشتنی رد می‌شود.
     const entry = labelableEntry(db, row.journalEntryId);
-    let payload = {};
-    try { payload = JSON.parse(row.payload || '{}'); } catch { payload = {}; }
+    const payload = parseJson(row.payload);
     payload.topicLabel = clean || null;
     db.prepare('UPDATE financial_events SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(JSON.stringify(payload), row.id);
+    // رویدادی که از یک تراکنش آمده: ستونِ همان تراکنش هم همین برچسب است تا ویرایش و
+    // بازیابیِ بعدی برچسبِ قبلی را زنده نکنند.
+    const transactionId = transactionOfEvent(row);
+    if (transactionId) db.prepare('UPDATE transactions SET topic_label=? WHERE id=?').run(clean, transactionId);
     let attached = 0;
     let migrated = 0;
+    if (entry) {
+      // برچسبِ قبلی، هر چه بوده، از سطرهای سند برداشته می‌شود؛ وگرنه عوض‌کردن یا
+      // برداشتنِ برچسب روی سندِ ثبت‌شده هیچ اثری نداشت.
+      db.prepare(`UPDATE journal_lines SET analytic_id=NULL WHERE entry_id=?
+        AND analytic_id IN (SELECT id FROM analytic_accounts WHERE source_kind=?)`).run(entry.id, TOPIC_SOURCE_KIND);
+    }
     if (clean && entry) {
       const analytic = topicAnalytic(db, clean);
-      db.prepare(`UPDATE journal_lines SET analytic_id=NULL WHERE analytic_id=? AND entry_id=?`).run(analytic.id, entry.id);
       const ledgerType = payload.type === 'income' ? 'income' : 'expense';
       const promoted = promotedLedgerFor(db, analytic.id, ledgerType);
       const result = attachLabelToPostedEntry(db, entry.id, analytic.id, { migrateToLedgerId: promoted, ledgerType });

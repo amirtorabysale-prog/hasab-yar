@@ -479,7 +479,7 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
 
     <RecognitionNotices notices={notices} navigate={navigate} notify={notify} onSeen={load} />
 
-    <TopicPromotionsCard notify={notify} onChanged={refresh} />
+    <TopicPromotionsCard notify={notify} onChanged={refresh} canDecide={['owner', 'manager'].includes(access?.workspace?.role)} />
 
     <UnidentifiedFundsPanel notify={notify} />
 

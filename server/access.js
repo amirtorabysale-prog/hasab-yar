@@ -14,7 +14,7 @@ export function minimumRoleForRequest(method, path) {
   // ارتقای برچسب به دسته، ساخت دسته و معین کدینگ می‌سازد و سندهای قبلی را
   // جابه‌جا می‌کند — هم‌سطح تغییر کدینگ، یعنی مدیر دفتر. دیدن پیشنهادها و
   // آمار برچسب‌ها کار حسابدار است.
-  if (normalizedPath === '/topics/threshold') return 'manager';
+  if (normalizedPath === '/topics/threshold') return ['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod) ? 'accountant' : 'manager';
   if (normalizedPath.startsWith('/topics/promotions/') && normalizedPath.endsWith('/decide')) return 'manager';
   if (normalizedPath.startsWith('/topics/')) return 'accountant';
   if (normalizedPath.startsWith('/collaboration/requests/') && normalizedPath.endsWith('/answer')) return 'manager';

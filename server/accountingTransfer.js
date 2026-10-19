@@ -167,8 +167,10 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
   // طرف حسابی که کد تفصیلی مقصد ندارد، روی معین می‌نشیند و در پارسیان گم
   // می‌شود. این بازدارنده نیست — فایل باید ساخته شود — ولی سکوت هم نباید بکند،
   // چون همان چیزی است که کاربر در پارسیان دنبالش می‌گردد و پیدا نمی‌کند.
+  // برچسب موضوعی («کلید برق») هم تفصیلی است ولی طرف حساب نیست؛ جدا گفته می‌شود تا
+  // حسابدار دنبال شخصی نگردد که وجود ندارد.
   const unmappedAnalytics = [...new Map(journalRows
-    .filter((item) => item.analyticId && !String(item.tafsiliCode ?? '').trim())
+    .filter((item) => item.analyticId && item.analyticSourceKind !== 'topic-label' && !String(item.tafsiliCode ?? '').trim())
     .map((item) => [item.analyticId, { id: item.analyticId, name: item.tafsiliName || 'طرف حساب' }])).values()];
   checks.push({
     id: 'analytic-mapping',
@@ -180,6 +182,19 @@ export function accountingTransferReadiness({ packageData = {}, journalRows = []
     severity: 'advisory',
     unmappedAnalytics: unmappedAnalytics.slice(0, 40),
   });
+  const unmappedTopics = [...new Map(journalRows
+    .filter((item) => item.analyticId && item.analyticSourceKind === 'topic-label' && !String(item.tafsiliCode ?? '').trim())
+    .map((item) => [item.analyticId, { id: item.analyticId, name: item.tafsiliName || 'برچسب موضوعی' }])).values()];
+  if (unmappedTopics.length) {
+    checks.push({
+      id: 'topic-label-mapping',
+      label: 'برچسب‌های موضوعی کد تفصیلی پارسیان ندارند و در پارسیان فقط روی معین می‌نشینند',
+      count: unmappedTopics.length,
+      passed: false,
+      severity: 'advisory',
+      unmappedAnalytics: unmappedTopics.slice(0, 40),
+    });
+  }
 
   // فایل انتقال پارسیان بدون الگو ساخته نمی‌شود، و بدون کد کل/معین روی هر ردیف
   // هم نه — چون فایل انتقال حساب نمی‌سازد و کد باید از قبل در مقصد باشد.

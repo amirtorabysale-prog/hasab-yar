@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLES } from '../shared/accountingRules.js';
 import {
-  analyticForContact, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount, topicAnalytic,
+  analyticForContact, listChartAccounts, mapLedgerAccountToChart, meaningfulTopicLabel, suggestChartAccount, topicAnalytic,
 } from './chartOfAccounts.js';
 import { counterpartyAnalyticForKey } from './chartOfAccounts.js';
 import { counterpartyAccountKey, inputTaxLedgerAccount, outputTaxLedgerAccount } from './accounting.js';
@@ -208,7 +208,7 @@ const CATEGORY_ROLES = new Set([ROLES.EXPENSE_CATEGORY, ROLES.INCOME_CATEGORY]);
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {
   // برچسب موضوعی فقط روی سطر دسته می‌نشیند؛ رویداد بدون برچسب، رفتار قبلی دارد.
-  const topicLabel = String(event.topicLabel || '').trim();
+  const topicLabel = meaningfulTopicLabel(event.topicLabel, event.category);
   if (CATEGORY_ROLES.has(role) && topicLabel) return topicAnalytic(database, topicLabel).id;
   if (!COUNTERPARTY_ROLES.has(role) && !(role===ROLES.PREPAID_ASSET && event.reviewSupplierAdvance)) return null;
   const contactId = String(event.counterpartyId || '').trim();

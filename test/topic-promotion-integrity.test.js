@@ -267,7 +267,7 @@ test('معینِ بی‌کل و رقم فارسیِ ارتقاهای پیشین 
     const analytic = topicAnalytic(raw, 'ابزار برقی');
     raw.prepare(`INSERT INTO topic_promotions (id,analytic_id,label,period,occurrences,threshold,status,chart_code,category_name)
       VALUES ('old-promotion',?,'ابزار برقی','1405-07',3,3,'approved','۸۱۹۰','ابزار برقی')`).run(analytic.id);
-    topics.listTopicPromotions(database.db);
+    topics.topicPromotionSweep(database.db);
     assert.deepEqual({ ...chartOf('ابزار برقی') }, { code: '8190', levelCode: '90', parentCode: '81', kolCode: chartOf('تعمیر و نگهداری').kolCode });
     assert.equal(topics.getTopicPromotion(raw, 'old-promotion').chartCode, '8190');
     assert.equal(chartOf('حساب دستی').parentCode, null, 'معینی که ارتقا نساخته، دست نمی‌خورد');
