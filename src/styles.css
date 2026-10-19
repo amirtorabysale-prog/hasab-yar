@@ -298,7 +298,9 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
 /* صدای واقعیِ میکروفون: هر میله ارتفاعش را از سطحِ صدا می‌گیرد، نه از حلقهٔ ساختگی. */
 .hs.hs-live .hs-bar { animation: none; transition: transform 80ms linear; }
 .hs.is-listening .hs-rec { animation: hs-blinkdot 1.2s steps(1, end) infinite; }
+/* تا مبلغی نوشته نشده چشم‌ها به کلیدها نگاه می‌کنند؛ عدد که روی LCD آمد، صورت کنار می‌رود. */
 .hs.is-typing .hs-face { transform: translate(0, .5px); }
+.hs.is-typing.hs-has-num .hs-face { opacity: 0; }
 .hs.is-typing .hs-num { opacity: 1; }
 .hs.is-typing .hs-arm-l { animation: hs-tap-l 340ms steps(1, end) infinite; }
 .hs.is-typing .hs-arm-r { animation: hs-tap-r 340ms steps(1, end) -170ms infinite; }

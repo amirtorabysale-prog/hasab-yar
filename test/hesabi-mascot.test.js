@@ -48,7 +48,11 @@ test('کامپوننت: تزئینی، مبلغ و هشدار روی LCD، مو�
     const id = idle.match(/<pattern id="([^"]+)"/)[1];
     assert.match(id, /^[a-zA-Z0-9_-]+$/);
     assert.ok(idle.includes(`url(#${id})`));
-    assert.match(renderToStaticMarkup(React.createElement(HesabiMascot, { mood: 'typing', amount: 15_000_000, typed: '۱۵ میلیون' })), /۱۵٬۰۰۰٬۰۰۰/);
+    const typing = renderToStaticMarkup(React.createElement(HesabiMascot, { mood: 'typing', amount: 15_000_000, typed: '۱۵ میلیون' }));
+    assert.match(typing, /۱۵٬۰۰۰٬۰۰۰/);
+    // دیده‌شده در Chrome: چشم‌ها روی عددِ LCD می‌افتادند. عدد که هست، صورت کنار می‌رود.
+    assert.match(typing, /class="hs is-typing hs-has-num"/);
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(HesabiMascot, { mood: 'typing', typed: 'اجاره' })), /hs-has-num/);
     assert.match(renderToStaticMarkup(React.createElement(HesabiMascot, { mood: 'worried', alert: '−۱۵٬۰۰۰٬۰۰۰' })), /−۱۵٬۰۰۰٬۰۰۰/);
     const live = renderToStaticMarkup(React.createElement(HesabiMascot, { mood: 'listening', levels: [44, 22, 11] }));
     assert.match(live, /class="hs is-listening hs-live"/);
@@ -62,6 +66,7 @@ test('حرکت‌ها: پلک‌زدن پایان دارد، hover فقط با �
   assert.match(css, /\.hs-eyes \{[^}]*animation: hs-blink 5\.4s steps\(1, end\) 6;/);
   assert.match(css, /prefers-reduced-motion: reduce\) \{\s*\.hs-svg \* \{ animation: none !important; transition: none !important; \}/);
   for (const mood of ['listening', 'typing', 'thinking', 'question', 'success', 'worried']) assert.match(css, new RegExp(`\\.hs\\.is-${mood} `));
+  assert.match(css, /\.hs\.is-typing\.hs-has-num \.hs-face \{ opacity: 0; \}/);
   const today = readFileSync(new URL('../src/features/today/TodayPage.jsx', import.meta.url), 'utf8');
   assert.match(today, /<span aria-live="polite"[^>]*>\{composerLabels\[composerState\]\[0\]\}<\/span><HesabiMascot /);
   assert.match(readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8'), /mascot=\{mascot\}/);

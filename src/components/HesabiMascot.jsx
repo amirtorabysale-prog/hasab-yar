@@ -122,7 +122,7 @@ export const HesabiMascot = memo(function HesabiMascot({ mood = 'idle', amount =
   const liveLevels = mood === 'listening' && Array.isArray(levels) && levels.length ? levels : null;
 
   return (
-    <span className={`hs is-${mood}${liveLevels ? ' hs-live' : ''}`} aria-hidden="true">
+    <span className={`hs is-${mood}${liveLevels ? ' hs-live' : ''}${mood === 'typing' && lcd ? ' hs-has-num' : ''}`} aria-hidden="true">
       <svg className="hs-svg" viewBox="-3 -11 26 39" focusable="false">
         <defs>
           <pattern id={patternId} width="1" height=".5" patternUnits="userSpaceOnUse"><rect x="0" y="0" width="1" height=".16" fill="#000" fillOpacity=".22" /></pattern>
