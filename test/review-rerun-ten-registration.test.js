@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {tempDatabase} from './helpers/tempPath.js';
 import {extractContactCandidate} from '../shared/counterpartySpeech.js';
 import {reviewNatureViolations} from '../shared/reviewNature.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 const cases=Object.fromEntries(JSON.parse(readFileSync(new URL('../docs/testing/new-ten-2026-10-06-evidence.json',import.meta.url))).cases);
 process.env.DATABASE_PATH=tempDatabase('review-rerun-ten');
 process.env.ADMIN_USERNAME='rerun-owner';process.env.ADMIN_PASSWORD=`test-${crypto.randomUUID()}`;
@@ -19,7 +20,7 @@ const row=item=>database().prepare('SELECT * FROM financial_events WHERE id=?').
 const prepared=(item,p)=>assistant.prepareReviewProposal(database(),row(item),p);
 function office(name,fn) {
   const workspace=db.createWorkspace(owner.id,{name:`بازآزمایی محلی ${name}`,profileType:'business'});
-  return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{db.installChartTemplate();return fn();});
+  return db.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },()=>{db.installChartTemplate();return fn();});
 }
 function event(id,amount,extra={}) {
   return store.recordFinancialEvent(database(),{kind:'cash-expense',amount,category:'سایر هزینه‌ها',occurredAt:'2026-10-07',evidence:cases[id],eventNature:'new',...extra},

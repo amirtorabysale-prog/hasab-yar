@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { audit, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
+import { audit, currentTimeZone, currentWorkspace, db, duplicateAllowed, invalidInput } from './core.js';
+import { duplicateError, likelyDuplicates } from '../duplicateGuard.js';
 import { automationPolicy } from './settings.js';
 import { insertTransactionRows, previewTransactions, recordUnderstoodObligation } from './transactions.js';
 import { queueUnderstoodIntake } from './reviewIntakes.js';
@@ -461,6 +462,14 @@ export function commitUnderstandingCase(id, { now } = {}) {
       touch(id, { status: STATUS_BY_ROUTE[plan.route] || 'needs-accountant' });
       db.exec('COMMIT');
       throw fail('پرونده هنوز آمادهٔ ثبت نیست.', 'UNDERSTANDING_NOT_READY', 409, { questions: plan.questions, reasons: plan.reasons });
+    }
+    // «اجاره مهر دفتر ۱۵ میلیون از سامان» دو دقیقه پس از همان اجاره از صف حسابدار، بی
+    // هیچ هشداری ثبت شد (۲۳ مهر ۱۴۰۵). هر ردیف هزینه و درآمدِ پرونده پیش از ثبت سنجیده
+    // می‌شود؛ کاربری که هشدار را دیده با «تکراری نیست» (`X-Allow-Duplicate`) رد می‌شود.
+    if (!duplicateAllowed()) {
+      const duplicates = plan.components.filter((component) => component.item && !['transfer', 'settlement', 'partner-settlement', 'obligation'].includes(component.kind))
+        .flatMap((component) => likelyDuplicates(db, component.item, { timeZone: currentTimeZone() }).map((duplicate) => ({ ...duplicate, component: component.id })));
+      if (duplicates.length) throw duplicateError(duplicates);
     }
     const results = [];
     for (const component of plan.components) {

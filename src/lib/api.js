@@ -108,6 +108,16 @@ async function reachServer(path, init) {
 let overdraftApprover = null;
 export function setOverdraftApprover(approver) { overdraftApprover = approver; }
 
+/**
+ * «شاید این ثبت تکراری باشد» — برای کارت AI، تأیید صف حسابدار و هر مسیر دیگر یک‌جا.
+ *
+ * سرور ثبتِ هم‌مبلغ و هم‌دسته در همان دوره را با `POSSIBLE_DUPLICATE` برمی‌گرداند و
+ * هیچ چیزی ثبت نکرده است. اگر کاربر بگوید «تکراری نیست»، همان درخواست با
+ * `X-Allow-Duplicate` دوباره فرستاده می‌شود. ثبت روزانه برگهٔ خودش را دارد.
+ */
+let duplicateConfirmer = null;
+export function setDuplicateConfirmer(confirmer) { duplicateConfirmer = confirmer; }
+
 async function request(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(method);
@@ -159,6 +169,11 @@ async function request(path, options = {}) {
       throw Object.assign(new Error('درخواست برای تأیید حسابدار فرستاده شد؛ پس از تأیید، از «درخواست‌های تأیید» اجرا می‌شود.'), { status: 202, code: 'APPROVAL_REQUESTED', details: body.details });
     }
     throw Object.assign(new Error('ثبت انجام نشد؛ چیزی تغییر نکرد.'), { status: 409, code: 'NEGATIVE_BALANCE_DECLINED', details: body.details });
+  }
+  if (response.status === 409 && body.code === 'POSSIBLE_DUPLICATE' && duplicateConfirmer && path !== '/api/transactions' && !options.headers?.['X-Allow-Duplicate']) {
+    const confirmed = await duplicateConfirmer({ message: body.message, duplicates: body.details?.duplicates || [] });
+    if (confirmed) return request(path, { ...options, headers: { ...options.headers, 'X-Allow-Duplicate': '1' } });
+    throw Object.assign(new Error('ثبت انجام نشد؛ چیزی تغییر نکرد.'), { status: 409, code: 'POSSIBLE_DUPLICATE_DECLINED', details: body.details });
   }
   if (!response.ok) {
     const retryAfterHeader = Number(response.headers.get('retry-after'));

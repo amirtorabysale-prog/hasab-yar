@@ -10,7 +10,8 @@ import { prepareReviewProposal, reviewConversation, reviewedEvent, originalRevie
 import { attachReviewedCheque } from './cheques.js';
 import { assertEventChangeAllowed, retireDocumentBehindEvent } from './documentEvents.js';
 import { listUnquantifiedReviews } from './reviewIntakes.js';
-import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb } from './core.js';
+import { activeWorkspaceDatabase, audit, currentTimeZone, currentWorkspace, db, controlDb, duplicateAllowed } from './core.js';
+import { duplicateError, likelyDuplicates } from '../duplicateGuard.js';
 import { answerEventQuestion, approveFinancialEvent, coverageQuestion, decisionForEvent, financialEventAudit, handOverToAccountant, listBlockedRecognition, listHeldRecognition, listRecognitionNotices, listReviewQueue, listTimingContracts, markRecognitionNoticeSeen, releaseHeldRecognition, reviewedTimingCategory, scheduleTimingBalance, unscheduledTimingBalances, postBlockedRecognitionCatchUp, recordFinancialEvent, rejectFinancialEvent, reverseFinancialEvent, reviewTimingCoverage, scheduleForEvent, postDueRecognitionItems, postReviewedComposite } from '../financialEventStore.js';
 import { isReviewSupplierAdvance } from '../../shared/reviewSupplierAdvance.js';
 import { treatmentHasPlan } from '../../shared/accountingRules.js';
@@ -312,10 +313,32 @@ export function approveEvent(eventId, { reason = '', withinTransaction = false }
       settlement_choice AS settlement FROM transactions WHERE id=?`).get(source.id);
     if (transaction) postJournal = transactionJournalPoster(transaction, settlementFor(transaction));
   }
-  const item = approveFinancialEvent(database, eventId, {
-    actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal, overrideReason: reason, withinTransaction,
-  });
-  if (source?.type === 'transaction') database.prepare('UPDATE transactions SET journal_deferred=0 WHERE id=?').run(source.id);
+  // سند و «زنده شدنِ» ردیفِ صف (`journal_deferred=0`) یک تراکنش‌اند: ماندهٔ صندوق و بانک
+  // همین ردیف را تازه از این لحظه می‌شمارد، و نگهبان مانده فقط درون BEGIN…COMMIT
+  // می‌سنجد. پیش از این، ردیف پس از COMMIT زنده می‌شد و جاری سامان بی‌تأیید منفی شد.
+  // تأییدِ دوبارهٔ رویدادِ ثبت‌شده همان نتیجه را برمی‌گرداند و هشدار تکرار نمی‌گیرد.
+  const wasPending = database.prepare('SELECT status FROM financial_events WHERE id=?').get(String(eventId || ''))?.status === 'pending';
+  const ownTransaction = !withinTransaction;
+  if (ownTransaction) database.exec('BEGIN IMMEDIATE');
+  let item;
+  try {
+    item = approveFinancialEvent(database, eventId, {
+      actor: currentWorkspace()?.userId || null, timeZone: currentTimeZone(), postJournal, overrideReason: reason, withinTransaction: true,
+    });
+    if (source?.type === 'transaction') database.prepare('UPDATE transactions SET journal_deferred=0 WHERE id=?').run(source.id);
+    // مورد صف همان هشدار «شاید تکراری» را می‌گیرد که ثبت روزانه و مسیر AI می‌گیرند — پس
+    // از سنجش‌های نقشه، تا «تکراری نیست» به خطای دیگری نرسد؛ هشدار همه‌چیز را برمی‌گرداند.
+    if (wasPending && source?.type === 'transaction' && !duplicateAllowed()) {
+      const transaction = database.prepare(`SELECT id,amount,type,category,account_id AS accountId,contact_id AS contactId,
+        occurred_at AS occurredAt FROM transactions WHERE id=?`).get(source.id);
+      const duplicates = transaction ? likelyDuplicates(database, transaction, { excludeIds: [transaction.id], timeZone: currentTimeZone() }) : [];
+      if (duplicates.length) throw duplicateError(duplicates);
+    }
+    if (ownTransaction) database.exec('COMMIT');
+  } catch (error) {
+    if (ownTransaction) { try { database.exec('ROLLBACK'); } catch { /* نگهبان خودش برگردانده است. */ } }
+    throw error;
+  }
   audit('approve', 'financial-event', eventId, { status: item.status });
   return item;
 }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 process.env.DATABASE_PATH = tempDatabase('review-assistant');
 process.env.ADMIN_USERNAME = 'review-owner';
 process.env.ADMIN_PASSWORD = `review-${crypto.randomUUID()}`;
@@ -10,7 +11,7 @@ const assistant = await import('../server/reviewAssistant.js');
 const ai = await import('../server/accountingReviewAi.js');
 db.ensureAdmin();
 const owner = db.authenticateUser(process.env.ADMIN_USERNAME,process.env.ADMIN_PASSWORD);
-const run = f=>db.runInWorkspace('primary',{role:'owner',userId:owner.id},f);
+const run = f=>db.runInWorkspace('primary', { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },f);
 const database = ()=>db.activeWorkspaceDatabase();
 const fake = proposal=>async()=>({ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(proposal)}]}]})});
 function event(text='خرید کالا با چک از شرکت نمونه',amount=40000000) {
@@ -92,7 +93,7 @@ test('DNA stays in its workspace and backup preserves conversation, context, che
   assert.ok(snapshot.tables.cheques.length>0);
   assert.ok(snapshot.tables.accounting_review_context.some(c=>JSON.parse(c.facts).dueAt));
   const workspace=db.createWorkspace(owner.id,{name:'شرکت بدون تجربه',profileType:'business'});
-  db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{
+  db.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },()=>{
     const item=event();ai.ensureReviewAiSchema(database());
     assert.equal(assistant.relevantDna(database(),database().prepare('SELECT * FROM financial_events WHERE id=?').get(item.id)).length,0);
     assert.equal(db.reviewQueue().dnaSummary.accepted,0);
@@ -396,7 +397,7 @@ test('one uniquely valued inventory line binds to its real SKU and posts stock a
 
 test('short named real banks map to bank subsidiary on transfer; no income or expense',()=>{
  const workspace=db.createWorkspace(owner.id,{name:'تست بانک کوتاه',profileType:'business'});
- return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{
+ return db.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },()=>{
   db.installChartTemplate();
   const from=db.saveAccount({name:'سامان',kind:'bank',bankId:'saman',openingBalance:1000000});
   const to=db.saveAccount({name:'پاسارگاد',kind:'bank',bankId:'pasargad'});
@@ -499,7 +500,7 @@ test('category semantics override unrelated same-type AI chart bindings',()=>run
 // وقتی معلوم نیست، یا دورهٔ بسته را عوض می‌کند، ثبت اتمی متوقف می‌شود.
 const mappingCase=(name,setup)=>{
  const workspace=db.createWorkspace(owner.id,{name,profileType:'business'});
- return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},()=>{
+ return db.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },()=>{
   db.installChartTemplate();
   const from=db.saveAccount({name:'جاری سامان',kind:'bank',bankId:'saman',openingBalance:1000000});
   const to=db.saveAccount({name:'جاری تجارت',kind:'bank',bankId:'tejarat'});
@@ -582,7 +583,7 @@ test('trade inventory purchase can be posted without a maturity; cheque maturity
 
 test('a model cannot hide a wrong courier account by renaming its expense key to wages',()=>{
  const workspace=db.createWorkspace(owner.id,{name:'تست ماهیت متن اصلی',profileType:'business'});
- return db.runInWorkspace(workspace.id,{role:'owner',userId:owner.id},async()=>{
+ return db.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT },async()=>{
   db.installChartTemplate();
   const item=store.recordFinancialEvent(database(),{kind:'cash-expense',amount:200000,accountId:'cash',occurredAt:'2026-10-04',evidence:'امروز دویست هزار تومان هزینه پیک پرداخت کردم',category:'حمل‌ونقل'}, {sourceEventId:crypto.randomUUID(),decision:{route:'accountant-review',guardBlocked:true,reasons:['بررسی لازم است']}});
   const salary=database().prepare("SELECT id FROM chart_accounts WHERE code='8101'").get();
