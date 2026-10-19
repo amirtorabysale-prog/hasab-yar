@@ -47,7 +47,7 @@ test('فقط translate، rotate و scale حرکت می‌کنند؛ نه چید�
   const properties = [...block.matchAll(/\{([^{}]*)\}/g)]
     .flatMap((match) => [...match[1].matchAll(/([a-z-]+)\s*:/g)].map((declaration) => declaration[1]));
   assert.ok(properties.length >= 15);
-  for (const name of properties) assert.ok(['translate', 'rotate', 'scale', 'transition', 'transform-origin'].includes(name), `خاصیتِ ${name}`);
+  for (const name of properties) assert.ok(['translate', 'rotate', 'scale', 'transition', 'transition-delay', 'transform-origin', 'transform-box'].includes(name), `خاصیتِ ${name}`);
   assert.doesNotMatch(css, /transition\s*:\s*all\b/);
   assert.match(block, /transition: translate \.16s var\(--ease-out\), rotate \.16s var\(--ease-out\), scale \.16s var\(--ease-out\)/);
   assert.match(css, /--ease-out: cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
@@ -64,4 +64,35 @@ test('آیکنِ وضعیت که داخل کنترل نیست تکان نمی‌
 test('فشردن دکمه کمی جمعش می‌کند، با scale جدا تا transformِ موجود دکمه نپرد', () => {
   assert.match(css, /button:not\(:disabled\):active \{ scale: \.97; \}/);
   assert.match(css, /scale \.16s var\(--ease-out\)/);
+});
+
+/** کلاسِ اصلیِ آیکن (اولین lucide-* پس از lucide)، همان که CSS باید بنویسد. */
+const canonicalClass = (Icon) => renderToStaticMarkup(createElement(Icon, { size: 18 })).match(/class="lucide (lucide-[a-z0-9-]+)/)[1];
+
+test('هر آیکنِ منوی کناری حرکتِ شکلِ خودش را دارد، نه فقط بلند شدنِ یکسانِ ۱ پیکسلی', () => {
+  // دیدهٔ مالک محصول روی سایت: «وقتی موس میره روشون اتفاق خاصی براشون نمیفته».
+  const navigation = readFileSync(new URL('../src/app/navigation.jsx', import.meta.url), 'utf8');
+  const maps = [...navigation.matchAll(/const (?:SCREEN|GROUP)_ICONS = \{([^}]*)\}/g)].map((match) => match[1]).join(',');
+  const names = [...new Set([...maps.matchAll(/:\s*([A-Z][A-Za-z0-9]+)/g)].map((match) => match[1]))];
+  assert.ok(names.length >= 12, names.join(', '));
+  const block = hoverBlock();
+  for (const name of names) {
+    const cls = canonicalClass(icons[name]);
+    const own = [...block.matchAll(/([^{}]*)\{([^}]*)\}/g)].filter(([, selector, body]) => selector.includes(':hover') && new RegExp(`\\.${cls}\\b`).test(selector) && !/translate: none;\s*$/.test(body.trim()) && body.trim() !== 'translate: none;');
+    assert.ok(own.length, `${name} (${cls}) حرکتِ مخصوص ندارد`);
+  }
+});
+
+test('تکهٔ آیکن که حرکت می‌کند واقعاً در SVGِ آن آیکن هست', () => {
+  // اگر lucide ترتیب یا تعدادِ تکه‌ها را عوض کند، nth-child بی‌صدا به هیچ می‌خورد.
+  const picks = [...hoverBlock().matchAll(/\.lucide-([a-z0-9-]+) > ([a-z]*):nth-(child|of-type)\((\d+)\)/g)];
+  assert.ok(picks.length >= 15, `قاعدهٔ تکه‌ای: ${picks.length}`);
+  for (const [, name, type, how, at] of picks) {
+    const markup = renderToStaticMarkup(createElement(icons[pascal(name)], { size: 18 }));
+    const children = [...markup.matchAll(/<(path|circle|rect|line|polyline|ellipse)\b/g)].map((match) => match[1]);
+    const index = Number(at);
+    const pool = how === 'of-type' ? children.filter((child) => child === type) : children;
+    assert.ok(pool.length >= index, `lucide-${name}: تکهٔ ${type}:nth-${how}(${at}) نیست (${children.join(',')})`);
+    if (how === 'child' && type) assert.equal(children[index - 1], type, `lucide-${name}: تکهٔ ${index} از نوع ${type} نیست`);
+  }
 });
