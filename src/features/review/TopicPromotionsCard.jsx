@@ -22,7 +22,7 @@ function PromotionCard({ promotion, notify, onDecided }) {
     try {
       const result = await api.decideTopicPromotion(promotion.id, { decision, reason: reason.trim(), categoryName: name, chartCode: code });
       notify(decision === 'approve'
-        ? `دستهٔ «${result.item.categoryName}» ساخته شد${result.item.migratedLines ? ` و ${toPersianDigits(result.item.migratedLines)} سطر قبلی منتقل شد` : ''}.`
+        ? `دستهٔ «${result.item.categoryName}» ساخته شد${result.item.migratedLines ? ` و ${toPersianDigits(result.item.migratedLines)} سطر قبلی منتقل شد` : ''}${result.item.keptLockedLines ? `؛ ${toPersianDigits(result.item.keptLockedLines)} سطر در دورهٔ بسته سر جایش ماند` : ''}.`
         : 'برچسب دسته نشد و دیگر پرسیده نمی‌شود.');
       onDecided();
     } catch (error) { notify(error.message); }
@@ -33,7 +33,7 @@ function PromotionCard({ promotion, notify, onDecided }) {
       <p className="text-[13px] font-extrabold">برچسب «{promotion.label}» این ماه <span className="numbers">{toPersianDigits(promotion.occurrences)}</span> بار ثبت شده است</p>
       <span className="rounded-full border border-accent/40 bg-surface px-2 py-0.5 text-[11px] font-bold text-accent">آستانه: <span className="numbers">{toPersianDigits(promotion.threshold)}</span></span>
     </div>
-    <p className="mt-1 text-xs leading-6 text-muted">دستهٔ مستقل بسازیم؟ با تأیید، دسته و معین کدینگ ساخته می‌شود، <b className="text-ink">{toPersianDigits(promotion.migrationCount)} سطر قبلیِ همین برچسب</b> به دستهٔ تازه منتقل می‌شود و واژه یاد گرفته می‌شود. مبالغ و توازن سندها عوض نمی‌شود.</p>
+    <p className="mt-1 text-xs leading-6 text-muted">دستهٔ مستقل بسازیم؟ با تأیید، دسته و معین کدینگ ساخته می‌شود، <b className="text-ink">{toPersianDigits(promotion.migrationCount)} سطر قبلیِ همین برچسب</b> به دستهٔ تازه منتقل می‌شود و واژه یاد گرفته می‌شود. مبالغ و توازن سندها عوض نمی‌شود.{promotion.lockedLineCount > 0 && <> <b className="text-ink">{toPersianDigits(promotion.lockedLineCount)} سطر</b> در دورهٔ بسته است و جابه‌جا نمی‌شود.</>}</p>
     {promotion.samples?.length > 0 && <ul className="mt-2 space-y-1 rounded-lg border border-line bg-surface p-2 text-[11px] leading-5 text-muted">
       {promotion.samples.map((sample) => <li key={sample.entryId} className="truncate">
         {persianDate(sample.occurredAt)} · <span className="numbers">{formatAmount(sample.amount)}</span> تومان · {sample.accountName}{sample.memo ? ` · ${sample.memo.slice(0, 40)}` : ''}
@@ -92,7 +92,7 @@ export function TopicPromotionsCard({ notify, onChanged }) {
       <summary className="cursor-pointer font-bold text-muted">تصمیم‌های قبلی (<span className="numbers">{toPersianDigits(decided.length)}</span>)</summary>
       <ul className="mt-1.5 space-y-1 text-muted">
         {decided.map((item) => <li key={item.id}>
-          «{item.label}» → {item.status === 'approved' ? <>دستهٔ «{item.categoryName}» (کد <span className="numbers">{item.chartCode}</span>{item.migratedLines ? `، ${toPersianDigits(item.migratedLines)} سطر منتقل شد` : ''})</> : 'دسته نشد'}
+          «{item.label}» → {item.status === 'approved' ? <>دستهٔ «{item.categoryName}» ({item.chartCode ? <>کد <span className="numbers">{item.chartCode}</span></> : 'بی‌معین؛ کدینگ هنوز نصب نیست'}{item.migratedLines ? `، ${toPersianDigits(item.migratedLines)} سطر منتقل شد` : ''})</> : 'دسته نشد'}
           {item.decisionReason ? ` — ${item.decisionReason}` : ''}
         </li>)}
       </ul>

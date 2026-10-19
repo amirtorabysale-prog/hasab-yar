@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { db, audit, currentWorkspace, invalidInput, currentTimeZone } from './db/core.js';
-import { periodForDate, categoryLedgerAccount } from './accounting.js';
+import { assertAccountingPeriodOpen, periodForDate, categoryLedgerAccount } from './accounting.js';
 import {
-  TOPIC_SOURCE_KIND, normalizeTopicLabel, topicAnalytic, listChartAccounts, mapLedgerAccountToChart,
+  TOPIC_SOURCE_KIND, backfillLevelCodes, chartCodeIsValid, listChartAccounts, mapLedgerAccountToChart, normalizeChartCode,
+  normalizeTopicLabel, saveChartAccount, suggestChartAccount, topicAnalytic,
 } from './chartOfAccounts.js';
 
 /**
@@ -55,7 +56,144 @@ function promotionError(message, code = 'TOPIC_PROMOTION_INVALID', status = 400)
   return Object.assign(new Error(message), { code, status });
 }
 
-const schema = () => ensureTopicPromotionSchema(db);
+const schema = () => { ensureTopicPromotionSchema(db); repairPromotionChartAccounts(db); };
+
+// سندی که سند معکوس دارد زنده نیست: حذف یا ویرایشِ ثبت، سند قبلی را با معکوسش
+// خنثی می‌کند و هر دو در دفتر می‌مانند. شمردنِ سند اصلی، برچسبِ حذف‌شده را به
+// آستانه می‌رساند؛ و جابه‌جاکردنش بی معکوسش، دستهٔ قدیمی را منفی و دستهٔ تازه را
+// بزرگ‌تر از واقع می‌کرد (سه «کلید برق»، یکی حذف‌شده: «تعمیرات» منفی یک میلیون).
+const LIVE_ENTRY = `je.entry_kind='normal' AND NOT EXISTS (SELECT 1 FROM journal_entries rev WHERE rev.reverses_entry_id=je.id)`;
+
+/** دوره‌های بسته. سندِ دورهٔ بسته با ارتقا یا برچسب عوض نمی‌شود، مثل هر اصلاح دیگری. */
+function lockedPeriods(database) {
+  try {
+    return new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'").all().map((row) => row.period));
+  } catch { return new Set(); }
+}
+
+function chartInstalled(database) {
+  try { return Number(database.prepare('SELECT COUNT(*) AS n FROM chart_accounts').get()?.n) > 0; } catch { return false; }
+}
+
+/**
+ * حساب کلِ معینِ تازه.
+ *
+ * معینِ بی‌کل در کدینگ یتیم است و فایل انتقال پارسیان کد کلش را ندارد؛ خروجی با
+ * «هر حساب کد کل و معین عددی دارد» می‌ایستاد. کل به این ترتیب پیدا می‌شود: کلی
+ * که کدِ واردشده زیرش است؛ کلِ معینِ دسته‌هایی که ثبت‌های همین برچسب امروز روی
+ * آن‌اند؛ کلِ بقیهٔ دسته‌های هم‌نوع؛ و اگر کدینگ فقط یک کلِ هم‌نوع دارد، همان.
+ */
+function promotionChartParent(database, type, { sourceAccountIds = [], code = '' } = {}) {
+  const generals = database.prepare(`SELECT id, code FROM chart_accounts WHERE level='general' AND type=? AND active=1`).all(type);
+  if (code) {
+    const byPrefix = generals.filter((row) => code.startsWith(row.code) && code.length > row.code.length)
+      .sort((left, right) => right.code.length - left.code.length)[0];
+    if (byPrefix) return byPrefix;
+  }
+  const generalByCode = new Map(generals.map((row) => [row.code, row]));
+  const mostCommon = (parents) => {
+    const counts = new Map();
+    for (const parent of parents.filter(Boolean)) counts.set(parent.id, { ...parent, uses: (counts.get(parent.id)?.uses || 0) + 1 });
+    const [best] = [...counts.values()].sort((left, right) => right.uses - left.uses);
+    return best ? { id: best.id, code: best.code } : null;
+  };
+  const mappedParent = database.prepare(`SELECT parent.code FROM ledger_accounts la
+    JOIN chart_accounts ca ON ca.id=la.chart_account_id
+    JOIN chart_accounts parent ON parent.id=ca.parent_id
+    WHERE la.id=?`);
+  const mapped = (accountIds) => mostCommon(accountIds.map((accountId) => generalByCode.get(mappedParent.get(accountId)?.code)));
+  // حسابِ دستهٔ مبدأ هنوز نگاشت نشده (دستهٔ تازه با اولین ثبتش حساب می‌گیرد):
+  // کلِ همان معینی که پیشنهاددهندهٔ نگاشت برایش می‌گوید.
+  const chartAccounts = listChartAccounts(database);
+  const ledgerOf = database.prepare('SELECT name, type, source_kind AS sourceKind, source_key AS sourceKey FROM ledger_accounts WHERE id=?');
+  const suggested = (accountIds) => mostCommon(accountIds.map((accountId) => {
+    const ledger = ledgerOf.get(accountId);
+    return ledger ? generalByCode.get(suggestChartAccount(ledger, chartAccounts)?.parentCode) : null;
+  }));
+  const categoryAccounts = database.prepare('SELECT id FROM ledger_accounts WHERE source_kind=?').all(`${type}-category`).map((row) => row.id);
+  return mapped(sourceAccountIds) || suggested(sourceAccountIds) || mapped(categoryAccounts)
+    || (generals.length === 1 ? generals[0] : null);
+}
+
+/** کد معین پیشنهادی: معینِ آزادِ بعدیِ همان کل، هم‌طولِ معین‌های دیگرش. */
+function suggestedChartCode(database, parent) {
+  if (!parent) return null;
+  const siblings = database.prepare(`SELECT code FROM chart_accounts WHERE parent_id=? AND level='subsidiary'`).all(parent.id)
+    .map((row) => row.code).filter((code) => /^\d+$/.test(code) && code.startsWith(parent.code) && code.length > parent.code.length);
+  const width = siblings.length ? Math.max(...siblings.map((code) => code.length)) : parent.code.length + 2;
+  const digits = width - parent.code.length;
+  const used = siblings.filter((code) => code.length === width).map((code) => Number(code.slice(parent.code.length)));
+  const taken = database.prepare('SELECT 1 FROM chart_accounts WHERE code=?');
+  for (let next = (used.length ? Math.max(...used) : 0) + 1; String(next).length <= digits; next += 1) {
+    const code = parent.code + String(next).padStart(digits, '0');
+    if (!taken.get(code)) return code;
+  }
+  return null;
+}
+
+/** معین را زیر کلش می‌نشاند؛ کد سطح از نو از تفاضل کد معین و کد کل ساخته می‌شود. */
+function attachChartParent(database, chartId, parent) {
+  database.prepare(`UPDATE chart_accounts SET parent_id=?, level_code='' WHERE id=?`).run(parent.id, chartId);
+  backfillLevelCodes(database);
+}
+
+/**
+ * معین‌هایی که ارتقاهای پیش از این اصلاح ساختند — بی‌کل یا با کدِ ارقام فارسی —
+ * یک بار سر جایشان می‌نشینند. فقط حسابی دست می‌خورد که کدش در یک ارتقای
+ * تأییدشده ثبت است؛ کدینگِ خودِ دفتر نه. اجرای دوباره کاری نمی‌کند.
+ */
+export function repairPromotionChartAccounts(database) {
+  let rows = [];
+  try {
+    rows = database.prepare(`SELECT tp.id AS promotionId, ca.id, ca.code, ca.type, ca.parent_id AS parentId
+      FROM topic_promotions tp JOIN chart_accounts ca ON ca.code=tp.chart_code
+      WHERE tp.status='approved' AND ca.level='subsidiary'`).all();
+  } catch { return 0; }
+  let repaired = 0;
+  for (const row of rows) {
+    let code = row.code;
+    const latin = normalizeChartCode(row.code);
+    if (latin !== row.code && chartCodeIsValid(latin) && !database.prepare('SELECT 1 FROM chart_accounts WHERE code=?').get(latin)) {
+      database.prepare(`UPDATE chart_accounts SET code=?, level_code='' WHERE id=?`).run(latin, row.id);
+      database.prepare('UPDATE topic_promotions SET chart_code=? WHERE id=?').run(latin, row.promotionId);
+      code = latin;
+      repaired += 1;
+    }
+    if (!row.parentId && /^\d+$/.test(code)) {
+      const parent = promotionChartParent(database, row.type, { code });
+      if (parent) { attachChartParent(database, row.id, parent); repaired += 1; }
+    }
+  }
+  if (repaired) {
+    backfillLevelCodes(database);
+    audit('repair', 'topic_promotion', 'chart-accounts', { repaired });
+  }
+  return repaired;
+}
+
+/**
+ * سندِ ثبت‌شده‌ای که برچسب دستی رویش می‌نشیند: فقط سند زنده و فقط در دورهٔ باز.
+ * برچسب یا انتقالِ سندِ معکوس‌شده، بی معکوسش، دسته‌ها را کج می‌کرد؛ و سندِ دورهٔ
+ * بسته با برچسب هم عوض نمی‌شود.
+ */
+function labelableEntry(database, entryId) {
+  if (!entryId) return null;
+  const entry = database.prepare(`SELECT je.id, je.occurred_at AS occurredAt FROM journal_entries je WHERE je.id=? AND ${LIVE_ENTRY}`).get(entryId);
+  if (entry) assertAccountingPeriodOpen(database, periodForDate(entry.occurredAt, currentTimeZone()));
+  return entry || null;
+}
+
+function inTransaction(database, work) {
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const result = work();
+    database.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try { database.exec('ROLLBACK'); } catch { /* تراکنش باز نبوده است. */ }
+    throw error;
+  }
+}
 
 /** آستانهٔ ارتقا: چند تکرار برچسب در یک ماه، پیشنهاد دستهٔ مستقل بسازد. */
 export function topicPromotionThreshold(database) {
@@ -80,7 +218,7 @@ export function topicLabelStats(database, { timeZone = currentTimeZone() } = {})
   const labels = database.prepare(`SELECT id,code,name FROM analytic_accounts WHERE source_kind=? AND active=1 ORDER BY name`).all(TOPIC_SOURCE_KIND);
   const rows = database.prepare(`SELECT jl.analytic_id AS analyticId, je.occurred_at AS occurredAt
     FROM journal_lines jl
-    JOIN journal_entries je ON je.id=jl.entry_id AND je.entry_kind='normal'
+    JOIN journal_entries je ON je.id=jl.entry_id AND ${LIVE_ENTRY}
     JOIN analytic_accounts aa ON aa.id=jl.analytic_id
     WHERE aa.source_kind=?`).all(TOPIC_SOURCE_KIND);
   const countBy = new Map();
@@ -105,28 +243,11 @@ function labeledLines(database, analyticId, { timeZone, period }) {
       la.id AS accountId, la.type, la.source_kind AS sourceKind, la.name AS accountName,
       je.occurred_at AS occurredAt, je.memo
     FROM journal_lines jl
-    JOIN journal_entries je ON je.id=jl.entry_id AND je.entry_kind='normal'
+    JOIN journal_entries je ON je.id=jl.entry_id AND ${LIVE_ENTRY}
     JOIN ledger_accounts la ON la.id=jl.account_id
     WHERE jl.analytic_id=?`).all(analyticId)
     .map((row) => ({ ...row, period: periodForDate(row.occurredAt, timeZone) }))
     .filter((row) => !period || row.period === period);
-}
-
-/** کد معین پیشنهادی: ادامهٔ همان محدودهٔ کدینگ که دسته‌های هم‌نوع در آن‌اند.
- *
- * وقتی کدینگ هنوز نصب نیست، از سقفِ کدینگ پیشنهادی خود اپ شروع می‌شود (۸۱۲۰
- * هزینه، ۶۲۰۳ درآمد) تا نصبِ بعدیِ قالب، با کدِ دستهٔ تازه برخورد نکند.
- */
-const TEMPLATE_LAST_SUBSIDIARY = Object.freeze({ expense: 8120, income: 6203 });
-
-function suggestedChartCode(database, type) {
-  const range = type === 'income' ? [6100, 6300] : [8100, 8200];
-  const used = listChartAccounts(database)
-    .filter((item) => item.level === 'subsidiary' && Number(item.code) >= range[0] && Number(item.code) < range[1])
-    .map((item) => Number(item.code));
-  let code = Math.max(used.length ? Math.max(...used) + 1 : range[0] + 1, TEMPLATE_LAST_SUBSIDIARY[type] + 1);
-  while (used.includes(code)) code += 1;
-  return code <= range[1] ? String(code) : null;
 }
 
 /**
@@ -158,9 +279,15 @@ export function topicPromotionSweep(database, { timeZone = currentTimeZone(), th
       const line = lines.find((item) => item.entryId === entryId);
       return { entryId, occurredAt: line.occurredAt, amount: Math.max(line.debit, line.credit), memo: line.memo, accountName: line.accountName };
     });
+    // سطرِ دورهٔ بسته در پیشنهاد می‌ماند ولی جابه‌جا نمی‌شود؛ عددِ کارت همان را می‌گوید.
+    const locked = lockedPeriods(database);
+    const lockedLineCount = candidates.filter((line) => locked.has(line.period)).length;
+    const parent = chartInstalled(database)
+      ? promotionChartParent(database, type, { sourceAccountIds: candidates.map((line) => line.accountId) }) : null;
     const payload = {
-      type, suggestedCode: suggestedChartCode(database, type),
-      migrationCount: candidates.length,
+      type, suggestedCode: suggestedChartCode(database, parent),
+      migrationCount: candidates.length - lockedLineCount,
+      lockedLineCount,
       migrationLineIds: candidates.map((line) => line.lineId),
       samples,
     };
@@ -232,9 +359,26 @@ export function decideTopicPromotion(database, id, { decision, reason = '', cate
   const label = normalizeTopicLabel(promotion.label);
   const name = normalizeTopicLabel(categoryName) || label;
   if (!name) throw invalidInput('نام دسته خالی است.');
+  // «۸۱۵۵» و «81-55» همان 8155 است؛ کدِ ارقام فارسی در کدینگ می‌نشست و پارسیان نمی‌پذیرفتش.
+  const requestedCode = normalizeChartCode(chartCode);
+  if (requestedCode && !chartCodeIsValid(requestedCode)) throw invalidInput('کد معین فقط رقم است (حداکثر ۱۲ رقم).');
+  const timeZone = currentTimeZone();
 
   database.exec('BEGIN IMMEDIATE');
   try {
+    // ۰. سطرهای پیشنهاد، همین حالا دوباره سنجیده می‌شوند: سندی که از گشت تا تصمیم
+    //    معکوس شده یا دوره‌اش بسته شده، جابه‌جا نمی‌شود.
+    const lineOf = database.prepare(`SELECT jl.id, jl.account_id AS accountId, la.source_kind AS sourceKind, je.occurred_at AS occurredAt
+      FROM journal_lines jl
+      JOIN ledger_accounts la ON la.id=jl.account_id
+      JOIN journal_entries je ON je.id=jl.entry_id AND ${LIVE_ENTRY}
+      WHERE jl.id=?`);
+    const liveLines = (payload.migrationLineIds || []).map((lineId) => lineOf.get(lineId))
+      .filter((line) => line && line.sourceKind === `${type}-category`);
+    const locked = lockedPeriods(database);
+    const isLocked = (line) => locked.has(periodForDate(line.occurredAt, timeZone));
+    const keptLockedLines = liveLines.filter(isLocked).length;
+
     // ۱. دستهٔ جدید — یا همان که از قبل بوده.
     let category = database.prepare('SELECT id,name FROM categories WHERE name=?').get(name);
     if (!category) {
@@ -244,33 +388,37 @@ export function decideTopicPromotion(database, id, { decision, reason = '', cate
       category = { id: categoryId, name };
     }
 
-    // ۲. معینِ کدینگ: ادامهٔ همان محدوده که دسته‌های هم‌نوع در آن‌اند.
+    // ۲. معینِ کدینگ، زیرِ کلِ درست. کدینگِ نصب‌نشده یعنی معینی ساخته نمی‌شود و
+    //    نگاشت با نصب کدینگ انجام می‌شود؛ معینِ بی‌کل خروجی پارسیان را می‌بست.
     let chart = null;
-    const requestedCode = String(chartCode || payload.suggestedCode || '').trim();
-    const code = requestedCode || suggestedChartCode(database, type);
-    if (!code) throw promotionError('کد معین آزادی در این محدوده پیدا نشد؛ کد را دستی وارد کن.', 'TOPIC_CHART_CODE_EXHAUSTED', 409);
-    chart = database.prepare('SELECT id,code FROM chart_accounts WHERE code=?').get(code);
-    if (!chart) {
-      const chartId = randomUUID();
-      database.prepare(`INSERT INTO chart_accounts (id,code,name,level,type,normal_side,role,level_code,active,source)
-        VALUES (?,?,?,'subsidiary',?,?,'',?,1,'manual')`)
-        .run(chartId, code, name, type, type === 'income' ? 'credit' : 'debit', code);
-      chart = { id: chartId, code };
-    } else if (normalizeTopicLabel(database.prepare('SELECT name FROM chart_accounts WHERE id=?').get(chart.id)?.name) !== name) {
-      throw promotionError(`کد «${code}» به حساب دیگری تعلق دارد؛ کد دیگری انتخاب کن.`, 'TOPIC_CHART_CODE_TAKEN', 409);
+    if (chartInstalled(database)) {
+      const parent = promotionChartParent(database, type, { sourceAccountIds: liveLines.map((line) => line.accountId), code: requestedCode });
+      const code = requestedCode || suggestedChartCode(database, parent);
+      if (!code) {
+        throw parent
+          ? promotionError('زیرِ این حساب کل کد معین آزادی نماند؛ کد را دستی وارد کن.', 'TOPIC_CHART_CODE_EXHAUSTED', 409)
+          : promotionError('حساب کلِ این دسته در کدینگ معلوم نیست؛ کد معینی زیرِ یکی از حساب‌های کلِ هم‌نوع وارد کن.', 'TOPIC_CHART_PARENT_MISSING', 409);
+      }
+      const existing = database.prepare('SELECT id,code,name,parent_id AS parentId FROM chart_accounts WHERE code=?').get(code);
+      if (existing) {
+        if (normalizeTopicLabel(existing.name) !== name) throw promotionError(`کد «${code}» به حساب دیگری تعلق دارد؛ کد دیگری انتخاب کن.`, 'TOPIC_CHART_CODE_TAKEN', 409);
+        if (!existing.parentId && parent) attachChartParent(database, existing.id, parent);
+        chart = existing;
+      } else {
+        if (!parent) throw promotionError('حساب کلِ این کد در کدینگ نیست؛ کدی زیرِ یکی از حساب‌های کلِ هم‌نوع وارد کن.', 'TOPIC_CHART_PARENT_MISSING', 409);
+        chart = saveChartAccount(database, { code, name, level: 'subsidiary', type, parentCode: parent.code });
+        backfillLevelCodes(database);
+      }
     }
 
     // ۳. حساب دفتر کل دستهٔ جدید و اتصالش به کدینگ.
     const ledgerId = categoryLedgerAccount(database, type, name);
     const ledger = database.prepare('SELECT id,chart_account_id FROM ledger_accounts WHERE id=?').get(ledgerId);
-    if (!ledger.chart_account_id) mapLedgerAccountToChart(database, ledgerId, chart.id);
+    if (chart && !ledger.chart_account_id) mapLedgerAccountToChart(database, ledgerId, chart.id);
 
-    // ۴. انتقال ثبت‌های قبلی: فقط سطرهایِ دسته؛ تسویهٔ طرف حساب و دارایی دست
-    //    نمی‌خورد. مبلغ و توازن هیچ سندی عوض نمی‌شود، فقط صاحبِ سطر.
-    const candidates = (payload.migrationLineIds || [])
-      .map((lineId) => database.prepare(`SELECT jl.id, jl.account_id, la.source_kind AS sourceKind, la.type
-        FROM journal_lines jl JOIN ledger_accounts la ON la.id=jl.account_id WHERE jl.id=?`).get(lineId))
-      .filter((line) => line && line.sourceKind === `${type}-category` && line.account_id !== ledgerId);
+    // ۴. انتقال ثبت‌های قبلی: فقط سطرهایِ دسته، از سند زنده و دورهٔ باز؛ تسویهٔ
+    //    طرف حساب و دارایی دست نمی‌خورد. مبلغ و توازن هیچ سندی عوض نمی‌شود.
+    const candidates = liveLines.filter((line) => line.accountId !== ledgerId && !isLocked(line));
     let migrated = 0;
     const movedLineIds = candidates.map((line) => line.id);
     if (movedLineIds.length) {
@@ -297,10 +445,10 @@ export function decideTopicPromotion(database, id, { decision, reason = '', cate
       .run(randomUUID(), label, name);
     audit('learn', 'learning', label, { category: name, source: 'topic-promotion' });
 
-    database.prepare(`UPDATE topic_promotions SET status='approved',category_name=?,chart_code=?,migrated_lines=?,
+    database.prepare(`UPDATE topic_promotions SET status='approved',category_name=?,chart_code=?,migrated_lines=?,payload=?,
       decided_by=?,decision_reason=?,decided_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .run(name, chart.code, migrated, actor, cleanReason, promotion.id);
-    audit('approve', 'topic_promotion', promotion.id, { label, category: name, chartCode: chart.code, migrated });
+      .run(name, chart?.code || null, migrated, JSON.stringify({ ...payload, keptLockedLines }), actor, cleanReason, promotion.id);
+    audit('approve', 'topic_promotion', promotion.id, { label, category: name, chartCode: chart?.code || null, migrated, keptLockedLines });
     database.exec('COMMIT');
   } catch (error) {
     try { database.exec('ROLLBACK'); } catch { /* تراکنش باز نبوده است. */ }
@@ -356,11 +504,17 @@ export function setTransactionTopicLabel(transactionId, label) {
   const clean = normalizeTopicLabel(label);
   const row = db.prepare('SELECT id,topic_label AS previous FROM transactions WHERE id=?').get(String(transactionId || ''));
   if (!row) throw promotionError('تراکنش پیدا نشد.', 'TRANSACTION_NOT_FOUND', 404);
+  return inTransaction(db, () => labelTransaction(row, clean));
+}
+
+function labelTransaction(row, clean) {
+  // سندِ زندهٔ همین تراکنش؛ دورهٔ بسته پیش از هر نوشتنی رد می‌شود.
+  const live = db.prepare(`SELECT je.id FROM journal_entries je WHERE je.source_type='transaction' AND je.source_id=? AND ${LIVE_ENTRY}
+    ORDER BY je.revision DESC LIMIT 1`).get(row.id);
+  const entry = labelableEntry(db, live?.id);
   db.prepare('UPDATE transactions SET topic_label=? WHERE id=?').run(clean, row.id);
   let attached = 0;
   let migrated = 0;
-  const entry = db.prepare(`SELECT id FROM journal_entries WHERE source_type='transaction' AND source_id=? AND entry_kind='normal'
-    ORDER BY revision DESC LIMIT 1`).get(row.id);
   if (entry) {
     // سندِ فعالِ همین تراکنش؛ تاریخچهٔ نسخه‌های پیشین دست نمی‌خورد.
     db.prepare(`UPDATE journal_lines SET analytic_id=NULL WHERE analytic_id IS NOT NULL
@@ -390,21 +544,25 @@ export function setEventTopicLabel(eventId, label) {
   const clean = normalizeTopicLabel(label);
   const row = db.prepare('SELECT id,payload,journal_entry_id AS journalEntryId FROM financial_events WHERE id=?').get(String(eventId || ''));
   if (!row) throw promotionError('رویداد پیدا نشد.', 'EVENT_NOT_FOUND', 404);
-  let payload = {};
-  try { payload = JSON.parse(row.payload || '{}'); } catch { payload = {}; }
-  payload.topicLabel = clean || null;
-  db.prepare('UPDATE financial_events SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(JSON.stringify(payload), row.id);
-  let attached = 0;
-  let migrated = 0;
-  if (clean && row.journalEntryId) {
-    const analytic = topicAnalytic(db, clean);
-    db.prepare(`UPDATE journal_lines SET analytic_id=NULL WHERE analytic_id=? AND entry_id=?`).run(analytic.id, row.journalEntryId);
-    const ledgerType = payload.type === 'income' ? 'income' : 'expense';
-    const promoted = promotedLedgerFor(db, analytic.id, ledgerType);
-    const result = attachLabelToPostedEntry(db, row.journalEntryId, analytic.id, { migrateToLedgerId: promoted, ledgerType });
-    attached = result.attached;
-    migrated = result.migrated;
-  }
-  audit('label', 'financial-event', row.id, { label: clean, attachedToPosted: attached > 0, migrated });
-  return { id: row.id, topicLabel: clean, attachedToPostedLines: attached, migratedLines: migrated };
+  return inTransaction(db, () => {
+    // سند رویدادِ برگشت‌خورده زنده نیست و دست نمی‌خورد؛ دورهٔ بسته پیش از هر نوشتنی رد می‌شود.
+    const entry = labelableEntry(db, row.journalEntryId);
+    let payload = {};
+    try { payload = JSON.parse(row.payload || '{}'); } catch { payload = {}; }
+    payload.topicLabel = clean || null;
+    db.prepare('UPDATE financial_events SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(JSON.stringify(payload), row.id);
+    let attached = 0;
+    let migrated = 0;
+    if (clean && entry) {
+      const analytic = topicAnalytic(db, clean);
+      db.prepare(`UPDATE journal_lines SET analytic_id=NULL WHERE analytic_id=? AND entry_id=?`).run(analytic.id, entry.id);
+      const ledgerType = payload.type === 'income' ? 'income' : 'expense';
+      const promoted = promotedLedgerFor(db, analytic.id, ledgerType);
+      const result = attachLabelToPostedEntry(db, entry.id, analytic.id, { migrateToLedgerId: promoted, ledgerType });
+      attached = result.attached;
+      migrated = result.migrated;
+    }
+    audit('label', 'financial-event', row.id, { label: clean, attachedToPosted: attached > 0, migrated });
+    return { id: row.id, topicLabel: clean, attachedToPostedLines: attached, migratedLines: migrated };
+  });
 }
