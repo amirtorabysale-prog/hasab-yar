@@ -296,13 +296,12 @@ function trendShape(rows, currentFiscalMonth) {
   const lastExpense = expense.find(([month]) => month === lastMonth)?.[1] || 0;
   return {
     id: 'trend',
-    title: 'روند درآمد',
+    label: 'روند درآمد',
     value: direction,
-    evidence: direction === 'ثابت'
+    detail: direction === 'ثابت'
       ? `میانگین درآمد ماهانه در ${income.length} ماه کامل تقریباً ثابت مانده (تغییر ${Math.abs(changePercent)}٪).`
       : `میانگین درآمد ماهانه ${Math.abs(changePercent)}٪ ${changePercent > 0 ? 'بالاتر' : 'پایین‌تر'} از نیمهٔ اول همین بازه است.`,
-    sample: income.length,
-    detail: { months: income.length, changePercent, lastMonth, lastIncome, lastExpense, lastMargin: lastIncome - lastExpense },
+    evidence: { sample: income.length, months: income.length, changePercent, lastMonth, lastIncome, lastExpense, lastMargin: lastIncome - lastExpense },
   };
 }
 
@@ -338,12 +337,11 @@ function cashPressure(rows, obligations, now) {
   const overdue = due.filter((item) => item.dueAt.getTime() < now.getTime());
   return {
     id: 'cash-pressure',
-    title: 'فشار پرداخت سی روز آینده',
+    label: 'فشار پرداخت سی روز آینده',
     value: level,
-    evidence: `${due.length} تعهد پرداختنی تا سی روز آینده سررسید دارد و جمعشان ${Math.round(ratio * 100)}٪ درآمد معمول یک ماه این پرونده است.`
+    detail: `${due.length} تعهد پرداختنی تا سی روز آینده سررسید دارد و جمعشان ${Math.round(ratio * 100)}٪ درآمد معمول یک ماه این پرونده است.`
       + (overdue.length ? ` ${overdue.length} مورد از سررسید گذشته است.` : ''),
-    sample: due.length,
-    detail: { payable, typicalIncome, ratio: Math.round(ratio * 100) / 100, overdueCount: overdue.length },
+    evidence: { sample: due.length, payable, typicalIncome, ratio: Math.round(ratio * 100) / 100, overdueCount: overdue.length },
   };
 }
 
@@ -380,11 +378,10 @@ function monthOutliers(rows, currentFiscalMonth, fiscalDayOfMonth) {
   const top = findings[0];
   return {
     id: 'month-outlier',
-    title: 'دستهٔ خارج از عادت این ماه',
+    label: 'دستهٔ خارج از عادت این ماه',
     value: top.category,
-    evidence: `هزینهٔ «${top.category}» این ماه ${top.ratio >= 1 ? `${top.ratio} برابر` : `${Math.round(top.ratio * 100)}٪`} معمول ماهانهٔ خودش در این پرونده است.`,
-    sample: findings.length,
-    detail: { findings: findings.slice(0, 5) },
+    detail: `هزینهٔ «${top.category}» این ماه ${top.ratio >= 1 ? `${top.ratio} برابر` : `${Math.round(top.ratio * 100)}٪`} معمول ماهانهٔ خودش در این پرونده است.`,
+    evidence: { sample: findings.length, findings: findings.slice(0, 5) },
   };
 }
 
