@@ -25,6 +25,18 @@ import { openDocumentsFor } from './counterpartyCard.js';
 import { vatGuardContext } from '../tax.js';
 import { checkConfirmationAnswer, confirmationAsk, confirmationHint } from '../confirmationAnswer.js';
 import { ensureReviewAiSchema, latestReviewProposal, proposeReview, proposalIsCurrent, recordReviewFeedback } from '../accountingReviewAi.js';
+import { recordAccountantLesson } from './aiLessons.js';
+
+/**
+ * آنچه حسابدار در صف تأیید کرد به یادگیری پارسر می‌رود (server/db/aiLessons.js): درسِ دسته همان
+ * لحظه، اختلاف ساختاری برای بازبینی. پس از COMMIT صدا زده می‌شود و شکستش سند را برنمی‌گرداند.
+ */
+function learnFromAccountant(database, row, lines) {
+  try {
+    const event = JSON.parse(row?.payload || '{}');
+    recordAccountantLesson({ eventId: row.id, transcript: originalReviewTranscript(database, row), lines: lines || [], topicLabel: event.topicLabel || null });
+  } catch (error) { console.warn('[ai-lessons]', error?.message || error); }
+}
 
 // ---------------------------------------------------------------------------
 // رویدادهای مالی و صف بررسی
@@ -144,6 +156,7 @@ export function reviewAiFeedback(eventId, proposalId, { accepted = false, reason
         recordReviewFeedback(database,eventId,proposal.id,{state:'accepted',reason:proposal.explanation,actor});
         addReviewMessage(database,eventId,'accepted',`تأیید سند ${item.journalEntryId}`,actor);
         database.exec('COMMIT');
+        learnFromAccountant(database, fresh, (() => { try { return JSON.parse(fresh.posting_plan || '{}').lines; } catch { return []; } })());
         return {item};
       } catch(error) {database.exec('ROLLBACK');throw error;}
     }
@@ -204,6 +217,7 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
     });
     database.exec('COMMIT');
     audit('reviewed-composite', 'financial-event', eventId, { journalEntryId: item.journalEntryId, proposalId: proposal?.id || null, aiAccepted: Boolean(proposal && aiAccepted) });
+    learnFromAccountant(database, row, lines);
     return { item };
   } catch (error) { database.exec('ROLLBACK'); throw error; }
 }
@@ -579,6 +593,7 @@ function acceptPreparedProposal(database,row,proposal,actor) {
     addReviewMessage(database,row.id,'accepted',`سند ${item.journalEntryId} — ${proposal.summary}`,actor);
     database.exec('COMMIT');
     audit('accept-ai-proposal','financial-event',row.id,{proposalId:proposal.id,journalEntryId:item.journalEntryId,dnaEvidence:proposal.dnaEvidence?.map(d=>d.id) || []});
+    learnFromAccountant(database, fresh, final.lines);
     return {item};
   } catch(error) {database.exec('ROLLBACK');throw error;}
 }

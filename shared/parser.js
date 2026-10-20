@@ -1028,15 +1028,16 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
   let directionUnclear = false;
   // نگاشت تأییدشدهٔ کاربر از هر قاعده‌ای قوی‌تر است: او یک‌بار همین را اصلاح
   // کرده و نباید دوباره از او پرسیده شود.
-  // نگاشتی که از ثبت‌های تأییدشدهٔ AI یاد گرفته شده فقط دسته را عوض می‌کند، هرگز
+  // نگاشتی که از ثبت‌های تأییدشدهٔ AI یا تأییدِ حسابدار یاد گرفته شده فقط دسته را عوض می‌کند، هرگز
   // جهت پول را: اگر دسته‌اش با جهتی که فعل و نقش‌های همین جمله نشان داده‌اند نخواند،
   // کنار می‌رود. «کلید برق ← تعمیر و نگهداری» نباید «کلید برق اضافه رو فروختیم» را هزینه کند.
   const learnedType = learned && CATEGORY_DEFINITIONS.find((definition) => definition.name === learned.category)?.type;
-  const usable = learned && !(learned.source === 'ai' && learnedType && learnedType !== type) ? learned : null;
+  const usable = learned && !(['ai', 'accountant'].includes(learned.source) && learnedType && learnedType !== type) ? learned : null;
   let category = usable?.category;
   let categoryConfidence = 0.98;
   let categoryReason = !usable ? ''
     : usable.source === 'ai' ? `بر اساس آنچه از ثبت‌های تأییدشدهٔ AI دربارهٔ «${usable.keyword}» یاد گرفته شد انتخاب شد.`
+      : usable.source === 'accountant' ? `بر اساس آنچه حسابدار دربارهٔ «${usable.keyword}» تأیید کرده انتخاب شد.`
       : `بر اساس نگاشت تأییدشدهٔ «${usable.keyword}» انتخاب شد.`;
   let categoryAmbiguous = false;
   let categoryRunnerUp = null;

@@ -149,7 +149,7 @@ export function learnableKeyword(label, text, category) {
  * درس‌های یک پروندهٔ ثبت‌شده. پس از COMMIT صدا زده می‌شود و شکستش هرگز ثبت را
  * برنمی‌گرداند (صدازننده خطا را می‌بلعد).
  */
-export function recordAiLessons({ caseId, transcript, components = [], now = new Date() } = {}) {
+export function recordAiLessons({ caseId, transcript, components = [], now = new Date(), confirmedBy = 'ai' } = {}) {
   ensureAiLessonSchema();
   const text = String(transcript || '').trim();
   if (!caseId || !text || !components.length) return [];
@@ -164,7 +164,7 @@ export function recordAiLessons({ caseId, transcript, components = [], now = new
     const row = index >= 0 ? free[index] : null;
     if (row) row.used = true;
     const item = component.item || null;
-    const final = { kind: component.kind, amount, type: item?.type || null, category: item?.category || null, topicLabel: item?.topicLabel || null, fundedBy: item?.fundedBy?.kind || null };
+    const final = { kind: component.kind, amount, type: item?.type || null, category: item?.category || null, topicLabel: item?.topicLabel || null, fundedBy: item?.fundedBy?.kind || null, confirmedBy };
     const context = { caseId, componentId: component.id || String(amount), text, final, parser: { path: view.path, rows: view.rows } };
     if (!row) {
       // پارسر ردیف ساخت ولی با مبلغ دیگر.
@@ -185,7 +185,7 @@ export function recordAiLessons({ caseId, transcript, components = [], now = new
       continue;
     }
     if (row.category === item.category || GENERIC_CATEGORIES.has(item.category)) continue;
-    recorded.push(recordCategory({ ...context, row, item, learnings, now }));
+    recorded.push(recordCategory({ ...context, row, item, learnings, now, confirmedBy }));
   }
   return recorded.filter(Boolean);
 }
@@ -201,7 +201,7 @@ function recordStructural({ caseId, componentId, text, final, parser, flags, par
   return id;
 }
 
-function recordCategory({ caseId, componentId, text, final, parser, row, item, learnings, now }) {
+function recordCategory({ caseId, componentId, text, final, parser, row, item, learnings, now, confirmedBy = 'ai' }) {
   const keyword = learnableKeyword(item.topicLabel, text, item.category);
   // درسی که همین جمله را درست نمی‌کند (یا جهتش را عوض می‌کند) درس نیست.
   const trial = keyword && (parseFinancialText(text, {
@@ -216,15 +216,26 @@ function recordCategory({ caseId, componentId, text, final, parser, row, item, l
     if (cases.includes(caseId)) return existing.id;
     db.prepare(`UPDATE ai_lessons SET confirmations=confirmations+1,case_ids=?,sample=?,parser_category=?,parser=?,final=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
       .run(JSON.stringify([...cases, caseId].slice(-10)), text.slice(0, 500), row.category, JSON.stringify(parser), JSON.stringify(final), existing.id);
-    maybeLearn(existing.id);
+    settle(existing.id, confirmedBy);
     return existing.id;
   }
   const id = `al-${randomUUID()}`;
   db.prepare(`INSERT INTO ai_lessons (id,kind,lesson_key,keyword,category,parser_category,case_ids,sample,parser,final,status)
     VALUES (?,?,?,?,?,?,?,?,?,?,'watching')`)
     .run(id, 'category', key, keyword, item.category, row.category, JSON.stringify([caseId]), text.slice(0, 500), JSON.stringify(parser), JSON.stringify(final));
-  maybeLearn(id);
+  settle(id, confirmedBy);
   return id;
+}
+
+/**
+ * تأییدِ حسابدار خودش تأییدِ قطعی است و منتظرِ آستانه نمی‌ماند؛ تأییدِ ثبت‌کنندهٔ پروندهٔ AI
+ * تا آستانه می‌شمارد. یادگیریِ خودِ کاربر (`conflict`) و درسی که کاربر کنار گذاشته (`dismissed`)
+ * در هر دو حالت دست نمی‌خورند.
+ */
+function settle(id, confirmedBy) {
+  if (confirmedBy !== 'accountant') { maybeLearn(id); return; }
+  const lesson = db.prepare('SELECT * FROM ai_lessons WHERE id=?').get(id);
+  if (lesson?.kind === 'category' && lesson.status === 'watching') learn(lesson, { replace: false, actor: 'accountant', source: 'accountant' });
 }
 
 /** همان موضوع، دستهٔ دیگر: AI دو جور فهمیده و تصمیم با انسان است. */
@@ -242,16 +253,16 @@ function maybeLearn(id) {
 }
 
 /** نوشتن در «آنچه یاد گرفته‌ام»؛ یادگیریِ دیگرِ همان واژه فقط با «جایگزین کن» عوض می‌شود. */
-function learn(lesson, { replace = false, actor = null } = {}) {
+function learn(lesson, { replace = false, actor = null, source = json(lesson.final, {}).confirmedBy === 'accountant' ? 'accountant' : 'ai' } = {}) {
   const current = db.prepare('SELECT id,category,source FROM learnings WHERE keyword=?').get(lesson.keyword);
   let learningId = current?.id || null;
   let status = 'learned';
   if (current && current.category !== lesson.category) {
     if (!replace) status = 'conflict';
-    else db.prepare("UPDATE learnings SET category=?,source='ai',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(lesson.category, current.id);
+    else db.prepare('UPDATE learnings SET category=?,source=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(lesson.category, source, current.id);
   } else if (!current) {
     learningId = randomUUID();
-    db.prepare("INSERT INTO learnings (id,keyword,category,source) VALUES (?,?,?,'ai')").run(learningId, lesson.keyword, lesson.category);
+    db.prepare('INSERT INTO learnings (id,keyword,category,source) VALUES (?,?,?,?)').run(learningId, lesson.keyword, lesson.category, source);
   }
   db.prepare('UPDATE ai_lessons SET status=?,learning_id=?,decided_by=?,decided_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
     .run(status, status === 'learned' ? learningId : null, actor, actor ? new Date().toISOString() : null, lesson.id);
@@ -263,6 +274,53 @@ function learn(lesson, { replace = false, actor = null } = {}) {
 export function forgetAiLesson(learningId) {
   ensureAiLessonSchema();
   db.prepare("UPDATE ai_lessons SET status='dismissed',updated_at=CURRENT_TIMESTAMP WHERE kind='category' AND learning_id=? AND status='learned'").run(String(learningId || ''));
+}
+
+// ---------------------------------------------------------------------------
+// صف حسابدار: آنچه حسابدار تأیید کرد هم درس است
+// ---------------------------------------------------------------------------
+
+const CATEGORY_ROLES = { 'expense-category': 'expense', 'income-category': 'income' };
+const OBLIGATION_ROLES = new Set(['payable', 'receivable']);
+const PARTNER_ROLES = new Set(['partner-payable', 'partner-receivable']);
+
+/** نقشِ سطرِ سندِ دستی از روی حسابِ دفترش: بانک و صندوق، دستهٔ هزینه یا درآمد، یا چیزِ دیگر. */
+function ledgerRole(accountId) {
+  const account = db.prepare('SELECT source_kind,source_key FROM ledger_accounts WHERE id=?').get(String(accountId || ''));
+  if (!account) return {};
+  if (account.source_kind === 'operational-account') return { role: 'cash' };
+  if (CATEGORY_ROLES[account.source_kind]) return { role: account.source_kind, key: account.source_key };
+  return { role: account.source_kind };
+}
+
+/**
+ * سندِ قطعیِ حسابدار به شکلِ همان جزئی که نقشهٔ AI به ثبت می‌دهد. فقط سندی که دستهٔ هزینه یا
+ * درآمد دارد درسِ پارسر است؛ دارایی، وام و تسویهٔ بی‌دسته از جنسِ دیگری‌اند و کنار می‌مانند.
+ */
+export function componentFromLines(lines = [], { topicLabel = null } = {}) {
+  const typed = (lines || []).map((line) => ({ ...line, ...(line.role ? {} : ledgerRole(line.accountId)) }));
+  const category = typed.find((line) => CATEGORY_ROLES[line.role]);
+  if (!category) return null;
+  const amount = Number(category.debit || category.credit) || 0;
+  const name = String(category.key || category.accountName || '').trim();
+  if (!name || !Number.isSafeInteger(amount) || amount <= 0) return null;
+  const cash = typed.some((line) => line.role === 'cash');
+  const partner = typed.some((line) => PARTNER_ROLES.has(line.role));
+  const kind = cash ? 'cash' : partner ? 'cash' : typed.some((line) => OBLIGATION_ROLES.has(line.role)) ? 'obligation' : null;
+  if (!kind) return null;
+  return { id: 'accountant', kind, amount, item: { amount, type: CATEGORY_ROLES[category.role], category: name, topicLabel, ...(partner && !cash ? { fundedBy: { kind: 'partner' } } : {}) } };
+}
+
+/**
+ * سندی که حسابدار در صف تأیید کرد — پیشنهادِ AI، نقشهٔ قطعی یا سطرهای دستی — همان مقایسه با
+ * پارسر را می‌گذراند. درسِ دسته همان لحظه یاد گرفته می‌شود (تأییدِ حسابدار قطعی است) و منشأش
+ * 'accountant' است؛ اختلاف ساختاری مثل همیشه فقط برای بازبینی می‌ماند.
+ */
+export function recordAccountantLesson({ eventId, transcript, lines = [], topicLabel = null, now = new Date() } = {}) {
+  ensureAiLessonSchema();
+  const component = componentFromLines(lines, { topicLabel });
+  if (!component || !eventId) return [];
+  return recordAiLessons({ caseId: `review:${eventId}`, transcript, components: [component], now, confirmedBy: 'accountant' });
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +360,7 @@ export function decideAiLesson(id, { decision } = {}) {
     }
   } else if (decision === 'dismiss') {
     if (lesson.status === 'learned' && lesson.learning_id) {
-      db.prepare("DELETE FROM learnings WHERE id=? AND source='ai'").run(lesson.learning_id);
+      db.prepare("DELETE FROM learnings WHERE id=? AND source IN ('ai','accountant')").run(lesson.learning_id);
     }
     db.prepare("UPDATE ai_lessons SET status='dismissed',decided_by=?,decided_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(actor, new Date().toISOString(), lesson.id);
     audit('dismiss', 'ai_lesson', lesson.id, { keyword: lesson.keyword, category: lesson.category });

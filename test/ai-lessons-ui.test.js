@@ -26,5 +26,5 @@ test('App نقش را به صفحه می‌دهد و هر یادگیری منش�
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /<LearningPage categories=\{data\.categories\} notify=\{notify\} role=\{access\.workspace\?\.role\} \/>/);
   const page = readFileSync(new URL('../src/features/learning/LearningPage.jsx', import.meta.url), 'utf8');
-  assert.match(page, /const SOURCE_LABELS = \{ ai: 'از AI', topic: 'از ارتقای موضوع' \}/);
+  assert.match(page, /const SOURCE_LABELS = \{ ai: 'از AI', accountant: 'از تأیید حسابدار', topic: 'از ارتقای موضوع' \}/);
 });
