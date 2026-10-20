@@ -66,19 +66,45 @@ export const ANALYTIC_KINDS = Object.freeze({
  * پارسیان (ستون تفصیلی) زنده می‌ماند. اگر همان برچسب در ماه تکرار شود، موتور
  * شمارش پیشنهاد ارتقا به دسته می‌دهد — تصمیم با حسابدار است، نه با این تابع.
  *
- * کلید منشأ (`topic-label` + متن یک‌نرمال‌شده) همان برچسب را دوباره می‌سازد،
- * پس یک موضوع همیشه یک تفصیلی است؛ «کلید برق» و «کلید  برق» یکی‌اند.
+ * کلید منشأ (`topic-label` + کلید مقایسه) همان برچسب را دوباره می‌سازد، پس یک
+ * موضوع همیشه یک تفصیلی است. کلید از متن یکسان‌شدهٔ فارسی می‌آید: موضوعی که مدل
+ * هر بار کمی متفاوت می‌نویسد («اجاره دفتر»، «اجارهٔ دفتر»، «اجاره‌ی دفتر») یک
+ * تفصیلی است، نه سه؛ وگرنه شمارش ارتقا پخش می‌شد و پارسیان سه تفصیلی می‌گرفت.
  */
 export const TOPIC_SOURCE_KIND = 'topic-label';
 
 export function normalizeTopicLabel(value) {
-  return String(value || '').replace(/[\u200c\s]+/g, ' ').trim().slice(0, 60);
+  return String(value || '').replace(/[‌s]+/g, ' ').trim().slice(0, 60);
+}
+
+/** کلید مقایسهٔ برچسب: املاهای یک موضوع یک کلیدند. */
+export function topicLabelKey(value) {
+  // از متن خام، تا کسرهٔ «ه‌ی» پیش از تبدیل نیم‌فاصله دیده شود؛ «ه ی» برچسب‌های
+  // قدیمی است که نیم‌فاصله‌شان فاصله ذخیره شده.
+  return normalizePersian(String(value || '').replace(/ۀ/g, 'ه')).replace(/ه ی(?= |$)/g, 'ه').slice(0, 60);
+}
+
+/**
+ * برچسبی که چیزی به دسته اضافه می‌کند. «اجاره» روی دستهٔ «اجاره» تفصیلی تازه‌ای
+ * نمی‌سازد؛ فقط دسته را تکرار می‌کرد و فهرست تفصیلی‌های پارسیان را پر.
+ */
+export function meaningfulTopicLabel(label, category = '') {
+  const clean = normalizeTopicLabel(label);
+  return clean && topicLabelKey(clean) !== topicLabelKey(category) ? clean : '';
 }
 
 export function topicAnalytic(database, label) {
   const clean = normalizeTopicLabel(label);
   if (!clean) throw chartError('برچسب موضوعی خالی است.');
-  return saveAnalyticAccount(database, { name: clean, kind: 'custom', sourceKind: TOPIC_SOURCE_KIND, sourceKey: clean });
+  const key = topicLabelKey(clean);
+  ensureChartSchema(database);
+  // برچسب‌های پیش از کلید مقایسه با متن خودشان ذخیره شده‌اند؛ همان تفصیلی دوباره
+  // به کار می‌رود و سطرهای سندهای قبلی دست نمی‌خورند.
+  const existing = database.prepare('SELECT id FROM analytic_accounts WHERE source_kind=? AND source_key=?').get(TOPIC_SOURCE_KIND, key)
+    || database.prepare('SELECT id,source_key AS sourceKey FROM analytic_accounts WHERE source_kind=?').all(TOPIC_SOURCE_KIND)
+      .find((row) => topicLabelKey(row.sourceKey) === key);
+  if (existing) return database.prepare('SELECT * FROM analytic_accounts WHERE id=?').get(existing.id);
+  return saveAnalyticAccount(database, { name: clean, kind: 'custom', sourceKind: TOPIC_SOURCE_KIND, sourceKey: key });
 }
 
 function chartError(message, code = 'CHART_INVALID', status = 400) {

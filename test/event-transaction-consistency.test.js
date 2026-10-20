@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('event-consistency');
 process.env.DATABASE_PATH = databasePath;
@@ -13,7 +14,7 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('consistency-owner', 'Consistency-Long-Passphrase-6620');
 const workspace = database.createWorkspace(owner.id, { name: 'شرکت تطابق', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT }, callback);
 
 const doubtful = (amount) => ({
   amount, type: 'expense', category: 'سایر', rawText: `حدود ${amount}`,

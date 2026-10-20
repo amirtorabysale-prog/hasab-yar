@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { tempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 const databasePath = tempDatabase('stress-ledger');
 process.env.DATABASE_PATH = databasePath;
@@ -14,7 +15,7 @@ const { parseFinancialText } = await import('../shared/parser.js');
 
 database.ensureAdmin();
 const owner = database.authenticateUser(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD);
-const inPrimary = (callback) => database.runInWorkspace('primary', { role: 'owner', userId: owner.id }, callback);
+const inPrimary = (callback) => database.runInWorkspace('primary', { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 const all = JSON.parse(readFileSync(new URL('./fixtures/stress-scenarios-v1.json', import.meta.url), 'utf8'));

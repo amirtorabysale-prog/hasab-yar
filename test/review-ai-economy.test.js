@@ -5,6 +5,7 @@ import { decide } from '../shared/accountingDecision.js';
 import { factsFromEvent } from '../shared/eventFacts.js';
 import { normalizeFinancialEvent } from '../shared/financialEvent.js';
 import { isHeadingChoiceQuestion } from '../shared/reviewQuestions.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * «تحلیل کن» با کمترین درخواست به مدل — آزمون سی سناریوی مهر ۱۴۰۵.
@@ -26,7 +27,7 @@ const assistant = await import('../server/reviewAssistant.js');
 const ai = await import('../server/accountingReviewAi.js');
 db.ensureAdmin();
 const owner = db.authenticateUser(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD);
-const run = (f) => db.runInWorkspace('primary', { role: 'owner', userId: owner.id }, f);
+const run = (f) => db.runInWorkspace('primary', { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT }, f);
 const database = () => db.activeWorkspaceDatabase();
 const before = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'test-key';
 test.after(() => { if (before === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = before; });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * پول باید جایی برود که واقعاً رفته — نه به «سایر هزینه‌ها» و «صندوق».
@@ -19,7 +20,7 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('routing-owner', 'routing-strong-password-4417');
 const workspace = database.createWorkspace(owner.id, { name: 'کارخانهٔ پلاستیک', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 /** سند نهاییِ یک ثبت — بعد از تأیید، اگر منتظر مانده باشد. */

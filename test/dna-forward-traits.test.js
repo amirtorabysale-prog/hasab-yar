@@ -42,8 +42,8 @@ test('رشد واقعی درآمد با شاهد عددی گزارش می‌شو
   ];
   const found = trait(financialDna(rows, { timeZone: TZ, now }), 'trend');
   assert.equal(found.value, 'رو به رشد');
-  assert.equal(found.detail.changePercent, 200);
-  assert.match(found.evidence, /۲۰۰|200/);
+  assert.equal(found.evidence.changePercent, 200);
+  assert.match(found.detail, /۲۰۰|200/);
 });
 
 test('نوسان کم روند شمرده نمی‌شود', () => {
@@ -77,8 +77,8 @@ test('تعهد پرداختنی پیش رو در برابر درآمد معمو�
   ];
   const found = trait(financialDna(busyRows(now), { timeZone: TZ, now, obligations }), 'cash-pressure');
   assert.equal(found.value, 'بالا');
-  assert.equal(found.detail.payable, 120_000_000);
-  assert.ok(found.detail.ratio >= 1);
+  assert.equal(found.evidence.payable, 120_000_000);
+  assert.ok(found.evidence.ratio >= 1);
 });
 
 test('تعهد کوچک فشار بالا اعلام نمی‌شود', () => {
@@ -113,8 +113,8 @@ test('سررسید گذشته جدا شمرده و در شاهد گفته می�
     { amount: 60_000_000, direction: 'payable', dueAt: at(1405, 6, 25), title: 'چک پیش رو' },
   ];
   const found = trait(financialDna(busyRows(now), { timeZone: TZ, now, obligations }), 'cash-pressure');
-  assert.equal(found.detail.overdueCount, 1);
-  assert.match(found.evidence, /سررسید گذشته/);
+  assert.equal(found.evidence.overdueCount, 1);
+  assert.match(found.detail, /سررسید گذشته/);
 });
 
 // ------------------------------------------------------- دستهٔ خارج از عادت
@@ -130,7 +130,7 @@ test('دسته‌ای که این ماه چند برابر عادت خودش ش�
   ];
   const found = trait(financialDna(rows, { timeZone: TZ, now }), 'month-outlier');
   assert.equal(found.value, 'اجاره');
-  assert.ok(found.detail.findings[0].ratio >= 1.6);
+  assert.ok(found.evidence.findings[0].ratio >= 1.6);
 });
 
 // روز سوم ماه همیشه کمتر از میانه است؛ گزارش «افت شدید» آنجا بی‌معناست.
@@ -164,4 +164,29 @@ test('بدون دادهٔ کافی هیچ‌کدام از صفت‌های تاز
   ], { timeZone: TZ, now, obligations: [{ amount: 999_000_000, direction: 'payable', dueAt: at(1405, 6, 20) }] });
   assert.equal(dna.sufficiency.level, 'thin');
   assert.deepEqual(dna.traits, []);
+});
+
+// صفحهٔ DNA هر صفت را با یک قالب نشان می‌دهد: عنوان، مقدار و جملهٔ توضیح متن‌اند
+// و شاهد عددی شیء. سه صفت رو به جلو شاهدشان را در `detail` می‌گذاشتند و صفحه با
+// «Minified React error #31 … {payable, typicalIncome, ratio, overdueCount}» می‌شکست.
+test('همهٔ صفت‌ها، از جمله سه صفت رو به جلو، قالب صفحهٔ DNA را دارند', () => {
+  const now = new Date(at(1405, 6, 20));
+  const rows = [
+    ...monthRows(1405, 2, { income: 50_000_000, expense: 10_000_000, category: 'اجاره' }),
+    ...monthRows(1405, 3, { income: 50_000_000, expense: 10_000_000, category: 'اجاره' }),
+    ...monthRows(1405, 4, { income: 150_000_000, expense: 10_000_000, category: 'اجاره' }),
+    ...monthRows(1405, 5, { income: 150_000_000, expense: 10_000_000, category: 'اجاره' }),
+    ...monthRows(1405, 6, { income: 80_000_000, expense: 50_000_000, category: 'اجاره', days: [2, 8, 14] }),
+  ];
+  const obligations = [{ amount: 300_000_000, direction: 'payable', dueAt: at(1405, 6, 15), title: 'چک عقب‌افتاده' }];
+  const dna = financialDna(rows, { timeZone: TZ, now, obligations });
+  for (const id of ['trend', 'cash-pressure', 'month-outlier']) assert.ok(trait(dna, id), `صفت ${id} در این داده ساخته می‌شود`);
+  for (const item of dna.traits) {
+    for (const field of ['label', 'value', 'detail']) {
+      assert.equal(typeof item[field], 'string', `${item.id}.${field} متن است`);
+      assert.ok(item[field].length > 0, `${item.id}.${field} خالی نیست`);
+    }
+    assert.equal(typeof item.evidence, 'object', `${item.id}.evidence شیء است`);
+    assert.equal(typeof (item.evidence.sample ?? item.evidence.total), 'number', `${item.id}: «بر پایهٔ چند ثبت» عدد دارد`);
+  }
 });

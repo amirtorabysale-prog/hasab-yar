@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase, removeTempDatabase } from './helpers/tempPath.js';
 import { counterpartyChoice, settlementPreview } from '../shared/counterpartySettlement.js';
+import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 
 /**
  * نامی که در جمله گفته می‌شود باید به کارت حساب همان شخص برسد.
@@ -25,7 +26,7 @@ database.ensureAdmin();
 
 const owner = database.authenticateUser('choice-owner', 'choice-strong-password-4417');
 const workspace = database.createWorkspace(owner.id, { name: 'کارخانهٔ پلاستیک', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id, overdraftApproval: FIXTURE_OVERDRAFT }, callback);
 const db = () => database.activeWorkspaceDatabase();
 
 function postedLines(transactionId) {

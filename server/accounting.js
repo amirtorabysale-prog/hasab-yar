@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { approvalRequiredError, currentApproval, recordOverdraftApproval } from './balanceGuard.js';
 import {
   analyticForContact, counterpartyAnalyticForKey, ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart,
-  resolveLineDimensions, saveAnalyticAccount, suggestChartAccount, topicAnalytic,
+  meaningfulTopicLabel, resolveLineDimensions, saveAnalyticAccount, suggestChartAccount, topicAnalytic,
 } from './chartOfAccounts.js';
 import { ensurePayrollSchema, payrollJournalLines } from './payroll.js';
 import {
@@ -446,7 +446,7 @@ export function syncTransactionJournal(database, transaction, { createdBy = null
   const category = counterparty || categoryLedgerAccount(database, transaction.type, transaction.category);
   // طرح ترکیبی: برچسبِ موضوع («کلید برق») روی سطرِ دسته تفصیلی می‌شود؛ دستهٔ
   // جدید نمی‌سازد و کدینگ را تکان نمی‌دهد. تسویهٔ طرف حساب، تفصیلیِ شخص می‌گیرد.
-  const topicLabel = String(transaction.topicLabel || transaction.topic_label || '').trim();
+  const topicLabel = meaningfulTopicLabel(transaction.topicLabel || transaction.topic_label, transaction.category);
   const topicAnalyticId = !counterparty && topicLabel ? topicAnalytic(database, topicLabel).id : null;
   const analyticId = settlement ? analyticForContact(database, settlement.contactId, settlement.contactName)?.id || null : topicAnalyticId;
   const lines = transaction.type === 'income'
@@ -770,7 +770,7 @@ export function migrateAccountingLedger(database, { createdBy = null } = {}) {
     if (!exists) syncOpeningBalanceJournal(database, account.id, { createdBy });
   }
   // تراکنشی که سندش عمداً منتظر تأیید مانده، «بی‌سند» نیست؛ نباید اینجا سند بخورد.
-  const transactions = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,account_id AS accountId,occurred_at AS occurredAt
+  const transactions = database.prepare(`SELECT id,amount,type,category,raw_text AS rawText,account_id AS accountId,occurred_at AS occurredAt,topic_label AS topicLabel
     FROM transactions WHERE status NOT IN ('deleted','allocated')
       AND COALESCE(journal_deferred,0)=0 ORDER BY occurred_at,id`).all();
   for (const transaction of transactions) {

@@ -7,15 +7,16 @@ import { readRoute, writeRoute } from './app/route.js';
 import { CARD_SECTIONS, LEDGER_SECTIONS, SETTINGS_REQUIRES, SETTINGS_SECTIONS, findMenuItem, visibleMenu } from './app/menu.js';
 import { profileDefinition } from '../shared/product.js';
 import { CloseDaySheet, TodayPage } from './features/today/TodayPage.jsx';
-import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet } from './features/capture/CaptureSheets.jsx';
+import { ConfirmationSheet, CorrectionSheet, DecisionDetailsSheet, DuplicateSheet, FailureSheet, LearningSuggestionSheet, PossibleDuplicateSheet } from './features/capture/CaptureSheets.jsx';
 import CounterpartyMatchSheet from './features/counterparty/CounterpartyMatchSheet.jsx';
 import { EMPTY_SUMMARY } from './components/common.jsx';
 import { IntentSheet, SettleSheet } from './features/capture/IntentSheets.jsx';
 import { inUnderstandingScope } from '../shared/understandingScope.js';
 import { LoginPage, Onboarding } from './features/auth/AuthScreens.jsx';
-import { api, flushTransactionQueue, queueTransactions, setOverdraftApprover } from './lib/api.js';
+import { api, flushTransactionQueue, queueTransactions, setDuplicateConfirmer, setOverdraftApprover } from './lib/api.js';
 import { OverdraftApprovalSheet } from './features/capture/OverdraftApprovalSheet.jsx';
 import { applyDnaSignals } from '../shared/dnaSignals.js';
+import { mascotAlert, mascotMood } from './lib/mascotMood.js';
 import { assessAudioCapture, createWavRecorder } from './lib/wavRecorder.js';
 import { browserRecognitionCanRestart, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported, mergeSpeechSegments } from './lib/liveSpeech.js';
 import { capitalEntryPayload, detectVoiceIntent, invoiceDraftPayload } from '../shared/voiceIntent.js';
@@ -151,6 +152,12 @@ export default function App() {
   useEffect(() => {
     setOverdraftApprover((info) => new Promise((resolve) => setOverdraftPrompt({ ...info, resolve })));
     return () => setOverdraftApprover(null);
+  }, []);
+  // برگهٔ «شاید تکراری» برای کارت AI و تأیید صف؛ ثبت روزانه برگهٔ خودش را دارد.
+  const [possibleDuplicate, setPossibleDuplicate] = useState(null);
+  useEffect(() => {
+    setDuplicateConfirmer((info) => new Promise((resolve) => setPossibleDuplicate({ ...info, resolve })));
+    return () => setDuplicateConfirmer(null);
   }, []);
   // startRecording یک closure است و مقدار state در آن کهنه می‌ماند؛ تصمیمِ
   // «نشست Realtime باز شود یا نه» باید تازه‌ترین وضعیت سرور را ببیند.
@@ -1204,6 +1211,16 @@ export default function App() {
     catch (error) { notify(error.message); }
   };
 
+  // حالِ حسابی (نماد نوار ضبط) از همان وضعیت‌هایی که برگه‌ها را باز می‌کنند.
+  const mascot = {
+    mood: mascotMood({
+      recordState, manualText, savedRecently: Boolean(undoSave), reviewing: Boolean(parseResult),
+      analyzing: understandingDraft?.status === 'extracting',
+      asking: Boolean((understandingDraft && understandingDraft.status !== 'extracting') || possibleDuplicate || duplicatePrompt || intentDraft || correctionDraft),
+      worried: Boolean(overdraftPrompt || failure),
+    }),
+    alert: mascotAlert({ overdraftPrompt, failure }),
+  };
   if (authenticated === null) return <div dir="rtl" className="grid min-h-screen place-items-center bg-paper text-ink"><span className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-accent" aria-label="در حال بارگذاری" /></div>;
   if (!authenticated) return <LoginPage onLogin={login} error={authError} />;
   if (access.user?.mustChangePassword) return <main dir="rtl" className="min-h-screen bg-paper py-10 text-ink"><div className="mx-auto max-w-[760px] px-4"><p className="text-sm font-bold text-accent">اولین ورود</p><h1 className="mt-2 text-2xl font-extrabold">رمز موقتت را عوض کن</h1><p className="mt-2 text-sm leading-7 text-muted">برای حفاظت از اطلاعات مالی، تا تعیین رمز شخصی امکان ورود به دفتر وجود ندارد.</p></div><Suspense fallback={<ScreenLoading />}><PasswordPanel notify={notify} onChanged={logout} /></Suspense></main>;
@@ -1231,7 +1248,7 @@ export default function App() {
               aiForAll={{ ...aiForAll, busy: aiToggleBusy, online }} onToggleAiForAll={toggleAiForAll}
               reviewing={Boolean(parseResult)} savedRecently={Boolean(undoSave)} pendingAudioCount={pendingAudioCount}
               navigate={navigate} onOpenClosing={() => setCloseDayOpen(true)} onSelectTransaction={setSelectedDecision} onSnoozeAlert={snoozeAlert}
-              notify={notify} refreshToday={load} experience={access.experience}
+              notify={notify} refreshToday={load} experience={access.experience} mascot={mascot}
             />
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={LEDGER_SECTIONS[section] || 'transactions'} cardSection={CARD_SECTIONS[section] || ''} onTabChange={(id) => { setSection(id); writeRoute('ledger', id); }} navigate={navigate} />}
@@ -1280,6 +1297,7 @@ export default function App() {
       {failure && <FailureSheet failure={failure} close={() => setFailure(null)} retry={() => { setFailure(null); holdingRef.current = true; startRecording(); }} manual={() => { setFailure(null); document.getElementById('manual-entry')?.focus(); }} />}
       {correctionDraft && <CorrectionSheet draft={correctionDraft} accounts={data.accounts} close={() => setCorrectionDraft(null)} confirm={applyCorrection} />}
       {duplicatePrompt && <DuplicateSheet prompt={duplicatePrompt} close={() => setDuplicatePrompt(null)} confirm={confirmDuplicate} />}
+      {possibleDuplicate && <PossibleDuplicateSheet prompt={possibleDuplicate} close={(confirmed) => { possibleDuplicate.resolve(confirmed); setPossibleDuplicate(null); }} />}
       {learningSuggestion && <LearningSuggestionSheet suggestion={learningSuggestion} close={() => setLearningSuggestion(null)} confirm={acceptLearning} />}
       {intentDraft && <IntentSheet draft={intentDraft} setDraft={setIntentDraft} accounts={data.accounts || []} close={() => setIntentDraft(null)} confirm={saveIntentDraft} />}
       {understandingDraft && <Suspense fallback={null}><UnderstandingSheet draft={understandingDraft} setDraft={setUnderstandingDraft} close={() => setUnderstandingDraft(null)} notify={notify}
