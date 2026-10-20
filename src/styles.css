@@ -466,10 +466,10 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
    `fill` عمداً پیش‌فرض است تا بعد از پایان انیمیشن transform حساب‌شده none شود و
    عنصرهای fixed درون صفحه‌ها دقیقاً مثل قبل نسبت به دیدگر موقعیت‌گیری کنند. */
 @keyframes screen-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
 }
-.screen-enter { animation: screen-in .24s cubic-bezier(0.22, 1, 0.36, 1); }
+.screen-enter { animation: screen-in .28s cubic-bezier(0.22, 1, 0.36, 1); }
 @media (prefers-reduced-motion: reduce) {
   .screen-enter { animation: none; }
 }
