@@ -66,6 +66,27 @@ test('فشردن دکمه کمی جمعش می‌کند، با scale جدا تا
   assert.match(css, /scale \.16s var\(--ease-out\)/);
 });
 
+test('هاور منو مینیمال است: ردیف فقط رنگ می‌گیرد و حرکت مالِ خودِ آیکن است', () => {
+  // خواستهٔ مالک محصول: «مثل سایت Claude، تغییر کوچک و مینیمال بر اساس شکل آیکن».
+  // هاور v2 (هالهٔ سه‌لایه، بلند شدن ۴px، آیکن ۱٫۵ برابر، جاروی نور، فلش) هم این را
+  // نقض کرد و هم با transition خودش translate/rotate/scaleِ آیکن‌های زنده را پاک کرد.
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => [selector.replace(/\/\*[\s\S]*?\*\//g, '').trim(), body]);
+  for (const [selector, body] of rules) {
+    if (!/\.menu-(?:group|leaf)[^,{]*:(?:hover|active|focus-visible)/.test(selector) || /\.lucide/.test(selector)) continue;
+    assert.doesNotMatch(body, /(?:^|;)\s*(?:transform|translate|box-shadow|filter|rotate)\s*:/, `${selector} فقط رنگ می‌گیرد`);
+  }
+  for (const [selector, body] of rules) {
+    assert.ok(!(/\.menu-group[^,{]*(?:>\s*)?svg/.test(selector) && /transition\s*:/.test(body)), `${selector} transitionِ آیکن‌های زنده را بازنویسی می‌کند`);
+  }
+  // فشردن: transitionِ پایهٔ ردیف‌های منو scale را دارد تا scale: .97 نپرد.
+  for (const [selector, body] of rules.filter(([selector, body]) => /\.menu-(?:group|leaf)\b/.test(selector) && /transition\s*:/.test(body) && !/\.lucide|svg/.test(selector))) {
+    assert.match(body, /scale \.16s/, selector);
+  }
+  assert.doesNotMatch(css, /content:\s*'←'/, 'فلشِ ساخته‌شده با CSS جزو نامِ دکمه برای صفحه‌خوان می‌شود');
+  assert.doesNotMatch(css, /--ease-pop/);
+  assert.match(css, /\.menu-group:focus-visible, \.menu-leaf:focus-visible \{ background: rgb\(var\(--c-accent\) \/ \.08\); \}/);
+});
+
 /** کلاسِ اصلیِ آیکن (اولین lucide-* پس از lucide)، همان که CSS باید بنویسد. */
 const canonicalClass = (Icon) => renderToStaticMarkup(createElement(Icon, { size: 18 })).match(/class="lucide (lucide-[a-z0-9-]+)/)[1];
 
