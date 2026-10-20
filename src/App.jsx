@@ -1238,6 +1238,9 @@ export default function App() {
         <div id="main-content" className="safe-bottom min-w-0 lg:col-start-2">
           <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden hover:bg-paper hover:text-ink"><Menu size={21} /></button><div className="min-w-0"><p className="text-xs text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><div className="flex shrink-0 items-center gap-2"><span className="hidden rounded-full border border-line bg-paper px-3 py-1 text-xs text-muted sm:inline">مبالغ به تومان</span><ThemeToggle /></div></header>
           <Suspense fallback={<ScreenLoading />}>
+          {/* کلید = صفحه؛ عوض‌شدنش فقط همین پوسته را دوباره سوار می‌کند و گذر آرام یک‌بار اجرا می‌شود.
+              تعویض بخش‌های درون یک صفحه (مثل برگه‌های دفتر) کلید را عوض نمی‌کند تا همان‌جا سریع بماند. */}
+          <div key={screen} className="screen-enter">
           {screen === 'today' && (
             <TodayPage
               data={data} loading={loading} manualText={manualText} setManualText={setManualText}
@@ -1279,6 +1282,7 @@ export default function App() {
               {part === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
             </>;
           })()}
+          </div>
           </Suspense>
         </div>
         <CounterpartyMatchSheet />
