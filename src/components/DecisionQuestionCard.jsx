@@ -30,31 +30,31 @@ export function DecisionQuestionCard({ question, busy, onAnswer }) {
     ? { fact: question.fact, value: freeFor.value, freeText: current.text.trim() }
     : { fact: question.fact, freeText: current.text.trim() });
 
-  return <div className="mt-2 rounded-xl border border-accent/40 bg-accent/5 p-3">
-    <p className="text-[12px] font-extrabold text-ink">{question.text}</p>
+  return <div className="mt-3 rounded-xl border border-accent/40 bg-accent/5 p-3.5">
+    <p className="text-[15px] font-bold leading-7 text-ink">{question.text}</p>
     {question.kind === 'options' && options.length > 0
-      ? <div className="mt-2 flex flex-wrap gap-1.5">
+      ? <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
           {options.map((option) => <button
             key={String(option.value)}
             disabled={busy}
             onClick={() => (option.freeInput ? setDraft({ fact: question.fact, option: option.value, text: '' }) : onAnswer({ fact: question.fact, value: option.value }))}
-            className={`tap rounded-lg border px-3 py-1 text-[12px] font-bold disabled:opacity-40 ${freeFor?.value === option.value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-paper'}`}>
+            className={`tap min-h-[44px] rounded-xl border px-3.5 py-2 text-start text-[14px] font-bold transition-colors hover:border-accent hover:bg-accent/5 disabled:opacity-40 ${freeFor?.value === option.value ? 'border-accent bg-accent/10 text-accent' : 'border-line bg-surface'}`}>
             {option.label}
           </button>)}
         </div>
       : <div className="mt-2 flex gap-1.5">
           <input aria-label={question.text} value={current.text} onChange={(event) => setText(event.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
+            className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-[14px]" />
           <button disabled={busy || !current.text.trim()} onClick={submitText}
-            className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ثبت پاسخ</button>
+            className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ثبت پاسخ</button>
         </div>}
 
     {/* گزینهٔ «خودم می‌گویم» یک مقدار نیست؛ ورودی آزاد می‌خواهد. */}
     {freeFor && <div className="mt-2 flex gap-1.5">
       <input aria-label={freeFor.label} value={current.text} onChange={(event) => setText(event.target.value)} placeholder={freeFor.label}
-        className="min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 py-1 text-[12px]" />
+        className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-[14px]" />
       <button disabled={busy || !current.text.trim()} onClick={submitText}
-        className="tap rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ثبت پاسخ</button>
+        className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ثبت پاسخ</button>
     </div>}
   </div>;
 }

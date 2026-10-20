@@ -12,23 +12,27 @@ test('question identities remain stable for legacy text and structured paraphras
   assert.equal(reviewQuestions({questions:[{id:'__proto__',text:'آزمون'}]})[0].id.startsWith('question-'),true);
 });
 
-test('questions render below proposal with individual boxes, typed dates and persisted answers instead of repeated questions',async()=>{
+test('questions come one at a time with progress, typed dates and persisted answers instead of repeated questions',async()=>{
   const vite=await createServer({server:{middlewareMode:true},appType:'custom'});
   try {
     const {ReviewAssistant}=await vite.ssrLoadModule('/src/features/review/ReviewAssistant.jsx');
     const ai={state:'proposed',summary:'خرید انباری',explanation:'تکمیل مشخصات خرید',canPost:false,questions:[{id:'inventory.name',text:'نام دقیق کالا چیست؟'},{id:'inventory.quantity',text:'چند متر خریدید؟'},{id:'cheque.due_at',text:'سررسید چک چیست؟',field:'dueAt'}],missingFacts:['نام دقیق کالا چیست؟','چند متر خریدید؟','سررسید چک چیست؟'],postingBlockers:['نام دقیق کالا چیست؟','چند متر خریدید؟','سررسید چک چیست؟','مسیر تخصصی لازم است.'],context:{questionAnswers:{'inventory.quantity':{question:'چند متر خریدید؟',value:'۶۰ متر'}}},lines:[]};
     const html=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'example'},ai,setAi(){},onSaved(){},notify(){}}));
-    assert.ok(html.indexOf('نام دقیق کالا چیست؟')>html.indexOf('تأیید و اعمال سند'));
+    // صف حسابدار (۲۹ مهر ۱۴۰۵): سؤال‌ها یکی‌یکی و پیش از سند و دکمهٔ تأیید، با شمارهٔ «۱ از ۲».
+    assert.ok(html.indexOf('نام دقیق کالا چیست؟')<html.indexOf('تأیید و ثبت سند'));
+    assert.match(html,/سؤال ۱ از ۲/);
     assert.match(html,/textarea[^>]*aria-label="نام دقیق کالا چیست؟"/);
-    assert.match(html,/input[^>]*aria-label="سررسید چک چیست؟"[^>]*type="date"/);
+    assert.doesNotMatch(html,/aria-label="سررسید چک چیست؟"/,'سؤال دوم تا جواب اولی نیامده نشان داده نمی‌شود');
+    const dateFirst=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'date-first'},ai:{...ai,questions:[ai.questions[2]],context:{}},setAi(){},onSaved(){},notify(){}}));
+    assert.match(dateFirst,/input[^>]*aria-label="سررسید چک چیست؟"[^>]*type="date"/);
     assert.doesNotMatch(html,/برای فعال شدن ثبت، فقط موارد مشخص‌شدهٔ بالا/);
     assert.doesNotMatch(html,/پاسخ این سؤال را اینجا بنویس…[^>]*aria-label="چند متر خریدید؟"/);
-    assert.match(html,/پاسخ‌های ذخیره‌شده/);assert.match(html,/۶۰ متر/);
-    assert.match(html,/چرا هنوز قابل ثبت نیست\؟/);
+    assert.match(html,/جواب‌های داده‌شده/);assert.match(html,/۶۰ متر/);
+    assert.match(html,/هنوز قابل ثبت نیست/);
     assert.match(html,/مسیر تخصصی لازم است\./);
-    assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
-    const answerPanel=html.slice(html.indexOf('aria-label="سؤال‌ها و پاسخ‌های این پرونده"'));
-    assert.doesNotMatch(answerPanel,/text-expense/);
+    assert.match(html,/disabled=""[^>]*>(?:<svg[\s\S]*?<\/svg>)?تأیید و ثبت سند/);
+    const start=html.indexOf('aria-label="سؤال‌های این پرونده"');assert.ok(start>0);
+    assert.doesNotMatch(html.slice(start,html.indexOf('</label>',start)),/text-expense/,'سؤال هشدار قرمز نیست');
   } finally {await vite.close();}
 });
 
@@ -38,7 +42,7 @@ test('bank mapping repair states historical impact and requires explicit action 
   const {ReviewAssistant}=await vite.ssrLoadModule('/src/features/review/ReviewAssistant.jsx');
   const html=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'bank-case'},ai:{state:'proposed',summary:'بانک',lines:[],canPost:false,mappingRepairs:[{ledgerAccountId:'bank-ledger',accountName:'سامان',chartAccountId:'bank-chart',chartCode:'1102',chartName:'بانک',affectedLines:3}]},setAi(){},onSaved(){},notify(){}}));
   assert.match(html,/نمایش کدینگ 3 سطر قبلی/);assert.match(html,/تأیید اصلاح نگاشت بانک و بازتحلیل/);
-  assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
+  assert.match(html,/disabled=""[^>]*>(?:<svg[\s\S]*?<\/svg>)?تأیید و ثبت سند/);
  } finally {await vite.close();}
 });
 
@@ -52,6 +56,6 @@ test('missing imported balance has explicit documented preview and separate disa
  try {
   const {ReviewAssistant}=await vite.ssrLoadModule('/src/features/review/ReviewAssistant.jsx');
   const html=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'basis-case'},ai:{state:'proposed',id:'p',canPost:false,lines:[],priorBasis:{role:'receivable',amount:50000000,latestDate:'2026-10-06',debit:'طلب مشتری',credit:'سرمایه افتتاحیه'}},setAi(){},onSaved(){},notify(){}}));
-  assert.match(html,/ثبت مانده مستند منتقل‌شده/);assert.match(html,/مدیر دفتر/);assert.match(html,/disabled=""[^>]*>تأیید و اعمال سند/);
+  assert.match(html,/ثبت مانده مستند منتقل‌شده/);assert.match(html,/مدیر دفتر/);assert.match(html,/disabled=""[^>]*>(?:<svg[\s\S]*?<\/svg>)?تأیید و ثبت سند/);
  } finally {await vite.close();}
 });

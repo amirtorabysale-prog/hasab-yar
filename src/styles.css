@@ -418,3 +418,17 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
 @media (prefers-reduced-motion: reduce) {
   .screen-enter { animation: none; }
 }
+
+/* ── صف حسابدار: حرکت‌های کوتاه که فرایند را کند نمی‌کنند ────────────────────
+   قدمِ تازه (سؤال بعدی، نتیجهٔ تحلیل، فرم رد) ۱۸۰ms محو و ۶px بالا می‌آید؛ کارتِ
+   تأییدشده ۱۶۰ms محو می‌شود و بعد صف تازه خوانده می‌شود. فقط opacity و transform.
+   نوار «در حال تحلیل» تنها حرکتِ پیوسته است و فقط تا وقتی پاسخ نرسیده. */
+@keyframes rq-step-in { from { opacity: 0; transform: translateY(6px); } }
+.rq-step { animation: rq-step-in .18s var(--ease-out); }
+@keyframes rq-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.rq-skeleton { border-radius: 6px; background: linear-gradient(90deg, rgb(var(--c-line) / .45) 25%, rgb(var(--c-line)) 37%, rgb(var(--c-line) / .45) 63%); background-size: 400% 100%; animation: rq-shimmer 1.2s linear infinite; }
+.rq-leaving { opacity: 0; transform: translateY(-4px); transition: opacity .16s var(--ease-out), transform .16s var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .rq-step, .rq-skeleton { animation: none; }
+  .rq-leaving { transition: none; }
+}

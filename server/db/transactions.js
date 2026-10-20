@@ -442,9 +442,14 @@ export function insertTransactionRows({ transcript, transactions, counterpartyRe
     return Object.assign(ids, { queuedForAccountant: 1, queuedReasons: [NATURE_EXPLANATIONS[correction] || 'اصلاح یک ثبت قبلی'] });
   }
   for (const item of transactions) {
-    const nature = fromUtterance
+    // پولی که هنوز جابه‌جا نشده («قراره تا آبان پرداختش کنیم»، «موعد پرداختش هفته بعده»، «مشتری
+    // هنوز نداده») ردیف نقدی نمی‌سازد، از هر مسیری که آمده باشد. تا ۲۹ مهر ۱۴۰۵ فقط «نسیه»ِ صریح
+    // به این مسیر می‌رسید؛ ردیفِ `unpaidSignal` با حساب صندوق ذخیره می‌شد، رویدادش «بدهی باز» بود
+    // و پس از تأیید، ماندهٔ صندوق را به اندازهٔ بدهیِ پرداخت‌نشده کم می‌کرد (دیده‌شده در صف حسابدار).
+    const unpaid = item.unpaidSignal === true && ['income', 'expense'].includes(item.type);
+    const nature = (fromUtterance
       ? correctionNature(item, transcript) || (nonCashInstrument(item, transcript) ? 'non-cash-instrument' : null) || (readMixedSettlement(transcript || item.rawText) ? 'mixed-settlement' : null) || (readExplicitNonCash(transcript || item.rawText) ? 'explicit-non-cash' : null)
-      : null;
+      : null) || (unpaid ? 'explicit-non-cash' : null);
     if (nature) {
       const amount = Math.round(Number(item.amount));
       if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 999_999_999_999) throw invalidInput('مبلغ معتبر نیست.');

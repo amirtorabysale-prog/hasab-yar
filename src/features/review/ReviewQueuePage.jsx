@@ -5,34 +5,18 @@ import { TopicPromotionsCard } from './TopicPromotionsCard.jsx';
 import { Check } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
-import { ROUTE_LABELS } from '../../../shared/confidenceEngine.js';
+import { EntryTable } from './ReviewEntry.jsx';
+import { PATHS, reviewCase, reviewPath } from './reviewCase.js';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
 import { periodKeyLabel } from '../../components/RecognitionNote.jsx';
 
-const ROUTE_STYLE = {
-  'accountant-review': 'border-expense/40 bg-expense/5 text-expense',
-  confirm: 'border-accent/40 bg-accent/5 text-accent',
-  auto: 'border-income/40 bg-income/5 text-income',
-};
 
 /**
- * یک ردیف از صف بررسی.
- *
- * چرا تاریخچه فقط با درخواست باز می‌شود: صف ممکن است ده‌ها ردیف داشته باشد و
- * گرفتن تاریخچهٔ همه، هم کند است و هم چیزی است که حسابدار فقط برای موارد
- * مشکوک می‌خواهد.
+ * ثبتِ دستیِ سطرهای سند برای گفتهٔ چندمبلغی، وقتی حسابدار بی‌پیشنهادِ AI جلو می‌رود.
+ * مسیرِ دوم است و پشتِ «یا: ثبت دستی سطرها» می‌ماند؛ مسیرِ اول «تحلیل کن» است.
  */
-function OriginalTranscript({text}) {
-  return <section aria-label="متن اصلی گفتهٔ کاربر" className="mt-3 rounded-lg border border-line bg-paper p-3">
-    <p className="text-xs font-extrabold text-ink">متن اصلی گفتهٔ کاربر</p>
-    <p className="mt-1 text-xs text-muted">متن ذخیره‌شده هنگام دریافت؛ مبنای بررسی حسابدار</p>
-    {text ? <blockquote dir="auto" className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-7 text-ink">{text}</blockquote>
-      : <p className="mt-2 text-xs text-muted">متن اصلی برای این مورد ذخیره نشده است.</p>}
-  </section>;
-}
-
 function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState([]);
@@ -137,12 +121,33 @@ function TopicLabelField({ item, notify }) {
   </div>;
 }
 
-function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, navigate }) {
-  const [open, setOpen] = useState(false);
+const TONE = {
+  accent: { chip: 'border-accent/40 bg-accent/10 text-accent', box: 'border-accent bg-accent/5', label: 'text-accent' },
+  warn: { chip: 'border-warn/40 bg-warn-bg text-warn', box: 'border-warn bg-warn-bg/50', label: 'text-warn' },
+  income: { chip: 'border-income/40 bg-income/10 text-income', box: 'border-income bg-income/5', label: 'text-income' },
+};
+
+/**
+ * یک موردِ صف: مبلغ و تاریخ، جملهٔ کاربر، «چرا در صف است؟» و فقط یک قدمِ بعدی.
+ *
+ * بازطراحی پس از بازخورد مالک محصول (۲۹ مهر ۱۴۰۵): هشت تکه و شش دکمه روی هر کارت بود و
+ * دلیلِ آمدن به صف یک خطِ خاکستریِ ۱۲ پیکسلی پنجمِ کارت. حالا دلیل بالای کارت است و مسیر
+ * یکی از سه تاست (`reviewCase`): سؤال کارتی، تحلیل، یا تأییدِ سندِ آماده. رد و جزئیات
+ * پایین کارت و آرام‌اند؛ هیچ پنجرهٔ `prompt` مرورگری باز نمی‌شود.
+ */
+function ReviewQueueRow({ item, busy, leaving, onApprove, onReject, onAnswered, notify }) {
+  const [details, setDetails] = useState(false);
   const [trail, setTrail] = useState(null);
   const [decision, setDecision] = useState(null);
   const [ai, setAi] = useState(item.aiProposal || null);
+  const [rejecting, setRejecting] = useState(false), [reason, setReason] = useState('');
+  const [override, setOverride] = useState(''), [overrideReason, setOverrideReason] = useState('');
+  const [manual, setManual] = useState(false);
   const confidence = item.confidence || {};
+  const question = decision?.decision?.question || null;
+  const kase = reviewCase(item);
+  const tone = TONE[kase.tone] || TONE.accent;
+  const transcript = item.originalTranscript || item.event?.utterance || item.event?.evidence || '';
 
   // تصمیم فقط برای ردیف‌هایی خوانده می‌شود که واقعاً تصمیمی دارند. صف ممکن است
   // ده‌ها ردیف داشته باشد و اکثرشان از مسیر قدیمی آمده‌اند.
@@ -159,69 +164,86 @@ function ReviewQueueRow({ item, busy, onApprove, onReject, onAnswered, notify, n
       await onAnswered?.();
     } catch (error) { notify?.(error.message); }
   };
-
-  const toggle = async () => {
-    const next = !open;
-    setOpen(next);
+  const approve = async (withReason = '') => {
+    const result = await onApprove(item, withReason);
+    if (result?.needReason) setOverride(result.needReason);
+  };
+  const openDetails = async () => {
+    const next = !details;
+    setDetails(next);
     if (next && !trail) {
       try { setTrail((await api.eventAudit(item.id)).items); }
       catch { setTrail([]); }
     }
   };
 
-  return <article className="py-3">
-    <div className="flex flex-wrap items-center gap-3">
-      <span className={`rounded border px-2 py-0.5 text-xs font-bold ${ROUTE_STYLE[item.route] || ROUTE_STYLE.confirm}`}>
-        {ROUTE_LABELS[item.route] || 'در انتظار'}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-bold">{confidence.summary || item.kind}</p>
-        <p className="mt-0.5 text-xs text-muted">
-          {persianDate(item.occurredAt)} · <span className="numbers">{formatAmount(item.amount)}</span> تومان{item.event?.amountReferenceOnly ? ' (بزرگ‌ترین مبلغ گفته‌شده؛ مبلغ سند هنوز مشخص نیست)' : ''}
-          {item.dueAt && <> · سررسید {persianDate(item.dueAt)}</>}
-        </p>
-      </div>
-      <span className={`numbers text-[12px] font-bold ${confidence.percent >= 80 ? 'text-accent' : 'text-expense'}`}>
-        {toPersianDigits(confidence.percent ?? 0)}٪
-      </span>
-      <div className="flex gap-1.5">
-        <button disabled={busy} onClick={() => item.approvalBlocked ? setOpen(true) : onApprove(item)} className="tap flex items-center gap-1 rounded-lg bg-accent px-3 text-[12px] font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80"><Check size={15} />{item.approvalBlocked ? 'تکمیل و اصلاح سند' : 'تأیید و ثبت سند'}</button>
-        <button disabled={busy} onClick={() => onReject(item)} className="tap rounded-lg border border-expense/50 px-3 text-[12px] font-bold text-expense disabled:opacity-40">رد</button>
-        <button onClick={toggle} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold hover:bg-paper hover:text-ink">{open ? 'بستن' : 'چرا؟'}</button>
-      </div>
+  return <article className={`review-card py-5 ${leaving ? 'rq-leaving' : ''}`} data-path={kase.path}>
+    <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <p className="numbers text-[17px] font-extrabold">{formatAmount(item.amount)} <span className="text-[13px] font-bold text-muted">تومان</span></p>
+      <p className="text-[13px] text-muted">{persianDate(item.occurredAt)}{item.dueAt ? ` · سررسید ${persianDate(item.dueAt)}` : ''}</p>
+      <span className={`ms-auto rounded-full border px-2.5 py-0.5 text-[12px] font-extrabold ${tone.chip}`}>{kase.badge}</span>
+    </header>
+    {item.event?.amountReferenceOnly && <p className="mt-1 text-[12px] text-muted">بزرگ‌ترین مبلغِ گفته‌شده؛ مبلغ سند هنوز مشخص نیست.</p>}
+    {transcript
+      ? <blockquote dir="auto" aria-label="متن اصلی گفتهٔ کاربر" className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-[15px] leading-8 text-ink">«{transcript}»</blockquote>
+      : <p className="mt-2 text-[13px] text-muted">متن اصلی برای این مورد ذخیره نشده است.</p>}
+
+    <div className={`mt-3 rounded-xl border-s-4 px-4 py-3 ${tone.box}`}>
+      <p className={`text-[12px] font-extrabold ${tone.label}`}>چرا در صف است؟</p>
+      <p className="mt-0.5 text-[15px] font-bold leading-7">{kase.headline}</p>
+      {kase.detail && <p className="mt-1 text-[13px] leading-6 text-muted">{kase.detail}</p>}
+      {/* قدمِ بعدیِ سؤال و تحلیل، خودِ کارتِ پایین است؛ این‌جا تکرارش نمی‌کنیم. */}
+      {kase.path === 'approve' && <p className="mt-1.5 text-[13px] leading-6">{kase.next}</p>}
     </div>
 
-    <OriginalTranscript text={item.originalTranscript || item.event?.utterance || item.event?.evidence} />
-    <TopicLabelField item={item} notify={notify} />
-    {item.approvalBlocked && <div className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3 text-xs leading-6">
-      <p>{item.approvalNextStep === 'answer-question' ? 'ابتدا به سؤال پایین کارت پاسخ بده؛ بعد از تکمیل، امکان ثبت دوباره بررسی می‌شود.' : 'سطرهای این سند هنوز قطعی نیست. پیشنهاد AI را با «تحلیل کن» بگیر و حساب‌ها را بررسی کن.'}</p>
-    </div>}
-    {/* دلیل توقف، بدون باز کردن جزئیات — همان چیزی که حسابدار اول می‌خواهد بداند. */}
-    {!open && confidence.reasons?.length > 0 && <p className="mt-1.5 text-xs leading-5 text-muted">• {confidence.reasons[0]}</p>}
-
-    {item.route === 'accountant-review' && <ReviewAssistant item={item} ai={ai} setAi={setAi} onSaved={onAnswered} notify={notify} busy={busy} />}
-
-    {item.event?.kind === 'review-placeholder' && <ReviewedCompositeEditor item={item} ai={ai} onSaved={onAnswered} notify={notify} />}
-
-    {/* سؤال بالاتر از جزئیات می‌نشیند: تا جوابش نیامده، بقیه‌اش موضوعیت ندارد. */}
     {/* کلید: تصمیم + واقعیت پرسیده‌شده. ردیف با item.id کلید می‌خورد و بعد از
         جواب «شروع دوره» همان می‌ماند؛ بی‌این کلید متن تایپ‌شده برای «پایان دوره»
         هم فرستاده می‌شد. */}
-    {decision?.decision?.question && <DecisionQuestionCard key={questionCardKey(decision.decision.id || item.decisionId, decision.decision.question)} question={decision.decision.question} busy={busy} onAnswer={answer} />}
+    {kase.path === 'question' && question && <div className="rq-step"><DecisionQuestionCard key={questionCardKey(decision.decision.id || item.decisionId, question)} question={question} busy={busy} onAnswer={answer} /></div>}
+    {kase.path === 'question' && !question && <p className="mt-3 text-[13px] text-muted">در حال خواندن سؤال…</p>}
+
+    {kase.path === 'analysis' && item.route === 'accountant-review' && <ReviewAssistant item={item} ai={ai} setAi={setAi} onSaved={onAnswered} notify={notify} busy={busy} />}
+    {kase.path === 'analysis' && item.route !== 'accountant-review' && <p className="mt-3 text-[13px] leading-6 text-muted">این مورد با تصمیم حسابدار کامل می‌شود؛ از «جزئیات» دلیلش را ببین.</p>}
+    {item.event?.kind === 'review-placeholder' && <div className="mt-2">
+      <button type="button" onClick={() => setManual(!manual)} aria-expanded={manual} className="tap text-[13px] font-bold text-muted underline-offset-4 hover:underline">{manual ? 'بستن ثبت دستی سطرها' : 'یا: ثبت دستی سطرها توسط حسابدار'}</button>
+      {manual && <ReviewedCompositeEditor item={item} ai={ai} onSaved={onAnswered} notify={notify} />}
+    </div>}
+
+    {kase.path === 'approve' && <div className="rq-step">
+      <EntryTable lines={item.plan?.lines || []} title="سند نهایی" />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={() => approve()} className="tap inline-flex items-center gap-1.5 rounded-xl bg-accent px-5 text-[14px] font-extrabold text-on-fill hover:bg-accent/90 disabled:opacity-40"><Check size={17} aria-hidden="true" />تأیید و ثبت سند</button>
+      </div>
+    </div>}
+    {override && <div className="rq-step mt-3 space-y-2 rounded-xl border border-warn/40 bg-warn-bg/50 p-3">
+      <p className="text-[13px] font-bold leading-6">{override}</p>
+      <label className="block text-[13px] font-bold">دلیل ثبت<textarea value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} rows={2} className="mt-1 block w-full rounded-lg border border-line bg-surface p-2.5 text-[14px] font-normal" /></label>
+      <button type="button" disabled={busy || !overrideReason.trim()} onClick={() => approve(overrideReason.trim())} className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-40">ثبت با همین دلیل</button>
+    </div>}
 
     {/* برنامهٔ تخصیص، وقتی ساخته شده — همان چیزی که ثابت می‌کند مبلغ یک‌جا هزینه نشد. */}
-    {decision?.schedule?.length > 0 && <p className="mt-1.5 text-xs text-muted">
+    {decision?.schedule?.length > 0 && <p className="mt-2 text-[13px] text-muted">
       برنامهٔ شناسایی: <span className="numbers">{toPersianDigits(decision.schedule.length)}</span> قلم ماهانه،
       از {decision.schedule[0].periodKey} تا {decision.schedule[decision.schedule.length - 1].periodKey}
     </p>}
 
-    {open && <div className="mt-2">
+    <footer className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+      <button type="button" disabled={busy} onClick={() => setRejecting(!rejecting)} aria-expanded={rejecting} className="tap font-bold text-expense disabled:opacity-40">رد این مورد</button>
+      <button type="button" onClick={openDetails} aria-expanded={details} className="tap font-bold text-muted">{details ? 'بستن جزئیات' : 'جزئیات'}</button>
+    </footer>
+    {rejecting && <div className="rq-step mt-2 space-y-2">
+      {/* رد کردن پاک کردن نیست: رویداد با دلیلش در تاریخچه می‌ماند. */}
+      <label className="block text-[13px] font-bold">دلیل رد این مورد<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={2} className="mt-1 block w-full rounded-lg border border-line bg-surface p-2.5 text-[14px] font-normal" /></label>
+      <button type="button" disabled={busy || !reason.trim()} onClick={() => onReject(item, reason.trim())} className="tap rounded-lg border border-expense px-3 text-[13px] font-bold text-expense disabled:opacity-40">ثبت رد</button>
+    </div>}
+    {details && <div className="rq-step mt-2 space-y-3">
+      <TopicLabelField item={item} notify={notify} />
       <ConfidencePanel assessment={{ percent: confidence.percent ?? 0, fields: confidence.components || {}, reasons: confidence.reasons || [] }} />
-      <div className="mt-3 rounded-xl border border-line bg-surface p-3">
-        <p className="text-xs font-extrabold">تاریخچهٔ رویداد</p>
-        {trail === null && <p className="mt-2 text-xs text-muted">در حال خواندن…</p>}
-        {trail?.length === 0 && <p className="mt-2 text-xs text-muted">رویدادی ثبت نشده است.</p>}
-        {trail?.map((entry, index) => <p key={`${entry.stage}-${index}`} className="mt-1.5 text-xs leading-5 text-muted">
+      <div className="rounded-xl border border-line bg-surface p-3">
+        <p className="text-[13px] font-extrabold">تاریخچهٔ رویداد</p>
+        {trail === null && <p className="mt-2 text-[13px] text-muted">در حال خواندن…</p>}
+        {trail?.length === 0 && <p className="mt-2 text-[13px] text-muted">رویدادی ثبت نشده است.</p>}
+        {trail?.map((entry, index) => <p key={`${entry.stage}-${index}`} className="mt-1.5 text-[13px] leading-6 text-muted">
           <b className="text-ink">{entry.stage}</b> · {persianDate(entry.createdAt)}
         </p>)}
       </div>
@@ -385,13 +407,22 @@ function UnquantifiedReviewCard({ item, notify, onSaved }) {
     catch (error) { notify(error.message); }
     finally { setBusy(false); }
   };
-  return <article className="space-y-2 py-3 text-sm">
-    <p className="font-bold">درخواست پیگیری حسابدار — مبلغ مشخص نشده</p>
-    <OriginalTranscript text={item.transcript} />
-    <p className="text-muted">شناسه پیگیری: {item.id} — هیچ سند یا مبلغ فرضی ثبت نشده است. ابتدا مبلغ، تاریخ و سند مبنا را بررسی کن.</p>
-    <input className="w-full rounded border border-line p-2" value={journalEntryId} onChange={e => setJournalEntryId(e.target.value)} placeholder="شناسه سند مرتبط در صورت ثبت اصلاح توسط حسابدار (اختیاری)" />
-    <textarea className="w-full rounded border border-line p-2" value={reason} onChange={e => setReason(e.target.value)} placeholder="نتیجه بررسی و دلیل بستن پرونده" />
-    <button disabled={busy || reason.trim().length < 8} onClick={resolve} className="tap rounded bg-accent px-3 text-on-fill disabled:opacity-40">ثبت نتیجه بررسی و بستن پرونده</button>
+  const kase = reviewCase({ intake: true });
+  return <article className="review-card space-y-3 py-5" data-path="intake">
+    <header className="flex flex-wrap items-center gap-2">
+      <p className="text-[15px] font-extrabold">درخواست پیگیری حسابدار</p>
+      <span className="ms-auto rounded-full border border-warn/40 bg-warn-bg px-2.5 py-0.5 text-[12px] font-extrabold text-warn">{kase.badge}</span>
+    </header>
+    {item.transcript && <blockquote dir="auto" aria-label="متن اصلی گفتهٔ کاربر" className="whitespace-pre-wrap break-words text-[15px] leading-8 text-ink">«{item.transcript}»</blockquote>}
+    <div className="rounded-xl border-s-4 border-warn bg-warn-bg/50 px-4 py-3">
+      <p className="text-[12px] font-extrabold text-warn">چرا در صف است؟</p>
+      <p className="mt-0.5 text-[15px] font-bold leading-7">{kase.headline} هیچ سند یا مبلغ فرضی ثبت نشده است.</p>
+      <p className="mt-1.5 text-[13px] leading-6">{kase.next}</p>
+    </div>
+    <input className="w-full rounded-lg border border-line bg-surface p-2.5 text-[14px]" value={journalEntryId} onChange={e => setJournalEntryId(e.target.value)} placeholder="شناسه سند مرتبط، اگر اصلاح را ثبت کرده‌ای (اختیاری)" aria-label="شناسه سند مرتبط" />
+    <textarea className="w-full rounded-lg border border-line bg-surface p-2.5 text-[14px]" value={reason} onChange={e => setReason(e.target.value)} placeholder="نتیجهٔ بررسی و دلیل بستن پرونده" aria-label="نتیجهٔ بررسی" rows={2} />
+    <button disabled={busy || reason.trim().length < 8} onClick={resolve} className="tap rounded-xl bg-accent px-5 text-[14px] font-bold text-on-fill disabled:opacity-40">ثبت نتیجه و بستن پرونده</button>
+    <p className="text-[12px] text-muted">شناسهٔ پیگیری: {item.id}</p>
   </article>;
 }
 
@@ -428,6 +459,7 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
   const [dnaSummary,setDnaSummary] = useState(null);
   const [notices, setNotices] = useState([]);
   const [busy, setBusy] = useState('');
+  const [leaving, setLeaving] = useState('');
 
   const load = useCallback(async () => {
     try { const result=await api.reviewQueue();setItems(result.items);setDnaSummary(result.dnaSummary);setNotices(result.recognitionNotices || []);await refresh?.(); }
@@ -436,44 +468,48 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const approve = async (item) => {
-    setBusy(item.id);
-    try { await api.approveEvent(item.id); notify('سند ثبت شد.'); await load(); }
-    catch (error) {
-      if (error.code !== 'EVENT_OVERRIDE_REASON_REQUIRED') notify(error.message);
-      else {
-        const reason = window.prompt(`${error.message}\n\nدلیل ثبت:`);
-        if (reason?.trim()) {
-          try { await api.approveEvent(item.id, reason.trim()); notify('سند با دلیل ثبت شد.'); await load(); }
-          catch (retry) { notify(retry.message); }
-        }
-      }
-    }
-    setBusy('');
+  // کارتِ تمام‌شده کوتاه محو می‌شود (۱۶۰ms) و بعد صف تازه خوانده می‌شود؛ پرشِ ناگهانیِ
+  // فهرست نیست و فرایند هم کند نمی‌شود.
+  const leave = async (item) => {
+    setLeaving(item.id);
+    await new Promise((resolve) => setTimeout(resolve, 170));
+    await load();
+    setLeaving('');
   };
 
-  const reject = async (item) => {
-    // رد کردن پاک کردن نیست: رویداد با دلیلش در تاریخچه می‌ماند.
-    const reason = window.prompt('دلیل رد این مورد چیست؟');
-    if (!reason) return;
+  /** دلیلِ لازم برای ثبت (`EVENT_OVERRIDE_REASON_REQUIRED`) در خودِ کارت پرسیده می‌شود، نه با پنجرهٔ مرورگر. */
+  const approve = async (item, reason = '') => {
     setBusy(item.id);
-    try { await api.rejectEvent(item.id, reason); notify('مورد رد شد و دلیلش ثبت شد.'); await load(); }
+    try {
+      await api.approveEvent(item.id, reason || undefined);
+      notify(reason ? 'سند با دلیل ثبت شد.' : 'سند ثبت شد.');
+      await leave(item);
+      return null;
+    } catch (error) {
+      if (error.code === 'EVENT_OVERRIDE_REASON_REQUIRED') return { needReason: error.message };
+      notify(error.message);
+      return null;
+    } finally { setBusy(''); }
+  };
+
+  const reject = async (item, reason) => {
+    setBusy(item.id);
+    try { await api.rejectEvent(item.id, reason); notify('مورد رد شد و دلیلش ثبت شد.'); await leave(item); }
     catch (error) { notify(error.message); }
     setBusy('');
   };
 
-  const needsAccountant = (items || []).filter((item) => item.route === 'accountant-review').length;
+  const counts = (items || []).reduce((total, item) => ({ ...total, [reviewPath(item)]: (total[reviewPath(item)] || 0) + 1 }), {});
 
   // ترتیب صفحه ترتیب کار حسابدار است: آنچه اقدام می‌خواهد بالا، تنظیم صف پایین.
   return <main className="mx-auto w-full max-w-[980px] px-4 py-5">
     <header className="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 className="text-xl font-extrabold">صف بررسی</h1>
-        <p className="mt-1 max-w-[640px] text-sm leading-7 text-muted">مواردی که سیستم به‌جای حدس زدن متوقفشان کرده. سند هیچ‌کدام هنوز زده نشده؛ متن اصلی را بخوان، کمبود را تکمیل کن و پیشنهاد ثبت را بسنج.</p>
+        <p className="mt-1 max-w-[640px] text-[14px] leading-7 text-muted">مواردی که سیستم به‌جای حدس زدن نگه داشته. سند هیچ‌کدام هنوز زده نشده؛ هر کارت می‌گوید چرا این‌جاست و قدم بعدی چیست.</p>
       </div>
-      {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-xs">
-        <span className={`rounded-full border px-2.5 py-1 font-bold ${ROUTE_STYLE['accountant-review']}`}>نیازمند بررسی: <span className="numbers">{toPersianDigits(needsAccountant)}</span></span>
-        <span className={`rounded-full border px-2.5 py-1 font-bold ${ROUTE_STYLE.confirm}`}>در انتظار تأیید: <span className="numbers">{toPersianDigits(items.length - needsAccountant)}</span></span>
+      {items && items.length > 0 && <div className="flex flex-wrap gap-1.5 text-[12px]">
+        {['question', 'analysis', 'approve', 'intake'].filter((path) => counts[path]).map((path) => <span key={path} className="rounded-full border border-line bg-surface px-2.5 py-1 font-bold">{PATHS[path].badge}: <span className="numbers">{toPersianDigits(counts[path])}</span></span>)}
       </div>}
     </header>
 
@@ -487,8 +523,8 @@ export function ReviewQueuePage({ notify, access, navigate, refresh }) {
       {items === null && <p className="py-6 text-sm text-muted">در حال خواندن صف…</p>}
       {items?.length === 0 && <p className="py-6 text-sm font-bold text-income">چیزی در صف بررسی نمانده است.</p>}
       {items?.length > 0 && <div className="divide-y divide-line">
-        {items.map((item) => item.intake ? <UnquantifiedReviewCard key={item.id} item={item} notify={notify} onSaved={load} /> : <ReviewQueueRow key={item.id} item={item} busy={busy === item.id}
-          onApprove={approve} onReject={reject} onAnswered={load} notify={notify} navigate={navigate} />)}
+        {items.map((item) => item.intake ? <UnquantifiedReviewCard key={item.id} item={item} notify={notify} onSaved={load} /> : <ReviewQueueRow key={item.id} item={item} busy={busy === item.id} leaving={leaving === item.id}
+          onApprove={approve} onReject={reject} onAnswered={load} notify={notify} />)}
       </div>}
     </section>
 

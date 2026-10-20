@@ -43,16 +43,22 @@ async function renderAssistant(ai) {
   } finally { await vite.close(); }
 }
 
-test('پیش‌نویس قفل‌شده: نشانِ «هیچ چیزی ثبت نشده»، نقشهٔ سه‌گامی و پنل «چرا هنوز قابل ثبت نیست؟» با راهنمای رفع', async () => {
+// بازطراحی ۲۹ مهر ۱۴۰۵: «مشکل» و «راه‌حل» هر کدام یک خط، سؤال یکی‌یکی، دلیل قفل کنار دکمه.
+const LOCKED_APPROVE = /disabled=""[^>]*>(?:<svg[\s\S]*?<\/svg>)?تأیید و ثبت سند/;
+
+test('پیش‌نویس قفل‌شده: نشانِ «هیچ چیزی ثبت نشده»، «مشکل» و «راه‌حل» با راهنمای رفع، و سؤال یکی‌یکی', async () => {
   const html = await renderAssistant(lockedProposal);
   assert.match(html, /پیش‌نویس — تا تأیید تو هیچ چیزی ثبت نشده/);
-  assert.match(html, /aria-label="مسیر تکمیل سند"/);
-  assert.match(html, /۲\. غلط یا ناقص بود\؟ در گفت‌وگو اصلاحش کن/);
-  assert.match(html, /چرا هنوز قابل ثبت نیست\؟/);
-  assert.match(html, /بانک یا صندوق واقعی را انتخاب کن\./);
-  assert.match(html, /از بخش «مشاهده یا اصلاح تاریخ، طرف‌حساب و بانک»/, 'راهنمای محل رفع گیرهٔ بانک');
-  assert.match(html, /قفل — تا رفع موارد بالا/, 'دلیل قفل‌بودن دکمهٔ تأیید روی خود دکمه');
-  assert.match(html, /disabled=""[^>]*>تأیید و اعمال سند/);
+  // سؤالِ بی‌جواب علت است؛ گیرهٔ بانک زیرش با راهنمای رفع می‌آید.
+  assert.match(html, /<dt[^>]*>مشکل<\/dt><dd[^>]*>یک سؤال بی‌جواب مانده است\.<\/dd><dd[^>]*>به سؤال پایین جواب بده/);
+  assert.match(html, /<li>بانک یا صندوق واقعی را انتخاب کن\. <span[^>]*>— حساب واقعی را در سؤال بانک انتخاب کن/);
+  assert.match(html, /<dt[^>]*>راه‌حل<\/dt><dd[^>]*>خرید فن صنعتی سالن/);
+  assert.match(html, /هنوز قابل ثبت نیست/);
+  assert.match(html, /حساب واقعی را در سؤال بانک انتخاب کن/, 'راهنمای محل رفع گیرهٔ بانک');
+  assert.match(html, /سؤال ۱ از ۱/);
+  assert.match(html, /قفل تا «مشکل» بالا حل شود/, 'دلیل قفل‌بودن دکمهٔ تأیید کنار خود دکمه');
+  assert.match(html, LOCKED_APPROVE);
+  assert.doesNotMatch(html, /<details[^>]*open/, 'توضیح بلند پشت «چرا؟» بسته می‌ماند');
   assert.match(html, /\(دارایی ثابت\)/, 'برچسب فارسی نقش سطر بدهکار');
   assert.match(html, /\(وام پرداختنی\)/, 'برچسب فارسی نقش سطر بستانکار');
   // متن‌های مبهم قدیمی نباید برگردند.
@@ -61,18 +67,20 @@ test('پیش‌نویس قفل‌شده: نشانِ «هیچ چیزی ثبت ن�
   assert.doesNotMatch(html, /موارد لازم برای آماده شدن سند/);
 });
 
-test('پیش‌نویس آماده: بدون پنل گیره، دکمهٔ تأیید باز و جملهٔ وضعیت روشن', async () => {
+test('پیش‌نویس آماده: بدون «مشکل»، دکمهٔ تأیید باز و نشان «آمادهٔ ثبت»', async () => {
   const html = await renderAssistant({ ...lockedProposal, canPost: true, postingBlockers: [], questions: [] });
-  assert.doesNotMatch(html, /چرا هنوز قابل ثبت نیست\؟/);
-  assert.doesNotMatch(html, /قفل — تا رفع موارد بالا/);
-  assert.match(html, /پیش‌نویس کامل است\. با تأیید تو سند ثبت می‌شود/);
-  assert.doesNotMatch(html, /disabled=""[^>]*>تأیید و اعمال سند/);
-  assert.match(html, /۳\. درست شد\؟ تأیید و ثبت/);
+  assert.doesNotMatch(html, /هنوز قابل ثبت نیست/);
+  assert.doesNotMatch(html, /<dt[^>]*>مشکل<\/dt>/);
+  assert.doesNotMatch(html, /قفل تا «مشکل» بالا حل شود/);
+  assert.match(html, /آمادهٔ ثبت/);
+  assert.match(html, /<dt[^>]*>سند پیشنهادی<\/dt>/);
+  assert.doesNotMatch(html, LOCKED_APPROVE);
 });
 
-test('گیرهٔ بدون سؤال: به‌جای جعبهٔ خالی، مسیر گفت‌وگو پیشنهاد می‌شود', async () => {
+test('گیرهٔ بدون سؤال: همان گیره «مشکل» است و راه رفعش گفت‌وگو با دستیار', async () => {
   const html = await renderAssistant({ ...lockedProposal, questions: [], postingBlockers: ['پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.'] });
-  assert.match(html, /اصلاح را در گفت‌وگو بنویس و «ارسال و بازبینی پیشنهاد» را بزن/);
+  assert.match(html, /<dt[^>]*>مشکل<\/dt><dd[^>]*>پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد\.<\/dd>/);
+  assert.match(html, /در «گفت‌وگو با دستیار» بنویس چه چیزی درست است/);
 });
 
 test('پرامپت مدل: فارسیِ ساده و نام حساب فقط از فهرست شرکت', () => {

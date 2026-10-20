@@ -1099,12 +1099,17 @@ test('دفتر: قضاوتِ حسابدار و طلبِ پرداخت‌نشده�
       const db = database.activeWorkspaceDatabase();
       for (const sentence of JUDGMENT_SENTENCES) {
         const rows = parseFinancialText(sentence, { source: 'voice', now: new Date(NOW) }).transactions;
-        const [id] = database.insertTransactions({ transcript: sentence, transactions: rows });
-        const event = db.prepare('SELECT id, route, status, kind FROM financial_events WHERE source_event_id=?').get(`transaction:${id}`);
+        const result = database.insertTransactions({ transcript: sentence, transactions: rows });
+        // پولِ پرداخت‌نشده («مستاجر هنوز نداده») ردیف نقدی ندارد (۲۹ مهر ۱۴۰۵): با موتور روشن طلبِ
+        // باز می‌شود (`obligation:`)، خاموش به صف حسابدار (`correction:`)؛ هیچ ردیف تراکنشی ساخته نمی‌شود.
+        const event = rows[0].unpaidSignal
+          ? db.prepare(`SELECT id, route, status, kind FROM financial_events WHERE source_event_id LIKE ? ORDER BY rowid DESC LIMIT 1`).get(engineV2 ? 'obligation:%' : 'correction:%')
+          : db.prepare('SELECT id, route, status, kind FROM financial_events WHERE source_event_id=?').get(`transaction:${result[0]}`);
+        if (rows[0].unpaidSignal) assert.equal(result.length, 0, `ردیف نقدی برای پولِ نیامده: ${sentence}`);
         assert.equal(event.route, 'accountant-review', `${sentence} engineV2=${engineV2}`);
         assert.notEqual(event.status, 'posted', sentence);
         assert.ok(!database.pendingConfirmations(50).items.some((item) => item.id === event.id), sentence);
-        if (rows[0].unpaidSignal) assert.equal(event.kind, 'receivable-opened', sentence);
+        if (rows[0].unpaidSignal && engineV2) assert.equal(event.kind, 'receivable-opened', sentence);
       }
       // هیچ‌کدام سندی نزده‌اند؛ صندوق دست‌نخورده است.
       assert.equal(db.prepare("SELECT COUNT(*) AS count FROM journal_entries WHERE source_type='transaction'").get().count, 0);

@@ -153,7 +153,24 @@ export function ensureFinancialEventSchema(database) {
   if (!REPAIRED_DATABASES.has(database)) {
     REPAIRED_DATABASES.add(database);
     repairCancelledSchedules(database);
+    detachUnpaidCashRows(database);
   }
+}
+
+/**
+ * ردیفِ تراکنشی که رویدادش «طلب یا بدهیِ باز» است، به هیچ حساب نقدی وصل نیست.
+ *
+ * تا ۲۹ مهر ۱۴۰۵ ردیفِ پرداخت‌نشده («قبض اومده، قراره تا آبان پرداختش کنیم») با حساب صندوق
+ * ذخیره می‌شد. سندش درست بود (هزینه در برابر بدهی، بی‌سطر نقدی)، ولی ماندهٔ صندوق از جمعِ همین
+ * ردیف‌ها حساب می‌شود و به اندازهٔ بدهیِ پرداخت‌نشده کم می‌آمد؛ کارت حساب و دفتر کل دو عدد
+ * می‌گفتند. حساب از ردیف برداشته می‌شود؛ سندِ دفتر و خودِ تعهد دست نمی‌خورند.
+ */
+export function detachUnpaidCashRows(database) {
+  try {
+    database.prepare(`UPDATE transactions SET account_id=NULL WHERE account_id IS NOT NULL AND id IN (
+      SELECT substr(source_event_id, 13) FROM financial_events
+      WHERE kind IN ('payable-opened','receivable-opened') AND source_event_id LIKE 'transaction:%')`).run();
+  } catch { /* دفتری که هنوز جدول تراکنش ندارد */ }
 }
 
 const REPAIRED_DATABASES = new WeakSet();
@@ -1639,6 +1656,23 @@ export function rejectFinancialEvent(database, eventId, { actor = null, reason =
   return describeStored(database, database.prepare('SELECT * FROM financial_events WHERE id=?').get(row.id));
 }
 
+/** سطرهای سندِ برنامه‌ریزی‌شده با نام‌هایی که کاربر می‌شناسد: حسابِ بانک، دسته، طرف حساب. */
+function planPreview(database, row) {
+  let plan = null;
+  try { plan = row.posting_plan ? JSON.parse(row.posting_plan) : null; } catch { plan = null; }
+  const lines = Array.isArray(plan?.lines) ? plan.lines : [];
+  if (!lines.length) return null;
+  const accountName = (id) => {
+    try { return database.prepare('SELECT name FROM accounts WHERE id=?').get(String(id || ''))?.name || null; } catch { return null; }
+  };
+  return {
+    lines: lines.map((line) => ({
+      role: line.role, debit: Number(line.debit) || 0, credit: Number(line.credit) || 0,
+      label: line.role === 'cash' ? accountName(line.key) || (line.key === 'cash' ? 'صندوق' : null) : (line.key || null),
+    })),
+  };
+}
+
 function describeStored(database, row) {
   const decision = decisionForEvent(database, row.id);
   const held = row.route === ROUTES.ACCOUNTANT_REVIEW && JSON.parse(row.confidence || '{}').guardBlocked === true;
@@ -1658,6 +1692,9 @@ function describeStored(database, row) {
     journalEntryId: row.journal_entry_id,
     approvalBlocked,
     approvalNextStep: approvalBlocked ? (decision?.decisionStatus === DECISION_STATUS.NEEDS_USER_INPUT ? 'answer-question' : 'manual-review') : 'approve',
+    // سندی که با «تأیید» زده می‌شود، فقط وقتی تأیید باز است: سطرِ موردِ گیرافتاده حدسِ
+    // پارسر است و نشان‌دادنش به‌عنوان «سند نهایی» گمراه می‌کرد (صف حسابدار، ۲۹ مهر ۱۴۰۵).
+    plan: approvalBlocked ? null : planPreview(database, row),
     decisionId: row.decision_id || null,
     event: JSON.parse(row.payload),
     confidence: JSON.parse(row.confidence),
