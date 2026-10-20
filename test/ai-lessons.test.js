@@ -20,6 +20,8 @@ const NOW = '2026-10-14T08:00:00.000Z';
 const none = { op: null, of: [] };
 const T01 = 'یه کلید برق ۴۵۰ هزار تومانی برای تابلوی برق دفتر خریدیم که کلید سوختهٔ قبلی رو عوض کردیم؛ نقد از صندوق.';
 const T18 = 'قبض برق مهر مغازه ۴ میلیون تومان اومده ولی قراره تا آبان پرداختش کنیم.';
+// پارسر خودِ T01 را حالا درست می‌گیرد (قطعهٔ سوخته که عوض شد)؛ همان کلید بی «سوخته» هنوز دستهٔ عمومی می‌گیرد.
+const SWITCH = 'یه کلید برق ۴۵۰ هزار تومانی برای تابلوی برق دفتر خریدیم؛ نقد از صندوق.';
 const REPAIR = 'تعمیر و نگهداری';
 
 process.env.DATABASE_PATH = tempDatabase('ai-lessons');
@@ -78,15 +80,15 @@ const parsed = (text) => parseFinancialText(text, { learnings: database.getLearn
 const record = (caseId, transcript, components) => database.recordAiLessons({ caseId, transcript, components, now: new Date(NOW) });
 const cash = (amount, type, category, extra = {}) => ({ id: 'a1', kind: 'cash', amount, item: { amount, type, category, ...extra } });
 
-test('T01: «کلید برق» بار اول دیده می‌شود، با تأیید دوم یاد گرفته می‌شود و پارسر جملهٔ تازه را درست می‌گیرد', async () => {
+test('«کلید برق» بار اول دیده می‌شود، با تأیید دوم یاد گرفته می‌شود و پارسر جملهٔ تازه را درست می‌گیرد', async () => {
   await inBook(async () => {
-    assert.equal(parsed(T01).category, 'سوخت و ایاب‌وذهاب', 'نقطهٔ شروع: پارسر «برق» را سوخت می‌خواند');
-    const first = await viaAi(T01, switchSaid('کلید برق'));
+    assert.equal(parsed(SWITCH).category, 'سایر هزینه‌ها', 'نقطهٔ شروع: پارسر «کلید برق» را نمی‌شناسد');
+    const first = await viaAi(SWITCH, switchSaid('کلید برق'));
     assert.equal(first.status, 'posted');
     let [lesson] = lessons('category');
     assert.equal(lesson.keyword, 'کلید برق');
     assert.equal(lesson.category, REPAIR);
-    assert.equal(lesson.parserCategory, 'سوخت و ایاب‌وذهاب');
+    assert.equal(lesson.parserCategory, 'سایر هزینه‌ها');
     assert.equal(lesson.status, 'watching');
     assert.equal(lesson.confirmations, 1);
     assert.deepEqual(aiLearnings(), [], 'از یک بار یاد نمی‌گیرد');
@@ -117,9 +119,9 @@ test('نگاشت مشخص‌تر برنده است، هر کدام که دیرت
   assert.equal(parseFinancialText('قبض برق ۲ میلیون پرداخت کردیم', { learnings }).transactions[0].category, 'قبوض');
 });
 
-test('T18: قبضِ پرداخت‌نشده — پارسر ردیف نقدی می‌ساخت؛ اختلاف ساختاری می‌ماند و هرگز یاد گرفته نمی‌شود', async () => {
+test('T18: پارسر هم حالا تعهدِ پرداخت می‌بیند؛ با AI هم‌نظر است و درسی نمی‌ماند', async () => {
   await inBook(async () => {
-    assert.equal(parsed(T18).type, 'expense', 'نقطهٔ شروع: پارسر خروج نقدی می‌سازد');
+    assert.equal(parsed(T18).unpaidSignal, true, 'پارسر دیگر خروج نقدی نمی‌سازد (test/burnt-and-unpaid-family.test.js)');
     const posted = await viaAi(T18, model({
       event: { kind: 'obligation', description: '', status: 'done' },
       amounts: [amt('a1', 4_000_000, 'total', '۴ میلیون تومان')],
@@ -127,13 +129,8 @@ test('T18: قبضِ پرداخت‌نشده — پارسر ردیف نقدی م�
       subject: { what: 'قبض برق', kind: 'service', use: 'internal', category: 'قبوض', delivered: 'yes', usefulLifeMonths: null, evidence: 'قبض برق' },
     }), { 'counterparties.c1': { valueId: 'new' }, 'engine.a1.counterparty': { value: 'اداره برق' } });
     assert.equal(posted.status, 'posted');
-    const [lesson] = lessons('structural');
-    assert.deepEqual(lesson.flags.map((flag) => flag.id), ['cash-for-unpaid']);
-    assert.equal(lesson.status, 'open');
-    assert.equal(lessons('category').length, 0);
+    assert.equal(lessons().length, 0);
     assert.deepEqual(aiLearnings(), []);
-    assert.throws(() => database.decideAiLesson(lesson.id, { decision: 'learn' }), /خودکار یاد گرفته نمی‌شود/);
-    assert.equal(database.decideAiLesson(lesson.id, { decision: 'reviewed' }).status, 'reviewed');
   });
 });
 
@@ -146,11 +143,17 @@ test('هر نوع اختلاف ساختاری علامت خودش را دارد 
     record('c-settle', lunch, [{ id: 'a1', kind: 'settlement', amount: 2_000_000 }]);
     record('c-partner-settle', lunch, [{ id: 'a1', kind: 'partner-settlement', amount: 2_000_000 }]);
     record('c-amount', lunch, [cash(20_000_000, 'expense', 'خوراک')]);
+    record('c-unpaid', lunch, [{ id: 'a1', kind: 'obligation', amount: 2_000_000, item: { amount: 2_000_000, type: 'expense', category: 'خوراک' } }]);
+    record('c-paid', T18, [cash(4_000_000, 'expense', 'قبوض')]);
     const flags = Object.fromEntries(lessons('structural').map((lesson) => [lesson.caseIds[0], lesson.flags.map((flag) => flag.id)]));
     assert.deepEqual(flags, {
       'c-direction': ['direction'], 'c-partner': ['paid-by-other'], 'c-transfer': ['transfer-as-row'],
       'c-settle': ['settlement-as-row'], 'c-partner-settle': ['settlement-as-row'], 'c-amount': ['amount'],
+      'c-unpaid': ['cash-for-unpaid'], 'c-paid': ['unpaid-for-paid'],
     });
+    const open = lessons('structural').find((lesson) => lesson.caseIds[0] === 'c-unpaid');
+    assert.throws(() => database.decideAiLesson(open.id, { decision: 'learn' }), /خودکار یاد گرفته نمی‌شود/);
+    assert.equal(database.decideAiLesson(open.id, { decision: 'reviewed' }).status, 'reviewed');
     assert.equal(lessons('category').length, 0);
     assert.deepEqual(aiLearnings(), []);
     for (const lesson of lessons('structural')) assert.ok(lesson.flags.every((flag) => flag.label && flag.label !== flag.id));
@@ -242,9 +245,9 @@ test('«نه، یاد نگیر» روی درسِ یادگرفته، یادگیر
 
 test('هر پرونده یک بار شمرده می‌شود — دوباره ثبت‌کردنِ همان پرونده هم', async () => {
   await inBook(async () => {
-    const posted = await viaAi(T01, switchSaid('کلید برق'));
+    const posted = await viaAi(SWITCH, switchSaid('کلید برق'));
     database.commitUnderstandingCase(posted.id, { now: new Date(NOW) });
-    record(posted.id, T01, posted.plan.components);
+    record(posted.id, SWITCH, posted.plan.components);
     assert.equal(lessons('category')[0].confirmations, 1);
   });
 });
@@ -308,5 +311,13 @@ test('گزارش اختلاف‌ها: بدون نام دفتر و کاربر، �
     assert.equal(report.format, 'hesab-yar-ai-lessons');
     assert.deepEqual(report.lessons.map((lesson) => [lesson.kind, lesson.flags, lesson.sample]), [['structural', ['direction'], 'ناهار پرسنل ۲ میلیون نقد دادیم']]);
     assert.doesNotMatch(JSON.stringify(report), /دفتر درس‌های AI|ai-lessons-owner/);
+  });
+});
+
+test('T01 عیناً: پارسر حالا همان دستهٔ AI را می‌گوید؛ درسی ساخته نمی‌شود', async () => {
+  await inBook(async () => {
+    assert.equal(parsed(T01).category, REPAIR);
+    await viaAi(T01, switchSaid('کلید برق'));
+    assert.equal(lessons().length, 0);
   });
 });

@@ -46,6 +46,7 @@ const GENERIC_WORDS = new Set([
 export const STRUCTURAL_FLAGS = Object.freeze({
   direction: 'جهت پول برعکس خوانده می‌شد',
   'cash-for-unpaid': 'برای پولی که هنوز پرداخت نشده ردیف نقدی می‌ساخت',
+  'unpaid-for-paid': 'پولی را که رفته بود پرداخت‌نشده می‌خواند',
   'paid-by-other': 'پول از جیب شریک یا کارمند رفته بود، نه از صندوق و بانک',
   'transfer-as-row': 'انتقال بین حساب‌های خود شرکت را درآمد یا هزینه می‌خواند',
   'settlement-as-row': 'تسویهٔ طلب یا بدهی را درآمد یا هزینهٔ تازه می‌خواند',
@@ -120,7 +121,8 @@ export function deterministicView(text, { learnings = [], accounts = [], now = n
   if (natureNeedsAccountant(readEventNature(text)) || readNonCashInstrument(text) || readExplicitNonCash(text)) return { path: 'queue', reason: 'non-cash' };
   const rows = (parseFinancialText(text, { learnings, source: 'text', now }).transactions || [])
     .filter((row) => Number.isSafeInteger(row.amount) && row.amount > 0)
-    .map((row) => ({ amount: row.amount, type: row.type, category: row.category }));
+    // ردیفِ پرداخت‌نشده («قراره تا آبان پرداختش کنیم») تعهد باز می‌کند، نه ردیف نقدی.
+    .map((row) => ({ amount: row.amount, type: row.type, category: row.category, unpaid: row.unpaidSignal === true }));
   return { path: 'parser', rows };
 }
 
@@ -170,12 +172,13 @@ export function recordAiLessons({ caseId, transcript, components = [], now = new
       continue;
     }
     const flags = [];
-    if (component.kind === 'obligation') flags.push('cash-for-unpaid');
+    if (component.kind === 'obligation') { if (!row.unpaid) flags.push('cash-for-unpaid'); else continue; }
     else if (component.kind === 'transfer') flags.push('transfer-as-row');
     else if (component.kind === 'settlement' || component.kind === 'partner-settlement') flags.push('settlement-as-row');
     else if (component.kind === 'cash' && item) {
       if (row.type !== item.type) flags.push('direction');
       if (item.fundedBy) flags.push('paid-by-other');
+      if (row.unpaid) flags.push('unpaid-for-paid');
     } else continue;
     if (flags.length) {
       recorded.push(recordStructural({ ...context, flags, parserCategory: row.category }));
