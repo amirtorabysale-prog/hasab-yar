@@ -223,7 +223,12 @@ function vatSplitGuard(event, facts, { decision, vat, sentence, rewrittenBy }) {
   }
 
   if (mention.form === VAT_FORMS.EXCLUSIVE) {
-    return check(name, GUARD_VERDICTS.BLOCK, 'مبلغ بدون ارزش افزوده گفته شده؛ پولی که واقعاً جابه‌جا شد چقدر بود؟', noted);
+    // فاکتورِ پرداخت‌نشده پولی جابه‌جا نکرده؛ «پولی که واقعاً جابه‌جا شد» سؤالِ بی‌جواب بود
+    // («فاکتور خرید … به‌علاوهٔ ۱۰ درصد ارزش افزوده، پولش هنوز ندادیم» — آزمون صف، ۲۹ مهر ۱۴۰۵).
+    const unpaid = [EVENT_KINDS.PAYABLE_OPENED, EVENT_KINDS.RECEIVABLE_OPENED].includes(event.kind);
+    return check(name, GUARD_VERDICTS.BLOCK, unpaid
+      ? 'مبلغ بدون ارزش افزوده گفته شده؛ جمع فاکتور با ارزش افزوده چقدر است؟'
+      : 'مبلغ بدون ارزش افزوده گفته شده؛ پولی که واقعاً جابه‌جا شد چقدر بود؟', noted);
   }
   if (mention.form === VAT_FORMS.BARE) {
     return check(name, GUARD_VERDICTS.BLOCK, 'ارزش افزوده گفته شده ولی معلوم نیست داخل این مبلغ است یا جدا از آن.', noted);

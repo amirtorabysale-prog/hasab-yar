@@ -138,7 +138,10 @@ async function proposeReviewOnce(database, eventId, { fetcher = fetch, message =
     // حق بیمهٔ بیمه‌نامهٔ کارکنان («بیمه حوادث کارگران دوازده ماهه») حقوق نیست،
     // حتی وقتی دسته‌اش «حقوق و دستمزد» خورده؛ پرسیدن خالص یا ناخالص سؤال غلط است.
     // ولی «حقوق کارگرا با بیمه درمان ۴۰ میلیون» حقوق است و همان سؤال را می‌خواهد.
-    || (!premiumOnly(captured) && payrollReviewQuestion({category:event.category,answers:context.questionAnswers || {}}));
+    // پولِ شریک، برگشتِ وجه، واریزِ ناشناس و آوردهٔ سرمایه حقوق نیستند، هر دسته‌ای که خورده
+    // باشند؛ سؤالِ خالص یا ناخالص جلوی قاعدهٔ درستِ همان ماهیت را می‌گرفت (آزمون صف، ۲۹ مهر ۱۴۰۵).
+    || (!premiumOnly(captured) && !nature.partner && !nature.refund && !nature.unknownReceipt && !nature.capital
+      && payrollReviewQuestion({category:event.category,answers:context.questionAnswers || {},text:captured}));
   const localProposal=unsupported || ruled || (originalTradeFacts && (
     taxPenaltyProposal(captured,row.amount,context) ||
     (!event.amountReferenceOnly && simpleReviewCashProposal(captured,row.amount,{advanceRole:advanceRoleFor(database,event)})) ||

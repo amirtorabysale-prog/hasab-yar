@@ -23,9 +23,21 @@ function legacyId(text) {
   for(const char of normalize(text)) hash=Math.imul(hash ^ char.codePointAt(0),16777619);
   return `question-${(hash>>>0).toString(16)}`;
 }
+/**
+ * همان سؤال با واژه‌های دیگر. مدل گاهی سؤالش را در `missingFacts` با «مشخص شود …» تکرار
+ * می‌کند و حسابدار یک چیز را دو بار جواب می‌داد (آزمون صف روی سایت، ۲۹ مهر ۱۴۰۵: «پیش‌پرداخت
+ * بیمه یا هزینهٔ بیمهٔ دوره؟» دو بار). فقط وقتی همهٔ واژه‌های معنادارِ سؤالِ کوتاه‌تر در
+ * دیگری هست و دست‌کم چهار واژه دارد؛ «شروع پوشش» و «پایان پوشش» دو سؤال می‌مانند.
+ */
+const FILLER=new Set(['این','آن','برای','یا','را','رو','به','از','که','و','در','با','شود','است','کند','کنید','مشخص','لطفا','لطفاً','کدام','چه','آیا']);
+const contentWords=text=>new Set(normalize(text).split(' ').filter(word=>word.length>1 && !FILLER.has(word)));
+function restates(a,b) {
+  const [small,large]=[contentWords(a),contentWords(b)].sort((x,y)=>x.size-y.size);
+  return small.size>=4 && [...small].every(word=>large.has(word));
+}
 export function reviewQuestions(proposal={}) {
   const result=[];
-  const add=(text,id,field)=>{
+  const add=(text,id,field,options)=>{
     if(typeof text!=='string' || !text.trim()) return;
     text=text.trim().slice(0,150);
     id=typeof id==='string' && /^[a-z][a-z0-9_.-]{0,79}$/.test(id)?id:legacyId(text);
@@ -36,9 +48,11 @@ export function reviewQuestions(proposal={}) {
     // Coverage is a contract fact, never the cash occurrence date. Keep the
     // answer in the conversation without overwriting the transaction date.
     if(field==='occurredAt' && /coverage|service[_.-]?(?:start|end)|پوشش|شروع خدمت|دوره خدمت/.test(`${id} ${text}`)) field=null;
-    if(!result.some(q=>q.id===id || normalize(q.text)===normalize(text) || (businessFact(text) && businessFact(q.text)===businessFact(text)))) result.push({id,text,...(['occurredAt','dueAt','counterpartyName','counterpartyId','accountId'].includes(field)?{field}:{})});
+    // گزینه‌های بسته («وجه در اختیار شرکت»، «افزایش سرمایه مصوب» …) کارتِ انتخاب می‌شوند، نه متنِ آزاد.
+    const choices=Array.isArray(options) ? options.filter(o=>typeof o==='string' && o.trim()).map(o=>o.trim().slice(0,80)).slice(0,6) : [];
+    if(!result.some(q=>q.id===id || normalize(q.text)===normalize(text) || restates(q.text,text) || (businessFact(text) && businessFact(q.text)===businessFact(text)))) result.push({id,text,...(['occurredAt','dueAt','counterpartyName','counterpartyId','accountId'].includes(field)?{field}:{}),...(choices.length>=2?{options:choices}:{})});
   };
-  for(const q of (Array.isArray(proposal.questions)?proposal.questions:[]).slice(0,5)) add(q?.text,q?.id,q?.field);
+  for(const q of (Array.isArray(proposal.questions)?proposal.questions:[]).slice(0,5)) add(q?.text,q?.id,q?.field,q?.options);
   for(const text of (Array.isArray(proposal.missingFacts)?proposal.missingFacts:[]).slice(0,5)) add(text);
   return result.slice(0,5);
 }

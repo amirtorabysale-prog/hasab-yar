@@ -68,12 +68,25 @@ export function fixedAssetReviewProposal({ text = '', amount, decision = null, a
   };
 }
 
-export function payrollReviewQuestion({ category = '', answers = {} } = {}) {
+/**
+ * آنچه جمله گفته، دوباره پرسیده نمی‌شود: «حقوق مهر ۳۰ میلیون خالص بود» خالص بودن را گفته و
+ * فقط کسورش مانده (آزمون صف روی سایت، ۲۹ مهر ۱۴۰۵). شناسهٔ سؤال همان می‌ماند تا جوابِ قبلی
+ * و مسیرِ پس از آن عوض نشود.
+ */
+const NET_SAID = /(?<![آ-ی])خالص(?![آ-ی])/;
+const GROSS_SAID = /(?<![آ-ی])ناخالص(?![آ-ی])/;
+export function payrollReviewQuestion({ category = '', answers = {}, text = '' } = {}) {
   if (String(category).trim() !== 'حقوق و دستمزد' || answerOf(answers, 'payroll.gross-or-net')) return null;
+  const said = normalizePersian(String(text || ''));
+  const question = GROSS_SAID.test(said)
+    ? 'مبلغ ناخالص گفته شده؛ بیمه و مالیات کسرشده چقدر بود و چقدر واقعاً پرداخت شد؟'
+    : NET_SAID.test(said)
+      ? 'مبلغ خالص گفته شده؛ بیمه و مالیات کسرشدهٔ این حقوق چقدر بود؟ اگر کسوری نداشت، بنویس «کسوری نداشت».'
+      : 'این مبلغ خالص پرداختی به کارکنان است یا ناخالص حقوق؟ اگر بیمه و مالیات کسر شده، مبلغ هرکدام را هم بنویس.';
   return {
     summary: 'پرداخت حقوق',
-    explanation: 'حقوق کسور بیمه و مالیات دارد؛ پیش از پیشنهاد سند، باید معلوم شود این مبلغ خالص پرداختی است یا ناخالص.',
-    questions: [{ id: 'payroll.gross-or-net', text: 'این مبلغ خالص پرداختی به کارکنان است یا ناخالص حقوق؟ اگر بیمه و مالیات کسر شده، مبلغ هرکدام را هم بنویس.' }],
+    explanation: 'حقوق کسور بیمه و مالیات دارد؛ پیش از پیشنهاد سند، باید معلوم شود این مبلغ خالص پرداختی است یا ناخالص و کسورش چقدر است.',
+    questions: [{ id: 'payroll.gross-or-net', text: question }],
     missingFacts: [], lines: [],
   };
 }

@@ -2,7 +2,7 @@ import { Check, ChevronLeft, ChevronRight, MessageCircle, Sparkles } from 'lucid
 import { useEffect, useState } from 'react';
 import { ReviewPriorBasis } from './ReviewPriorBasis.jsx';
 import { EntryTable } from './ReviewEntry.jsx';
-import { proposalBrief } from './reviewCase.js';
+import { proposalBrief, remainingBlockers } from './reviewCase.js';
 import { reviewQuestions, reviewSavedAnswers } from '../../../shared/reviewQuestions.js';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
@@ -19,15 +19,6 @@ import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js'
  * ۳. سؤال‌ها یکی‌یکی با شمارهٔ «۱ از ۳»؛ پس از آخری پیشنهاد با جواب‌ها بازبینی می‌شود.
  * ۴. سند پیشنهادی و تأیید. رد با دلیل و گفت‌وگو با دستیار، کنارِ تأیید ولی آرام‌تر.
  */
-
-/** هر گیرهٔ ثبت یک راهنمای «از کجا حل می‌شود؟» دارد تا حسابدار گم نشود. */
-export function blockerHint(text) {
-  const t = String(text || '');
-  if (/بانک|صندوق/.test(t)) return 'حساب واقعی را در سؤال بانک انتخاب کن، یا از «گفت‌وگو با دستیار» بخش «تاریخ، طرف‌حساب و بانک».';
-  if (/تاریخ/.test(t)) return 'تاریخ را از «گفت‌وگو با دستیار» بخش «تاریخ، طرف‌حساب و بانک» اصلاح کن.';
-  if (/سؤال|نام واقعی|مشخص کن|پاسخ/.test(t)) return 'به سؤال پایین جواب بده؛ جواب‌ها ذخیره می‌مانند.';
-  return 'در «گفت‌وگو با دستیار» بنویس چه چیزی درست است تا پیشنهاد تازه بدهد.';
-}
 
 const SPEAKERS = { assistant: 'دستیار', accepted: 'تأیید سند', rejected: 'رد با دلیل' };
 
@@ -53,6 +44,8 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
   const hasUnreviewedChanges = hasAnswerChanges || hasFactChanges || Boolean(message.trim());
   const needsChoices = questions.some((q) => ['counterpartyId', 'accountId'].includes(q.field)) || Object.values(savedAnswers).some((a) => ['counterpartyId', 'accountId'].includes(a.field));
   const brief = ai?.state === 'proposed' ? proposalBrief(ai, { unanswered, conditions }) : null;
+  // گیره‌های دیگر به زبانِ کاربر و بی‌تکرار؛ اولی همان «مشکل» بالاست.
+  const otherBlockers = brief && !brief.ready ? remainingBlockers(conditions, brief) : [];
   const current = unanswered[Math.min(step, Math.max(unanswered.length - 1, 0))];
   const currentIndex = current ? unanswered.indexOf(current) : -1;
   const creates = ai?.newCounterparty || ai?.inventoryItems?.length || ai?.lines?.some((l) => l.newAccount);
@@ -78,6 +71,11 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
       <datalist id={`tax-sources-${item.id}`}>{ai.taxRefundCandidates.map((c) => <option key={c.lineId} value={c.reference}>{c.accountName} · {persianDate(c.occurredAt)} · مانده {formatAmount(c.available)} تومان</option>)}</datalist>
     </>;
     if (['occurredAt', 'dueAt'].includes(q.field)) return <input {...props} type="date" />;
+    // جوابِ بسته («وجه در اختیار شرکت»، «برداشت شخصی» …) کارتِ انتخاب است، نه متنِ آزاد.
+    if (q.options?.length) return <span role="radiogroup" aria-label={q.text} className="mt-2 grid gap-2 sm:grid-cols-2">
+      {q.options.map((option) => <button key={option} type="button" role="radio" aria-checked={value === option} onClick={() => answerQuestion(q, option)}
+        className={`tap rounded-lg border px-3 py-2 text-start text-[14px] font-bold ${value === option ? 'border-accent bg-accent/10 text-ink' : 'border-line bg-surface text-ink hover:border-accent/50'}`}>{option}</button>)}
+    </span>;
     // شخص تازه هم یک جواب است، نه فقط انتخاب از فهرست موجود.
     const newName = String(ai?.newCounterparty?.name || ai?.counterpartyName || '').trim();
     if (['counterpartyId', 'accountId'].includes(q.field)) return <select {...props}><option value="">انتخاب کن…</option>{q.field === 'counterpartyId' && newName && <option value={`new:${newName}`}>طرف‌حساب تازه: {newName}</option>}{(q.field === 'counterpartyId' ? contacts : accounts).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>;
@@ -162,13 +160,13 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
     {brief && !loading && <div className="rq-step rounded-xl border border-line bg-paper p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="rounded-full border border-line bg-surface px-2.5 py-0.5 text-[12px] font-bold text-muted">پیش‌نویس — تا تأیید تو هیچ چیزی ثبت نشده</span>
-        <span className={`rounded-full px-2.5 py-0.5 text-[12px] font-extrabold ${brief.ready ? 'bg-income/10 text-income' : 'bg-warn-bg text-warn'}`}>{brief.ready ? 'آمادهٔ ثبت' : 'هنوز قابل ثبت نیست'}</span>
+        <span className={`rounded-full px-2.5 py-0.5 text-[12px] font-extrabold ${brief.ready ? 'bg-income/10 text-income' : 'bg-warn-bg text-warn'}`}>{brief.ready ? 'آمادهٔ ثبت' : brief.unsupported ? 'هنوز پشتیبانی نمی‌شود' : 'هنوز قابل ثبت نیست'}</span>
       </div>
       <dl className="mt-3 space-y-2.5 text-[14px] leading-7">
-        {!brief.ready && <div role="status" className="rounded-lg border-s-4 border-warn bg-warn-bg/60 px-3 py-2"><dt className="text-[12px] font-extrabold text-warn">مشکل</dt><dd className="font-bold text-ink">{brief.problem}</dd><dd className="mt-0.5 text-[13px] text-muted">{brief.fromQuestions ? 'به سؤال پایین جواب بده؛ جواب‌ها ذخیره می‌مانند.' : blockerHint(conditions[0])}</dd></div>}
+        {!brief.ready && <div role="status" className="rounded-lg border-s-4 border-warn bg-warn-bg/60 px-3 py-2"><dt className="text-[12px] font-extrabold text-warn">مشکل</dt><dd className="font-bold text-ink">{brief.problem}</dd><dd className="mt-0.5 text-[13px] text-muted">{brief.fix}</dd></div>}
         {brief.solution && <div className="rounded-lg border-s-4 border-accent bg-accent/5 px-3 py-2"><dt className="text-[12px] font-extrabold text-accent">{brief.ready ? 'سند پیشنهادی' : 'راه‌حل'}</dt><dd className="text-ink">{brief.solution}</dd></div>}
       </dl>
-      {(brief.fromQuestions ? conditions : conditions.slice(1)).length > 0 && !brief.ready && <ol className="mt-2 list-decimal space-y-1 ps-5 text-[13px] leading-6">{(brief.fromQuestions ? conditions : conditions.slice(1)).map((text, index) => <li key={index}>{text} <span className="text-muted">— {blockerHint(text)}</span></li>)}</ol>}
+      {otherBlockers.length > 0 && <ol className="mt-2 list-decimal space-y-1 ps-5 text-[13px] leading-6">{otherBlockers.map((blocker) => <li key={blocker.problem}>{blocker.problem} <span className="text-muted">— {blocker.fix}</span></li>)}</ol>}
       {brief.more && <details className="mt-2 text-[13px] leading-6"><summary className="cursor-pointer font-bold text-muted">چرا؟</summary><p className="mt-1 text-ink">{brief.more}</p></details>}
 
       {current && <div key={current.id} className="rq-step mt-4 rounded-xl border border-accent/40 bg-accent/5 p-3.5" aria-label="سؤال‌های این پرونده">
@@ -176,7 +174,10 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
           <p className="text-[12px] font-extrabold text-accent">سؤال {toPersianDigits(currentIndex + 1)} از {toPersianDigits(unanswered.length)}</p>
           {unanswered.length > 1 && <span aria-hidden="true" className="flex gap-1">{unanswered.map((q, index) => <span key={q.id} className={`h-1.5 w-4 rounded-full ${index <= currentIndex ? 'bg-accent' : 'bg-line'}`} />)}</span>}
         </div>
-        <label className="mt-1.5 block text-[15px] font-bold leading-7">{current.text}{questionInput(current, answers[current.id] ?? '')}</label>
+        {/* گزینه‌ها دکمه‌اند؛ درونِ <label> کلیک روی متنِ سؤال اولین گزینه را می‌زد. */}
+        {current.options?.length
+          ? <div className="mt-1.5 text-[15px] font-bold leading-7"><p>{current.text}</p>{questionInput(current, answers[current.id] ?? '')}</div>
+          : <label className="mt-1.5 block text-[15px] font-bold leading-7">{current.text}{questionInput(current, answers[current.id] ?? '')}</label>}
         <div className="mt-3 flex flex-wrap gap-2">
           {currentIndex > 0 && <button type="button" onClick={() => setStep(currentIndex - 1)} className="tap inline-flex items-center gap-1 rounded-lg border border-line px-3 text-[13px] font-bold"><ChevronRight size={16} aria-hidden="true" />قبلی</button>}
           {currentIndex < unanswered.length - 1
@@ -208,7 +209,7 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
       {hasUnreviewedChanges && <p role="status" className="mt-3 text-[13px] font-bold text-accent">اطلاعات عوض شده؛ پیش از تأیید، «ذخیره و بازبینی پیشنهاد» را بزن.</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
         <button type="button" disabled={loading || busy || !ai.canPost || hasUnreviewedChanges} onClick={accept} className="tap inline-flex items-center gap-1.5 rounded-xl bg-accent px-5 text-[14px] font-extrabold text-on-fill hover:bg-accent/90 disabled:opacity-40"><Check size={17} aria-hidden="true" />{creates ? 'تأیید، ساخت موارد لازم و ثبت سند' : 'تأیید و ثبت سند'}</button>
-        {!ai.canPost && <span className="text-[12px] font-bold text-muted">قفل تا «مشکل» بالا حل شود</span>}
+        {!ai.canPost && <span className="text-[12px] font-bold text-muted">{brief.unsupported ? 'این شکل سند هنوز قابل ثبت نیست' : 'قفل تا «مشکل» بالا حل شود'}</span>}
         <button type="button" disabled={loading || busy} onClick={() => setRejecting(!rejecting)} aria-expanded={rejecting} className="tap rounded-xl border border-line px-3 text-[13px] font-bold text-expense">رد با دلیل</button>
         <button type="button" disabled={loading} onClick={toggle} aria-expanded={open} className="tap inline-flex items-center gap-1.5 rounded-xl border border-line px-3 text-[13px] font-bold"><MessageCircle size={16} aria-hidden="true" />{open ? 'بستن گفت‌وگو' : 'گفت‌وگو با دستیار'}</button>
       </div>

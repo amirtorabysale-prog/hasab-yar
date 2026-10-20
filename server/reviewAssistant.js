@@ -342,7 +342,13 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
           ? 'مانده واقعی پیش‌دریافت این مشتری برای عودت کافی نیست؛ سند دریافت اولیه یا مانده مستند لازم است.'
           : 'ماندهٔ واقعی این پیش‌پرداخت یا ودیعه برای برگشت وجه کافی نیست؛ سند پرداخت اولیه یا ماندهٔ مستند لازم است.');
       }
-    } else if (!twoWayCashRoles.includes(role) && (openingOut ? !creditCash || counter.debit<=0 : creditCash || counter.credit<=0)) blockers.push('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
+    } else if (!twoWayCashRoles.includes(role) && (openingOut ? !creditCash || counter.debit<=0 : creditCash || counter.credit<=0)) blockers.push(
+      // متن از برگشت می‌گوید و سند هم جهتِ برگشت را دارد (پولِ کالای خریده‌شده به صندوق برگشت،
+      // پولِ فروش به مشتری پس داده شد): پیشنهاد درست است، ثبتِ برگشتِ کالا هنوز پشتیبانی نمی‌شود.
+      // «جهت ناسازگار است» حسابدار را به اصلاحِ سندِ درست می‌فرستاد (آزمون صف، ۲۹ مهر ۱۴۰۵).
+      refundSaid && ['income-category','expense-category','inventory-asset','inventory-unsplit'].includes(role)
+        ? 'برگشت کالا یا پول یک خرید یا فروش قبلی هنوز از «تحلیل کن» ثبت نمی‌شود.'
+        : 'جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.');
     // متن از برگشت پول می‌گوید ولی سند همان پرداخت یا دریافت اولیه را تکرار
     // می‌کند: «بیمه رو فسخ کردیم ۶ میلیون پس دادن» با بدهکار پیش‌پرداخت /
     // بستانکار بانک، صندوق را منفی می‌کرد.

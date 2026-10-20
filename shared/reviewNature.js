@@ -40,6 +40,7 @@ export function reviewNature(text) {
   return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,refund,writtenOffRecovery,principal,settlement};
 }
 
+const SALES_RETURN=/مشتری.*(?:برگردوند|برگرداند|برگروند|برگشت داد|برگشت زد|پس آورد|مرجوع)/;
 export function reviewNatureViolations(text, lines=[], facts={}) {
   const fine=taxPenaltyFacts(text);
   const n=reviewNature(text), roles=new Set(lines.map(l=>l.role)), issues=[];
@@ -93,6 +94,11 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
     if(lines.length && (roles.has('income-category') || (expected && shape(lines)!==shape(expected.lines)))) add('nature.conditional-waiver','بخشودگی وابسته به پرداخت بعدی هنوز تحقق نیافته؛ تعهد پرداخت وجه نیست. فقط پرداخت انجام‌شده را از بدهی کم کن و مانده را تا تحقق شرط نگه دار.');
   }
   if(n.settlement && (roles.has('income-category') || roles.has('expense-category'))) add('nature.prior-settlement','تسویه طلب یا بدهی قبلی نباید درآمد یا هزینه را دوباره شناسایی کند؛ سند مبنای مانده کدام است؟');
+  // برگشت از فروش: «مشتری کالا رو برگردوند و پولش رو پس دادیم». مدل کالا را به قیمت فروش به
+  // انبار برمی‌گرداند و فروش را کم نمی‌کرد؛ با نام و تعداد کالا همین سند ثبت می‌شد (آزمون صف،
+  // ۲۹ مهر ۱۴۰۵). کاهش فروش لازم است؛ بهای تمام‌شدهٔ کالای برگشتی از متن درنمی‌آید.
+  if(SALES_RETURN.test(normalizePersian(text)) && lines.some(l=>['inventory-asset','inventory-unsplit'].includes(l.role) && l.debit>0) && !lines.some(l=>l.role==='income-category' && l.debit>0))
+    issues.push({id:'workflow.sales-return',action:true,text:'برگشت کالا از مشتری باید فروش را کم کند؛ برگرداندن کالا به انبار به قیمت فروش سند درستی نیست.'});
   return issues;
 }
 
@@ -119,13 +125,16 @@ export function partnerTreatment(text,facts={}) {
   if(/بازپرداخت بدهی شرکت/.test(t)) return PARTNER_TREATMENTS.repayCompany;
   if(/بازپرداخت طلب شرکت/.test(t)) return PARTNER_TREATMENTS.repayPartner;
   // «که بعداً بهش پس بدیم» یعنی قرض شریک به شرکت؛ پول در اختیار شرکت است.
-  if(/در اختیار شرکت|به شرکت قرض داد|قرض\s*(?:داد|گرفتیم)|(?:بهش|به او|بهشون)\s*پس\s*(?:بدیم|میدیم|می دیم|بدهیم|بده)/.test(t)) return PARTNER_TREATMENTS.funding;
+  // همین با ضمیرِ چسبیده و فعلِ برگرداندن: «هر وقت لازم شد پسش میدیم»، «برش می‌گردونیم»
+  // (آزمون صف، ۲۹ مهر ۱۴۰۵). فقط «ما پس می‌دهیم»؛ «برداشت کرد، گفت پسش میده» برعکس است.
+  if(/در اختیار شرکت|به شرکت قرض داد|قرض\s*(?:داد|گرفتیم)|(?:بهش|به او|بهشون)\s*پس\s*(?:بدیم|میدیم|می دیم|بدهیم|بده)/.test(t)
+    || /(?<![آ-ی])پس(?:ش|شون|شو)\s*(?:بدیم|میدیم|می دیم|بدهیم|میدهیم|می دهیم)(?![آ-ی])|(?<![آ-ی])بر(?:ش|شون)\s*(?:می\s*)?گردون(?:یم|یمش)(?![آ-ی])/.test(t)) return PARTNER_TREATMENTS.funding;
   return null;
 }
 export function partnerTransferProposal(text,amount,facts={}) {
   if(!reviewNature(text).partner || !Number.isSafeInteger(amount) || amount<=0) return null;
   const treatment=partnerTreatment(text,facts);
-  if(!treatment) return {summary:'تعیین ماهیت انتقال شریک',explanation:'انتقال شریک به حساب شرکت به‌تنهایی درآمد یا افزایش سرمایه نیست.',missingFacts:[],questions:[{id:'nature.partner-transfer',text:'این انتقال کدام است: وجه در اختیار شرکت، افزایش سرمایه مصوب، بازپرداخت بدهی شرکت، برداشت شخصی یا بازپرداخت طلب شرکت؟'}],lines:[]};
+  if(!treatment) return {summary:'تعیین ماهیت انتقال شریک',explanation:'انتقال شریک به حساب شرکت به‌تنهایی درآمد یا افزایش سرمایه نیست.',missingFacts:[],questions:[{id:'nature.partner-transfer',text:'این انتقال کدام است: وجه در اختیار شرکت، افزایش سرمایه مصوب، بازپرداخت بدهی شرکت، برداشت شخصی یا بازپرداخت طلب شرکت؟',options:Object.values(PARTNER_TREATMENTS)}],lines:[]};
   const outgoing=[PARTNER_TREATMENTS.withdrawal,PARTNER_TREATMENTS.repayCompany].includes(treatment);
   const role=treatment===PARTNER_TREATMENTS.capital?'owner-capital':
     [PARTNER_TREATMENTS.withdrawal,PARTNER_TREATMENTS.repayPartner].includes(treatment)?'partner-receivable':'partner-payable';

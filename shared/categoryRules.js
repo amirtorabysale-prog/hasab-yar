@@ -270,8 +270,43 @@ function headOccurrence(text, word) {
 }
 const attributiveFirstWord = (word) => ATTRIBUTIVE_HEADS.has(String(word).split(/[\s‌]+/)[0]) ? String(word).split(/[\s‌]+/)[0] : null;
 
+/**
+ * واژهٔ کلیدی از آغازِ یک واژه، نه از میانِ واژهٔ دیگر.
+ *
+ * با `includes`، «شریکمون آقای سعیدی ۵۰ میلیون گذاشت تو کار» واژهٔ «عیدی» را درونِ «سعیدی»
+ * می‌دید و حقوق و دستمزد می‌شد؛ «تحلیل کن» هم به‌جای پرسیدنِ ماهیتِ پولِ شریک، خالص یا
+ * ناخالص بودنِ حقوق را می‌پرسید (آزمون صف روی سایت، ۲۹ مهر ۱۴۰۵). همین خانواده: «رهن» در
+ * «پیراهن»، «نصب» در «منصب»، «پیک» در «المپیک». پسوند آزاد می‌ماند («اجاره‌اش»، «فروشمون»)؛
+ * پیشوندِ فعل («میفروختیم»، «نفروختیم») فقط برای واژهٔ فعلی.
+ *
+ * چند واژهٔ کوتاه آغازِ واژهٔ رایجِ دیگری‌اند: «شامل»، «پیکان»، «رهنما»، «کارگردان».
+ */
+const VERB_KEYWORD = /^(?:فروخت|خرید|گرفت|داد)/;
+const NOT_AFTER = Object.freeze({ شام: '(?:ل|پو|پاین)', پیک: '(?:ان|ر(?![آ-ی]))', رهن: 'ما', کارگر: 'دان' });
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const KEYWORD_PATTERNS = new Map();
+function keywordAt(text, word) {
+  // بیشترِ واژه‌ها اصلاً در جمله نیستند؛ زیررشته اول، تا عبارتِ منظم فقط برای نامزدها اجرا شود
+  // (پیش‌نمایش زندهٔ پارسر بودجهٔ زمانی دارد — آزمون «fast enough for live preview»).
+  if (!text.includes(word)) return false;
+  let compiled = KEYWORD_PATTERNS.get(word);
+  if (!compiled) {
+    compiled = new RegExp(`(?<![آ-یءأؤئ])${VERB_KEYWORD.test(word) ? '(?:نمی|می|ب|ن)?' : ''}${escapeRegExp(word)}${NOT_AFTER[word] ? `(?!${NOT_AFTER[word]})` : ''}`);
+    KEYWORD_PATTERNS.set(word, compiled);
+  }
+  return compiled.test(text);
+}
+
+/**
+ * نامِ کسی که با عنوان آمده («آقای وکیلی»، «خانم شاملو»، «آقای کارگر»، «اقای رهنما») موضوعِ
+ * پول نیست. مرزِ آغازِ واژه «وکیلی» و «شاملو» را نمی‌گیرد، چون از آغازِ واژه‌اند؛ پس واژهٔ
+ * پس از عنوان پیش از امتیازدهی کنار می‌رود. «آقا ۵ میلیون» و «خانم رو» نام ندارند.
+ */
+const NAMED_PERSON = /(?<![آ-ی])(?:آقای|اقای|آقا|اقا|خانم|خانوم|جناب|سرکار|دکتر|مهندس|حاج|حاجی)\s+(?!(?:و|از|به|با|رو|را|که|هم|تا|برای|واسه|بابت|یه|یک|این|اون|آن)(?![آ-ی]))[آ-ی]+/g;
+export const maskNamedPeople = (text) => String(text || '').replace(NAMED_PERSON, (match) => `${match.split(' ')[0]} ،`);
+
 export function scoreCategories(text, type) {
-  const normalized = normalizePersian(text);
+  const normalized = maskNamedPeople(normalizePersian(text));
   if (!normalized) return [];
   // انبار و کالا وقتی مفعولِ بیمه یا اجاره‌اند، نشانهٔ خرید کالا نیستند.
   const serviceObjectsMasked = normalized.replace(SERVICE_OF_GOODS, (_match, head) => head);
@@ -283,7 +318,7 @@ export function scoreCategories(text, type) {
     const scoredText = definition.id === 'exp-material' ? serviceObjectsMasked
       : definition.id === 'exp-delivery' ? normalized.replace(INSURANCE_OF_CARGO, (_match, head) => head) : normalized;
     for (const { word, pattern: keywordPattern, weight } of definition.keywords) {
-      if (keywordPattern ? !keywordPattern.test(normalized) : !scoredText.includes(word)) continue;
+      if (keywordPattern ? !keywordPattern.test(normalized) : !keywordAt(scoredText, word)) continue;
       // «کلید برق»: واژهٔ توصیفی پشتِ اسمِ دیگر، دستهٔ خودش را نمی‌سازد.
       const head = keywordPattern ? null : attributiveFirstWord(word);
       if (head && !headOccurrence(scoredText, word === head ? head : word)) continue;
