@@ -16,6 +16,7 @@ export * from './db/accounts.js';
 export * from './db/pettyCash.js';
 export * from './db/transactions.js';
 export * from './db/learnings.js';
+export * from './db/aiLessons.js';
 export * from './db/collaboration.js';
 export * from './db/chart.js';
 export * from './db/journal.js';

@@ -60,6 +60,7 @@ import {
   topicLabelStats, topicPromotionSweep, listTopicPromotions, decideTopicPromotion,
   saveTopicPromotionThreshold, topicPromotionThreshold, setTransactionTopicLabel, setEventTopicLabel,
 } from './topicPromotion.js';
+import { aiLessonThreshold, decideAiLesson, exportAiLessons, listAiLessons, saveAiLessonThreshold } from './db/aiLessons.js';
 import { db as activeDb, currentTimeZone } from './db/core.js';
 
 const app = express();
@@ -1237,6 +1238,18 @@ app.get('/api/learnings', (_request, response) => response.json({ items: getLear
 app.post('/api/learnings', (request, response, next) => { try { response.status(201).json({ item: saveLearning(request.body || {}) }); } catch (error) { next(error); } });
 app.put('/api/learnings/:id', (request, response, next) => { try { const item = updateLearning(request.params.id, request.body || {}); if (!item) return response.status(404).json({ message: 'یادگیری پیدا نشد.' }); return response.json({ item }); } catch (error) { return next(error); } });
 app.delete('/api/learnings/:id', (request, response) => response.status(deleteLearning(request.params.id) ? 204 : 404).end());
+// درس‌های پارسر از ثبت‌های تأییدشدهٔ AI (server/db/aiLessons.js): دیدن برای همه، تصمیم
+// با حسابدار، تعداد تأییدِ لازم برای یادگیریِ خودکار با مدیر دفتر.
+app.get('/api/ai-lessons', (_request, response, next) => { try { return response.json(listAiLessons()); } catch (error) { return next(error); } });
+app.get('/api/ai-lessons/threshold', (_request, response) => response.json({ threshold: aiLessonThreshold() }));
+app.get('/api/ai-lessons/export', (_request, response, next) => {
+  try {
+    response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-ai-lessons-${new Date().toISOString().slice(0, 10)}.json"`);
+    return response.json(exportAiLessons());
+  } catch (error) { return next(error); }
+});
+app.post('/api/ai-lessons/threshold', (request, response, next) => { try { return response.json({ threshold: saveAiLessonThreshold(request.body?.threshold) }); } catch (error) { return next(error); } });
+app.post('/api/ai-lessons/:id/decide', (request, response, next) => { try { return response.json({ item: decideAiLesson(request.params.id, request.body || {}) }); } catch (error) { return next(error); } });
 app.patch('/api/settings', (request, response) => response.json({ settings: saveSettings(request.body || {}) }));
 
 app.use('/api', (_request, response) => response.status(404).json({ code: 'API_NOT_FOUND', message: 'مسیر درخواستی پیدا نشد.' }));

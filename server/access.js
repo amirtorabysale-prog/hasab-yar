@@ -17,6 +17,9 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath === '/topics/threshold') return ['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod) ? 'accountant' : 'manager';
   if (normalizedPath.startsWith('/topics/promotions/') && normalizedPath.endsWith('/decide')) return 'manager';
   if (normalizedPath.startsWith('/topics/')) return 'accountant';
+  // چند تأییدِ هم‌جهت تا پارسر خودکار از AI یاد بگیرد، سیاست دفتر است؛ تصمیم دربارهٔ
+  // تک‌تک درس‌ها هم‌سطحِ ساختن یک یادگیری، یعنی حسابدار.
+  if (normalizedPath === '/ai-lessons/threshold') return ['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod) ? 'viewer' : 'manager';
   if (normalizedPath.startsWith('/collaboration/requests/') && normalizedPath.endsWith('/answer')) return 'manager';
   if (normalizedPath.startsWith('/collaboration/')) return 'accountant';
   // الگوی انتقال تعیین می‌کند هر فایل بعدی روی چه ساختاری نوشته شود؛ مثل

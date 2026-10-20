@@ -28,7 +28,9 @@ export const OPTIONAL_BACKUP_TABLES = new Set([
   // تنخواه‌گردان، مهر ۱۴۰۵.
   'petty_cash_funds',
   // فهم رویداد، مهر ۱۴۰۵.
-  'understanding_cases', 'understanding_versions']);
+  'understanding_cases', 'understanding_versions',
+  // درس‌های پارسر از AI، مهر ۱۴۰۵.
+  'ai_lessons']);
 
 function backupError(message, code = 'BACKUP_INVALID') {
   return Object.assign(new Error(message), { status: 400, code });

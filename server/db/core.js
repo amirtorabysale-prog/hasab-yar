@@ -357,6 +357,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id,workspace_id);
 `);
 
+const LEARNING_SOURCE_COLUMN = "source TEXT NOT NULL DEFAULT 'manual'";
+
 function ensureColumn(table, definition) {
   try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`); } catch (error) {
     if (!/duplicate column name/i.test(error.message)) throw error;
@@ -665,6 +667,9 @@ function ensureAccountingTransferSchema(database) {
 
 // تسویهٔ جزئی: چقدر از این تعهد تا امروز پرداخت شده.
 ensureColumn('obligations', 'paid_amount INTEGER NOT NULL DEFAULT 0');
+// منشأ هر یادگیری: کاربر ('manual')، ارتقای برچسب موضوعی ('topic') یا ثبت‌های تأییدشدهٔ AI
+// ('ai'). یادگیریِ AI فقط دسته را عوض می‌کند، هرگز جهت پول را (shared/parser.js).
+ensureColumn('learnings', LEARNING_SOURCE_COLUMN);
 // انتخاب کاربر دربارهٔ طرف حساب: '' یعنی چیزی نگفته، 'none' یعنی صریح گفته
 // این ثبت هزینه یا درآمد عادی است. بدون نگه‌داشتنش، ثبتی که به صف بررسی
 // می‌رود انتخاب کاربر را گم می‌کند و موقع تأیید دوباره حدس زده می‌شود.
@@ -836,6 +841,7 @@ export function workspaceDatabase(workspaceId) {
     settingInsert.run('accountOpeningMigrated', 'true');
   }
   ensureCategorySeed(database);
+  ensureColumnOn(database, 'learnings', LEARNING_SOURCE_COLUMN);
   ensureAccountingSchema(database);
   ensureTransactionReviewSchema(database);
   ensureVoiceMetricSchema(database);

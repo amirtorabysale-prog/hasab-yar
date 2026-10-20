@@ -1279,7 +1279,7 @@ export default function App() {
               {part === 'backup' && <BackupPanel access={access} notify={notify} refresh={load} />}
               {part === 'privacy' && <DataPrivacyPanel access={access} notify={notify} />}
               {part === 'security' && <><SessionsPanel notify={notify} /><PasswordPanel notify={notify} onChanged={logout} /><LogoutPanel onLogout={logout} /></>}
-              {part === 'learning' && <LearningPage categories={data.categories} notify={notify} />}
+              {part === 'learning' && <LearningPage categories={data.categories} notify={notify} role={access.workspace?.role} />}
             </>;
           })()}
           </div>

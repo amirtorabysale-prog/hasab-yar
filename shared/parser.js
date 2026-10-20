@@ -977,13 +977,22 @@ export function incomeTwin(text) {
   };
 }
 
-function classify(context, learnings = [], categoryContext = '', { moneyIn = false, rentTaken = false, rowText = '' } = {}) {
+function classify(context, learnings = [], categoryContext = '', { moneyIn = false, rentTaken = false, rowText = '', learningContext = '' } = {}) {
   const normalizedContext = maskRoleNouns(normalizePersian(context)).replace(PURPOSE_PHRASES, ' ');
   const normalizedCategoryContext = maskRoleNouns(normalizePersian(categoryContext) || normalizePersian(context)).replace(PURPOSE_PHRASES, ' ');
+  // نگاشتِ تأییدشده در کلِ بندِ همین ردیف جست‌وجو می‌شود، نه فقط در پنجرهٔ دسته: «یه کلید برق
+  // ۴۵۰ هزار تومانی … کلید سوختهٔ قبلی رو عوض کردیم» واژهٔ «سوخت» را بعد از مبلغ دارد، پنجرهٔ
+  // دسته فقط همان بعد را می‌دید و نگاشتِ «کلید برق» هرگز به جمله نمی‌رسید (T01، دور سخت).
+  // بی‌یادگیری، هزینه‌ای هم ندارد: پارسرِ پیش‌نمایشِ زنده روی هر حرف اجرا می‌شود.
+  const normalizedLearningContext = !learnings.length ? '' : learningContext
+    ? maskRoleNouns(normalizePersian(learningContext)).replace(PURPOSE_PHRASES, ' ') : normalizedCategoryContext;
   // نگاشت تأییدشدهٔ «اجاره → اجاره» برای پرداخت اجارهٔ خودمان بود؛ وقتی جمله
   // صریح می‌گوید مستاجر یا مشتری به ما داده، همان نگاشت جهت را برنمی‌گرداند.
-  const learned = learnings.find((item) => normalizedCategoryContext.includes(normalizePersian(item.keyword))
-    && !(moneyIn && CATEGORY_DEFINITIONS.find((definition) => definition.name === item.category)?.type === 'expense'));
+  // وقتی چند نگاشت در جمله پیدا می‌شود، مشخص‌ترین (بلندترین) برنده است: «کلید برق»
+  // بر «برق» مقدم است، هر کدام که دیرتر ذخیره شده باشد.
+  const learned = learnings.filter((item) => normalizedLearningContext.includes(normalizePersian(item.keyword))
+    && !(moneyIn && CATEGORY_DEFINITIONS.find((definition) => definition.name === item.category)?.type === 'expense'))
+    .sort((left, right) => normalizePersian(right.keyword).length - normalizePersian(left.keyword).length)[0];
   // «واریز کردیم» پرداخت ماست؛ همان «واریز» نباید در سمت درآمد هم شمرده شود.
   const incomeScore = signalScore(normalizedContext.replace(/واریز\s*کرد(?:یم|م)(?![آ-ی])/g, ' '), INCOME_WORDS, INCOME_VERBS);
   const expenseScore = signalScore(normalizedContext, EXPENSE_WORDS, EXPENSE_VERBS);
@@ -1019,12 +1028,19 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
   let directionUnclear = false;
   // نگاشت تأییدشدهٔ کاربر از هر قاعده‌ای قوی‌تر است: او یک‌بار همین را اصلاح
   // کرده و نباید دوباره از او پرسیده شود.
-  let category = learned?.category;
+  // نگاشتی که از ثبت‌های تأییدشدهٔ AI یاد گرفته شده فقط دسته را عوض می‌کند، هرگز
+  // جهت پول را: اگر دسته‌اش با جهتی که فعل و نقش‌های همین جمله نشان داده‌اند نخواند،
+  // کنار می‌رود. «کلید برق ← تعمیر و نگهداری» نباید «کلید برق اضافه رو فروختیم» را هزینه کند.
+  const learnedType = learned && CATEGORY_DEFINITIONS.find((definition) => definition.name === learned.category)?.type;
+  const usable = learned && !(learned.source === 'ai' && learnedType && learnedType !== type) ? learned : null;
+  let category = usable?.category;
   let categoryConfidence = 0.98;
-  let categoryReason = learned ? `بر اساس نگاشت تأییدشدهٔ «${learned.keyword}» انتخاب شد.` : '';
+  let categoryReason = !usable ? ''
+    : usable.source === 'ai' ? `بر اساس آنچه از ثبت‌های تأییدشدهٔ AI دربارهٔ «${usable.keyword}» یاد گرفته شد انتخاب شد.`
+      : `بر اساس نگاشت تأییدشدهٔ «${usable.keyword}» انتخاب شد.`;
   let categoryAmbiguous = false;
   let categoryRunnerUp = null;
-  if (learned) confidence = Math.max(confidence, 0.96);
+  if (usable) confidence = Math.max(confidence, 0.96);
   if (!category) {
     let suggestion = classifyCategory(normalizedCategoryContext, type);
     if (type === 'income' && moneyIn && !suggestion.matched) suggestion = incomeTwin(normalizedCategoryContext) || suggestion;
@@ -1084,7 +1100,7 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
   // همان‌قدر حدس است که درآمدخواندنش؛ ردیف علامت می‌خورد تا حسابدار جهت را تعیین کند.
   // «کرایه دستگاه به یه شرکت دیگه ۵ میلیون گرفتیم»: «کرایه» دستهٔ حمل را می‌گیرد و هزینهٔ حمل
   // بی‌سؤال ثبت می‌شد (محک دسته، I016)؛ کرایه‌ای که ما گرفتیم همان ابهامِ اجاره را دارد.
-  if (rentTaken && !learned && (category === 'اجاره' || (category === 'حمل‌ونقل' && TAKEN_BY_US.test(normalizedContext)))) directionUnclear = true;
+  if (rentTaken && !usable && (category === 'اجاره' || (category === 'حمل‌ونقل' && TAKEN_BY_US.test(normalizedContext)))) directionUnclear = true;
   return {
     type, category, confidence, typeConfidence: confidence, typeReason, categoryConfidence, categoryReason,
     chartCode: chartCodeForCategory(category), categoryAmbiguous, categoryRunnerUp, directionUnclear,
@@ -1384,7 +1400,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const rowCounterparty = ownContact?.name && (ownContact.confident || !counterparty.name) ? ownContact : counterparty;
     const rowMoneyDirection = rowCounterparty === ownContact ? counterpartyMoneyDirection(ownText) : moneyDirection;
     // «سرور ابری ۱۲ ماهه ۱۸ میلیون ریختیم»: فعل پرداختِ همین بند (نه کل جمله) نوع را می‌گوید.
-    let classified = classify(context, learnings, categoryContext, { moneyIn: rowMoneyIn, rentTaken, rowText: text.slice(previousEnd, nextStart) });
+    let classified = classify(context, learnings, categoryContext, { moneyIn: rowMoneyIn, rentTaken, rowText: text.slice(previousEnd, nextStart), learningContext: `${ownBefore} ${ownAfter}`.trim() });
     // جهت پول از کل جمله، وقتی جمله یک مبلغ بیشتر ندارد.
     //
     // پنجرهٔ جهت فقط متنِ کنار مبلغ را می‌بیند و «یه پولی اومده تو حساب ملی

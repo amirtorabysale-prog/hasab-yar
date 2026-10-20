@@ -14,6 +14,7 @@ import { migrateAccountingLedger } from '../accounting.js';
 import { migrateInventory } from '../inventory.js';
 import { ensureReviewAiSchema } from '../accountingReviewAi.js';
 import { ensureUnderstandingSchema } from './understanding.js';
+import { ensureAiLessonSchema } from './aiLessons.js';
 
 export const FINANCIAL_BACKUP_TABLES = [
   'categories', 'accounts', 'petty_cash_funds', 'contacts', 'transactions', 'bank_statement_imports', 'bank_statement_lines', 'obligations', 'recurring_rules', 'invoices',
@@ -29,10 +30,12 @@ export const FINANCIAL_BACKUP_TABLES = [
   'accounting_transfer_settings', 'accounting_transfer_mappings', 'accounting_transfer_batches', 'accounting_transfer_validations', 'audit_log',
   // پروندهٔ فهم رویداد: متن اصلی، نسخه‌ها و پاسخ‌ها — ردِ اینکه هر سند از کدام گفته آمد.
   'understanding_cases', 'understanding_versions',
+  // درس‌هایی که پارسر از ثبت‌های AI گرفته: در حال یادگیری، یادگرفته، اختلاف‌های ساختاری.
+  'ai_lessons',
 ];
 
 const BACKUP_DELETE_ORDER = [
-  'understanding_versions', 'understanding_cases',
+  'ai_lessons', 'understanding_versions', 'understanding_cases',
   'accounting_review_tax_refunds', 'accounting_review_insurance', 'unidentified_receipt_resolutions', 'accounting_review_messages', 'accounting_review_context', 'cheques', 'accountant_intakes', 'accounting_review_ai', 'financial_event_audit', 'recognition_schedule_items', 'accounting_decisions', 'financial_events',
   'accounting_transfer_validations', 'accounting_transfer_batches', 'accounting_transfer_mappings', 'accounting_transfer_settings',
   'payroll_lines', 'payroll_runs', 'fixed_asset_settings', 'journal_templates',
@@ -58,6 +61,7 @@ export function financialBackupSnapshot(workspace = currentWorkspace()) {
   ensureUnidentifiedSchema(db);
   ensureChequeSchema(db);
   ensureUnderstandingSchema(db);
+  ensureAiLessonSchema(db);
   ensureStructureSchemas(db);
   const tables = {};
   for (const table of FINANCIAL_BACKUP_TABLES) tables[table] = db.prepare(`SELECT * FROM ${table}`).all();
@@ -75,6 +79,7 @@ export function restoreFinancialSnapshot(snapshot) {
   ensureUnidentifiedSchema(db);
   ensureChequeSchema(db);
   ensureUnderstandingSchema(db);
+  ensureAiLessonSchema(db);
   ensureStructureSchemas(db);
   db.exec('PRAGMA defer_foreign_keys = ON');
   db.exec('BEGIN IMMEDIATE');

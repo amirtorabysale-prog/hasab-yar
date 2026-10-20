@@ -560,6 +560,25 @@ export const api = {
   saveLearning: (payload) => request('/api/learnings', { method: 'POST', body: JSON.stringify(payload) }),
   updateLearning: (id, payload) => request(`/api/learnings/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteLearning: (id) => request(`/api/learnings/${id}`, { method: 'DELETE' }),
+  aiLessons: () => request('/api/ai-lessons'),
+  decideAiLesson: (id, decision) => request(`/api/ai-lessons/${encodeURIComponent(id)}/decide`, { method: 'POST', body: JSON.stringify({ decision }) }),
+  saveAiLessonThreshold: (threshold) => request('/api/ai-lessons/threshold', { method: 'POST', body: JSON.stringify({ threshold }) }),
+  downloadAiLessons: async () => {
+    const response = await reachServer('/api/ai-lessons/export', { credentials: 'same-origin', headers: protectedHeaders(false) });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(body.message || 'ساخت گزارش اختلاف‌ها انجام نشد.'), { status: response.status, code: body.code });
+    }
+    const blob = await response.blob();
+    const fileName = (response.headers.get('content-disposition') || '').match(/filename="?([^";]+)"?/i)?.[1] || 'hesab-yar-ai-lessons.json';
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { fileName, bytes: blob.size };
+  },
   settings: (payload) => request('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
   backupStatus: () => request('/api/backups/status'),
   createServerSnapshot: () => request('/api/backups/snapshot', { method: 'POST', body: '{}' }),

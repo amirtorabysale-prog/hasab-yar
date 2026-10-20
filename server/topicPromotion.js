@@ -457,11 +457,11 @@ export function decideTopicPromotion(database, id, { decision, reason = '', cate
     const learned = database.prepare('SELECT category FROM learnings WHERE keyword=?').get(label);
     let learning = 'created';
     if (!learned) {
-      database.prepare('INSERT INTO learnings (id,keyword,category) VALUES (?,?,?)').run(randomUUID(), label, name);
+      database.prepare("INSERT INTO learnings (id,keyword,category,source) VALUES (?,?,?,'topic')").run(randomUUID(), label, name);
     } else if (learned.category === name) {
       learning = 'unchanged';
     } else if (replaceLearning === true) {
-      database.prepare('UPDATE learnings SET category=?, updated_at=CURRENT_TIMESTAMP WHERE keyword=?').run(name, label);
+      database.prepare("UPDATE learnings SET category=?, source='topic', updated_at=CURRENT_TIMESTAMP WHERE keyword=?").run(name, label);
       learning = 'replaced';
     } else {
       learning = 'kept';

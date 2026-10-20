@@ -19,6 +19,7 @@ import { readServicePeriod } from '../../shared/periodSpeech.js';
 import { classifyCategory } from '../../shared/categoryRules.js';
 import { EVENT_KINDS, normalizeFinancialEvent } from '../../shared/financialEvent.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
+import { recordAiLessons } from './aiLessons.js';
 
 /**
  * پروندهٔ «فهم رویداد» — هر گفته یک پرونده، هر استخراج یا پاسخ یک نسخه.
@@ -447,6 +448,7 @@ export async function answerUnderstandingCase(id, incoming = {}, options = {}) {
  */
 export function commitUnderstandingCase(id, { now } = {}) {
   ensureUnderstandingSchema();
+  let lessonInput = null;
   db.exec('BEGIN IMMEDIATE');
   try {
     const row = caseRow(id);
@@ -528,9 +530,15 @@ export function commitUnderstandingCase(id, { now } = {}) {
     touch(id, { status: 'posted', result: JSON.stringify({ postedAt: new Date().toISOString(), components: results }) });
     audit('commit', 'understanding-case', id, { components: results.map((item) => ({ kind: item.kind, status: item.status })) });
     db.exec('COMMIT');
+    lessonInput = { caseId: id, transcript: row.transcript, components: plan.components, now: now || new Date() };
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch { /* COMMIT بالا انجام شده است. */ }
     throw error;
+  }
+  // پارسر از همین ثبت یاد می‌گیرد (server/db/aiLessons.js). سند ثبت شده است؛ شکستِ
+  // یادگیری هرگز آن را برنمی‌گرداند و فقط در لاگ می‌ماند.
+  if (lessonInput) {
+    try { recordAiLessons(lessonInput); } catch (error) { console.warn('[ai-lessons]', error?.message || error); }
   }
   return getUnderstandingCase(id);
 }
