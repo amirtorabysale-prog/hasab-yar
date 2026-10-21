@@ -667,7 +667,9 @@ app.post('/api/import/opening-balances', chartUpload.single('file'), (request, r
 app.post('/api/import/parsian-backup/preview', parsianBackupUpload.single('file'), (request, response, next) => {
   try {
     if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
-    return response.json(previewParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname));
+    return response.json(previewParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname, {
+      amountUnit: request.body?.amountUnit, kolTypes: request.body?.kolTypes,
+    }));
   } catch (error) { return next(error); }
 });
 app.post('/api/import/parsian-backup/commit', parsianBackupUpload.single('file'), (request, response, next) => {

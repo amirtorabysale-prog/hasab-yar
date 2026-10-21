@@ -217,6 +217,15 @@ async function requestText(path, options = {}) {
   return text;
 }
 
+// بکاپ پارسیان همراه واحد مبلغ و نوع‌های انتخاب‌شده فرستاده می‌شود؛ پیش‌نمایش و ثبت یک طرح را می‌سازند.
+function parsianBackupForm(file, { amountUnit, kolTypes = {} } = {}) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('amountUnit', amountUnit || '');
+  form.append('kolTypes', JSON.stringify(kolTypes));
+  return form;
+}
+
 export const api = {
   activeWorkspaceId: currentWorkspaceId,
   offlineScope: currentOfflineScope,

@@ -16,22 +16,38 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // پارسیان واحد مبلغ را نگه نمی‌دارد؛ تا دفتر انتخاب نکند پیش‌نمایش ساخته نمی‌شود.
+  const [amountUnit, setAmountUnit] = useState('');
+  const [kolTypes, setKolTypes] = useState({});
 
   const acceptFile = (event) => {
     setFile(event.target.files?.[0] || null);
-    setPreview(null); setResult(null); setError('');
+    setPreview(null); setResult(null); setError(''); setKolTypes({});
   };
 
+  const chooseUnit = (unit) => {
+    setAmountUnit(unit);
+    setPreview(null); setResult(null);
+  };
+
+  const chooseKolType = (code, type) => setKolTypes((current) => ({ ...current, [code]: type }));
+  const pendingTypes = (preview?.kolTypeChoices || []).filter((choice) => !kolTypes[choice.code]);
+  const acceptSuggestions = () => setKolTypes((current) => {
+    const next = { ...current };
+    for (const choice of preview?.kolTypeChoices || []) if (!next[choice.code] && choice.suggestion) next[choice.code] = choice.suggestion;
+    return next;
+  });
+
   const runPreview = async () => {
-    if (!file) return;
+    if (!file || !amountUnit) return;
     setBusy(true); setError(''); setResult(null);
-    try { setPreview(await api.parsianBackupPreview(file)); }
+    try { setPreview(await api.parsianBackupPreview(file, { amountUnit })); }
     catch (issue) { setPreview(null); setError(issue.message); }
     setBusy(false);
   };
 
   const runCommit = async () => {
-    if (!preview || !file) return;
+    if (!preview || !file || pendingTypes.length) return;
     const skipped = preview.summary.voucherCount - preview.summary.importableCount;
     const question = skipped > 0
       ? `${toPersianDigits(preview.summary.importableCount)} سند متوازن به‌صورت پیش‌نویس وارد شود و ${toPersianDigits(skipped)} سند نامتوازن/نامعتبر فقط در همین گزارش بماند؟`
@@ -39,14 +55,14 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
     if (!window.confirm(`${question}\nاین کار فقط در دفتر خام مجاز است و یک‌بار انجام می‌شود.`)) return;
     setBusy(true); setError('');
     try {
-      const outcome = await api.parsianBackupCommit(file);
+      const outcome = await api.parsianBackupCommit(file, { amountUnit, kolTypes });
       setResult(outcome); setPreview(null); setFile(null);
       await refresh();
       notify('بکاپ پارسیان وارد شد؛ اسناد به‌صورت پیش‌نویس منتظر تأیید تو هستند.');
     } catch (issue) {
       setError(issue.message);
-      if (issue.code === 'PARSIAN_IMPORT_PARTIAL' && issue.details) {
-        setError(`${issue.message} ${issue.details.errors?.map((item) => item.message).join(' | ') || ''}`);
+      if (issue.details?.errors?.length) {
+        setError(`${issue.message} ${issue.details.errors.map((item) => item.message).join(' | ')}`);
       }
     }
     setBusy(false);
@@ -63,13 +79,23 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
       اسناد متوازن به‌صورت <b>پیش‌نویس</b> می‌آیند تا در میز کار سندها تأییدشان کنی.
     </p>
 
+    <fieldset className="mt-3" disabled={!canManage || busy}>
+      <legend className="text-[13px] font-bold">مبلغ‌های پارسیان این دفتر به چه واحدی است؟</legend>
+      <p className="text-[12px] leading-6 text-muted">پارسیان واحد مبلغ را در بکاپ نگه نمی‌دارد. حساب‌یار به تومان ثبت می‌کند؛ مبلغ ریالی بر ۱۰ تقسیم می‌شود و مبلغی که تومانِ صحیح نشود گرد نمی‌شود.</p>
+      <div className="mt-1 flex gap-4 text-[13px]">
+        {[['rial', 'ریال'], ['toman', 'تومان']].map(([value, label]) => <label key={value} className="flex items-center gap-1.5">
+          <input type="radio" name="parsian-amount-unit" value={value} checked={amountUnit === value} onChange={() => chooseUnit(value)} /> {label}
+        </label>)}
+      </div>
+    </fieldset>
+
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <input type="file" accept=".bak,.bak2,application/octet-stream" onChange={acceptFile} disabled={!canManage || busy}
         className="block w-full max-w-md text-[13px] file:ml-3 file:rounded-lg file:border file:border-line file:bg-paper file:px-3 file:py-2 file:text-[13px] file:font-bold" />
-      <button disabled={!file || busy} onClick={runPreview} className="tap rounded-lg border border-line bg-paper px-4 text-[13px] font-bold hover:bg-paper hover:text-ink disabled:opacity-45">
+      <button disabled={!file || !amountUnit || busy} onClick={runPreview} className="tap rounded-lg border border-line bg-paper px-4 text-[13px] font-bold hover:bg-paper hover:text-ink disabled:opacity-45">
         {busy ? 'در حال خواندن…' : 'پیش‌نمایش'}
       </button>
-      {preview && raw?.ok && canManage && <button disabled={busy || !summary.importableCount} onClick={runCommit}
+      {preview && raw?.ok && canManage && <button disabled={busy || !summary.importableCount || pendingTypes.length > 0} onClick={runCommit}
         className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">
         ورود {toPersianDigits(summary.importableCount)} سند متوازن + کدینگ
       </button>}
@@ -102,6 +128,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
         <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-[12px] leading-6">{preview.warnings.map((item, index) => <li key={index}>• {item}</li>)}</ul>
       </div>}
 
+      {preview.kolTypeChoices.length > 0 ? <KolTypeChoices choices={preview.kolTypeChoices} kolTypes={kolTypes} onChoose={chooseKolType} onAcceptSuggestions={acceptSuggestions} pending={pendingTypes.length} /> : null}
       <ChartPreview preview={preview} />
       <VoucherPreview preview={preview} />
     </div>}
@@ -109,7 +136,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
     {result && <div className="mt-4 space-y-3">
       <div className="rounded-lg border border-income/40 bg-income/5 p-3 text-[13px] leading-6">
         <b>ورود کامل شد.</b> کدینگ: <b className="numbers">{toPersianDigits(result.chart.created)}</b> حساب تازه — تفصیلی: <b className="numbers">{toPersianDigits(result.analytics)}</b> —
-        حساب دفتر کل: <b className="numbers">{toPersianDigits(result.ledgerAccounts)}</b> — سند پیش‌نویس: <b className="numbers">{toPersianDigits(result.journals.entries)}</b> سند با جمع <b className="numbers">{formatAmount(result.journals.total)}</b> تومان.
+        حساب دفتر کل: <b className="numbers">{toPersianDigits(result.ledgerAccounts)}</b> — سند پیش‌نویس: <b className="numbers">{toPersianDigits(result.journals.entries)}</b> سند با جمع <b className="numbers">{formatAmount(result.journals.total)}</b> تومان (واحد فایل: {result.amountUnit === 'rial' ? 'ریال' : 'تومان'}).
         <div className="mt-1 text-muted">سندها در میز کار سندها منتظر تأییدند؛ شماره‌گذاری داخلی از نو و تاریخ‌ها شمسیِ خود فایل‌اند.</div>
       </div>
       {result.skippedVouchers.length > 0 && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3">
@@ -128,6 +155,28 @@ function SummaryTile({ label, value, tone = '' }) {
   return <div className="rounded-lg border border-line bg-paper p-3 text-center">
     <p className={`text-lg font-extrabold numbers ${tone}`}>{toPersianDigits(value)}</p>
     <p className="mt-0.5 text-[11px] text-muted">{label}</p>
+  </div>;
+}
+
+const TYPE_OPTIONS = [['asset', 'دارایی'], ['liability', 'بدهی'], ['equity', 'سرمایه'], ['income', 'درآمد'], ['expense', 'هزینه']];
+
+/** کل‌هایی که پارسیان نوع روشنی برایشان نمی‌دهد؛ ثبت تا انتخاب همه بسته است. */
+function KolTypeChoices({ choices, kolTypes, onChoose, onAcceptSuggestions, pending }) {
+  return <div className="rounded-lg border border-accent/40 bg-warn-bg p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-[13px] font-bold text-accent">نوع {toPersianDigits(choices.length)} حساب کل را خودت انتخاب کن{pending ? ` — ${toPersianDigits(pending)} مانده` : ''}</p>
+      {pending > 0 ? <button type="button" onClick={onAcceptSuggestions} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">پذیرش پیشنهادها</button> : null}
+    </div>
+    <ul className="mt-2 space-y-2 text-[12px] leading-6">
+      {choices.map((choice) => <li key={choice.code} className="flex flex-wrap items-center gap-2">
+        <label htmlFor={`kol-type-${choice.code}`} className="min-w-48"><b className="numbers">{toPersianDigits(choice.code)}</b> {choice.name} <span className="text-muted">— {choice.reason}</span></label>
+        <select id={`kol-type-${choice.code}`} value={kolTypes[choice.code] || ''} onChange={(event) => onChoose(choice.code, event.target.value)} className="rounded-lg border border-line bg-paper px-2 py-1">
+          <option value="">انتخاب کن…</option>
+          {TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        {choice.suggestionLabel ? <span className="text-muted">پیشنهاد کدینگ استاندارد: {choice.suggestionLabel}</span> : null}
+      </li>)}
+    </ul>
   </div>;
 }
 

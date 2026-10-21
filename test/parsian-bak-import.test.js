@@ -1,132 +1,180 @@
-// آزمون ورود بکاپ پارسیان — پارسر بومی MTF/SQL Server 2000 + جریان دفتر خام.
+// آزمون ورود بکاپ پارسیان — خوانندهٔ بومی SQL Server 2000 + جریان دفتر خام.
 //
-// دو لایه:
-//  ۱) فیکسچر سینتتیک: یک بکاپ کوچک با ساختار واقعی (کانتینر MTF، صفحات دادهٔ
-//     SQL Server 2000، ستون حذف‌شدهٔ tbl_Document) ساخته می‌شود تا پارسر به
-//     هیچ فایل مشتری وابسته نباشد.
-//  ۲) اگر بکاپ واقعی از طریق PARSIAN_BAK_PATH در دسترس باشد، سنجه‌های رمزگشایی
-//     همان فایل هم راستی‌آزمایی می‌شود (فایل مشتری هرگز وارد Git نمی‌شود).
-//
-// قاعدهٔ ثابت: اسناد نامتوازن وارد نمی‌شوند و در پیش‌نمایش با هشدار می‌آیند؛
-// ثبت دوم در همان دفتر باید رد شود (فقط دفتر خام).
+// سه لایه:
+//  ۱) رفت‌وبرگشت: دفترهای تصادفی در بکاپ سینتتیکی با ساختار واقعی (صفحهٔ نامرتب،
+//     torn bits، صفحهٔ کهنهٔ PFS، ردیف حذف‌شده) نوشته و عیناً بازخوانده می‌شوند.
+//  ۲) طرح و ثبت در دفتر خام: واحد مبلغ، نوع حساب از گروه پارسیان، همه‌یا‌هیچ.
+//  ۳) اگر بکاپ‌های واقعی روی دیسک باشند، با عددهایی که مستقل از این کد از
+//     همان فایل‌ها درآمده سنجیده می‌شوند (فایل مشتری هرگز وارد Git نمی‌شود).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { buildParsianBackup } from './helpers/parsianBakFixture.js';
 
 // ---------------------------------------------------------------------------
-// فیکسچر سینتتیک بکاپ
+// دفتر نمونه و دفتر تصادفی
 // ---------------------------------------------------------------------------
 
-function utf16le(text) { return Buffer.from(text, 'utf16le'); }
+const GROUPS = [
+  { Code: 11, CName: 'دارايي هاي جاري' }, { Code: 21, CName: 'بدهي هاي جاري' }, { Code: 31, CName: 'حقوق صاحبان سهام' },
+  { Code: 41, CName: 'فروش و درآمدها' }, { Code: 61, CName: 'هزينه هاي فعاليت' }, { Code: 91, CName: 'حسابهاي انتظامي' },
+];
 
-// ردیف جدول‌های کدینگ: [30 00 39 00][اعداد ثابت][پرکننده][شمارندهٔ متغیر=۱ در k-2][انتها در k][متن از k+2]
-function chartRow(fixedBytes, name, k) {
-  const nameBytes = utf16le(name);
-  const head = Buffer.from([0x30, 0x00, 0x39, 0x00]);
-  const fixed = Buffer.from(fixedBytes);
-  const meta = Buffer.alloc(k - 6 - fixedBytes.length);
-  const varCount = Buffer.alloc(2); varCount.writeUInt16LE(1, 0);
-  const rowLength = k + 2 + nameBytes.length;
-  const endOffset = Buffer.alloc(2); endOffset.writeUInt16LE(rowLength, 0);
-  return Buffer.concat([head, fixed, meta, varCount, endOffset, nameBytes]);
+function sampleTables() {
+  const kol = [
+    { Code: 10, CName: 'صندوق', GroupCode: 11, iType: 0 },
+    { Code: 12, CName: 'بدهکاران', GroupCode: 11, iType: 0 },
+    { Code: 23, CName: 'بستانکاران', GroupCode: 21, iType: 0 },
+    { Code: 27, CName: 'جاري شرکا', GroupCode: null, iType: 0 },
+    { Code: 60, CName: 'فروش', GroupCode: 41, iType: 1 },
+    { Code: 62, CName: 'خريد', GroupCode: 11, iType: 1 },
+  ];
+  const moeen = [
+    { KolCode: 10, Code: 1, CName: 'صندوق' }, { KolCode: 12, Code: 2, CName: 'مشتریان' },
+    { KolCode: 23, Code: 4, CName: 'ماليات بر ارزش افزوده' }, { KolCode: 27, Code: 1, CName: 'جاري آرش' },
+    { KolCode: 60, Code: 1, CName: 'فروش' }, { KolCode: 62, Code: 1, CName: 'خريد' },
+  ];
+  const tafsili = [
+    { KolCode: 12, MoeenCode: 2, Code: 4, CName: 'شرکت طلايي سبز گستر' },
+    { KolCode: 23, MoeenCode: 4, Code: 1, CName: 'ارزش افزوده فروش' },
+  ];
+  let id = 1;
+  const row = (sanad, date, kolCode, moeenCode, taf, bed, bes, comment) => ({
+    ID: id++, Sanad_Num: sanad, SanadDate: date, KolCode: kolCode, MoeenCode: moeenCode, TafsiliCode: taf,
+    Comment: comment, Bed: bed, Bes: bes, SanadComment: null,
+  });
+  const document = [
+    // سند ۱۲ متوازن: فروش + ارزش افزوده ۱۰٪ (همان سند فایل واقعی).
+    row(12, '1403/03/08', 12, 2, 4, 1172600000, 0, 'فاکتور فروش 1'),
+    row(12, '1403/03/08', 60, 1, 0, 0, 1066000000, 'فاکتور فروش 1 شرکت طلايي سبز گستر'),
+    row(12, '1403/03/08', 23, 4, 1, 0, 106600000, 'ماليات بر ارزش افزوده فروش فاكتور 1'),
+    // سند ۱۳ در خود پارسیان نامتوازن است (پارسیان سند نامتوازن را می‌پذیرد).
+    row(13, '1403/03/09', 10, 1, 0, 500000, 0, 'سند ناقص'),
+    // سند ۱۴: آورده شریک — حساب بی‌گروه.
+    row(14, '1403/03/10', 10, 1, 0, 250000000, 0, 'آورده نقدی'),
+    row(14, '1403/03/10', 27, 1, 0, 0, 250000000, 'آورده نقدی'),
+  ];
+  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document };
 }
 
-// کل: کد i16 در ۴، دو بایت پرکننده در ۶-۷، شمارنده در ۸، انتها در ۱۰.
-const kolRow = (code, name) => chartRow([
-  code & 0xff, (code >> 8) & 0xff, 0, 0,
-], name, 10);
-
-const moeenRow = (kol, code, name) => chartRow([
-  kol & 0xff, (kol >> 8) & 0xff, code & 0xff, (code >> 8) & 0xff,
-], name, 10);
-
-const tafsiliRow = (kol, moeen, code, name) => {
-  const fixed = Buffer.alloc(8);
-  fixed.writeInt16LE(kol, 0); fixed.writeInt16LE(moeen, 2); fixed.writeInt32LE(code, 4);
-  return chartRow([...fixed], name, 14);
-};
-
-// ردیف سند با چیدمان واقعی tbl_Document: ستون حذف‌شده در ۴، ستون‌های واقعی
-// از ۸، و ناحیهٔ نقشهٔ تهی تا ۶۲؛ شمارندهٔ متغیر=۲ در ۶۲، دو انتها در ۶۴/۶۶،
-// متن‌ها از ۶۸ — دقیقاً مثل ردیف واقعی فایل نمونه (۸۸ و ۱۱۴).
-function documentRow({ seq, sanad, kol, moeen, taf, bed, bes, date, comment }) {
-  const fixed = Buffer.alloc(62);
-  fixed[0] = 0x30; fixed[1] = 0x00; fixed[2] = 0x39; fixed[3] = 0x00; // بایت وضعیت ردیف واقعی SQL Server
-  fixed.writeInt32LE(seq, 4);
-  fixed.writeInt32LE(sanad, 8);
-  fixed.writeInt16LE(kol, 12);
-  fixed.writeInt16LE(moeen, 14);
-  fixed.writeInt32LE(taf, 16);
-  fixed.writeDoubleLE(bed, 20);
-  fixed.writeDoubleLE(bes, 28);
-  const dateBytes = utf16le(date);
-  const commentBytes = utf16le(comment);
-  const varCount = Buffer.alloc(2); varCount.writeUInt16LE(2, 0);
-  const end1 = Buffer.alloc(2); end1.writeUInt16LE(68 + dateBytes.length, 0);
-  const rowLength = 68 + dateBytes.length + commentBytes.length;
-  const end2 = Buffer.alloc(2); end2.writeUInt16LE(rowLength, 0);
-  return Buffer.concat([fixed, varCount, end1, end2, dateBytes, commentBytes]);
+function sampleBackup(options = {}) {
+  const tables = sampleTables();
+  // ردیف کهنه با همان شناسهٔ ردیف زنده ولی سند و حساب دیگر، و ردیف حذف‌شده.
+  const stale = [{ ...tables.tbl_Document[2], Sanad_Num: 130, KolCode: 21, Bes: 3530000 }];
+  const deleted = [{ ...tables.tbl_Document[0], ID: 9001, Sanad_Num: 12, Bed: 10000000, Comment: 'واريزي شاپرک' }];
+  return buildParsianBackup(tables, { stale, deleted, ...options });
 }
 
-// صفحهٔ دادهٔ SQL Server 2000: نوع ۰x01، ObjectId در ۰x18، ردیف‌ها از ۹۶.
-function dataPage(objectId, rows) {
+function seededRandom(seed) {
+  let state = seed >>> 0 || 1;
+  return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 2 ** 32; };
+}
+
+const WORDS = ['فاکتور', 'فروش', 'خريد', 'کارمزد', 'بانک', 'شرکت', 'محترم', 'ماليات', 'ي', 'ك', 'ۀ', 'A1', '۱۲۳', ' ', '—'];
+
+/** دفتر تصادفی: کدینگ بی‌تکرار و سندهای چندردیفه با متن‌هایی که از مرز بخش‌ها می‌گذرند. */
+function randomTables(seed) {
+  const random = seededRandom(seed);
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const text = (max) => Array.from({ length: Math.floor(random() * max) }, () => pick(WORDS)).join(' ').trim();
+  const kolCodes = [...new Set(Array.from({ length: 3 + Math.floor(random() * 12) }, () => 10 + Math.floor(random() * 60)))];
+  const kol = kolCodes.map((code) => ({ Code: code, CName: text(4) || `کل ${code}`, GroupCode: random() < 0.2 ? null : pick(GROUPS).Code, iType: random() < 0.5 ? 0 : 1 }));
+  const moeen = kol.flatMap((item) => Array.from({ length: 1 + Math.floor(random() * 4) }, (_, index) => ({ KolCode: item.Code, Code: index + 1, CName: text(5) || 'معین' })));
+  const tafsili = moeen.filter(() => random() < 0.4).map((item, index) => ({ KolCode: item.KolCode, MoeenCode: item.Code, Code: index + 1, CName: text(6) || 'تفصیلی' }));
+  const document = [];
+  let id = 1 + Math.floor(random() * 5000);
+  const voucherCount = 1 + Math.floor(random() * 120);
+  for (let sanad = 1; sanad <= voucherCount; sanad += 1) {
+    const date = `1403/${String(1 + Math.floor(random() * 12)).padStart(2, '0')}/${String(1 + Math.floor(random() * 29)).padStart(2, '0')}`;
+    const lineCount = 2 + Math.floor(random() * 8);
+    for (let line = 0; line < lineCount; line += 1) {
+      const account = pick(moeen);
+      const tafsiliRow = tafsili.find((item) => item.KolCode === account.KolCode && item.MoeenCode === account.Code);
+      const amount = Math.floor(random() * 10 ** (1 + Math.floor(random() * 12)));
+      const debit = random() < 0.5;
+      document.push({
+        ID: id, Sanad_Num: sanad, SanadDate: date, KolCode: account.KolCode, MoeenCode: account.Code,
+        TafsiliCode: tafsiliRow && random() < 0.7 ? tafsiliRow.Code : 0,
+        Comment: random() < 0.15 ? null : text(30), Bed: debit ? amount : 0, Bes: debit ? 0 : amount,
+        SanadComment: random() < 0.8 ? null : text(10),
+      });
+      id += 1 + Math.floor(random() * 3);
+    }
+  }
+  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document };
+}
+
+const { parseParsianBackup, restoreTornBits } = await import('../server/parsianBackup.js');
+
+function normalizedRows(parsed) {
+  return parsed.documents.rows
+    .map((row) => [row.id, row.sanad, row.date, row.kol, row.moeen, row.taf, row.bed, row.bes, row.comment, row.sanadComment].join('|'))
+    .sort();
+}
+
+function expectedRows(tables) {
+  return tables.tbl_Document
+    .map((row) => [row.ID, row.Sanad_Num, row.SanadDate, row.KolCode, row.MoeenCode, row.TafsiliCode, row.Bed, row.Bes, (row.Comment || '').trim(), (row.SanadComment || '').trim()].join('|'))
+    .sort();
+}
+
+// ---------------------------------------------------------------------------
+// ۱) رفت‌وبرگشت خواننده
+// ---------------------------------------------------------------------------
+
+test('رفت‌وبرگشت: هر دفتر تصادفی عیناً از بکاپ سینتتیک بازخوانده می‌شود', () => {
+  for (let seed = 1; seed <= 60; seed += 1) {
+    const tables = randomTables(seed);
+    const parsed = parseParsianBackup(buildParsianBackup(tables, { seed }), { fileName: `seed-${seed}.bak` });
+    assert.deepEqual(normalizedRows(parsed), expectedRows(tables), `seed ${seed}`);
+    assert.deepEqual(parsed.chart.kol.map((row) => `${row.code}|${row.name}|${row.group}|${row.temporary}`).sort(),
+      tables.tbl_Kol.map((row) => `${row.Code}|${row.CName.trim()}|${row.GroupCode}|${row.iType === 1}`).sort(), `seed ${seed}`);
+    assert.deepEqual(parsed.chart.moeen.map((row) => `${row.kol}/${row.code}|${row.name}`).sort(),
+      tables.tbl_Moeen.map((row) => `${row.KolCode}/${row.Code}|${row.CName.trim()}`).sort(), `seed ${seed}`);
+    assert.deepEqual(parsed.chart.tafsili.map((row) => `${row.kol}/${row.moeen}/${row.code}|${row.name}`).sort(),
+      tables.tbl_Tafsili.map((row) => `${row.KolCode}/${row.MoeenCode}/${row.Code}|${row.CName.trim()}`).sort(), `seed ${seed}`);
+  }
+});
+
+test('torn bits: بدون برگرداندن، متن روی مرز بخش خراب است؛ با برگرداندن عین اصل', () => {
   const page = Buffer.alloc(8192);
-  page[0] = 0x01; page[1] = 0x01;
-  page.writeUInt32LE(objectId, 0x18);
-  let offset = 96;
-  for (const row of rows) { row.copy(page, offset); offset += row.length; }
-  return page;
-}
+  page[0] = 1; page.writeUInt16LE(0x100, 4);
+  const original = Buffer.from('صندوق قرض الحسنه'.repeat(400), 'utf16le').subarray(0, 8192 - 96);
+  original.copy(page, 96);
+  const pristine = Buffer.from(page);
+  let torn = 1;
+  for (let sector = 1; sector < 16; sector += 1) {
+    const at = 512 * (sector + 1) - 1;
+    torn |= (page[at] & 3) << (2 * sector);
+    page[at] = (page[at] & 0xfc) | 1;
+  }
+  page.writeUInt32LE(torn >>> 0, 60);
+  pristine.writeUInt32LE(torn >>> 0, 60);
+  assert.notDeepEqual(page, pristine);
+  assert.ok(restoreTornBits(page) > 0);
+  assert.deepEqual(page, pristine);
+});
 
-// ردیف sysobjects: امضای ۰x0030، شناسهٔ شیء در ۴، لنگرِ 'U ' در ۸، نام متغیر.
-function sysObjectRow(objectId, name) {
-  const row = Buffer.alloc(80);
-  row[0] = 0x30; row[1] = 0x00;
-  row.writeUInt16LE(42, 2);
-  row.writeUInt32LE(objectId, 4);
-  Buffer.from([0x55, 0x20, 0x00, 0x00]).copy(row, 8); // xtype 'U '
-  row.writeUInt16LE(1, 48);
-  const endOffset = 52 + utf16le(name).length;
-  row.writeUInt16LE(endOffset, 50);
-  utf16le(name).copy(row, 52);
-  return row;
-}
+test('صفحهٔ کهنه و ردیف حذف‌شده خوانده نمی‌شوند؛ سند واقعی متوازن می‌ماند', () => {
+  const parsed = parseParsianBackup(sampleBackup(), { fileName: 'sample.bak' });
+  assert.equal(parsed.documents.rows.length, 6);
+  assert.ok(!parsed.documents.rows.some((row) => row.sanad === 130 || row.id === 9001));
+  assert.equal(parsed.meta.pagesByTable.tbl_Document.stale, 1);
+  const voucher = parsed.documents.vouchers.find((item) => item.sanad === 12);
+  assert.ok(voucher.balanced);
+  assert.equal(voucher.bedTotal, 1172600000);
+});
 
-function buildFixtureBackup() {
-  const KOL = 10001, MOEEN = 10002, TAFSILI = 10003, DOCUMENT = 10004;
-  const header = Buffer.concat([
-    Buffer.from('TAPE', 'ascii'),
-    sysObjectRow(KOL, 'tbl_Kol'),
-    sysObjectRow(MOEEN, 'tbl_Moeen'),
-    sysObjectRow(TAFSILI, 'tbl_Tafsili'),
-    sysObjectRow(DOCUMENT, 'tbl_Document'),
-  ]);
-  const kolPage = dataPage(KOL, [
-    kolRow(10, 'صندوق'), kolRow(12, 'بدهکاران'), kolRow(23, 'بستانکاران'), kolRow(60, 'فروش'),
-  ]);
-  const moeenPage = dataPage(MOEEN, [
-    moeenRow(10, 1, 'صندوق'), moeenRow(12, 2, 'مشتریان'), moeenRow(23, 4, 'پرداختنی متفرقه'), moeenRow(60, 1, 'فروش'),
-  ]);
-  const tafsiliPage = dataPage(TAFSILI, [
-    tafsiliRow(12, 2, 4, 'شرکت طلايي سبز گستر'), tafsiliRow(12, 2, 5, 'شرکت بهاران بام پايدار'),
-    tafsiliRow(23, 4, 1, 'بیمه سامان'), tafsiliRow(23, 4, 2, 'تامین اجتماعی'),
-  ]);
-  // سند ۱۲ متوازن: فروش + ارزش افزودهٔ ۱۰٪. سند ۱۳ نامتوازن. یک ردیف صفر و
-  // یک ردیف تکراری دقیق هم داخل سند متوازن گذاشته می‌شود.
-  const docPage = dataPage(DOCUMENT, [
-    documentRow({ seq: 1, sanad: 12, kol: 12, moeen: 2, taf: 4, bed: 1172600000, bes: 0, date: '1403/03/08', comment: 'فاکتور فروش 1' }),
-    documentRow({ seq: 2, sanad: 12, kol: 60, moeen: 1, taf: 0, bed: 0, bes: 1066000000, date: '1403/03/08', comment: 'فاکتور فروش 1 شرکت طلايي سبز گستر' }),
-    documentRow({ seq: 3, sanad: 12, kol: 23, moeen: 4, taf: 1, bed: 0, bes: 106600000, date: '1403/03/08', comment: 'ماليات بر ارزش افزوده فروش فاكتور 1' }),
-    documentRow({ seq: 3, sanad: 12, kol: 23, moeen: 4, taf: 1, bed: 0, bes: 106600000, date: '1403/03/08', comment: 'ماليات بر ارزش افزوده فروش فاكتور 1' }),
-    documentRow({ seq: 6, sanad: 13, kol: 10, moeen: 1, taf: 0, bed: 500000, bes: 0, date: '1403/03/09', comment: 'سند ناقص' }),
-  ]);
-  const pad = (size) => Buffer.alloc(size);
-  return Buffer.concat([header, pad(0x1200 - header.length), kolPage, moeenPage, tafsiliPage, docPage]);
-}
+test('فایل غیربکاپ و بکاپ ناقص خطای روشن می‌دهند، نه خطای سرور', () => {
+  assert.throws(() => parseParsianBackup(Buffer.alloc(40000)), (error) => error.code === 'PARSIAN_BACKUP_NOT_MTF' && error.status === 400);
+  const truncated = sampleBackup().subarray(0, 20000);
+  assert.throws(() => parseParsianBackup(truncated), (error) => error.status === 400 && /^PARSIAN_BACKUP_/.test(error.code));
+});
 
 // ---------------------------------------------------------------------------
-// لایهٔ دادهٔ دفتر
+// ۲) طرح و ثبت در دفتر خام
 // ---------------------------------------------------------------------------
 
 const tempPathModule = await import('./helpers/tempPath.js');
@@ -137,25 +185,12 @@ process.env.ADMIN_PASSWORD = 'parsian-strong-password-12345';
 const database = await import(`../server/db.js?parsian-bak=${process.pid}`);
 database.ensureAdmin();
 const owner = database.authenticateUser('parsian-owner', 'parsian-strong-password-12345');
-const workspace = database.createWorkspace(owner.id, { name: 'دفتر خام پارسیان', profileType: 'business' });
-const inWorkspace = (callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
+const newWorkspace = (name) => database.createWorkspace(owner.id, { name, profileType: 'business' });
+const inWorkspace = (workspace, callback) => database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, callback);
 
 test.after(() => tempPathModule.removeTempDatabase(databasePath));
 
-const { parseParsianBackup } = await import('../server/parsianBackup.js');
-const { previewParsianBackup, commitParsianBackup, buildParsianImportPlan, internalMoeenCode } = await import(`../server/parsianImport.js?fixture=${process.pid}`);
-
-test('فیکسچر سینتتیک: کدینگ و سند متوازن درست رمزگشایی می‌شود', () => {
-  const parsed = parseParsianBackup(buildFixtureBackup(), { fileName: 'fixture.bak' });
-  assert.equal(parsed.chart.kol.length, 4);
-  assert.equal(parsed.chart.moeen.length, 4);
-  assert.equal(parsed.chart.tafsili.length, 4);
-  assert.equal(parsed.documents.vouchers.length, 2);
-  const voucher = parsed.documents.vouchers.find((item) => item.sanad === 12);
-  assert.ok(voucher.balanced);
-  assert.equal(voucher.bedTotal, 1172600000);
-  assert.equal(voucher.besTotal, 1172600000);
-});
+const { previewParsianBackup, commitParsianBackup, buildParsianImportPlan, internalMoeenCode, parsianKolType } = await import(`../server/parsianImport.js?fixture=${process.pid}`);
 
 test('کد داخلی معین یکتا و برگشت‌پذیر است', () => {
   assert.equal(internalMoeenCode(12, 2), '120002');
@@ -163,91 +198,152 @@ test('کد داخلی معین یکتا و برگشت‌پذیر است', () => 
   assert.notEqual(internalMoeenCode(12, 2), internalMoeenCode(120, 2));
 });
 
-test('طرح ورود: سند متوازن قابل ورود، ردیف صفر و تکراری حذف، نامتوازن هشدار', () => {
-  const parsed = parseParsianBackup(buildFixtureBackup(), { fileName: 'fixture.bak' });
-  const plan = buildParsianImportPlan(parsed);
-  assert.equal(plan.vouchers.length, 2);
-  const balanced = plan.vouchers.find((item) => item.sanad === 12);
-  assert.ok(balanced.importable);
-  // سه ردیف واقعی؛ ردیف صفر و تکراریِ دقیق کنار گذاشته می‌شوند.
-  assert.equal(balanced.lines.length, 3);
-  assert.equal(balanced.bedTotal, balanced.besTotal);
-  const unbalanced = plan.vouchers.find((item) => item.sanad === 13);
-  assert.ok(!unbalanced.importable);
-  assert.ok(unbalanced.issues.some((issue) => issue.includes('متوازن نیست')));
-  // کد یکتای معین = کل + معین چهاررقمی؛ کد سطح = کد اصیل پارسیان.
-  const subsidiary = plan.chartRows.filter((row) => row.level === 'subsidiary');
-  assert.deepEqual(subsidiary.map((row) => row.code).sort(), ['100001', '120002', '230004', '600001']);
-  assert.equal(subsidiary.find((row) => row.code === '120002').levelCode, '2');
+test('نوع کل از گروه پارسیان؛ بی‌گروه، انتظامی و ناسازگار نیازمند انتخاب‌اند', () => {
+  assert.equal(parsianKolType({ group: 11, temporary: false }).type, 'asset');
+  assert.equal(parsianKolType({ group: 21, temporary: false }).type, 'liability');
+  assert.equal(parsianKolType({ group: 31, temporary: false }).type, 'equity');
+  assert.equal(parsianKolType({ group: 41, temporary: true }).type, 'income');
+  assert.equal(parsianKolType({ group: 51, temporary: true }).type, 'expense');
+  assert.equal(parsianKolType({ group: 61, temporary: true }).type, 'expense');
+  assert.equal(parsianKolType({ group: null, temporary: false }).type, null);
+  assert.equal(parsianKolType({ group: 62, temporary: true }).type, null);
+  assert.equal(parsianKolType({ group: 91, temporary: false }).type, null);
+  // «خرید» پارسیان در گروه دارایی جاری ولی موقت است: تصمیم با حسابدار.
+  assert.equal(parsianKolType({ group: 11, groupName: 'دارايي هاي جاري', temporary: true }).type, null);
 });
 
-test('پیش‌نمایش در دفتر خام مجاز است و چیزی نمی‌نویسد', () => {
-  inWorkspace(() => {
-    const preview = previewParsianBackup(database.activeWorkspaceDatabase(), buildFixtureBackup(), 'fixture.bak');
+test('طرح بدون واحد مبلغ ساخته نمی‌شود', () => {
+  const parsed = parseParsianBackup(sampleBackup());
+  assert.throws(() => buildParsianImportPlan(parsed, {}), (error) => error.code === 'PARSIAN_IMPORT_UNIT_REQUIRED');
+});
+
+test('واحد ریال: مبلغ بر ۱۰ تقسیم می‌شود و مبلغ ناصحیح گرد نمی‌شود', () => {
+  const tables = sampleTables();
+  tables.tbl_Document.push(
+    { ID: 50, Sanad_Num: 20, SanadDate: '1403/04/01', KolCode: 10, MoeenCode: 1, TafsiliCode: 0, Comment: 'کارمزد', Bed: 7384, Bes: 0, SanadComment: null },
+    { ID: 51, Sanad_Num: 20, SanadDate: '1403/04/01', KolCode: 60, MoeenCode: 1, TafsiliCode: 0, Comment: 'کارمزد', Bed: 0, Bes: 7384, SanadComment: null },
+  );
+  const parsed = parseParsianBackup(buildParsianBackup(tables));
+  const rial = buildParsianImportPlan(parsed, { amountUnit: 'rial' });
+  assert.equal(rial.vouchers.find((item) => item.sanad === 12).lines[0].debit, 117260000);
+  const fee = rial.vouchers.find((item) => item.sanad === 20);
+  assert.ok(!fee.importable);
+  assert.ok(fee.lineIssues.some((issue) => issue.includes('تومانِ صحیح')));
+  const toman = buildParsianImportPlan(parsed, { amountUnit: 'toman' });
+  assert.ok(toman.vouchers.find((item) => item.sanad === 20).importable);
+  assert.equal(toman.vouchers.find((item) => item.sanad === 12).lines[0].debit, 1172600000);
+});
+
+test('پیش‌نمایش در دفتر خام چیزی نمی‌نویسد و کل‌های مبهم را با پیشنهاد نشان می‌دهد', () => {
+  const workspace = newWorkspace('پیش‌نمایش پارسیان');
+  inWorkspace(workspace, () => {
+    const preview = previewParsianBackup(database.activeWorkspaceDatabase(), sampleBackup(), 'sample.bak', { amountUnit: 'toman' });
     assert.ok(preview.rawLedger.ok);
-    assert.equal(preview.summary.importableCount, 1);
+    assert.equal(preview.summary.importableCount, 2);
     assert.equal(preview.summary.unbalancedCount, 1);
-    // پیش‌نمایش هیچ ردی در دفتر نگذاشته باشد.
-    const status = preview.rawLedger;
-    assert.equal(status.journalCount, 0);
-    assert.equal(status.chartCount, 0);
+    assert.deepEqual(preview.kolTypeChoices.map((choice) => choice.code).sort(), [27, 62]);
+    assert.equal(preview.kolTypeChoices.find((choice) => choice.code === 62).suggestion, 'expense');
+    assert.equal(preview.rawLedger.journalCount, 0);
+    assert.equal(preview.rawLedger.chartCount, 0);
   });
 });
 
-test('ثبت در دفتر خام: کدینگ، تفصیلی و سند پیش‌نویس وارد می‌شود', () => {
-  inWorkspace(() => {
+test('ثبت بدون انتخاب نوع کل‌های مبهم رد می‌شود و چیزی نمی‌نویسد', () => {
+  const workspace = newWorkspace('بی‌نوع پارسیان');
+  inWorkspace(workspace, () => {
     const active = database.activeWorkspaceDatabase();
-    const result = commitParsianBackup(active, buildFixtureBackup(), 'fixture.bak', {
-      createdBy: owner.id, timeZone: 'Asia/Tehran',
+    assert.throws(() => commitParsianBackup(active, sampleBackup(), 'sample.bak', { amountUnit: 'toman', kolTypes: { 27: 'equity' } }),
+      (error) => error.code === 'PARSIAN_IMPORT_TYPES_REQUIRED' && error.details.pendingKolTypes.length === 1);
+    assert.equal(active.prepare('SELECT COUNT(*) AS count FROM chart_accounts').get().count, 0);
+  });
+});
+
+test('ثبت در دفتر خام: کدینگ با نوع درست، تفصیلی و سند پیش‌نویس به تومان', () => {
+  const workspace = newWorkspace('دفتر خام پارسیان');
+  inWorkspace(workspace, () => {
+    const active = database.activeWorkspaceDatabase();
+    const result = commitParsianBackup(active, sampleBackup(), 'sample.bak', {
+      createdBy: owner.id, timeZone: 'Asia/Tehran', amountUnit: 'rial', kolTypes: JSON.stringify({ 27: 'equity', 62: 'expense' }),
     });
-    assert.equal(result.chart.created, 8); // ۴ کل + ۴ معین
-    assert.equal(result.analytics, 4);
-    assert.equal(result.ledgerAccounts, 4);
-    assert.equal(result.journals.entries, 1);
-    // سند به‌صورت پیش‌نویس ثبت شده و متوازن است.
-    const draft = active.prepare("SELECT approval_state, memo FROM journal_entries").get();
-    assert.equal(draft.approval_state, 'draft');
-    assert.ok(draft.memo.includes('سند 12'));
-    const lines = active.prepare(`SELECT journal_lines.debit, chart_accounts.code AS chartCode
+    assert.equal(result.chart.created, 12); // ۶ کل + ۶ معین
+    assert.equal(result.analytics, 2);
+    assert.equal(result.journals.entries, 2);
+    assert.equal(result.amountUnit, 'rial');
+    const types = Object.fromEntries(active.prepare("SELECT code,type FROM chart_accounts WHERE level='general'").all().map((row) => [row.code, row.type]));
+    assert.deepEqual(types, { 10: 'asset', 12: 'asset', 23: 'liability', 27: 'equity', 60: 'income', 62: 'expense' });
+    const drafts = active.prepare('SELECT approval_state AS state, memo FROM journal_entries ORDER BY memo').all();
+    assert.ok(drafts.every((draft) => draft.state === 'draft'));
+    assert.ok(drafts.some((draft) => draft.memo.includes('سند 12')));
+    const lines = active.prepare(`SELECT journal_lines.debit, journal_lines.analytic_id AS analytic, chart_accounts.code AS chartCode
       FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
       JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id`).all();
-    assert.equal(lines.reduce((sum, line) => sum + line.debit, 0), 1172600000);
-    // خط فروش به معین «مشتریان» پارسیان (کل ۱۲، معین ۲ → کد داخلی ۱۲۰۰۰۲) می‌خورد.
-    assert.ok(lines.some((line) => line.chartCode === '120002'));
-    // سند پیش‌نویس فقط با تفصیلیِ طرف حساب ثبت شده باشد.
-    const analytic = active.prepare("SELECT kind FROM analytic_accounts WHERE source_kind='parsian-tafsili'").get();
-    assert.equal(analytic.kind, 'contact');
+    // ریال به تومان: ۱٬۱۷۲٬۶۰۰٬۰۰۰ ریال + ۲۵۰٬۰۰۰٬۰۰۰ ریال.
+    assert.equal(lines.reduce((sum, line) => sum + line.debit, 0), 142260000);
+    assert.ok(lines.some((line) => line.chartCode === '120002' && line.analytic));
+    // دوباره در همان دفتر رد می‌شود.
+    assert.throws(() => commitParsianBackup(active, sampleBackup(), 'sample.bak', { amountUnit: 'rial', kolTypes: { 27: 'equity', 62: 'expense' } }),
+      (error) => error.code === 'PARSIAN_IMPORT_LEDGER_NOT_RAW');
   });
 });
 
-test('ثبت دوم در همان دفتر رد می‌شود (فقط دفتر خام)', () => {
-  inWorkspace(() => {
-    assert.throws(
-      () => commitParsianBackup(database.activeWorkspaceDatabase(), buildFixtureBackup(), 'fixture.bak', { createdBy: owner.id }),
-      (error) => error.code === 'PARSIAN_IMPORT_LEDGER_NOT_RAW',
+test('شکست در میانهٔ ثبت همه‌چیز را برمی‌گرداند و دفتر خام می‌ماند', () => {
+  const workspace = newWorkspace('شکست پارسیان');
+  inWorkspace(workspace, () => {
+    const active = database.activeWorkspaceDatabase();
+    // سندی که موتور ثبت ردش می‌کند: مبلغ بزرگ‌تر از سقف عدد صحیح امن.
+    const tables = sampleTables();
+    tables.tbl_Document.push(
+      { ID: 60, Sanad_Num: 30, SanadDate: '1403/05/01', KolCode: 10, MoeenCode: 1, TafsiliCode: 0, Comment: 'بزرگ', Bed: 2 ** 60, Bes: 0, SanadComment: null },
+      { ID: 61, Sanad_Num: 30, SanadDate: '1403/05/01', KolCode: 60, MoeenCode: 1, TafsiliCode: 0, Comment: 'بزرگ', Bed: 0, Bes: 2 ** 60, SanadComment: null },
     );
+    assert.throws(() => commitParsianBackup(active, buildParsianBackup(tables), 'big.bak', { amountUnit: 'toman', kolTypes: { 27: 'equity', 62: 'expense' } }),
+      (error) => error.code === 'PARSIAN_IMPORT_FAILED');
+    for (const table of ['chart_accounts', 'analytic_accounts', 'journal_entries']) {
+      assert.equal(active.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, table);
+    }
+    // دفتر هنوز خام است و ورود درست انجام می‌شود.
+    const result = commitParsianBackup(active, sampleBackup(), 'sample.bak', { amountUnit: 'toman', kolTypes: { 27: 'equity', 62: 'expense' } });
+    assert.equal(result.journals.entries, 2);
   });
 });
 
 // ---------------------------------------------------------------------------
-// راستی‌آزمایی با بکاپ واقعی (در صورت وجود) — فایل مشتری وارد Git نمی‌شود.
+// ۳) بکاپ‌های واقعی — عددها از خوانش مستقلِ همان فایل‌ها (syscolumns، slot، PFS)
 // ---------------------------------------------------------------------------
 
-const realPath = process.env.PARSIAN_BAK_PATH || '/home/z/my-project/upload/db_111403.bak';
-if (existsSync(realPath)) {
-  test('بکاپ واقعی پارسیان: سنجه‌های رمزگشایی صحه‌گذاری شده', () => {
-    const parsed = parseParsianBackup(readFileSync(realPath), { fileName: 'db_111403.bak' });
-    assert.equal(parsed.chart.kol.length, 26);
-    assert.equal(parsed.chart.moeen.length, 84);
-    assert.equal(parsed.chart.tafsili.length, 37);
-    assert.equal(parsed.documents.rows.length, 2297);
-    assert.equal(parsed.documents.vouchers.length, 157);
-    assert.equal(parsed.documents.vouchers.filter((item) => item.balanced).length, 89);
-    const plan = buildParsianImportPlan(parsed);
-    assert.equal(plan.summary.importableCount, 88);
-    assert.equal(plan.summary.lineCount, 404);
-    assert.equal(plan.summary.bedTotal, plan.summary.besTotal);
+// db_111403: سال ۱۴۰۳ مشتری؛ سندهای ۱ تا ۱۵۲ پیوسته و همه متوازن. db_1402: شرکت آزمایشی.
+const realFiles = [process.env.PARSIAN_BAK_PATH, 'parsian/db_111403.bak', 'parsian/db_1402.bak'].filter((path) => path && existsSync(path));
+const KNOWN = {
+  db_111403: { kol: 26, moeen: 84, tafsili: 37, rows: 2499, vouchers: 152, balanced: 152, total: 283884754448, sanadMin: 1, sanadMax: 152 },
+  db_1402: { kol: 24, moeen: 55, tafsili: 1, rows: 6, vouchers: 2, balanced: 1, total: 876050000, sanadMin: 2, sanadMax: 3 },
+};
+const KNOWN_SHA1 = {
+  '33d67942e8fdcdafd6c689a6e895912512aa6765': 'db_111403',
+  fe4eb25e68bdc98b74b03fc558d423a6279fb31f: 'db_1402',
+};
+
+for (const path of new Set(realFiles)) {
+  const buffer = readFileSync(path);
+  const known = KNOWN_SHA1[createHash('sha1').update(buffer).digest('hex')];
+  test(`بکاپ واقعی ${known || path}: کدینگ و سندها عیناً خوانده می‌شوند`, () => {
+    const parsed = parseParsianBackup(buffer, { fileName: path });
+    const ids = new Set(parsed.documents.rows.map((row) => row.id));
+    assert.equal(ids.size, parsed.documents.rows.length);
+    if (!known) return;
+    const expected = KNOWN[known];
+    const vouchers = parsed.documents.vouchers;
+    assert.equal(parsed.chart.kol.length, expected.kol);
+    assert.equal(parsed.chart.moeen.length, expected.moeen);
+    assert.equal(parsed.chart.tafsili.length, expected.tafsili);
+    assert.equal(parsed.documents.rows.length, expected.rows);
+    assert.equal(vouchers.length, expected.vouchers);
+    assert.equal(vouchers.filter((voucher) => voucher.balanced).length, expected.balanced);
+    assert.equal(vouchers.reduce((sum, voucher) => sum + voucher.bedTotal, 0), expected.total);
+    assert.equal(Math.min(...vouchers.map((voucher) => voucher.sanad)), expected.sanadMin);
+    assert.equal(Math.max(...vouchers.map((voucher) => voucher.sanad)), expected.sanadMax);
+    assert.ok(parsed.chart.moeen.every((row) => /^[؀-ۿ‌\s\d()\-ـ‌.،/]+$/.test(row.name)), 'نام معین خراب نیست');
+    const plan = buildParsianImportPlan(parsed, { amountUnit: 'toman' });
+    assert.equal(plan.summary.importableCount, expected.balanced);
   });
-} else {
-  test('بکاپ واقعی در دسترس نیست؛ آزمون صحه‌گذاری رد شد', { skip: true }, () => {});
 }
+if (!realFiles.length) test('بکاپ واقعی در دسترس نیست؛ آزمون فایل واقعی رد شد', { skip: true }, () => {});

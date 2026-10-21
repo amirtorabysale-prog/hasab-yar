@@ -1,265 +1,314 @@
 // خوانندهٔ بومی فایل بکاپ (.bak) نرم‌افزار حسابداری پارسیان.
 //
-// فرمت واقعی فایل: کانتینر MTF («TAPE») حامل بکاپ Microsoft SQL Server 2000 —
-// نسخهٔ دیتابیس v539 که SQL Serverهای مدرن (۲۰۱۲ به بعد) دیگر آن را restore
-// نمی‌کنند. این ماژول به جای وابستگی به هیچ سروری، صفحات ۸ کیلوبایتی داده را
-// مستقیم از دل بکاپ می‌خواند:
+// فرمت واقعی فایل: کانتینر MTF («TAPE») حامل بکاپ Microsoft SQL Server 2000.
+// SQL Serverهای امروزی این نسخه را restore نمی‌کنند، پس صفحه‌های ۸ کیلوبایتی
+// دیتابیس مستقیم از دل بکاپ خوانده می‌شوند. چهار قاعده که بدون هرکدام عدد غلط
+// درمی‌آید (همه روی بکاپ واقعی سال ۱۴۰۳ اثبات شده‌اند):
 //
-//   ۱. شناسایی جدول‌ها از روی ردیف‌های sysobjects که خودشان داخل بکاپ‌اند؛
-//   ۲. یافتن صفحات دادهٔ هر جدول با امضای صفحهٔ SQL Server (نوع ۰x01) و ObjectId؛
-//   ۳. قدم‌زدن ردیف‌های هم‌جوار هر صفحه (بایت وضعیت ۰x30، طول ردیف با کالیبراسیون)؛
-//   ۴. رمزگشایی ستون‌های ثابت با آفست معلوم و ستون‌های متغیر با شمارنده و
-//      آفست‌های انتهایی داخل خود ردیف؛ متن‌ها UTF-16LE هستند.
+//   ۱. بکاپ فقط extentهای تخصیص‌یافته را دارد و پشت هم نمی‌چیند؛ جای هر صفحه
+//      از شمارهٔ صفحهٔ داخل سرصفحه‌اش معلوم می‌شود، نه از فاصله‌اش تا آغاز فایل.
+//   ۲. torn page detection: دو بیت پایینِ آخرین بایت هر بخش ۵۱۲تایی با الگوی
+//      کنترلی جایگزین شده و بیت‌های اصلی در m_tornBits سرصفحه مانده‌اند. بدون
+//      برگرداندنشان کد حساب، شمارهٔ سند، مبلغ و متن خراب خوانده می‌شود.
+//   ۳. صفحه‌ای که در PFS «تخصیص‌نیافته» است داده‌ی کهنه دارد (پس از جابه‌جایی
+//      ردیف‌ها خالی شده ولی extentش هنوز در بکاپ آمده)؛ خوانده نمی‌شود.
+//   ۴. ردیف زنده فقط ردیفی است که آرایهٔ slot انتهای صفحه به آن اشاره می‌کند؛
+//      بایت‌های ردیف حذف‌شده تا فشرده‌سازی صفحه همان‌جا می‌مانند.
 //
-// قاعدهٔ ثابت: هیچ مقداری حدس زده نمی‌شود و هیچ ردیفی که امضای سالم نداشته
-// باشد وارد نتیجه نمی‌شود؛ ردیف‌های باقی‌ماندهٔ حذف‌شده (stale) با تکرارِ دقیق
-// و سنجه‌های سالم‌بودن فیلتر می‌شوند. خروجی این ماژول فقط داده است؛ تصمیمِ
-// ورود یا ندادن در server/parsianImport.js گرفته می‌شود.
-//
-// الگوریتم و آفست‌ها روی یک بکاپ واقعی پارسیان (db_111403، سال مالی ۱۴۰۳)
-// صحه‌گذاری شده و نتایجش با استخراج مستقل پایتونی تطبیق داده شده است.
+// چیدمان ستون‌ها حدس زده نمی‌شود: از sysobjects و syscolumns خود بکاپ خوانده
+// می‌شود. خروجی این ماژول فقط داده است؛ تصمیم ورود در server/parsianImport.js.
 
 import { createHash } from 'node:crypto';
 
-const MTF_MAGIC = Buffer.from('TAPE', 'ascii');
-const DATA_PAGE_STEP = 512;
 const PAGE_SIZE = 8192;
+const SECTOR = 512;
 const PAGE_HEADER = 96;
-const ROW_STATUS = 0x30;
+const PFS_INTERVAL = 8088;
+const PAGE_TYPES = new Set([1, 2, 3, 8, 9, 10, 11, 13, 16, 17]);
+const DATA_PAGE = 1;
+const SYSOBJECTS = 1;
+const SYSCOLUMNS = 3;
+const JALALI_DATE = /^(\d{4})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
 
-// ساختار ستون‌های ثابت چهار جدول هدف، به ترتیب فیزیکی ردیف SQL Server 2000.
-// آفست‌ها نسبت به آغاز ردیف‌اند و با سِت colid جدول در بکاپ واقعی جور شده‌اند.
-const TABLE_LAYOUTS = {
-  tbl_Kol: {
-    fixed: [
-      { name: 'code', offset: 4, type: 'int16' },
-    ],
-    texts: ['name'],
-  },
-  tbl_Moeen: {
-    fixed: [
-      { name: 'kol', offset: 4, type: 'int16' },
-      { name: 'code', offset: 6, type: 'int16' },
-    ],
-    texts: ['name'],
-  },
-  tbl_Tafsili: {
-    fixed: [
-      { name: 'kol', offset: 4, type: 'int16' },
-      { name: 'moeen', offset: 6, type: 'int16' },
-      { name: 'code', offset: 8, type: 'int32' },
-    ],
-    texts: ['name'],
-  },
-  // ردیف سند: جدول tbl_Document در پارسیان یک ستونِ حذف‌شده در جایگاه colid=1
-  // دارد که داده‌اش هنوز در ردیف می‌ماند (شناسهٔ قدیمی ردیف، آفست ۴) و همهٔ
-  // ستون‌های واقعی را ۴ بایت می‌راند. آفست‌های زیر با سنجه‌های واقعی صحه‌گذاری
-  // شده‌اند: سند ۱۲ فایل نمونه با همین چیدمان دقیقاً متوازن درمی‌آید
-  // (۱٬۱۷۲٬۶۰۰٬۰۰۰ = ۱٬۰۶۶٬۰۰۰٬۰۰۰ فروش + ۱۰۶٬۶۰۰٬۰۰۰ ارزش افزوده).
+// ستون‌هایی که از هر جدول پارسیان لازم است. نام ستون از syscolumns پیدا می‌شود؛
+// ستون اجباری که در بکاپ نباشد یعنی این فایل از نسخه‌ای است که نمی‌شناسیم.
+const TABLES = {
+  tbl_Kol: { required: ['Code', 'CName'], optional: ['GroupCode', 'iType'] },
+  tbl_Moeen: { required: ['KolCode', 'Code', 'CName'], optional: [] },
+  tbl_Tafsili: { required: ['KolCode', 'MoeenCode', 'Code', 'CName'], optional: [] },
+  tbl_ACCGroup: { required: ['Code', 'CName'], optional: [], missingTableAllowed: true },
   tbl_Document: {
-    fixed: [
-      { name: 'seq', offset: 4, type: 'int32' },
-      { name: 'sanad', offset: 8, type: 'int32' },
-      { name: 'kol', offset: 12, type: 'int16' },
-      { name: 'moeen', offset: 14, type: 'int16' },
-      { name: 'taf', offset: 16, type: 'int32' },
-      { name: 'bed', offset: 20, type: 'float64' },
-      { name: 'bes', offset: 28, type: 'float64' },
-    ],
-    // ترتیب ستون‌های متغیر مطابق colid: تاریخ سند، شرح ردیف، شرح سند.
-    texts: ['date', 'comment', 'sanadComment'],
+    required: ['ID', 'Sanad_Num', 'SanadDate', 'KolCode', 'MoeenCode', 'TafsiliCode', 'Bed', 'Bes'],
+    optional: ['Comment', 'SanadComment'],
   },
 };
-
-const TARGET_TABLES = Object.keys(TABLE_LAYOUTS);
-const JALALI_DATE = /^(\d{4})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
-const AMOUNT_LIMIT = 1e15;
-const OBJECT_NAME = /^[A-Za-z_][A-Za-z0-9_@# ]*$/;
 
 function parseError(message, code = 'PARSIAN_BACKUP_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
 }
 
-function u16(buffer, offset) { return buffer.readUInt16LE(offset); }
-function u32(buffer, offset) { return buffer.readUInt32LE(offset); }
-
-function utf16(buffer, from, to) {
-  try {
-    return buffer.toString('utf16le', from, to).replace(/\u0000+$/, '').trim();
-  } catch {
-    return '';
+/** برگرداندن بیت‌هایی که torn page detection در انتهای هر بخش ۵۱۲تایی گذاشته است. */
+export function restoreTornBits(page) {
+  if (!(page.readUInt16LE(4) & 0x100)) return 0;
+  const torn = page.readUInt32LE(60);
+  let changed = 0;
+  for (let sector = 1; sector < PAGE_SIZE / SECTOR; sector += 1) {
+    const at = SECTOR * (sector + 1) - 1;
+    const restored = (page[at] & 0xfc) | ((torn >>> (2 * sector)) & 3);
+    if (restored !== page[at]) { page[at] = restored; changed += 1; }
   }
+  return changed;
 }
 
-function validTableName(name) {
-  return name && name.length <= 128 && OBJECT_NAME.test(name) ? name : null;
+function pageHeader(page) {
+  return {
+    type: page[1],
+    slotCount: page.readUInt16LE(22),
+    objectId: page.readUInt32LE(24),
+    freeData: page.readUInt16LE(30),
+    pageId: page.readUInt32LE(32),
+  };
 }
 
-/**
- * شناسایی جدول‌های کاربری از روی ردیف‌های sysobjects داخل بکاپ.
- * ردیف sysobjects امضای مشخصی دارد: وضعیت 0x0030، طول ثابت ۴۰-۴۶، شناسهٔ
- * شیء در آفست ۴ و نام به‌صورت رشتهٔ متغیر در انتها.
- */
-function discoverTables(buffer) {
-  const anchor = Buffer.from([0x55, 0x20, 0x00, 0x00]); // xtype 'U '
-  const tables = new Map();
-  let cursor = 0;
-  while (true) {
-    const found = buffer.indexOf(anchor, cursor);
-    if (found < 0) break;
-    cursor = found + 1;
-    const rowStart = found - 8;
-    if (rowStart < 0) continue;
-    if (u16(buffer, rowStart) !== 0x0030) continue;
-    const minLen = u16(buffer, rowStart + 2);
-    if (![40, 42, 44, 46].includes(minLen)) continue;
-    const objectId = u32(buffer, rowStart + 4);
-    if (!(objectId > 0 && objectId < 2 ** 31)) continue;
-    if (u16(buffer, rowStart + 48) !== 1) continue;
-    const endOffset = u16(buffer, rowStart + 50);
-    if (!(endOffset >= 56 && endOffset <= 300)) continue;
-    const name = validTableName(utf16(buffer, rowStart + 52, rowStart + endOffset));
-    if (name && !tables.has(objectId)) tables.set(objectId, name);
-  }
-  return tables;
+function plausiblePage(buffer, offset) {
+  if (buffer[offset] !== 1 || !PAGE_TYPES.has(buffer[offset + 1])) return false;
+  if (buffer.readUInt16LE(offset + 36) !== 1) return false; // فایل دادهٔ اول
+  const slotCount = buffer.readUInt16LE(offset + 22);
+  const freeData = buffer.readUInt16LE(offset + 30);
+  return freeData >= PAGE_HEADER && freeData + 2 * slotCount <= PAGE_SIZE;
 }
 
-/** صفحات دادهٔ هر جدول: امضای صفحهٔ دادهٔ SQL Server 2000 و ObjectId در سرصفحه. */
-function discoverDataPages(buffer, tables) {
+/** همهٔ صفحه‌های داخل بکاپ، با کلید شمارهٔ صفحه و بیت‌های torn برگردانده. */
+function locatePages(buffer) {
   const pages = new Map();
-  for (const objectId of tables.keys()) pages.set(objectId, []);
-  for (let page = 0x1200; page + PAGE_SIZE <= buffer.length; page += DATA_PAGE_STEP) {
-    if (buffer[page] !== 0x01 || buffer[page + 1] !== 0x01) continue;
-    const objectId = u32(buffer, page + 0x18);
-    const list = pages.get(objectId);
-    if (list) list.push(page);
+  let duplicates = 0;
+  let tornBytes = 0;
+  for (let offset = 0; offset + PAGE_SIZE <= buffer.length;) {
+    if (!plausiblePage(buffer, offset)) { offset += SECTOR; continue; }
+    const page = Buffer.from(buffer.subarray(offset, offset + PAGE_SIZE));
+    tornBytes += restoreTornBits(page);
+    const pageId = page.readUInt32LE(32);
+    if (pages.has(pageId)) duplicates += 1;
+    else pages.set(pageId, page);
+    offset += PAGE_SIZE;
   }
-  return pages;
+  return { pages, duplicates, tornBytes };
+}
+
+/** وضعیت تخصیص صفحه از روی PFS: بیت 0x40 یعنی صفحه هنوز در اختیار یک شیء است. */
+function allocationReader(pages) {
+  return (pageId) => {
+    const pfsId = pageId < PFS_INTERVAL ? 1 : Math.floor(pageId / PFS_INTERVAL) * PFS_INTERVAL;
+    const pfs = pages.get(pfsId);
+    if (!pfs || pfs[1] !== 11) return null;
+    const recordOffset = pfs.readUInt16LE(PAGE_SIZE - 2);
+    const at = recordOffset + 4 + (pageId - (pfsId === 1 ? 0 : pfsId));
+    if (recordOffset < PAGE_HEADER || at >= PAGE_SIZE) return null;
+    return (pfs[at] & 0x40) !== 0;
+  };
 }
 
 /**
- * کالیبراسیون آفست «طول ردیف» (k) از روی اولین صفحهٔ جدول: مقداری که طولِ
- * ردیف اول را درست می‌دهد و دو گذرِ بعدی هم به ردیف‌های سالم می‌رسد.
+ * ساختار یک ردیف SQL Server 2000. null یعنی ردیف سالم نیست؛ هیچ مقداری از
+ * ردیف ناسالم خوانده نمی‌شود.
  */
-function calibrateRowLengthOffset(buffer, pages) {
-  const first = pages[0];
-  for (let k = 4; k < 100; k += 1) {
-    const firstLength = u16(buffer, first + PAGE_HEADER + k);
-    if (!(firstLength >= 6 && firstLength <= 8000) || PAGE_HEADER + firstLength + 4 > PAGE_SIZE) continue;
-    if (buffer[first + PAGE_HEADER + firstLength] !== ROW_STATUS) continue;
-    let offset = PAGE_HEADER + firstLength;
-    let ok = true;
-    for (let transition = 0; transition < 2; transition += 1) {
-      const length = u16(buffer, first + offset + k);
-      if (!(length >= 6 && length <= 8000) || offset + length > PAGE_SIZE - 4 || buffer[first + offset + length] !== ROW_STATUS) { ok = false; break; }
-      offset += length;
-    }
-    if (ok) return k;
+function readRecord(page, offset, limit) {
+  if (offset < PAGE_HEADER || offset + 4 > limit) return null;
+  const statusA = page[offset];
+  const kind = (statusA >> 1) & 7;
+  const fixedEnd = page.readUInt16LE(offset + 2);
+  if (fixedEnd < 4 || offset + fixedEnd > limit) return null;
+  let cursor = offset + fixedEnd;
+  let columnCount = Infinity;
+  let nullBitmap = null;
+  if (statusA & 0x10) {
+    if (cursor + 2 > limit) return null;
+    columnCount = page.readUInt16LE(cursor);
+    const bitmapBytes = Math.ceil(columnCount / 8);
+    nullBitmap = page.subarray(cursor + 2, cursor + 2 + bitmapBytes);
+    cursor += 2 + bitmapBytes;
   }
-  return null;
+  const varEnds = [];
+  if (statusA & 0x20) {
+    if (cursor + 2 > limit) return null;
+    const count = page.readUInt16LE(cursor);
+    if (cursor + 2 + 2 * count > limit) return null;
+    for (let index = 0; index < count; index += 1) varEnds.push(page.readUInt16LE(cursor + 2 + 2 * index) & 0x7fff);
+    cursor += 2 + 2 * count;
+  }
+  let previous = cursor - offset;
+  for (const end of varEnds) {
+    if (end < previous || offset + end > limit) return null;
+    previous = end;
+  }
+  return { page, offset, kind, fixedEnd, columnCount, nullBitmap, varEnds, varStart: cursor - offset };
 }
 
-/** قدم‌زدن همهٔ ردیف‌های سالم صفحات یک جدول. */
-function walkRows(buffer, pages, k) {
+/** ردیف‌های زندهٔ یک صفحهٔ داده — فقط آنچه آرایهٔ slot نشان می‌دهد. */
+function liveRecords(page, stats) {
+  const header = pageHeader(page);
+  const records = [];
+  const limit = PAGE_SIZE - 2 * header.slotCount;
+  for (let slot = 0; slot < header.slotCount; slot += 1) {
+    const offset = page.readUInt16LE(PAGE_SIZE - 2 - 2 * slot);
+    if (offset === 0) continue; // ردیف حذف‌شده
+    const record = readRecord(page, offset, limit);
+    if (!record) { stats.brokenRecords += 1; continue; }
+    // ۰ ردیف اصلی، ۱ ردیف جابه‌جاشده (forwarded). ۲ نشانی ردیف جابه‌جاشده است
+    // و دادهٔ خودش را ندارد؛ بقیه ردیف ایندکس یا شبح (ghost) هستند.
+    if (record.kind === 0 || record.kind === 1) records.push(record);
+    else stats.skippedRecords += 1;
+  }
+  return records;
+}
+
+function isNull(record, column) {
+  if (column.colid > record.columnCount) return true;
+  if (!record.nullBitmap) return false;
+  const bit = column.colid - 1;
+  return ((record.nullBitmap[bit >> 3] ?? 0) >> (bit & 7) & 1) === 1;
+}
+
+const latinDecoder = new TextDecoder('windows-1256');
+
+function cleanText(text) {
+  return text.replace(/\u0000+$/, '').trim();
+}
+
+function decodeValue(record, column) {
+  if (isNull(record, column)) return null;
+  const { page, offset } = record;
+  if (column.xoffset > 0) {
+    const at = offset + column.xoffset;
+    if (column.xoffset + column.length > record.fixedEnd) return null; // ستونی که بعد از ساخت ردیف اضافه شده
+    switch (column.xtype) {
+      case 48: return page[at];
+      case 52: return page.readInt16LE(at);
+      case 56: return page.readInt32LE(at);
+      case 127: return Number(page.readBigInt64LE(at));
+      case 59: return page.readFloatLE(at);
+      case 62: return page.readDoubleLE(at);
+      case 175: return cleanText(latinDecoder.decode(page.subarray(at, at + column.length)));
+      case 239: return cleanText(page.toString('utf16le', at, at + column.length));
+      default: return undefined;
+    }
+  }
+  const index = -column.xoffset - 1;
+  if (index >= record.varEnds.length) return null;
+  const from = offset + (index === 0 ? record.varStart : record.varEnds[index - 1]);
+  const to = offset + record.varEnds[index];
+  if (column.xtype === 231) return cleanText(page.toString('utf16le', from, to));
+  if (column.xtype === 167) return cleanText(latinDecoder.decode(page.subarray(from, to)));
+  return undefined;
+}
+
+function firstVariableText(record) {
+  if (!record.varEnds.length) return '';
+  return cleanText(record.page.toString('utf16le', record.offset + record.varStart, record.offset + record.varEnds[0]));
+}
+
+/** کاتالوگ جدول‌ها و ستون‌ها از sysobjects و syscolumns خود بکاپ. */
+function readCatalog(pagesByObject, stats) {
+  const objects = new Map();
+  for (const page of pagesByObject.get(SYSOBJECTS) || []) {
+    for (const record of liveRecords(page, stats)) {
+      if (record.fixedEnd < 10) continue;
+      const id = page.readInt32LE(record.offset + 4);
+      const xtype = page.toString('latin1', record.offset + 8, record.offset + 10);
+      const name = firstVariableText(record);
+      if (xtype === 'U ' && name) objects.set(name, id);
+    }
+  }
+  const columns = new Map();
+  for (const page of pagesByObject.get(SYSCOLUMNS) || []) {
+    for (const record of liveRecords(page, stats)) {
+      if (record.fixedEnd < 20) continue;
+      const at = record.offset;
+      const column = {
+        objectId: page.readInt32LE(at + 4),
+        xtype: page[at + 8],
+        length: page.readInt16LE(at + 12),
+        colid: page.readInt16LE(at + 16),
+        xoffset: page.readInt16LE(at + 18),
+        name: firstVariableText(record),
+      };
+      if (!columns.has(column.objectId)) columns.set(column.objectId, []);
+      columns.get(column.objectId).push(column);
+    }
+  }
+  return { objects, columns };
+}
+
+function readTable(name, spec, context) {
+  const objectId = context.catalog.objects.get(name);
+  if (objectId == null) {
+    if (spec.missingTableAllowed) return { rows: [], missing: true };
+    throw parseError(`جدول ${name} در این بکاپ نیست؛ این فایل بکاپ پارسیانِ شناخته‌شده نیست.`, 'PARSIAN_BACKUP_UNSUPPORTED');
+  }
+  const byName = new Map((context.catalog.columns.get(objectId) || []).map((column) => [column.name.toLowerCase(), column]));
+  const wanted = [];
+  for (const columnName of [...spec.required, ...spec.optional]) {
+    const column = byName.get(columnName.toLowerCase());
+    if (!column) {
+      if (spec.required.includes(columnName)) throw parseError(`ستون ${columnName} در جدول ${name} پیدا نشد؛ نسخهٔ این بکاپ پشتیبانی نمی‌شود.`, 'PARSIAN_BACKUP_UNSUPPORTED');
+      continue;
+    }
+    wanted.push([columnName, column]);
+  }
   const rows = [];
-  for (const page of pages) {
-    let offset = PAGE_HEADER;
-    while (offset < 8100) {
-      const length = u16(buffer, page + offset + k);
-      if (length < 6 || offset + length > PAGE_SIZE || buffer[page + offset] !== ROW_STATUS) break;
-      rows.push(buffer.subarray(page + offset, page + offset + length));
-      offset += length;
+  let livePages = 0;
+  let stalePages = 0;
+  for (const page of context.pagesByObject.get(objectId) || []) {
+    const allocated = context.allocated(pageHeader(page).pageId);
+    if (allocated === null) throw parseError('نقشهٔ تخصیص صفحه‌ها (PFS) در بکاپ پیدا نشد؛ بدون آن ردیف کهنه از زنده جدا نمی‌شود.', 'PARSIAN_BACKUP_UNSUPPORTED');
+    if (!allocated) { stalePages += 1; continue; }
+    livePages += 1;
+    for (const record of liveRecords(page, context.stats)) {
+      const row = {};
+      for (const [columnName, column] of wanted) {
+        const value = decodeValue(record, column);
+        if (value === undefined) throw parseError(`نوع ستون ${name}.${columnName} (${column.xtype}) شناخته نیست.`, 'PARSIAN_BACKUP_UNSUPPORTED');
+        row[columnName] = value;
+      }
+      rows.push(row);
     }
   }
-  return rows;
-}
-
-/** شمار ستون‌های متغیرِ موجود در ردیف، از روی فیلد شمارندهٔ داخل خود ردیف. */
-function detectVariableCount(row, k) {
-  for (const count of [1, 2, 3, 4]) {
-    const field = k - 2 * count;
-    if (field >= 0 && row.length > k && u16(row, field) === count) return count;
-  }
-  return 0;
+  context.parsed.meta.pagesByTable[name] = { live: livePages, stale: stalePages };
+  return { rows, missing: false };
 }
 
 /**
- * متن‌های ستون‌های متغیر ردیف. آفست‌های انتهایی داخل ردیف‌اند؛ آخرین انتها
- * باید دقیقاً پایان ردیف باشد، وگرنه ردیف خراب است و کنار گذاشته می‌شود.
- */
-function variableTexts(row, k, count) {
-  if (!count) return [];
-  const ends = [];
-  for (let index = 1; index <= count; index += 1) ends.push(u16(row, k - 2 * (count - index)));
-  const segments = [];
-  let start = k + 2;
-  for (const end of ends) {
-    if (end <= start || end > row.length) return null;
-    segments.push([start, end]);
-    start = end;
-  }
-  if (start !== row.length) return null;
-  return segments.map(([from, to]) => utf16(row, from, to));
-}
-
-function readFixed(row, offset, type) {
-  if (offset + { int16: 2, int32: 4, float64: 8 }[type] > row.length) return null;
-  if (type === 'int16') return row.readInt16LE(offset);
-  if (type === 'int32') return row.readInt32LE(offset);
-  return row.readDoubleLE(offset);
-}
-
-/**
- * رمزگشایی یک ردیف با چیدمان جدول. خروجی null یعنی ردیف این جدول نیست یا
- * سالم نیست؛ در هر دو حالت ساکت کنار گذاشته می‌شود و در شمارنده می‌آید.
- */
-function decodeRow(row, k, layout) {
-  const values = {};
-  for (const column of layout.fixed) {
-    const value = readFixed(row, column.offset, column.type);
-    if (value == null) return null;
-    values[column.name] = value;
-  }
-  const count = detectVariableCount(row, k);
-  const texts = variableTexts(row, k, count);
-  if (texts == null) return null;
-  for (let index = 0; index < layout.texts.length; index += 1) {
-    values[layout.texts[index]] = index < texts.length ? texts[index] : '';
-  }
-  if (count > layout.texts.length) {
-    // ستون‌های متغیر تهی‌شده جا دارند ولی ستون‌های خواسته‌شده کامل نیستند؛
-    // مثلاً ردیفی که شرح ردیف ندارد ولی شرح سند دارد. نگاشت ترتیبی می‌ماند،
-    // اما این حالت فقط وقتی پذیرفته می‌شود که تاریخ سند شکل درست داشته باشد.
-    if (!JALALI_DATE.test(values.date || '')) return null;
-  }
-  return values;
-}
-
-function saneAmount(value) {
-  return Number.isFinite(value) && Math.abs(value) < AMOUNT_LIMIT;
-}
-
-/** جمع تفاضلی بدهکار/بستانکارِ یک جدول سند پس از گرد به ریالِ صحیح. */
-function roundedAmount(value) {
-  return Math.round(value);
-}
-
-/**
- * نقطهٔ ورود: خواندن کامل بکاپ و برگرداندن کدینگ و اسناد سالنامة آن.
+ * نقطهٔ ورود: خواندن کامل بکاپ و برگرداندن کدینگ و اسناد آن.
  * خروجی برای «پیش‌نمایش» و «ثبت» یکسان است؛ تصمیم ورود با لایهٔ بالاتر.
  */
 export function parseParsianBackup(buffer, { fileName = '' } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 2 * PAGE_SIZE) {
     throw parseError('فایل ارسالی خیلی کوچک‌تر از آن است که بکاپ پارسیان باشد.');
   }
-  const hasMtfMagic = buffer.indexOf(MTF_MAGIC, 0) === 0 || buffer.subarray(0, 4096).includes(MTF_MAGIC);
-  if (!hasMtfMagic) {
+  if (!buffer.subarray(0, 4096).includes(Buffer.from('TAPE', 'ascii'))) {
     throw parseError('امضای کانتینر بکاپ (MTF/TAPE) پیدا نشد؛ این فایل بکاپ پارسیان نیست.', 'PARSIAN_BACKUP_NOT_MTF');
   }
+  try {
+    return parseLocatedBackup(buffer, fileName);
+  } catch (error) {
+    if (error.code) throw error;
+    // خطای خواندن بیرون از مرز بافر یعنی فایل ناقص یا دست‌خورده است، نه خطای سرور.
+    throw parseError(`ساختار بکاپ خوانا نیست: ${error.message}`);
+  }
+}
 
-  const tables = discoverTables(buffer);
-  if (!tables.size) throw parseError('هیچ جدولی در بکاپ شناسایی نشد؛ فایل ناقص یا رمزشده است.');
-  const pages = discoverDataPages(buffer, tables);
+function parseLocatedBackup(buffer, fileName) {
+  const { pages, duplicates, tornBytes } = locatePages(buffer);
+  const pagesByObject = new Map();
+  for (const page of pages.values()) {
+    const header = pageHeader(page);
+    if (header.type !== DATA_PAGE) continue;
+    if (!pagesByObject.has(header.objectId)) pagesByObject.set(header.objectId, []);
+    pagesByObject.get(header.objectId).push(page);
+  }
+  const stats = { brokenRecords: 0, skippedRecords: 0 };
+  const catalog = readCatalog(pagesByObject, stats);
+  if (!catalog.objects.size) throw parseError('هیچ جدولی در بکاپ شناسایی نشد؛ فایل ناقص یا رمزشده است.');
 
   const warnings = [];
   const parsed = {
@@ -268,76 +317,53 @@ export function parseParsianBackup(buffer, { fileName = '' } = {}) {
       sizeBytes: buffer.length,
       sha256: createHash('sha256').update(buffer).digest('hex'),
       container: 'MTF (Microsoft Tape Format) — بکاپ SQL Server 2000',
-      tablesDiscovered: tables.size,
+      pages: pages.size,
+      tablesDiscovered: catalog.objects.size,
       pagesByTable: {},
     },
-    chart: { kol: [], moeen: [], tafsili: [] },
+    chart: { kol: [], moeen: [], tafsili: [], groups: [] },
     documents: { rows: [], vouchers: [] },
-    stats: {
-      walkedRows: {}, decodedRows: {}, duplicateRows: {},
-      zeroRows: 0, suspiciousRows: 0,
-    },
+    stats: { ...stats, tornBytes, duplicatePages: duplicates, rows: {} },
     warnings,
   };
-
-  const seen = new Map();
-  for (const tableName of TARGET_TABLES) {
-    const objectId = [...tables.entries()].find(([, name]) => name === tableName)?.[0];
-    const tablePages = objectId != null ? pages.get(objectId) : undefined;
-    parsed.meta.pagesByTable[tableName] = tablePages ? tablePages.length : 0;
-    if (!tablePages || !tablePages.length) {
-      warnings.push(`جدول ${tableName} در بکاپ داده‌ای ندارد.`);
-      parsed.stats.walkedRows[tableName] = 0;
-      parsed.stats.decodedRows[tableName] = 0;
-      continue;
-    }
-    const k = calibrateRowLengthOffset(buffer, tablePages);
-    if (k == null) {
-      warnings.push(`ساختار ردیف‌های ${tableName} قابل کالیبراسیون نبود؛ این جدول نادیده گرفته شد.`);
-      parsed.stats.walkedRows[tableName] = 0;
-      parsed.stats.decodedRows[tableName] = 0;
-      continue;
-    }
-    const rows = walkRows(buffer, tablePages, k);
-    const layout = TABLE_LAYOUTS[tableName];
-    let decoded = 0;
-    let duplicated = 0;
-    const dedupeKey = seen.get(tableName) || new Map();
-    seen.set(tableName, dedupeKey);
-    const output = [];
-    for (const row of rows) {
-      const values = decodeRow(row, k, layout);
-      if (!values) { parsed.stats.suspiciousRows += 1; continue; }
-      if (tableName === 'tbl_Document' && !JALALI_DATE.test(values.date || '')) {
-        parsed.stats.suspiciousRows += 1;
-        continue;
-      }
-      const key = JSON.stringify(values);
-      if (dedupeKey.has(key)) { duplicated += 1; continue; }
-      dedupeKey.set(key, true);
-      output.push(values);
-      decoded += 1;
-    }
-    parsed.stats.walkedRows[tableName] = rows.length;
-    parsed.stats.decodedRows[tableName] = decoded;
-    parsed.stats.duplicateRows[tableName] = duplicated;
-    if (tableName === 'tbl_Kol') parsed.chart.kol = output;
-    if (tableName === 'tbl_Moeen') parsed.chart.moeen = output;
-    if (tableName === 'tbl_Tafsili') parsed.chart.tafsili = output;
-    if (tableName === 'tbl_Document') parsed.documents.rows = output;
+  const context = { catalog, pagesByObject, allocated: allocationReader(pages), stats, parsed };
+  const tables = {};
+  for (const [name, spec] of Object.entries(TABLES)) {
+    tables[name] = readTable(name, spec, context);
+    parsed.stats.rows[name] = tables[name].rows.length;
   }
+  Object.assign(parsed.stats, { brokenRecords: stats.brokenRecords, skippedRecords: stats.skippedRecords });
+  if (duplicates) throw parseError(`${duplicates} صفحه در بکاپ دو بار آمده است؛ ردیف زنده قابل تشخیص نیست.`, 'PARSIAN_BACKUP_INCONSISTENT');
+  if (stats.brokenRecords) warnings.push(`${stats.brokenRecords} ردیف ساختار سالم نداشت و خوانده نشد.`);
 
-  if (!parsed.chart.kol.length) throw parseError('جدول کدینگ (کل) در بکاپ خوانده نشد؛ استخراج ممکن نیست.');
-  if (!parsed.chart.moeen.length) throw parseError('جدول کدینگ (معین) در بکاپ خوانده نشد؛ استخراج ممکن نیست.');
-  if (!parsed.documents.rows.length) warnings.push('هیچ ردیف سند سال‌شمار در بکاپ پیدا نشد؛ فقط کدینگ وارد می‌شود.');
+  const groups = new Map(tables.tbl_ACCGroup.rows.map((row) => [row.Code, row.CName || '']));
+  parsed.chart.groups = [...groups].map(([code, name]) => ({ code, name }));
+  parsed.chart.kol = tables.tbl_Kol.rows.map((row) => ({
+    code: row.Code, name: row.CName || '',
+    group: row.GroupCode ?? null, groupName: row.GroupCode == null ? '' : groups.get(row.GroupCode) || '',
+    temporary: row.iType == null ? null : row.iType === 1,
+  }));
+  parsed.chart.moeen = tables.tbl_Moeen.rows.map((row) => ({ kol: row.KolCode, code: row.Code, name: row.CName || '' }));
+  parsed.chart.tafsili = tables.tbl_Tafsili.rows.map((row) => ({ kol: row.KolCode, moeen: row.MoeenCode, code: row.Code, name: row.CName || '' }));
+  if (!parsed.chart.kol.length) throw parseError('جدول کدینگ (کل) در بکاپ خالی است؛ استخراج ممکن نیست.');
 
-  // ردیف‌های سند با مبلغ بی‌معنا یا تاریخ بیرون از الگوی شمسی، پیش از این
-  // فیلتر شده‌اند؛ اینجا فقط اسناد را از ردیف‌ها می‌سازیم.
+  const ids = new Set();
+  for (const row of tables.tbl_Document.rows) {
+    if (ids.has(row.ID)) throw parseError(`ردیف سند با شناسهٔ ${row.ID} دو بار در بکاپ زنده است؛ بکاپ ناسازگار است و چیزی وارد نمی‌شود.`, 'PARSIAN_BACKUP_INCONSISTENT');
+    ids.add(row.ID);
+    parsed.documents.rows.push({
+      id: row.ID, sanad: row.Sanad_Num, date: row.SanadDate || '',
+      kol: row.KolCode, moeen: row.MoeenCode, taf: row.TafsiliCode || 0,
+      bed: row.Bed ?? 0, bes: row.Bes ?? 0,
+      comment: row.Comment || '', sanadComment: row.SanadComment || '',
+    });
+  }
+  if (!parsed.documents.rows.length) warnings.push('هیچ ردیف سندی در بکاپ نیست؛ فقط کدینگ وارد می‌شود.');
   parsed.documents.vouchers = buildVouchers(parsed.documents.rows);
   return parsed;
 }
 
-/** گروه‌بندی ردیف‌های سند بر شمارهٔ سند پارسیان، مرتب بر تاریخ و شماره. */
+/** گروه‌بندی ردیف‌های سند بر شمارهٔ سند پارسیان، مرتب بر تاریخ و شماره. مبلغ‌ها دست نمی‌خورند. */
 function buildVouchers(rows) {
   const bySanad = new Map();
   for (const row of rows) {
@@ -346,21 +372,13 @@ function buildVouchers(rows) {
   }
   return [...bySanad.entries()]
     .map(([sanad, lines]) => {
-      const normalized = lines.map((line) => ({
-        ...line,
-        bed: saneAmount(line.bed) ? roundedAmount(line.bed) : null,
-        bes: saneAmount(line.bes) ? roundedAmount(line.bes) : null,
-      }));
-      const dates = [...new Set(normalized.map((line) => line.date))].sort();
-      const bedTotal = normalized.reduce((sum, line) => sum + (line.bed || 0), 0);
-      const besTotal = normalized.reduce((sum, line) => sum + (line.bes || 0), 0);
+      lines.sort((first, second) => first.id - second.id);
+      const dates = [...new Set(lines.map((line) => line.date))].sort();
+      const bedTotal = lines.reduce((sum, line) => sum + line.bed, 0);
+      const besTotal = lines.reduce((sum, line) => sum + line.bes, 0);
       return {
-        sanad,
-        dates,
-        date: dates[0] || '',
-        lines: normalized,
-        bedTotal,
-        besTotal,
+        sanad, dates, date: dates[0] || '', lines, bedTotal, besTotal,
+        validDate: dates.length === 1 && JALALI_DATE.test(dates[0]),
         balanced: bedTotal === besTotal && bedTotal > 0,
       };
     })
