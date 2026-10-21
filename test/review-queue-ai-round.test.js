@@ -175,7 +175,7 @@ test('گیره‌های موتور به زبانِ کاربر: مشکل و قد�
   assert.equal(plainBlocker('برگشت کالا از مشتری باید فروش را کم کند؛ برگرداندن کالا به انبار به قیمت فروش سند درستی نیست.').unsupported, true);
   assert.equal(plainBlocker('برگشت کالا یا پول یک خرید یا فروش قبلی هنوز از «تحلیل کن» ثبت نمی‌شود.').unsupported, true);
   assert.equal(plainBlocker('جهت ورود یا خروج نقد با ماهیت سطر مقابل سازگار نیست.').unsupported, false);
-  assert.deepEqual(plainBlocker('متنی که نقشه‌اش نیست.'), { problem: 'متنی که نقشه‌اش نیست.', fix: 'در «گفت‌وگو با دستیار» بنویس چه چیزی درست است تا پیشنهاد تازه بدهد.', unsupported: false });
+  assert.deepEqual(plainBlocker('متنی که نقشه‌اش نیست.'), { problem: 'متنی که نقشه‌اش نیست.', fix: 'در «گفت‌وگو با دستیار» بنویس چه چیزی درست است تا پیشنهاد تازه بدهد.', unsupported: false, restart: false });
   const loan = proposalBrief({ canPost: false, summary: 'قسط وام' }, { conditions: ['این ثبت نقدی چندبخشی یا تخصصی است؛ ابتدا مسیر تخصصی یا سطرهای عملیاتی آن باید تکمیل شود.'] });
   assert.equal(loan.unsupported, true);
   assert.match(loan.problem, /چندسطری/);
@@ -186,6 +186,23 @@ test('گیره‌های موتور به زبانِ کاربر: مشکل و قد�
   assert.deepEqual(remainingBlockers([bank, lines], { fromQuestions: false }).map((item) => item.problem), [lines]);
   // سؤالِ بی‌جواب مقدم است و «پشتیبانی نمی‌شود» را پنهان نمی‌کند تا جوابش داده شود.
   assert.equal(proposalBrief({ canPost: false }, { unanswered: [{}], conditions: ['این ثبت نقدی چندبخشی یا تخصصی است؛ …'] }).unsupported, false);
+});
+
+test('پیشنهادِ کهنه: «تحلیل دوباره» پیش از سؤالِ قدیمی، با دکمهٔ خودش', async () => {
+  const { proposalBrief, remainingBlockers } = await loadCase();
+  // دیده‌شده روی سایت پس از دیپلوی: پولِ شریک هنوز «خالص یا ناخالص؟» را مشکل نشان می‌داد و پیامِ
+  // «تحلیل دوباره را بزن» دکمه‌ای نداشت؛ تحلیلِ تازه همان مورد را «وجه در اختیار شرکت» کرد.
+  const stale = 'کدینگ، اشخاص یا دفتر کل تغییر کرده؛ تحلیل را دوباره درخواست کن.';
+  const brief = proposalBrief({ canPost: false, summary: 'پرداخت حقوق' }, { unanswered: [{ id: 'payroll.gross-or-net' }], conditions: [stale] });
+  assert.deepEqual([brief.restart, brief.fromQuestions, brief.problem], [true, false, 'از زمان این تحلیل، دفتر یا اطلاعات این مورد عوض شده.']);
+  assert.match(brief.fix, /تحلیل دوباره/);
+  assert.deepEqual(remainingBlockers([stale, 'بانک یا صندوق واقعی را انتخاب کن.'], brief), []);
+  assert.equal(proposalBrief({ canPost: false }, { unanswered: [{}], conditions: [] }).restart, false);
+  const source = readFileSync(new URL('../src/features/review/ReviewAssistant.jsx', import.meta.url), 'utf8');
+  assert.match(source, /\{brief\.restart && <dd><button type="button" disabled=\{loading \|\| busy\} onClick=\{analyze\}[^>]*>.*تحلیل دوباره<\/button><\/dd>\}/);
+  assert.match(source, /\{current && !brief\.restart && <div/);
+  // «با تحلیل دوباره جواب‌ها به دستیار داده می‌شوند» هم حالا دکمهٔ خودش را دارد.
+  assert.match(source, /با «تحلیل دوباره» جواب‌ها به دستیار داده می‌شوند\.<\/p>\s*<button type="button" disabled=\{loading \|\| busy\} onClick=\{analyze\}/);
 });
 
 test('ReviewAssistant: گیره‌ها از نقشهٔ زبانِ کاربر، جوابِ بسته با کارتِ انتخاب، بی <label> دورِ دکمه‌ها', () => {

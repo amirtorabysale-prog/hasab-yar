@@ -136,13 +136,13 @@ const PLAIN_BLOCKERS = [
     fix: 'بانک یا صندوق را در سؤال پایین، یا در «گفت‌وگو با دستیار» بخش «تاریخ، طرف‌حساب و بانک» انتخاب کن.' }],
   [/نام واقعی طرف[\s‌]*حساب/, { problem: 'نام طرف‌حساب معلوم نیست.', fix: 'نامش را در سؤال پایین بنویس.' }],
   [/تاریخ واقعی رویداد لازم/, { problem: 'تاریخ رویداد معلوم نیست.', fix: 'تاریخ را از «گفت‌وگو با دستیار» بخش «تاریخ، طرف‌حساب و بانک» وارد کن.' }],
-  [/تغییر کرده؛ (?:پرونده|تحلیل|پیشنهاد) را دوباره/, { problem: 'از زمان این تحلیل، دفتر یا اطلاعات این مورد عوض شده.', fix: '«تحلیل دوباره» را بزن.' }],
+  [/تغییر کرده؛ (?:پرونده|تحلیل|پیشنهاد) را دوباره/, { problem: 'از زمان این تحلیل، دفتر یا اطلاعات این مورد عوض شده.', fix: '«تحلیل دوباره» را بزن تا پیشنهاد تازه ساخته شود.', restart: true }],
 ];
 const FALLBACK_FIX = 'در «گفت‌وگو با دستیار» بنویس چه چیزی درست است تا پیشنهاد تازه بدهد.';
 export function plainBlocker(text) {
   const value = clean(text);
   const known = PLAIN_BLOCKERS.find(([pattern]) => pattern.test(value))?.[1];
-  return known ? { ...known, unsupported: Boolean(known.unsupported) } : { problem: value, fix: FALLBACK_FIX, unsupported: false };
+  return known ? { ...known, unsupported: Boolean(known.unsupported), restart: Boolean(known.restart) } : { problem: value, fix: FALLBACK_FIX, unsupported: false, restart: false };
 }
 
 /** گیره‌ها به زبان کاربر و بی‌تکرار: «نام کالا …» و «اطلاعات کالای این سطر …» یک مشکل‌اند. */
@@ -156,7 +156,9 @@ export function plainBlockers(list = []) {
  * تکرارش نمی‌کند (دیده‌شده روی سایت: کارتِ پرینتر زیرِ «عمر مفید چند سال است؟»).
  */
 const CONSEQUENCE = /سطرهای معتبر و متوازن/;
-export function remainingBlockers(conditions = [], { fromQuestions = false } = {}) {
+export function remainingBlockers(conditions = [], { fromQuestions = false, restart = false } = {}) {
+  // پیشنهادِ کهنه فقط یک کار دارد: تحلیلِ دوباره. گیره‌های دیگرش ممکن است دیگر درست نباشند.
+  if (restart) return [];
   return plainBlockers(fromQuestions ? conditions.filter((text) => !CONSEQUENCE.test(text)) : conditions).slice(fromQuestions ? 0 : 1);
 }
 
@@ -167,10 +169,15 @@ export function remainingBlockers(conditions = [], { fromQuestions = false } = {
 export function proposalBrief(ai = {}, { unanswered = [], conditions = [] } = {}) {
   const solution = clean(ai.summary);
   if (ai.canPost) return { ready: true, problem: '', solution, more: clean(ai.explanation) };
+  const plain = plainBlockers(conditions);
+  // پیشنهادِ کهنه پیش از هر سؤالی: سؤالِ پیشنهادِ قدیمی شاید دیگر سؤال نباشد. دیده‌شده روی سایت:
+  // پولِ شریک هنوز «خالص یا ناخالص؟» می‌پرسید و «تحلیل دوباره» که پیام می‌گفت، دکمه‌ای نداشت.
+  const stale = plain.find((item) => item.restart);
+  if (stale) return { ready: false, problem: stale.problem, fix: stale.fix, restart: true, unsupported: false, solution, more: clean(ai.explanation), fromQuestions: false };
   // سؤالِ بی‌جواب علت است و «سطرهای معتبر ندارد» پیامدش؛ پس سؤال اول می‌آید (دیده‌شده در Chrome).
-  const [blocker] = plainBlockers(conditions);
+  const [blocker] = plain;
   const problem = unanswered.length ? (unanswered.length === 1 ? 'یک سؤال بی‌جواب مانده است.' : `${toPersianDigits(unanswered.length)} سؤال بی‌جواب مانده است.`)
     : blocker ? blocker.problem : 'پیشنهاد هنوز قابل ثبت نیست.';
   return { ready: false, problem, fix: unanswered.length ? 'به سؤال پایین جواب بده؛ جواب‌ها ذخیره می‌مانند.' : blocker?.fix || FALLBACK_FIX,
-    unsupported: !unanswered.length && Boolean(blocker?.unsupported), solution, more: clean(ai.explanation), fromQuestions: unanswered.length > 0 };
+    unsupported: !unanswered.length && Boolean(blocker?.unsupported), restart: false, solution, more: clean(ai.explanation), fromQuestions: unanswered.length > 0 };
 }

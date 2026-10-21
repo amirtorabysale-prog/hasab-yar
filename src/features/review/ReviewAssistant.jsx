@@ -163,13 +163,15 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
         <span className={`rounded-full px-2.5 py-0.5 text-[12px] font-extrabold ${brief.ready ? 'bg-income/10 text-income' : 'bg-warn-bg text-warn'}`}>{brief.ready ? 'آمادهٔ ثبت' : brief.unsupported ? 'هنوز پشتیبانی نمی‌شود' : 'هنوز قابل ثبت نیست'}</span>
       </div>
       <dl className="mt-3 space-y-2.5 text-[14px] leading-7">
-        {!brief.ready && <div role="status" className="rounded-lg border-s-4 border-warn bg-warn-bg/60 px-3 py-2"><dt className="text-[12px] font-extrabold text-warn">مشکل</dt><dd className="font-bold text-ink">{brief.problem}</dd><dd className="mt-0.5 text-[13px] text-muted">{brief.fix}</dd></div>}
+        {!brief.ready && <div role="status" className="rounded-lg border-s-4 border-warn bg-warn-bg/60 px-3 py-2"><dt className="text-[12px] font-extrabold text-warn">مشکل</dt><dd className="font-bold text-ink">{brief.problem}</dd><dd className="mt-0.5 text-[13px] text-muted">{brief.fix}</dd>
+          {/* پیام می‌گفت «تحلیل دوباره» را بزن و دکمه‌ای نبود (آزمون صف روی سایت). */}
+          {brief.restart && <dd><button type="button" disabled={loading || busy} onClick={analyze} className="tap mt-2 inline-flex items-center gap-2 rounded-xl bg-accent px-4 text-[14px] font-bold text-on-fill disabled:opacity-40"><Sparkles size={17} aria-hidden="true" />تحلیل دوباره</button></dd>}</div>}
         {brief.solution && <div className="rounded-lg border-s-4 border-accent bg-accent/5 px-3 py-2"><dt className="text-[12px] font-extrabold text-accent">{brief.ready ? 'سند پیشنهادی' : 'راه‌حل'}</dt><dd className="text-ink">{brief.solution}</dd></div>}
       </dl>
       {otherBlockers.length > 0 && <ol className="mt-2 list-decimal space-y-1 ps-5 text-[13px] leading-6">{otherBlockers.map((blocker) => <li key={blocker.problem}>{blocker.problem} <span className="text-muted">— {blocker.fix}</span></li>)}</ol>}
       {brief.more && <details className="mt-2 text-[13px] leading-6"><summary className="cursor-pointer font-bold text-muted">چرا؟</summary><p className="mt-1 text-ink">{brief.more}</p></details>}
 
-      {current && <div key={current.id} className="rq-step mt-4 rounded-xl border border-accent/40 bg-accent/5 p-3.5" aria-label="سؤال‌های این پرونده">
+      {current && !brief.restart && <div key={current.id} className="rq-step mt-4 rounded-xl border border-accent/40 bg-accent/5 p-3.5" aria-label="سؤال‌های این پرونده">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[12px] font-extrabold text-accent">سؤال {toPersianDigits(currentIndex + 1)} از {toPersianDigits(unanswered.length)}</p>
           {unanswered.length > 1 && <span aria-hidden="true" className="flex gap-1">{unanswered.map((q, index) => <span key={q.id} className={`h-1.5 w-4 rounded-full ${index <= currentIndex ? 'bg-accent' : 'bg-line'}`} />)}</span>}
@@ -185,7 +187,8 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
             : <button type="button" disabled={loading || busy || !hasAnswerChanges} onClick={analyze} className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-40">ذخیره و بازبینی پیشنهاد</button>}
         </div>
       </div>}
-      {!current && questions.some((q) => savedAnswers[q.id]) && !brief.ready && <p role="status" className="mt-3 rounded-lg bg-surface p-2.5 text-[13px] leading-6">جواب‌ها ذخیره شده؛ پیشنهاد هنوز قابل ثبت نیست. با «تحلیل دوباره» جواب‌ها به دستیار داده می‌شوند.</p>}
+      {!current && !brief.restart && questions.some((q) => savedAnswers[q.id]) && !brief.ready && <div role="status" className="mt-3 rounded-lg bg-surface p-2.5 text-[13px] leading-6"><p>جواب‌ها ذخیره شده؛ پیشنهاد هنوز قابل ثبت نیست. با «تحلیل دوباره» جواب‌ها به دستیار داده می‌شوند.</p>
+        <button type="button" disabled={loading || busy} onClick={analyze} className="tap mt-2 inline-flex items-center gap-2 rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-40"><Sparkles size={16} aria-hidden="true" />تحلیل دوباره</button></div>}
       {Object.keys(savedAnswers).length > 0 && <details className="mt-3 rounded-lg border border-line p-3 text-[13px]"><summary className="cursor-pointer font-bold">جواب‌های داده‌شده ({toPersianDigits(Object.keys(savedAnswers).length)}) · دیدن و اصلاح</summary>
         {Object.entries(savedAnswers).map(([id, answer]) => <label key={id} className="mt-2 block">{answer.question}{questionInput({ id, text: answer.question, field: answer.field }, answers[id] ?? answer.value)}</label>)}
         {hasAnswerChanges && <button type="button" disabled={loading || busy} onClick={analyze} className="tap mt-2 rounded-lg bg-accent px-3 text-[13px] font-bold text-on-fill disabled:opacity-40">ذخیره و بازبینی پیشنهاد</button>}
@@ -209,7 +212,7 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
       {hasUnreviewedChanges && <p role="status" className="mt-3 text-[13px] font-bold text-accent">اطلاعات عوض شده؛ پیش از تأیید، «ذخیره و بازبینی پیشنهاد» را بزن.</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
         <button type="button" disabled={loading || busy || !ai.canPost || hasUnreviewedChanges} onClick={accept} className="tap inline-flex items-center gap-1.5 rounded-xl bg-accent px-5 text-[14px] font-extrabold text-on-fill hover:bg-accent/90 disabled:opacity-40"><Check size={17} aria-hidden="true" />{creates ? 'تأیید، ساخت موارد لازم و ثبت سند' : 'تأیید و ثبت سند'}</button>
-        {!ai.canPost && <span className="text-[12px] font-bold text-muted">{brief.unsupported ? 'این شکل سند هنوز قابل ثبت نیست' : 'قفل تا «مشکل» بالا حل شود'}</span>}
+        {!ai.canPost && <span className="text-[12px] font-bold text-muted">{brief.unsupported ? 'این شکل سند هنوز قابل ثبت نیست' : brief.restart ? 'قفل تا تحلیل دوباره' : 'قفل تا «مشکل» بالا حل شود'}</span>}
         <button type="button" disabled={loading || busy} onClick={() => setRejecting(!rejecting)} aria-expanded={rejecting} className="tap rounded-xl border border-line px-3 text-[13px] font-bold text-expense">رد با دلیل</button>
         <button type="button" disabled={loading} onClick={toggle} aria-expanded={open} className="tap inline-flex items-center gap-1.5 rounded-xl border border-line px-3 text-[13px] font-bold"><MessageCircle size={16} aria-hidden="true" />{open ? 'بستن گفت‌وگو' : 'گفت‌وگو با دستیار'}</button>
       </div>
