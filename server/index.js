@@ -675,9 +675,14 @@ app.post('/api/import/parsian-backup/preview', parsianBackupUpload.single('file'
 app.post('/api/import/parsian-backup/commit', parsianBackupUpload.single('file'), (request, response, next) => {
   try {
     if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
-    return response.status(201).json(commitParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname, {
+    const result = commitParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname, {
       createdBy: request.user?.id || null, timeZone: currentTimeZone(),
-    }));
+      amountUnit: request.body?.amountUnit, kolTypes: request.body?.kolTypes,
+    });
+    // واحدی که دفتر برای مبلغ‌های پارسیانش گفت، همان واحد فایل انتقال به پارسیان
+    // است؛ بدون این، خروجی برگشتی با پیش‌فرض تومان ده برابر کوچک‌تر درمی‌آمد.
+    saveAccountingTransferSettings({ targetSystem: 'parsian-review-csv', amountUnit: result.amountUnit });
+    return response.status(201).json(result);
   } catch (error) { return next(error); }
 });
 app.get('/api/accountant-transfer/fields', (_request, response) => response.json(transferFieldCatalog()));

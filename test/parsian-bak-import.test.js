@@ -10,6 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { buildParsianBackup } from './helpers/parsianBakFixture.js';
 
@@ -304,6 +305,49 @@ test('شکست در میانهٔ ثبت همه‌چیز را برمی‌گردا
     // دفتر هنوز خام است و ورود درست انجام می‌شود.
     const result = commitParsianBackup(active, sampleBackup(), 'sample.bak', { amountUnit: 'toman', kolTypes: { 27: 'equity', 62: 'expense' } });
     assert.equal(result.journals.entries, 2);
+  });
+});
+
+test('از راه HTTP: واحد و نوع‌ها از فرم به پیش‌نمایش و ثبت می‌رسند و واحد خروجی پارسیان همان می‌شود', async () => {
+  const workspace = newWorkspace('HTTP پارسیان');
+  // ورود بکاپ ابزار حسابدار است و فقط در محیط حرفه‌ای باز است.
+  database.setExperiencePreference(workspace.id, owner.id, 'professional');
+  const port = 4800 + Math.floor(Math.random() * 500);
+  const child = spawn(process.execPath, ['server/index.js'], {
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'test' }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let index = 0; index < 60; index += 1) {
+      if (await fetch(`${base}/api/health`).then((response) => response.ok).catch(() => false)) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'parsian-owner', password: 'parsian-strong-password-12345' }),
+    });
+    const cookie = login.headers.getSetCookie().map((value) => value.split(';')[0]).join('; ');
+    const { csrfToken } = await login.json();
+    const send = async (path, fields) => {
+      const form = new FormData();
+      form.append('file', new Blob([sampleBackup()]), 'sample.bak');
+      for (const [name, value] of Object.entries(fields)) form.append(name, value);
+      const response = await fetch(base + path, { method: 'POST', body: form, headers: { cookie, 'x-csrf-token': csrfToken, 'x-workspace-id': workspace.id } });
+      return { status: response.status, data: await response.json() };
+    };
+    const missing = await send('/api/import/parsian-backup/preview', {});
+    assert.equal(missing.status, 400, JSON.stringify(missing.data));
+    assert.equal(missing.data.code, 'PARSIAN_IMPORT_UNIT_REQUIRED');
+    const preview = await send('/api/import/parsian-backup/preview', { amountUnit: 'rial' });
+    assert.equal(preview.status, 200, JSON.stringify(preview.data));
+    assert.equal(preview.data.summary.amountUnit, 'rial');
+    const commit = await send('/api/import/parsian-backup/commit', { amountUnit: 'rial', kolTypes: JSON.stringify({ 27: 'equity', 62: 'expense' }) });
+    assert.equal(commit.status, 201, JSON.stringify(commit.data));
+    assert.equal(commit.data.journals.entries, 2);
+  } finally { child.kill(); }
+  inWorkspace(workspace, () => {
+    const row = database.activeWorkspaceDatabase().prepare("SELECT amount_unit AS unit FROM accounting_transfer_settings WHERE target_system='parsian-review-csv'").get();
+    assert.equal(row?.unit, 'rial');
   });
 });
 

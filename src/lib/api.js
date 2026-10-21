@@ -450,8 +450,8 @@ export const api = {
     return request('/api/import/opening-balances', { method: 'POST', body: form });
   },
   transferFields: () => request('/api/accountant-transfer/fields'),
-  parsianBackupPreview: (file) => { const form = new FormData(); form.append('file', file); return request('/api/import/parsian-backup/preview', { method: 'POST', body: form }); },
-  parsianBackupCommit: (file) => { const form = new FormData(); form.append('file', file); return request('/api/import/parsian-backup/commit', { method: 'POST', body: form }); },
+  parsianBackupPreview: (file, options) => request('/api/import/parsian-backup/preview', { method: 'POST', body: parsianBackupForm(file, options) }),
+  parsianBackupCommit: (file, options) => request('/api/import/parsian-backup/commit', { method: 'POST', body: parsianBackupForm(file, options) }),
   downloadImportTemplate: async () => {
     const response = await reachServer('/api/import/template', { credentials: 'same-origin', headers: protectedHeaders(false) });
     if (!response.ok) throw new Error('دریافت الگوی اکسل ممکن نشد.');
