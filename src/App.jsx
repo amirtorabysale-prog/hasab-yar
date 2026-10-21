@@ -61,6 +61,7 @@ const DataPrivacyPanel = namedLazy(() => import('./features/settings/SettingsPag
 const ExportAccessCard = lazy(() => import('./features/settings/ExportAccessCard.jsx'));
 const FirmConsolePage = namedLazy(() => import('./features/firm/FirmConsolePage.jsx'), 'FirmConsolePage');
 const LearningPage = namedLazy(() => import('./features/learning/LearningPage.jsx'), 'LearningPage');
+const DnaPage = namedLazy(() => import('./features/dna/DnaPage.jsx'), 'DnaPage');
 const LedgerPage = namedLazy(() => import('./features/ledger/LedgerPage.jsx'), 'LedgerPage');
 const LogoutPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'LogoutPanel');
 const PasswordPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'PasswordPanel');
@@ -1262,6 +1263,7 @@ export default function App() {
           {screen === 'firm' && <FirmConsolePage access={access} notify={notify} switchWorkspace={switchWorkspace} refreshAccess={async () => { const result = await api.workspaces(); setAccess(accessFromPayload(result)); }} />}
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} initialTab={section} onTabChange={(id) => { setSection(id); writeRoute('chart', id); }} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} initialTab={section} />}
+          {screen === 'dna' && data.settings.profileType === 'business' && <DnaPage notify={notify} />}
           {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} autoCreate={section === 'new'} />}
           {screen === 'settings' && (() => {
             // تنظیمات یک ستون بلند بود: پشتیبان و رمز ته صفحه گم می‌شدند. حالا هر

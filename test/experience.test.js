@@ -150,6 +150,7 @@ test('هر صفحهٔ حرفه‌ای، مسیر سروری بسته‌ای دا
     chart: '/chart/accounts',
     tax: '/tax/rates',
     collaboration: '/collaboration/requests',
+    dna: '/financial-dna',
     learning: '/learnings',
   };
   for (const screen of professionalScreens) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, BookOpenCheck, ChevronDown, ChevronLeft, FolderTree, HandCoins, Home, Landmark, LayoutGrid, PiggyBank, ReceiptText, Search, Settings, Users, WalletCards, X } from 'lucide-react';
 import { findMenuItem, searchMenu, visibleMenu } from './menu.js';
+import { DnaIcon } from '../components/DnaHelix.jsx';
 import { formatAmount, toPersianDigits } from '../lib/format.js';
 import { profileDefinition } from '../../shared/product.js';
 
@@ -22,6 +23,8 @@ export function allowedScreens(access) {
 }
 
 const GROUP_ICONS = { ...SCREEN_ICONS, receipt: ReceiptText, tree: FolderTree };
+// نمادهای خودِ حساب‌یار، نه lucide: مارپیچِ DNA از تختهٔ طراحی مالک محصول، که فقط با hover می‌چرخد.
+const CUSTOM_ICONS = { dna: DnaIcon };
 
 const OPEN_GROUPS_KEY = 'hesab-yar-menu-open';
 const readOpenGroups = () => { try { return JSON.parse(localStorage.getItem(OPEN_GROUPS_KEY) || 'null'); } catch { return null; } };
@@ -58,7 +61,7 @@ export function MenuTree({ access, screen, section = '', navigate, profileType =
       {results.length ? results.map(({ group, item }) => <button type="button" role="listitem" key={`${group.id}-${item.label}`} onClick={() => go(item)} className="menu-leaf menu-result"><span>{item.label}</span><small>{group.label}</small></button>)
         : <p className="menu-empty">بخشی با این نام پیدا نشد.</p>}
     </div> : groups.map((group) => {
-      const Icon = GROUP_ICONS[group.icon] || Home;
+      const Icon = CUSTOM_ICONS[group.icon] || GROUP_ICONS[group.icon] || Home;
       // تک‌برگ = یک مقصد، نه یک دسته. کلیک مستقیم می‌رود به صفحه؛ زبانه‌هایش
       // بالای خود صفحه‌اند (خواستهٔ مالک محصول: نوار بالایی کافی است).
       if (group.items.length === 1) {
@@ -90,7 +93,7 @@ export function DesktopNav({ screen, section = '', navigate, businessName, profi
 export function BottomNav({ screen, navigate, access }) {
   // فقط صفحه‌های اصلی در نوار پایین جا می‌شوند؛ بقیه در کشو می‌مانند.
   const items = allowedScreens(access).filter((item) => item.primary).sort((a, b) => (a.id === 'review' ? -1 : b.id === 'review' ? 1 : 0)).slice(0, 4).sort((a, b) => (a.id === 'today' ? -1 : b.id === 'today' ? 1 : 0))
-    .map((item) => ({ id: item.id, label: item.label, icon: SCREEN_ICONS[item.icon] || Home }));
+    .map((item) => ({ id: item.id, label: item.label, icon: CUSTOM_ICONS[item.icon] || SCREEN_ICONS[item.icon] || Home }));
   return <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto flex h-[76px] max-w-[640px] items-start justify-around border-t border-line bg-surface px-3 pb-[env(safe-area-inset-bottom)] pt-2 lg:hidden">{items.map((item) => { const Icon = item.icon; const active = screen === item.id; return <button key={item.id} aria-current={active ? 'page' : undefined} onClick={() => navigate(item.id)} className={`tap flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg text-[12px] font-bold ${active ? 'text-accent' : 'text-muted'}`}><Icon size={21} strokeWidth={active ? 2.6 : 2} />{item.label}</button>; })}</nav>;
 }
 

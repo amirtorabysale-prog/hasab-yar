@@ -67,7 +67,12 @@ export const MENU = Object.freeze([
   {
     id: 'collaboration', label: 'همکاری با حسابدار', icon: 'users', items: [
       { label: 'تحویل و پرسش‌ها', screen: 'collaboration', section: 'delivery',
-        keywords: 'خروجی پارسیان انتقال بسته پایان ماه سوال پاسخ DNA مالی' },
+        keywords: 'خروجی پارسیان انتقال بسته پایان ماه سوال پاسخ' },
+    ],
+  },
+  {
+    id: 'dna', label: 'DNA مالی', icon: 'dna', items: [
+      { label: 'DNA مالی', screen: 'dna', keywords: 'dna دی ان ای اثر انگشت الگو رفتار پرونده پروفایل انضباط ثبت' },
     ],
   },
   {

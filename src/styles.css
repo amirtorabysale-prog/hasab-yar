@@ -432,3 +432,28 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
   .rq-step, .rq-skeleton { animation: none; }
   .rq-leaving { transition: none; }
 }
+
+/* ── نماد DNA: مارپیچ دوگانه (تختهٔ طراحی مالک محصول) ─────────────────────────
+   پله‌ها با scaleX جمع و باز می‌شوند و لایهٔ جلو هنگام عبور از محور محو می‌شود؛ هر پله با
+   تأخیرِ منفیِ خودش (--i × --step) پشتِ قبلی می‌آید. فقط transform و opacity. نمادِ منو
+   ساکن است و فقط با hover می‌چرخد؛ سرصفحهٔ DNA سه دور می‌چرخد و می‌ایستد. */
+@keyframes dna-turn { 0%, 50%, 100% { transform: scaleX(1); } 25%, 75% { transform: scaleX(.08); } }
+@keyframes dna-depth { 0%, 21% { opacity: 1; } 29%, 71% { opacity: 0; } 79%, 100% { opacity: 1; } }
+@keyframes dna-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+.dna-helix { display: block; flex: none; overflow: visible; }
+.dna-strand { fill: none; stroke-linecap: round; }
+.dna-front { stroke: rgb(var(--c-accent)); }
+.dna-back { stroke: rgb(var(--c-accent) / .45); }
+.dna-axis { stroke: rgb(var(--c-accent) / .45); stroke-width: 1; stroke-dasharray: 1 4; stroke-linecap: round; opacity: .55; }
+.dna-rung { transform-box: fill-box; transform-origin: 50% 50%; }
+.dna-bar-back { fill: rgb(var(--c-accent) / .45); }
+.dna-bar-front, .dna-knob { fill: rgb(var(--c-accent)); }
+@media (prefers-reduced-motion: no-preference) {
+  .dna-hero .dna-rung { animation: dna-turn var(--spin, 3.2s) linear 3; animation-delay: calc(var(--i) * var(--step, -0.4s)); }
+  .dna-hero .dna-bar-front { animation: dna-depth var(--spin, 3.2s) linear 3; animation-delay: calc(var(--i) * var(--step, -0.4s)); }
+  .dna-hero-tile { animation: dna-float 5s ease-in-out 2; }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :is(.menu-group, .menu-leaf, button, a[href]):hover .dna-menu .dna-rung { animation: dna-turn 1.4s linear infinite; animation-delay: calc(var(--i) * var(--step, -0.8s)); }
+  :is(.menu-group, .menu-leaf, button, a[href]):hover .dna-menu .dna-bar-front { animation: dna-depth 1.4s linear infinite; animation-delay: calc(var(--i) * var(--step, -0.8s)); }
+}

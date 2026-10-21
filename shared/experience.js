@@ -114,6 +114,11 @@ export const SCREENS = Object.freeze([
     id: 'collaboration', label: 'همکاری حسابدار', icon: 'users',
     experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant',
   }),
+  // اثر انگشت رفتاری پرونده؛ تا ۲۹ مهر ۱۴۰۵ برگهٔ سومِ «همکاری حسابدار» بود.
+  Object.freeze({
+    id: 'dna', label: 'DNA مالی', icon: 'dna',
+    experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant',
+  }),
   Object.freeze({
     id: 'learning', label: 'یادگیری‌ها', icon: 'book',
     experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant',
@@ -133,7 +138,7 @@ function rankAllows(role, minimum) {
  * مالیات ندارد.
  */
 export function screensFor({ role = 'viewer', experience = EXPERIENCES.SIMPLE, profileType = 'business' } = {}) {
-  const businessOnly = new Set(['accounting', 'chart', 'tax', 'collaboration', 'petty-cash']);
+  const businessOnly = new Set(['accounting', 'chart', 'tax', 'collaboration', 'dna', 'petty-cash']);
   return SCREENS.filter((screen) => {
     // صفحهٔ پنهان از ناوبری و از دروازهٔ سرور بیرون است، ولی تعریفش می‌ماند.
     if (screen.hidden) return false;
@@ -167,6 +172,8 @@ const PROFESSIONAL_PATHS = [
   /^\/reconciliation(\/|$)/,
   /^\/accountant-transfer(\/|$)/,
   /^\/collaboration(\/|$)/,
+  // صفحهٔ «DNA مالی» فقط حرفه‌ای است؛ خلاصهٔ الگوی پرونده برای تجربهٔ ساده از bootstrap می‌آید.
+  /^\/financial-dna(\/|$)/,
   /^\/tax(\/|$)/,
   /^\/learnings(\/|$)/,
   /^\/fixed-assets(\/|$)/,
