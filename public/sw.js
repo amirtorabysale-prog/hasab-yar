@@ -1,6 +1,6 @@
 // با هر تغییر در راهبرد کش، نسخه بالا می‌رود تا کش قدیمی در activate پاک شود.
-const SHELL_CACHE = 'hesab-yar-shell-v7';
-const ASSET_CACHE = 'hesab-yar-assets-v7';
+const SHELL_CACHE = 'hesab-yar-shell-v8';
+const ASSET_CACHE = 'hesab-yar-assets-v8';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg'];
 // کلید ساختگی داخل کش؛ هیچ درخواست واقعی با آن برابر نمی‌شود.
 const GENERATION_KEY = '/__asset-generation';

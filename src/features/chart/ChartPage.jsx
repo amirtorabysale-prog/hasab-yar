@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import ExcelImportPanel from '../accounting/ExcelImportPanel.jsx';
+import ParsianBackupPanel from './ParsianBackupPanel.jsx';
 import { FirmSummaryTile } from '../firm/FirmConsolePage.jsx';
 import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
@@ -112,7 +113,7 @@ function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
   </div>;
 }
 
-const CHART_TABS = ['mapping', 'chart', 'dimensions', 'import'];
+const CHART_TABS = ['mapping', 'chart', 'dimensions', 'import', 'parsian'];
 
 export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
   const [overview, setOverview] = useState(null);
@@ -173,7 +174,7 @@ export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
     </div>}
 
     <nav aria-label="بخش‌های کدینگ" className="section-navigation">
-      {[['mapping', 'نگاشت حساب‌ها'], ['chart', 'درخت کدینگ'], ['dimensions', 'تفصیلی و مرکز هزینه'], ['import', 'ورود کدینگ']].map(([id, label]) => (
+      {[['mapping', 'نگاشت حساب‌ها'], ['chart', 'درخت کدینگ'], ['dimensions', 'تفصیلی و مرکز هزینه'], ['import', 'ورود کدینگ'], ['parsian', 'بکاپ پارسیان']].map(([id, label]) => (
         <button key={id} type="button" aria-current={tab === id ? 'page' : undefined} onClick={() => { setTab(id); onTabChange?.(id); }}>{label}</button>
       ))}
     </nav>
@@ -228,6 +229,8 @@ export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
     </div>}
 
     {tab === 'dimensions' && <DimensionsPanel overview={overview} canManage={canManage} notify={notify} refresh={load} dimension={dimension} setDimension={setDimension} />}
+
+    {tab === 'parsian' && <div className="mt-4"><ParsianBackupPanel canManage={canManage} notify={notify} refresh={load} /></div>}
 
     {tab === 'import' && <div className="mt-4 space-y-5">
       <ExcelImportPanel canManage={canManage} notify={notify} refresh={load} />

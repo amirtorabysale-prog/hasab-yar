@@ -48,6 +48,8 @@ import {
   accountingPeriods, createAdjustingJournal, listLedgerAccounts, lockAccountingPeriod,
   periodForDate, reopenAccountingPeriod, trialBalance,
 } from './accounting.js';
+// خوانندهٔ بومی بکاپ پارسیان — ماژول مستقل که به هیچ موتور موجود دست نمی‌زند.
+import { commitParsianBackup, previewParsianBackup } from './parsianImport.js';
 import { accountLoginFingerprint, csrfTokenFor, csrfTokenIsValid, originMatchesHost, requestFingerprint, setSecurityHeaders, validateSecurityConfiguration } from './security.js';
 import { parseFinancialAudio } from './voice.js';
 import { createRealtimeTranscriptionCall } from './openaiRealtime.js';
@@ -71,6 +73,8 @@ const statementUpload = multer({ storage: multer.memoryStorage(), limits: { file
 const chartUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1 } });
 // الگوی انتقال پارسیان یک دیتابیس Access کامل است و چند مگابایت می‌شود.
 const transferTemplateUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 32 * 1024 * 1024, files: 1 } });
+// بکاپ SQL Server پارسیان هم چند تا چند ده مگابایت است.
+const parsianBackupUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 * 1024, files: 1 } });
 const securityConfig = validateSecurityConfiguration();
 const adminState = ensureAdmin();
 if (securityConfig.production) app.set('trust proxy', securityConfig.trustProxyHops);
@@ -656,6 +660,21 @@ app.post('/api/import/opening-balances', chartUpload.single('file'), (request, r
       amountUnit: request.body?.amountUnit,
       replace: request.body?.replace === 'true' || request.body?.replace === true,
       occurredAt: request.body?.occurredAt || '',
+    }));
+  } catch (error) { return next(error); }
+});
+// ورود بکاپ پارسیان: پیش‌نمایش هیچ چیزی نمی‌نویسد؛ ثبت فقط در دفتر خام مجاز است.
+app.post('/api/import/parsian-backup/preview', parsianBackupUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.json(previewParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname));
+  } catch (error) { return next(error); }
+});
+app.post('/api/import/parsian-backup/commit', parsianBackupUpload.single('file'), (request, response, next) => {
+  try {
+    if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
+    return response.status(201).json(commitParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname, {
+      createdBy: request.user?.id || null, timeZone: currentTimeZone(),
     }));
   } catch (error) { return next(error); }
 });
