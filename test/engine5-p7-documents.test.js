@@ -223,7 +223,7 @@ const engineOn = () => database.saveAutomationPolicy({ engineV2: true });
 // خوشهٔ cheque-path-bypasses-engine — چک همان ماهیت پرداخت نقدی را دارد.
 // ---------------------------------------------------------------------------
 
-/** همان payload کارت چک در App.jsx: یادداشت = گفتهٔ کاربر. */
+/** همان payload کارت چک در src/app/useIntentDrafts.js: یادداشت = گفتهٔ کاربر. */
 const voiceCheque = (text, extra = {}) => {
   const found = intent(text);
   return database.recordCheque({
@@ -371,7 +371,7 @@ test('سری چک تک‌چک ثبت نمی‌شود؛ با جمع کامل به
 // و طرف حساب کارت صوتی.
 // ---------------------------------------------------------------------------
 
-/** همان payload کارت طلب/بدهی در App.jsx، با طرف حسابِ گفته‌شده. */
+/** همان payload کارت طلب/بدهی در src/app/useIntentDrafts.js، با طرف حسابِ گفته‌شده. */
 const voiceObligation = (text) => {
   const found = intent(text);
   assert.equal(found?.intent, 'obligation', text);
@@ -527,7 +527,7 @@ const invoiceEvents = (invoice) => activeWorkspaceDatabase().prepare(`SELECT fe.
   FROM financial_events fe JOIN invoice_items ii ON fe.source_event_id='invoice-line:' || ii.id WHERE ii.invoice_id=?`).all(invoice.id);
 const accountNameOf = (entryId, kind) => activeWorkspaceDatabase().prepare(`SELECT a.name FROM journal_lines l JOIN ledger_accounts a ON a.id=l.account_id
   WHERE l.entry_id=? AND a.source_kind=?`).get(entryId, kind)?.name;
-/** همان payload کارت فاکتور در App.jsx. */
+/** همان payload کارت فاکتور در src/app/useIntentDrafts.js. */
 const voiceInvoice = (text) => {
   const found = intent(text);
   assert.equal(found?.intent, 'invoice', text);

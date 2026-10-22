@@ -32,7 +32,8 @@ test('همهٔ برگه‌های مدالی از قلاب مشترک استفا�
     'src/features/capture/IntentSheets.jsx',
     'src/features/capture/CaptureSheets.jsx',
     'src/features/today/TodayPage.jsx',
-    'src/features/ledger/LedgerPage.jsx',
+    'src/features/ledger/TransactionsPanel.jsx',
+    'src/features/ledger/InvoicesPanel.jsx',
     'src/features/pettyCash/PettyCashPage.jsx',
     'src/features/auth/AuthScreens.jsx',
   ];
