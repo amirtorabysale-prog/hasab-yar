@@ -12,7 +12,7 @@
 | متن → ردیف | `shared/parser.js` (`parseFinancialText`) — در مرورگر برای متن تایپی، روی سرور برای صدا | پارسر قطعی: مبلغ، نوع، دسته، طرف حساب، بانک، تاریخ، دوره. **هیچ درخواست AI برای فهم متن فرستاده نمی‌شود.** |
 | مسیریابی نیت | `src/App.jsx` → `routeIntent` | تنخواه، گفتهٔ بی‌مبلغ (`needsUnquantifiedReview`)، چندمبلغی (`hasCompositeAmounts`)، انتقال، تسویه، فاکتور، چک، سرمایه. گفتهٔ چندمبلغی و بی‌مبلغ مستقیم به صف حسابدار می‌رود. |
 | برگهٔ تأیید | `src/features/capture/CaptureSheets.jsx` | پیش‌نمایش سرور (`POST /api/transactions/preview` → `previewTransactions`) و تأیید کاربر. |
-| ثبت | `server/db/transactions.js` → `insertTransactionRows` | تشخیص اصلاح، چک، تسویهٔ مختلط و «پولی جابه‌جا نشده» با الگو؛ سپس `routeTransactionThroughEvents`. |
+| ثبت | `server/db/transactions/recording.js` → `insertTransactionRows` (بررسی جمله در `sentenceChecks.js`) | تشخیص اصلاح، چک، تسویهٔ مختلط و «پولی جابه‌جا نشده» با الگو؛ سپس `routeTransactionThroughEvents`. |
 | رویداد و تصمیم | `shared/transactionEvent.js` → `normalizeFinancialEvent` → `factsFromEvent` → `decide` (`shared/accountingDecision.js`) | ماهیت و نقشهٔ سند با قاعده؛ نگهبان‌ها (`shared/guards.js`)؛ ثبت با `recordFinancialEvent` (یکتایی با `source_event_id`). |
 | صف حسابدار و AI | `server/accountingReviewAi.js` (`proposeReview`) | تنها جای فعلی AI روی متن: **فقط** با «تحلیل کن» حسابدار، و خروجی‌اش مستقیماً سطر سند است که نگهبان‌ها و تأیید حسابدار کنترلش می‌کنند. |
 | DNA | `server/reviewAssistant.js` (`relevantDna`)، `server/financialDna.js` | تجربه‌های تأییدشده و ردشدهٔ همان دفتر برای پرامپت بررسی؛ الگوی رفتاری برای هشدار. |
