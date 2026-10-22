@@ -101,7 +101,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
       </button>}
     </div>
     {!canManage && <p className="mt-2 text-[12px] text-muted">ورود بکاپ فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
-    {error && <div className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3 text-[13px] leading-6 text-expense">{error}</div>}
+    {error && <div role="alert" className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3 text-[13px] leading-6 text-expense">{error}</div>}
 
     {raw && !raw.ok && <div className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3 text-[13px] font-bold leading-6 text-expense">
       ورود به این دفتر ممکن نیست: {raw.message}
@@ -129,6 +129,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
       </div>}
 
       {preview.kolTypeChoices.length > 0 ? <KolTypeChoices choices={preview.kolTypeChoices} kolTypes={kolTypes} onChoose={chooseKolType} onAcceptSuggestions={acceptSuggestions} pending={pendingTypes.length} /> : null}
+      {preview.designatedRoles?.length > 0 ? <DesignatedRoles roles={preview.designatedRoles} /> : null}
       <ChartPreview preview={preview} />
       <VoucherPreview preview={preview} />
     </div>}
@@ -139,6 +140,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
         حساب دفتر کل: <b className="numbers">{toPersianDigits(result.ledgerAccounts)}</b> — سند پیش‌نویس: <b className="numbers">{toPersianDigits(result.journals.entries)}</b> سند با جمع <b className="numbers">{formatAmount(result.journals.total)}</b> تومان (واحد فایل: {result.amountUnit === 'rial' ? 'ریال' : 'تومان'}).
         <div className="mt-1 text-muted">سندها در میز کار سندها منتظر تأییدند؛ شماره‌گذاری داخلی از نو و تاریخ‌ها شمسیِ خود فایل‌اند.</div>
       </div>
+      <NextStepsToParsian result={result} />
       {result.skippedVouchers.length > 0 && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3">
         <p className="text-[13px] font-bold text-expense">{toPersianDigits(result.skippedVouchers.length)} سند وارد نشد — با هشدار باقی ماند</p>
         <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto text-[12px] leading-6">
@@ -177,6 +179,35 @@ function KolTypeChoices({ choices, kolTypes, onChoose, onAcceptSuggestions, pend
         {choice.suggestionLabel ? <span className="text-muted">پیشنهاد کدینگ استاندارد: {choice.suggestionLabel}</span> : null}
       </li>)}
     </ul>
+  </div>;
+}
+
+/** نقش‌هایی که از تنظیمات خود پارسیان خوانده شد؛ نگاشت حساب‌های عملیاتی از همین‌ها می‌آید. */
+function DesignatedRoles({ roles }) {
+  return <details className="rounded-lg border border-line p-3">
+    <summary className="cursor-pointer text-[13px] font-bold">حساب‌هایی که پارسیان برای هر کار تعیین کرده ({toPersianDigits(roles.filter((role) => role.applied).length)} از {toPersianDigits(roles.length)} به کار می‌رود)</summary>
+    <p className="mt-2 text-[12px] leading-6 text-muted">صندوق، فروش، حقوق و بقیهٔ حساب‌های روزمرهٔ حساب‌یار خودکار به همین معین‌ها نگاشت می‌شوند تا خروجی پارسیان بدون نگاشت دستی ساخته شود.</p>
+    <ul className="mt-2 space-y-1 text-[12px] leading-6">
+      {roles.map((role) => <li key={role.key}>
+        <b>{role.label}</b>: <span className="numbers">{toPersianDigits(role.kol)}/{toPersianDigits(role.moeen)}</span>{role.name ? ` ${role.name}` : ''}
+        {role.applied ? <span className="text-income"> — به کار می‌رود</span> : <span className="text-muted"> — به کار نمی‌رود: {role.reason}</span>}
+      </li>)}
+    </ul>
+  </details>;
+}
+
+/** بعد از ورود: برای برگرداندن کار ماهانه به پارسیان چه مانده است. */
+function NextStepsToParsian({ result }) {
+  return <div className="rounded-lg border border-line bg-paper p-3 text-[12px] leading-6">
+    <p className="text-[13px] font-bold">قدم بعد: خروجی ماهانه به پارسیان</p>
+    <ol className="mt-1 list-decimal space-y-1 pr-5">
+      <li>سندهای پیش‌نویس را در میز کار سندها تأیید کن. این سندها همین حالا در پارسیان هستند و در فایل انتقال <b>نمی‌روند</b>؛ فقط ثبت‌های تازهٔ حساب‌یار می‌روند.</li>
+      <li>واحد مبلغ فایل انتقال روی <b>{result.amountUnit === 'rial' ? 'ریال' : 'تومان'}</b> گذاشته شد، همان واحدی که برای این بکاپ گفتی.</li>
+      <li>{result.mappedOperational > 0
+        ? <>{toPersianDigits(result.mappedOperational)} حساب روزمرهٔ حساب‌یار خودکار به معین‌های پارسیان نگاشت شد؛ بقیه هنگام اولین ثبت نگاشت می‌شوند.</>
+        : <>حساب‌های روزمرهٔ حساب‌یار هنگام اولین ثبت، با همان حساب‌هایی که پارسیان تعیین کرده نگاشت می‌شوند.</>}</li>
+      <li>در «همکاری با حسابدار ← تحویل و پرسش‌ها»، نوع فایل را «فایل انتقال پارسیان» بگذار و یک بار فایل پایهٔ Access را از خود پارسیان بده (امکانات ← سامانه تبادل اطلاعات ← سامانه تبادل اطلاعات اسناد ← انتقال اسناد به فایل).</li>
+    </ol>
   </div>;
 }
 

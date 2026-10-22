@@ -340,6 +340,20 @@ export function recordTransferBatchEntries(database, batchId, entryIds = []) {
   for (const entryId of new Set(entryIds)) insert.run(batchId, entryId);
 }
 
+/**
+ * سندهایی که از بکاپ پارسیان آمده‌اند همین حالا در پارسیان هستند.
+ *
+ * فرستادن دوباره‌شان یعنی سند تکراری در دفتر مشتری، چون پارسیان تکراری را
+ * تشخیص نمی‌دهد. پس فایل انتقال پارسیان آن‌ها را نمی‌برد. این سندها معکوس‌پذیر
+ * نیستند (فقط سند `normal` معکوس می‌شود)؛ اصلاحشان سند اصلاحی تازه است که
+ * مثل هر ثبت تازه به پارسیان می‌رود.
+ */
+export function ensureParsianSourceSchema(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS parsian_imported_entries (
+    entry_id TEXT PRIMARY KEY, sanad INTEGER, file_sha256 TEXT,
+    imported_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+}
+
 /** بستهٔ تحویل‌شده‌ای که این سند در آن رفته؛ `null` اگر هنوز صادر نشده. */
 export function exportedBatchOf(database, entryId, { timeZone = 'Asia/Tehran' } = {}) {
   let batches;

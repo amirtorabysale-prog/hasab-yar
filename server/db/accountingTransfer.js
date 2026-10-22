@@ -5,7 +5,7 @@ import { activeWorkspaceDatabase, audit, currentWorkspace, db, invalidInput, par
 import { chartMappingOverview } from '../chartOfAccounts.js';
 import { monthlyAccountantPackage } from './collaboration.js';
 import { readParsianTemplate } from '../parsianAccessFile.js';
-import { ensureTransferEntriesSchema, recordTransferBatchEntries } from '../accounting.js';
+import { ensureParsianSourceSchema, ensureTransferEntriesSchema, recordTransferBatchEntries } from '../accounting.js';
 
 export function transferFieldCatalog() {
   return { fields: TRANSFER_FIELDS, defaultColumns: DEFAULT_TRANSFER_COLUMNS, formats: Object.values(TRANSFER_FILE_FORMATS) };
@@ -104,7 +104,22 @@ function openingEntriesInScope(range) {
     .get(range.from, range.toExclusive).count || 0);
 }
 
-function accountingTransferJournalRows(range) {
+// سندی که از بکاپ پارسیان آمده همین حالا در پارسیان هست؛ فرستادن دوباره‌اش
+// سند تکراری می‌سازد، چون پارسیان تکرار را تشخیص نمی‌دهد. برای مقصد عمومی
+// (اکسل و نرم‌افزارهای دیگر) همان سند هم بخشی از دفتر است و می‌ماند.
+const PARSIAN_SOURCE_FILTER = `NOT EXISTS (SELECT 1 FROM parsian_imported_entries AS parsian_source
+    WHERE parsian_source.entry_id=journal_entries.id)`;
+
+function parsianSourcedEntriesInScope(range) {
+  ensureParsianSourceSchema(activeWorkspaceDatabase());
+  return Number(db.prepare(`SELECT COUNT(*) AS count FROM journal_entries
+    WHERE occurred_at>=? AND occurred_at<? AND NOT (${PARSIAN_SOURCE_FILTER})`)
+    .get(range.from, range.toExclusive).count || 0);
+}
+
+function accountingTransferJournalRows(range, target = 'generic-csv') {
+  const parsianOnly = target === 'parsian-review-csv';
+  if (parsianOnly) ensureParsianSourceSchema(activeWorkspaceDatabase());
   return db.prepare(`SELECT journal_entries.id AS entryId,journal_entries.occurred_at AS occurredAt,
     journal_entries.memo,journal_entries.entry_kind AS entryKind,journal_entries.source_type AS sourceType,
     journal_entries.source_id AS sourceId,journal_entries.revision,journal_lines.account_id AS accountId,
@@ -129,6 +144,7 @@ function accountingTransferJournalRows(range) {
     LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
     LEFT JOIN cost_centers ON cost_centers.id=journal_lines.cost_center_id
     WHERE journal_entries.occurred_at>=? AND journal_entries.occurred_at<? AND ${OPENING_ENTRY_FILTER}
+    ${parsianOnly ? `AND ${PARSIAN_SOURCE_FILTER}` : ''}
     ORDER BY journal_entries.occurred_at,journal_entries.created_at,journal_entries.id,journal_lines.rowid`).all(range.from, range.toExclusive);
 }
 
@@ -137,15 +153,22 @@ function accountingTransferState(month = '', targetSystem = 'generic-csv', now =
   const packageData = monthlyAccountantPackage(month, now);
   const settings = accountingTransferSettings(target);
   const mappings = accountingTransferMappings(target);
-  const journalRows = accountingTransferJournalRows(packageData.scope);
+  const journalRows = accountingTransferJournalRows(packageData.scope, target);
   const chart = chartMappingOverview(activeWorkspaceDatabase());
+  const parsianSourced = target === 'parsian-review-csv' ? parsianSourcedEntriesInScope(packageData.scope) : 0;
+  // پیش‌نویسِ آمده از پارسیان در این فایل نمی‌رود، پس جلوی ساختش را هم نمی‌گیرد.
   const pendingInPeriod = Number(db.prepare(`SELECT COUNT(*) AS count FROM journal_entries
-    WHERE approval_state<>'approved' AND occurred_at>=? AND occurred_at<?`)
+    WHERE approval_state<>'approved' AND occurred_at>=? AND occurred_at<?
+    ${target === 'parsian-review-csv' ? `AND ${PARSIAN_SOURCE_FILTER}` : ''}`)
     .get(packageData.scope.from, packageData.scope.toExclusive).count || 0);
   const readiness = accountingTransferReadiness({
     packageData, journalRows, settings, mappings,
     chart: { installed: chart.chartInstalled, complete: chart.complete },
     workflow: { pendingInPeriod, openingEntriesExcluded: openingEntriesInScope(packageData.scope) },
+  });
+  if (parsianSourced) readiness.checks.push({
+    id: 'parsian-sourced', severity: 'advisory', passed: true, count: parsianSourced,
+    label: `${parsianSourced} سند این دوره از بکاپ پارسیان آمده و همین حالا در پارسیان هست؛ در فایل انتقال نمی‌رود تا تکراری نشود.`,
   });
   const corrections = postExportEntries(packageData.scope.period, journalRows);
   if (corrections) readiness.checks.push({

@@ -19,22 +19,44 @@
 //   - فقط سند متوازنی که همهٔ ردیف‌هایش عیناً قابل ثبت‌اند وارد می‌شود، به‌صورت
 //     پیش‌نویس. سند دیگر با هشدار مشخص در گزارش می‌ماند؛ هیچ ردیفی اصلاح یا
 //     بی‌تفصیلی نمی‌شود.
+//   - نقش حساب (صندوق، فروش، بهای تمام‌شده، ارزش افزوده و ...) از حساب‌هایی
+//     خوانده می‌شود که خود پارسیان در تنظیماتش برای همان کار تعیین کرده؛ با آن،
+//     حساب‌های عملیاتی حساب‌یار بی‌دخالت دست به همان معین‌ها نگاشت می‌شوند.
+//     حسابی که پارسیان با تفصیلی تعیین کرده نقش نمی‌گیرد، چون نگاشت معین
+//     تفصیلی‌اش را نمی‌برد و ردیف در پارسیان روی معین بی‌تفصیلی می‌نشست.
+//   - سندهای واردشده در parsian_imported_entries ثبت می‌شوند تا فایل انتقال
+//     به پارسیان آن‌ها را دوباره نفرستد (پارسیان تکرار را تشخیص نمی‌دهد).
 //   - ورود فقط در دفتر خام مجاز است و همه یا هیچ: اگر هر مرحله شکست بخورد،
 //     هرچه ساخته شده برداشته می‌شود و دفتر دوباره خام است.
 
 import { randomUUID } from 'node:crypto';
 import { parseParsianBackup } from './parsianBackup.js';
 import {
-  importChartOfAccounts, listChartAccounts, saveAnalyticAccount,
+  importChartOfAccounts, listChartAccounts, mapLedgerAccountToChart, saveAnalyticAccount, suggestChartAccount,
 } from './chartOfAccounts.js';
 import { ledgerAccountForChart } from './ledgerImport.js';
-import { assertAccountingPeriodOpen, createJournalBatch, nextLedgerCode, periodForDate } from './accounting.js';
+import { assertAccountingPeriodOpen, createJournalBatch, ensureParsianSourceSchema, nextLedgerCode, periodForDate } from './accounting.js';
 import { persianToISO } from '../shared/persianDate.js';
 
 const JOURNAL_CHUNK = 200;
 const TYPE_LABELS = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
 const AMOUNT_UNITS = { rial: { label: 'ریال', divisor: 10 }, toman: { label: 'تومان', divisor: 1 } };
 const JALALI = /^(\d{4})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
+
+// حساب تعیین‌شده در تنظیمات پارسیان ← نقش حساب‌یار، با نوعی که نقش لازم دارد.
+const DESIGNATED_ROLES = {
+  Cash: { role: 'cash', type: 'asset', label: 'صندوق' },
+  Sell: { role: 'sales', type: 'income', label: 'فروش' },
+  BahayeTam: { role: 'cogs', type: 'expense', label: 'بهای تمام‌شدهٔ کالای فروش‌رفته' },
+  Wage: { role: 'salary-expense', type: 'expense', label: 'هزینهٔ حقوق و دستمزد' },
+  Loan: { role: 'loan-payable', type: 'liability', label: 'تسهیلات دریافتی' },
+  Asset: { role: 'owner-capital', type: 'equity', label: 'سرمایه' },
+  RecDoc: { role: 'note-receivable', type: 'asset', label: 'اسناد دریافتنی' },
+  DlDoc: { role: 'note-payable', type: 'liability', label: 'اسناد پرداختنی' },
+  MojodyMavad: { role: 'inventory', type: 'asset', label: 'موجودی کالا' },
+  VATSale: { role: 'output-tax', type: 'liability', label: 'ارزش افزودهٔ فروش' },
+  VATBuy: { role: 'input-tax', type: 'asset', label: 'ارزش افزودهٔ خرید' },
+};
 
 function parsianImportError(message, code = 'PARSIAN_IMPORT_INVALID', status = 400, details = undefined) {
   return Object.assign(new Error(message), { code, status, ...(details ? { details } : {}) });
@@ -207,6 +229,24 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
     });
   });
 
+  // --- نقش معین‌ها از حساب‌های تعیین‌شدهٔ پارسیان ---
+  const designatedRoles = [];
+  const usedRoles = new Set();
+  for (const item of parsed.chart.designated || []) {
+    const spec = DESIGNATED_ROLES[item.key];
+    if (!spec) continue;
+    const row = chartRows.find((candidate) => candidate.code === moeenIndex.get(`${item.kol}:${item.moeen}`));
+    let reason = '';
+    if (!item.moeen) reason = `پارسیان فقط کل ${item.kol} را تعیین کرده، نه یک معین`;
+    else if (item.taf) reason = `پارسیان آن را با تفصیلی ${item.taf} تعیین کرده؛ نگاشت معین تفصیلی را نمی‌برد`;
+    else if (!row) reason = `معین ${item.kol}/${item.moeen} در کدینگ فایل نیست`;
+    else if (!row.type) reason = `نوع کل ${item.kol} هنوز انتخاب نشده`;
+    else if (row.type !== spec.type) reason = `نوع معین (${TYPE_LABELS[row.type]}) با نقش ${spec.label} (${TYPE_LABELS[spec.type]}) نمی‌خواند`;
+    else if (usedRoles.has(spec.role)) reason = 'این نقش قبلاً به معین دیگری داده شده';
+    if (!reason) { row.role = spec.role; usedRoles.add(spec.role); }
+    designatedRoles.push({ key: item.key, label: spec.label, kol: item.kol, moeen: item.moeen, taf: item.taf, name: row?.name || '', applied: !reason, reason });
+  }
+
   // --- تفصیلی‌ها ---
   const analyticSpecs = [];
   const analyticKeys = new Map();
@@ -277,7 +317,7 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
   const dates = importable.map((voucher) => voucher.date).sort();
   const pendingKolTypes = kolTypeChoices.filter((choice) => !choice.chosen);
   return {
-    amountUnit: unit, chartRows, analyticSpecs, vouchers, warnings, kolTypeChoices, pendingKolTypes,
+    amountUnit: unit, chartRows, analyticSpecs, vouchers, warnings, kolTypeChoices, pendingKolTypes, designatedRoles,
     summary: {
       amountUnit: unit,
       kolCount: parsed.chart.kol.length,
@@ -330,6 +370,7 @@ export function previewParsianBackup(database, buffer, fileName, { amountUnit, k
     rawLedger: raw,
     summary: plan.summary,
     warnings: plan.warnings,
+    designatedRoles: plan.designatedRoles,
     kolTypeChoices: plan.kolTypeChoices.map((choice) => ({
       ...choice, suggestionLabel: choice.suggestion ? TYPE_LABELS[choice.suggestion] : '',
     })),
@@ -353,13 +394,17 @@ export function previewParsianBackup(database, buffer, fileName, { amountUnit, k
 
 /** برداشتن هرچه این ورود ساخته — دفتر پیش از ورود خام بوده، پس همه‌اش مال همین ورود است. */
 function undoImport(database, entryIds) {
+  ensureParsianSourceSchema(database);
   database.exec('BEGIN IMMEDIATE');
   try {
     const remove = (sql, ...values) => database.prepare(sql).run(...values);
     for (const id of entryIds) {
+      remove('DELETE FROM parsian_imported_entries WHERE entry_id=?', id);
       remove('DELETE FROM journal_lines WHERE entry_id=?', id);
       remove('DELETE FROM journal_entries WHERE id=?', id);
     }
+    // نگاشت حساب‌های عملیاتی به کدینگِ همین ورود هم برداشته می‌شود.
+    remove("UPDATE ledger_accounts SET chart_account_id=NULL WHERE chart_account_id IS NOT NULL AND (source_kind IS NULL OR source_kind<>'chart-account')");
     remove("DELETE FROM ledger_accounts WHERE source_kind='chart-account' AND chart_account_id IS NOT NULL");
     remove("DELETE FROM analytic_accounts WHERE source_kind='parsian-tafsili'");
     for (const level of ['subsidiary', 'general', 'group']) remove('DELETE FROM chart_accounts WHERE level=?', level);
@@ -412,6 +457,7 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
   };
 
   const created = { entries: 0, documentNumbers: [], total: 0, entryIds: [] };
+  let mappedOperational = 0;
   let chartResult;
   const analyticIdByKey = new Map();
   const ledgerIdByComposite = new Map();
@@ -427,8 +473,16 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
       });
       analyticIdByKey.set(spec.sourceKey, saved.id);
     }
-    for (const chart of listChartAccounts(database).filter((item) => item.active && item.postable)) {
+    const chartAccounts = listChartAccounts(database);
+    for (const chart of chartAccounts.filter((item) => item.active && item.postable)) {
       ledgerIdByComposite.set(chart.code, ledgerAccountForChart(database, chart, (type) => nextLedgerCode(database, type)));
+    }
+    // حساب‌های عملیاتیِ از پیش موجود (صندوق، فروش و ...) با نقش‌های پارسیان،
+    // فقط با نگاشت مطمئن؛ بقیه برای حسابدار در فهرست «بدون نگاشت» می‌مانند.
+    for (const ledger of database.prepare(`SELECT id,code,name,type,source_kind AS sourceKind,source_key AS sourceKey
+      FROM ledger_accounts WHERE chart_account_id IS NULL AND active=1`).all()) {
+      const suggestion = suggestChartAccount(ledger, chartAccounts, { confidentOnly: true });
+      if (suggestion) { mapLedgerAccountToChart(database, ledger.id, suggestion.id); mappedOperational += 1; }
     }
 
     // ۳) اسناد — دسته‌دسته، به‌صورت پیش‌نویس برای تأیید حسابدار.
@@ -442,12 +496,16 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
         analyticId: line.analyticKey ? analyticIdByKey.get(line.analyticKey) || null : null,
       })),
     }));
+    ensureParsianSourceSchema(database);
+    const markSource = database.prepare('INSERT INTO parsian_imported_entries (entry_id,sanad,file_sha256) VALUES (?,?,?)');
     for (let offset = 0; offset < documents.length; offset += JOURNAL_CHUNK) {
       const result = createJournalBatch(database, documents.slice(offset, offset + JOURNAL_CHUNK), { createdBy, timeZone });
       created.entries += result.created;
       created.documentNumbers.push(...result.documentNumbers);
       created.total += result.total;
       created.entryIds.push(...result.entryIds);
+      // ترتیب شناسه‌ها همان ترتیب سندهای فرستاده‌شده است.
+      result.entryIds.forEach((entryId, index) => markSource.run(entryId, importable[offset + index].sanad, parsed.meta.sha256));
     }
   } catch (error) {
     let undone = true;
@@ -469,6 +527,8 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     chart: chartResult,
     analytics: analyticIdByKey.size,
     ledgerAccounts: ledgerIdByComposite.size,
+    mappedOperational,
+    designatedRoles: plan.designatedRoles,
     journals: { entries: created.entries, documentNumbers: created.documentNumbers, total: created.total, unit: 'IRT' },
     amountUnit: unit,
     skippedVouchers: skipped,

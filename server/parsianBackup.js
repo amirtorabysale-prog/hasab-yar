@@ -43,6 +43,17 @@ const TABLES = {
   },
 };
 
+// حساب‌هایی که خود پارسیان در تنظیماتش برای هر کار تعیین کرده (صندوق، فروش،
+// بهای تمام‌شده، ارزش افزوده و ...). هر کدام سه ستون کل/معین/تفصیلی دارد.
+// فقط خوانده می‌شوند؛ اینکه به کدام نقش حساب‌یار می‌خورند در لایهٔ ورود است.
+const DESIGNATED = {
+  tbl_AccSetting: ['Cash', 'Sell', 'BahayeTam', 'Wage', 'Loan', 'Asset', 'RecDoc', 'DlDoc', 'MojodyMavad'],
+  tbl_VATSetting: ['VATSale', 'VATBuy'],
+};
+for (const [table, keys] of Object.entries(DESIGNATED)) {
+  TABLES[table] = { required: [], optional: keys.flatMap((key) => [`${key}_K`, `${key}_M`, `${key}_T`]), missingTableAllowed: true };
+}
+
 function parseError(message, code = 'PARSIAN_BACKUP_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
 }
@@ -321,7 +332,7 @@ function parseLocatedBackup(buffer, fileName) {
       tablesDiscovered: catalog.objects.size,
       pagesByTable: {},
     },
-    chart: { kol: [], moeen: [], tafsili: [], groups: [] },
+    chart: { kol: [], moeen: [], tafsili: [], groups: [], designated: [] },
     documents: { rows: [], vouchers: [] },
     stats: { ...stats, tornBytes, duplicatePages: duplicates, rows: {} },
     warnings,
@@ -344,6 +355,15 @@ function parseLocatedBackup(buffer, fileName) {
     temporary: row.iType == null ? null : row.iType === 1,
   }));
   parsed.chart.moeen = tables.tbl_Moeen.rows.map((row) => ({ kol: row.KolCode, code: row.Code, name: row.CName || '' }));
+  for (const [table, keys] of Object.entries(DESIGNATED)) {
+    const [row] = tables[table].rows;
+    if (!row) continue;
+    for (const key of keys) {
+      const kol = row[`${key}_K`];
+      if (kol == null || kol === 0) continue;
+      parsed.chart.designated.push({ key, kol, moeen: row[`${key}_M`] ?? 0, taf: row[`${key}_T`] ?? 0 });
+    }
+  }
   parsed.chart.tafsili = tables.tbl_Tafsili.rows.map((row) => ({ kol: row.KolCode, moeen: row.MoeenCode, code: row.Code, name: row.CName || '' }));
   if (!parsed.chart.kol.length) throw parseError('جدول کدینگ (کل) در بکاپ خالی است؛ استخراج ممکن نیست.');
 

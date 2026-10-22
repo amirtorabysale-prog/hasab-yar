@@ -57,7 +57,11 @@ function sampleTables() {
     row(14, '1403/03/10', 10, 1, 0, 250000000, 0, 'آورده نقدی'),
     row(14, '1403/03/10', 27, 1, 0, 0, 250000000, 'آورده نقدی'),
   ];
-  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document };
+  // تنظیمات پارسیان: صندوق و فروش معین دارند؛ حقوق به معینی اشاره می‌کند که در
+  // کدینگ نیست؛ سرمایه به جاری شرکا (بدهی/انتخابی) می‌خورد؛ ارزش افزوده با تفصیلی.
+  const accSetting = [{ ID: 2, Cash_K: 10, Cash_M: 1, Cash_T: 0, Sell_K: 60, Sell_M: 1, Sell_T: 0, Wage_K: 50, Wage_M: 2, Wage_T: 0, Asset_K: 27, Asset_M: 1, Asset_T: 0 }];
+  const vatSetting = [{ ID: 6, VATSale_K: 23, VATSale_M: 4, VATSale_T: 1, VATBuy_K: 0, VATBuy_M: 0, VATBuy_T: 0 }];
+  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document, tbl_AccSetting: accSetting, tbl_VATSetting: vatSetting };
 }
 
 function sampleBackup(options = {}) {
@@ -284,6 +288,63 @@ test('ثبت در دفتر خام: کدینگ با نوع درست، تفصیل�
     // دوباره در همان دفتر رد می‌شود.
     assert.throws(() => commitParsianBackup(active, sampleBackup(), 'sample.bak', { amountUnit: 'rial', kolTypes: { 27: 'equity', 62: 'expense' } }),
       (error) => error.code === 'PARSIAN_IMPORT_LEDGER_NOT_RAW');
+  });
+});
+
+test('نقش حساب‌ها از تنظیمات خود پارسیان؛ نقشی که با تفصیلی یا نوع ناسازگار است داده نمی‌شود', () => {
+  const plan = buildParsianImportPlan(parseParsianBackup(sampleBackup()), { amountUnit: 'toman', kolTypes: { 27: 'liability', 62: 'expense' } });
+  const roles = Object.fromEntries(plan.designatedRoles.map((item) => [item.key, item]));
+  assert.ok(roles.Cash.applied);
+  assert.ok(roles.Sell.applied);
+  assert.equal(plan.chartRows.find((row) => row.code === '100001').role, 'cash');
+  assert.equal(plan.chartRows.find((row) => row.code === '600001').role, 'sales');
+  assert.match(roles.Wage.reason, /در کدینگ فایل نیست/);
+  assert.match(roles.Asset.reason, /نمی‌خواند/); // جاری شرکا بدهی است، سرمایه نیست
+  assert.match(roles.VATSale.reason, /تفصیلی 1/);
+  assert.ok(!('VATBuy' in roles), 'کل صفر یعنی پارسیان حسابی تعیین نکرده');
+});
+
+test('سند آمده از بکاپ به پارسیان برنمی‌گردد و جلوی خروجی را نمی‌گیرد؛ سند اصلاحی تازه می‌رود', async () => {
+  const { createAdjustingJournal } = await import('../server/accounting.js');
+  const workspace = newWorkspace('رفت‌وبرگشت پارسیان');
+  inWorkspace(workspace, () => {
+    const active = database.activeWorkspaceDatabase();
+    const result = commitParsianBackup(active, sampleBackup(), 'sample.bak', { amountUnit: 'toman', kolTypes: { 27: 'equity', 62: 'expense' } });
+    assert.equal(active.prepare('SELECT COUNT(*) AS count FROM parsian_imported_entries').get().count, 2);
+    assert.deepEqual(active.prepare('SELECT sanad FROM parsian_imported_entries ORDER BY sanad').all().map((row) => row.sanad), [12, 14]);
+    assert.ok(result.designatedRoles.some((item) => item.key === 'Cash' && item.applied));
+
+    // سندها پیش‌نویس‌اند؛ برای پارسیان نه در فایل می‌روند نه جلوی ساختش را می‌گیرند.
+    const parsian = database.accountingTransferOverview('1403-03', 'parsian-review-csv');
+    assert.equal(parsian.readiness.rowCount, 0);
+    assert.equal(parsian.readiness.checks.find((check) => check.id === 'approval').count, 0);
+    assert.equal(parsian.readiness.checks.find((check) => check.id === 'parsian-sourced').count, 2);
+    // برای مقصد عمومی (اکسل) همان سندها بخشی از دفتر ماه‌اند.
+    const generic = database.accountingTransferOverview('1403-03', 'generic-csv');
+    assert.ok(generic.readiness.rowCount > 0);
+    assert.ok(!generic.readiness.checks.some((check) => check.id === 'parsian-sourced'));
+
+    // اصلاحِ یک سند آمده از پارسیان، سند تازه است و همان در فایل انتقال می‌رود.
+    const cash = active.prepare("SELECT ledger_accounts.id FROM ledger_accounts JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id WHERE chart_accounts.code='100001'").get().id;
+    const sales = active.prepare("SELECT ledger_accounts.id FROM ledger_accounts JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id WHERE chart_accounts.code='600001'").get().id;
+    const adjustment = createAdjustingJournal(active, {
+      occurredAt: active.prepare("SELECT occurred_at AS at FROM journal_entries WHERE memo LIKE '%سند 12 %'").get().at,
+      memo: 'اصلاح سند ۱۲ پارسیان', lines: [{ accountId: cash, debit: 1000, credit: 0 }, { accountId: sales, debit: 0, credit: 1000 }],
+    });
+    active.prepare("UPDATE journal_entries SET approval_state='approved' WHERE id=?").run(adjustment.id);
+    const after = database.accountingTransferOverview('1403-03', 'parsian-review-csv');
+    assert.equal(after.readiness.entryCount, 1);
+    assert.equal(after.readiness.debitTotal, 1000);
+
+    // ثبت روزمرهٔ تازه: صندوق و فروش حساب‌یار خودکار روی معین‌هایی می‌نشینند که
+    // خود پارسیان برای صندوق و فروش تعیین کرده، بدون نگاشت دستی.
+    database.insertTransactions({ transcript: 'فروش نقدی', transactions: [{ amount: 2_000_000, type: 'income', category: 'فروش', rawText: 'فروش نقدی' }] });
+    const codes = active.prepare(`SELECT chart_accounts.code FROM journal_lines
+      JOIN journal_entries ON journal_entries.id=journal_lines.entry_id
+      JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+      LEFT JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
+      WHERE journal_entries.source_type='transaction'`).all().map((row) => row.code).sort();
+    assert.deepEqual(codes, ['100001', '600001']);
   });
 });
 

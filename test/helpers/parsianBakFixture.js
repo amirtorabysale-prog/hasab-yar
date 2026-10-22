@@ -19,6 +19,9 @@ export const PARSIAN_TABLES = {
     ['ID', 'int'], ['Sanad_Num', 'int'], ['SanadDate', 'nvarchar'], ['KolCode', 'smallint'], ['MoeenCode', 'smallint'],
     ['TafsiliCode', 'int'], ['Comment', 'nvarchar'], ['Bed', 'float'], ['Bes', 'float'], ['SanadComment', 'nvarchar'],
   ],
+  // حساب‌هایی که پارسیان برای هر کار تعیین کرده؛ کل و معین smallint، تفصیلی int.
+  tbl_AccSetting: [['ID', 'int'], ...['Cash', 'Sell', 'Wage', 'Asset'].flatMap((key) => [[`${key}_K`, 'smallint'], [`${key}_M`, 'smallint'], [`${key}_T`, 'int']])],
+  tbl_VATSetting: [['ID', 'int'], ...['VATSale', 'VATBuy'].flatMap((key) => [[`${key}_K`, 'int'], [`${key}_M`, 'int'], [`${key}_T`, 'int']])],
 };
 
 function layout(columns) {
