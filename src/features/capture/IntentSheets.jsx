@@ -271,8 +271,6 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
       {draft.dueAt && <p className="mt-1 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}
       </>}
 
-      {draft.bounced && queueReview && <button disabled={busy} className="tap mt-3 w-full rounded-lg border border-accent p-3 font-bold text-accent" onClick={async()=>{setBusy(true);try{await queueReview(draft);}finally{setBusy(false);}}}>ارسال به صف حسابدار</button>}
-
       <div className="mt-5 grid grid-cols-[2fr_1fr] gap-2">
         <button disabled={busy || !ready} onClick={submit} className="tap rounded-lg bg-accent font-extrabold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">
           {busy ? 'در حال ثبت…' : isInvoice ? 'پیش‌نویس بساز' : 'ثبت کن'}

@@ -5,6 +5,9 @@
 
 import {
   listTaxRates, importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun, settleVatPeriod, claimVatRefund, saveTaxRate, taxReport, askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
+  // منابع نسخه‌دار: تا این اصلاح import نشده بودند و هر نه مسیر /api/tax-knowledge ۵۰۰ می‌داد.
+  listTaxDocuments, getTaxDocument, saveTaxDocumentDraft, listTaxReviewQueue, getTaxDocumentVersion,
+  publishTaxDocumentVersion, rejectTaxDocumentVersion, saveTaxDocumentRelation, citableTaxVersions,
 } from '../db.js';
 import { chartUpload } from './http.js';
 
