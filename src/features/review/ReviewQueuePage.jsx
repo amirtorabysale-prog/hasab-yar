@@ -11,6 +11,7 @@ import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
 import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
 import { periodKeyLabel } from '../../components/RecognitionNote.jsx';
+import { PersianDateInput } from '../../components/common.jsx';
 
 
 /**
@@ -27,6 +28,10 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
   const [aiAccepted, setAiAccepted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // استرداد قرارداد دوره‌دار: سرور می‌پرسد کدام قرارداد، تمام شد یا ادامه دارد، و از کی.
+  // جواب همین‌جا انتخاب می‌شود و با همان سطرها دوباره فرستاده می‌شود.
+  const [contractQuestion, setContractQuestion] = useState(null);
+  const [contract, setContract] = useState({});
   const digits = (value) => String(value ?? '').replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit))).replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit))).replace(/[,،\s]/g, '');
   const updateLine = (index, patch) => setLines((current) => current.map((line, position) => position === index ? { ...line, ...patch } : line));
   const openEditor = async () => {
@@ -44,7 +49,7 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
     setLines(ai.lines.map((line) => ({ accountId: '', debit: line.debit || '', credit: line.credit || '', analyticId: '', costCenterId: '' })));
     setAiAccepted(true);
   };
-  const submit = async () => {
+  const submit = async (contractAnswer = contract) => {
     setError('');
     const parsed = lines.map((line) => ({ accountId: line.accountId, debit: Number(digits(line.debit || 0)), credit: Number(digits(line.credit || 0)), analyticId: line.analyticId || null, costCenterId: line.costCenterId || null }));
     if (reason.trim().length < 8 || parsed.some((line) => !line.accountId || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) {
@@ -52,10 +57,14 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
     }
     setSaving(true);
     try {
-      await api.reviewedJournal(item.id, { lines: parsed, reason: reason.trim(), proposalId: ai?.state === 'proposed' ? ai.id : '', aiAccepted });
+      await api.reviewedJournal(item.id, { lines: parsed, reason: reason.trim(), proposalId: ai?.state === 'proposed' ? ai.id : '', aiAccepted, ...contractAnswer });
+      setContractQuestion(null);
       notify('سند بررسی‌شده با ردپای تصمیم حسابدار ثبت شد.');
       await onSaved();
-    } catch (failure) { setError(failure.message); }
+    } catch (failure) {
+      if (String(failure.question?.id || '').startsWith('contract.')) setContractQuestion({ ...failure.question, candidates: failure.candidates || [] });
+      else setError(failure.message);
+    }
     setSaving(false);
   };
   return <div className="mt-2 rounded-lg border border-accent/40 bg-accent/5 p-3 text-[12px]">
@@ -88,8 +97,31 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
       {lines.length < 12 && <button onClick={() => setLines((current) => [...current, { accountId: '', debit: '', credit: '', analyticId: '', costCenterId: '' }])} className="tap rounded border border-line px-2 py-1 hover:bg-paper hover:text-ink">افزودن سطر</button>}
       {ai?.state === 'proposed' && <label className="flex items-center gap-2"><input type="checkbox" checked={aiAccepted} disabled={ai.missingFacts?.length > 0} onChange={(event) => setAiAccepted(event.target.checked)} />مبالغ پیشنهاد AI را پس از انتخاب حساب‌ها تأیید می‌کنم؛ در صورت اصلاح، دلیل را می‌نویسم.</label>}
       <textarea aria-label="دلیل و مبنای ثبت حسابدار" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="مبنای حسابداری و اطلاعات بررسی‌شده" className="w-full rounded border border-line bg-paper p-2" rows={2} />
-      {error && <p className="text-expense">{error}</p>}
-      <button disabled={saving} onClick={submit} className="tap rounded bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
+      {error && <p role="alert" className="text-expense">{error}</p>}
+      {contractQuestion && <ContractAnswer question={contractQuestion} disabled={saving} onAnswer={(patch) => { const next = { ...contract, ...patch }; setContract(next); submit(next); }} />}
+      <button disabled={saving} onClick={() => submit()} className="tap rounded bg-accent px-3 py-1.5 font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">{saving ? 'در حال ثبت…' : 'ثبت سند قطعی با دلیل'}</button>
+    </div>}
+  </div>;
+}
+
+/** جواب سؤال‌های استرداد قرارداد: انتخاب قرارداد، پایان یا ادامه، و روز پایان. */
+function ContractAnswer({ question, disabled, onAnswer }) {
+  const [endedAt, setEndedAt] = useState('');
+  const button = 'tap rounded border border-accent px-2 py-1 text-right text-accent disabled:opacity-40';
+  return <div role="group" aria-label="جواب سؤال قرارداد" className="rounded border border-accent/40 bg-paper p-2">
+    <p className="font-bold leading-6">{question.text}</p>
+    {question.id === 'contract.reference' && <div className="mt-1 flex flex-col gap-1">
+      {question.candidates.map((candidate) => <button key={candidate.eventId} disabled={disabled} onClick={() => onAnswer({ contractEventId: candidate.eventId })} className={button}>
+        {candidate.documentNumber ? `سند ${toPersianDigits(candidate.documentNumber)} — ` : ''}{candidate.occurredAt ? persianDate(candidate.occurredAt) : ''} — {formatAmount(candidate.amount)} تومان (شناسایی‌نشده: {formatAmount(candidate.remaining)})
+      </button>)}
+    </div>}
+    {question.id === 'contract.ended' && <div className="mt-1 flex flex-wrap gap-1">
+      <button disabled={disabled} onClick={() => onAnswer({ contractEnded: true })} className={button}>قرارداد تمام شد (فسخ یا تخلیه)</button>
+      <button disabled={disabled} onClick={() => onAnswer({ contractEnded: false })} className={button}>قرارداد با مبلغ کمتر ادامه دارد</button>
+    </div>}
+    {question.id === 'contract.end-date' && <div className="mt-1 flex flex-wrap items-center gap-1">
+      <PersianDateInput value={endedAt} onChange={setEndedAt} />
+      <button disabled={disabled || !endedAt} onClick={() => onAnswer({ contractEndedAt: endedAt })} className={button}>ثبت با این روز پایان</button>
     </div>}
   </div>;
 }

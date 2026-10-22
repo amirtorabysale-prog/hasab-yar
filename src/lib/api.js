@@ -182,6 +182,10 @@ async function request(path, options = {}) {
       code: body.code,
       provider: body.provider,
       details: body.details,
+      // سؤالی که ثبت را نگه داشته (کدام قرارداد، تمام شد یا ادامه دارد) و نامزدهایش؛
+      // بی‌این‌ها رابط فقط پیام را نشان می‌داد و راهی برای جواب نبود (R061).
+      question: body.question,
+      candidates: body.candidates,
       requiresAction: Boolean(body.requiresAction),
       retryAfterSeconds: Number(body.retryAfterSeconds) || (Number.isFinite(retryAfterHeader) ? retryAfterHeader : 0),
     });

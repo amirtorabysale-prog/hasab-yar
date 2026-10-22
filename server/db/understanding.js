@@ -11,7 +11,7 @@ import { postAccountTransferJournal } from '../accounting.js';
 import { recordFinancialEvent } from '../financialEventStore.js';
 import { understandText, understandingProvider } from '../eventUnderstandingAi.js';
 import { resolveUnderstanding } from '../understandingResolve.js';
-import { buildUnderstandingPlan, periodEndFrom } from '../../shared/understandingPlan.js';
+import { applyUnderstandingAnswers, buildUnderstandingPlan, periodEndFrom } from '../../shared/understandingPlan.js';
 import { inUnderstandingScope, understandingReasons } from '../../shared/understandingScope.js';
 import { applyAnswer } from '../../shared/questionAnswer.js';
 import { FACT_QUESTIONS } from '../../shared/factRequirements.js';
@@ -146,7 +146,9 @@ const ENGINE_PICKER = { 'free-input': 'text', options: 'options' };
  */
 function planCase(understanding, answers, row, now = new Date(), { strict = new Set() } = {}) {
   const rejected = new Set();
-  const resolution = resolveUnderstanding(understanding);
+  // نامی که ثبت‌کننده برای یک نقشِ بی‌نام داد («تعمیرکار» ← «آقای رضایی») پیش از تطبیق با
+  // دفتر می‌نشیند، تا همان شخصِ ثبت‌شده و بدهی‌های بازش پیدا شوند.
+  const resolution = resolveUnderstanding(applyUnderstandingAnswers(understanding, answers));
   // سندهای بازِ هر طرف حسابی که در نقشه ممکن است لازم شود: هم‌نامِ قطعی، و
   // شخصی که ثبت‌کننده انتخاب کرده.
   const contactIds = new Set([

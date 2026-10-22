@@ -123,7 +123,9 @@ const KIND_CUES = Object.freeze({
   'loan-repayment': new RegExp(`وام|تسهیلات|لیزینگ|${LOAN_INSTALMENT.source}`),
   payroll: /حقوق|دستمزد|لیست\s*بیمه|کارکنان|پرسنل/,
   correction: /اشتباه|اصلاح|تصحیح|غلط/,
-  refund: /برگشت|مرجوع|استرداد|عودت|پس\s*(?:دادیم|گرفتیم|دادن|داد)/,
+  // «جنس‌های خراب رو برگردوندیم؛ از بدهیمون کم کردن»: برگرداندنِ محاوره‌ای هم برگشت است.
+  // بی‌این، برچسب «برگشت» کنار می‌رفت و برگشت از خرید خریدِ تازه ثبت می‌شد (R083).
+  refund: /برگشت|برگرد[وا]ن(?:دیم|دم|دند|دن|د)(?![آ-ی])|مرجوع|استرداد|عودت|پس\s*(?:دادیم|گرفتیم|دادن|داد|فرستادیم|فرستادم)/,
   cheque: /چک/,
   // بدون نشانهٔ پولِ شخصی، «پرداخت کرد» همان پرداختِ کسب‌وکار است.
   'paid-by-partner': { test: (text) => mentionsPersonalMoney(text) },
@@ -137,7 +139,9 @@ const POSTING_DATE_ROLES = new Set(['payment', 'occurrence', 'coverage-start', '
 /** نشانهٔ پرداختِ بخشی از مانده؛ بدون هیچ‌کدام، «بدهی‌اش را واریز کرد» یعنی همهٔ مانده. */
 const PARTIAL_PAYMENT = /بخشی|قسمتی|مقداری|نصف|نیمی|کمی|یه\s*کم|بعضی|بقیه|باقی|مابقی|علی[\s\u200c]*الحساب|درصد|قسط|بیعانه/;
 /** فعلِ انجام‌شدهٔ جابه‌جایی پول. */
-const DONE_MONEY_VERB = /(?:پرداخت|واریز|منتقل|حواله|کارت\s*به\s*کارت)\s*(?:کردیم|کردم|کرد|کردند|کردن|شد)(?=$|[\s.،؛!؟])|(?:^|\s)(?:دادیم|دادم|ریختیم|ریختم|زدیم|زدم|کشیدیم|کشیدن)(?=$|[\s.،؛!؟])/;
+// «مشتری ... پیش‌پرداخت داد ... ریخت به ملت»: «ریخت»ِ سوم‌شخص هم پولِ آمده است؛ بی‌آن
+// برچسب «آینده»ی مدل (که دربارهٔ شروعِ پروژه بود) پیش‌دریافت را گم می‌کرد (R057).
+const DONE_MONEY_VERB = /(?:پرداخت|واریز|منتقل|حواله|کارت\s*به\s*کارت)\s*(?:کردیم|کردم|کرد|کردند|کردن|شد)(?=$|[\s.،؛!؟])|(?:^|\s)(?:دادیم|دادم|ریختیم|ریختم|ریخت|ریختن|ریختند|زدیم|زدم|کشیدیم|کشیدن)(?=$|[\s.،؛!؟])/;
 const NOT_YET = /قرار|خواه|بعدا|بعداً|هنوز|اگر|اگه|می[\s\u200c]*(?:پرداز|ده|دیم|ریز|زن)/;
 /**
  * اصلاحِ سندِ قبلی یا رویدادِ دیرگفته، هر نوعی که مدل بگوید. آزمون زنده: «سود
@@ -158,6 +162,12 @@ const FUTURE_CLAUSE = /فردا|(?:هفته|ماه|سال)\s*(?:بعد|آیند�
 const LENGTH_WORD = '(?:دوازده|یازده|سیزده|چهارده|پانزده|پونزده|شانزده|شونزده|هیفده|هفده|هیجده|هجده|نوزده|بیست|پنجاه|هفتاد|هشتاد|چهار|پنج|شیش|شصت|چهل|هفت|هشت|نود|یک|یه|دو|سه|شش|نه|ده|سی|صد)';
 const COVERAGE_LENGTH = new RegExp(`(?<![آ-ی])(?:[0-9۰-۹]+|${LENGTH_WORD}(?:\\s+و\\s+${LENGTH_WORD})*)(?![آ-ی])\\s*(?:ماه|سال)\\s*(?:آینده|جلوتر)`, 'g');
 const CONDITION_CLAUSE = /(?:^|\s)(?:اگر|اگه)(?=$|\s)|در\s*صورت/;
+/** قبض یا فاکتوری که آمده یا زده شده: هزینه یا فروشِ واقع‌شده، هر وقت که پولش برسد. */
+const DOCUMENT_ISSUED_SOURCE = '(?:قبض|فاکتور|صورت\\s*حساب)(?:ش|شو)?[^.،؛!؟]{0,40}?(?:اومده|آمده|اومد|آمد|رسیده|رسید|زدیم|زدم|صادر\\s*(?:کردیم|کردم|شد|شده)|فرستادیم|رفته)(?![آ-ی])';
+const DOCUMENT_ISSUED = new RegExp(DOCUMENT_ISSUED_SOURCE);
+const DOCUMENT_ISSUED_ALL = new RegExp(DOCUMENT_ISSUED_SOURCE, 'g');
+/** وعدهٔ پرداختِ سوم‌شخص: «قراره آخر ماه بپردازه»، «هفته بعد میریزه». */
+const THEY_WILL_PAY = /قرار(?:ه|\s*است|\s*شده)(?:\s+\S+){0,8}?\s+(?:بپرداز(?:ه|د|ن|ند)|بد(?:ه|هد|ن|هند)|بریز(?:ه|د|ن|ند)|(?:پرداخت|واریز|تسویه)(?:ش|شو)?\s*(?:کنه|کند|کنن|کنند))(?![آ-ی])|(?:هفته|ماه)\s*(?:بعد|دیگه|آینده)\s*(?:می\s*(?:ده|دهد|دن|ریزه|ریزد|پردازه|پردازد))(?![آ-ی])/;
 const DONE_CLAUSE = /(?:^|\s)(?:کردیم|کردم|کرد|کردند|کردن|شد|شده|دادیم|دادم|داد|دادند|دادن|گرفتیم|گرفتم|گرفت|گرفتند|ریختیم|ریختم|ریخت|ریختند|زدیم|زدم|زد|زدند|کشیدیم|کشیدن|خریدیم|خریدم|فروختیم|فروختم|رسید|آمد|اومد)(?=$|[\s.،؛!؟])/;
 /** فعلِ سوم‌شخصِ واریز: «شرکت آفتاب ... به ملت واریز کرد» یعنی پول آمد. */
 const THEIR_DEPOSIT = /(?:واریز|پرداخت)\s*(?:کرد|کردند|کردن)(?=$|[\s.،؛!؟])|(?:^|\s)(?:ریخت|ریختند|ریختن|زد|زدند|زدن|داد|دادند|دادن)(?=$|[\s.،؛!؟])/;
@@ -656,10 +666,14 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     const forced = STATUS_BY_ROLE[role];
     const status = forced || pick(item.status, AMOUNT_STATUSES, 'done');
     if (forced && item.status !== forced) violations.push(`amounts.${id}:status-forced-${forced}`);
+    // «اجارهٔ همین ماه ۱۵ میلیون … واریز شد»: مدل تنها مبلغ را «جزءِ خودش» نوشت؛ نقشه
+    // آن را کلی دید که جزئش جدا ثبت می‌شود و هیچ سندی نساخت (آزمون ۱۰۰ سناریو، R014).
+    const partOf = item.partOf ? cleanLabel(item.partOf, 20) : null;
+    if (partOf && partOf === id) violations.push(`amounts.${id}:partOf-self`);
     return {
       id, role, status, raw: item,
       currency: pick(item.currency, CURRENCIES, null),
-      partOf: item.partOf ? cleanLabel(item.partOf, 20) : null,
+      partOf: partOf === id ? null : partOf,
       basis: pick(item.basis, AMOUNT_BASES, 'inferred'),
       computedFrom: item.computedFrom?.op ? { op: pick(item.computedFrom.op, COMPUTE_OPS, null), of: (item.computedFrom.of || []).map((ref) => cleanLabel(ref, 20)) } : null,
       evidence: cleanLabel(item.evidence, 300),
@@ -967,8 +981,11 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // عنوانی مثل «آقای» یا «شرکت» کنارش نیست (آزمون بازبین، مهر ۱۴۰۵).
   const isBank = (name) => {
     if (!name) return false;
+    // «شرکت آریا تجارت»، «فروشگاه ملت»: نامِ طرف حسابی که واژهٔ یک بانک را دارد بانک
+    // نیست، مگر خودِ واژهٔ «بانک» را هم داشته باشد. بی‌این، مشتری بانکِ ما می‌شد و
+    // طلبش بی‌طرف‌حساب ثبت می‌شد (آزمون ۱۰۰ سناریو، R002 و R026).
+    if (PARTY_TITLE.test(name) && !/بانک/.test(name)) return false;
     if (detectBank(name)) return true;
-    if (PARTY_TITLE.test(name)) return false;
     const cued = detectBank(`بانک ${name}`);
     return Boolean(cued && ledgerBanks.includes(cued.bankId));
   };
@@ -1055,6 +1072,17 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
         violations.push(`movements.${movement.id}:cash-by-word`);
       }
     }
+    // «مشتری ... پیش‌پرداخت داد ... ریخت به ملت»: مدل حساب را «ما» نوشت ولی شاهدِ همین
+    // جابه‌جایی نامِ بانک را دارد. پرسیدن «پول به کدام حساب آمد؟» سؤالی بود که جمله جواب
+    // داده بود (R057). نامِ شرکتی که واژهٔ بانک دارد («شرکت آریا تجارت») این‌جا بانک نیست.
+    if (!ACCOUNT_SIDES.has(movement[cashKey].kind) && !movement[cashKey].name && !loanEvent) {
+      const evidence = normalizePersian(movement.evidence || '');
+      const spokenBank = !PARTY_TITLE.test(evidence) ? detectBank(evidence) : null;
+      if (spokenBank && !isBank(movement[otherKey].name)) {
+        movement[cashKey] = { kind: 'bank', name: spokenBank.matchedText };
+        violations.push(`movements.${movement.id}:bank-in-evidence`);
+      }
+    }
   }
 
   const subject = {
@@ -1104,12 +1132,21 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
   // آینده («قرار است») هرگز بدهی نمی‌سازد.
   // سوم‌شخص هم: «مستاجر اجاره رو هنوز نداده» همان «هنوز نگرفتیم» است؛ بی‌این،
   // مبلغ انجام‌شده می‌ماند و «پول به کدام حساب آمد؟» برای پولی که نیامده پرسیده می‌شد.
-  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته|داده|دادن|دادند|ریخته|ریختن|ریختند)|(?:دریافت|واریز|پرداخت)\s*ن(?:شده|کرده|کردیم|کردن|کردند))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken) };
   // «تموم کردیم و تحویل دادیم؛ قراره بدن»: «قرار» دربارهٔ پول است و طلب امروز هست
   // (آزمون زنده V15). «قرار» فقط وقتی چیزی را آینده می‌کند که تحویلی گفته نشده باشد.
   const deliveredInSpeech = /تحویل\s*(?:دادیم|دادم|گرفتیم|گرفتم|شد)|(?:تموم|تمام)\s*(?:کردیم|کردم|شد)|انجام\s*(?:دادیم|دادم|شد)/.test(spoken)
     && !/(?:نه|هنوز)\s*تحویل|تحویل\s*ن(?:دادیم|داده|گرفتیم|گرفته|شده)/.test(spoken);
-  const notYetReal = /سفارش|پیش\s*فاکتور/.test(spoken) || (/قرار\s*(?:است|بود)|قراره/.test(spoken) && !deliveredInSpeech) || subject.delivered === 'no';
+  // قبضی که آمده و فاکتوری که زده شده، همان تحویل است: «قبض برق ... اومده ولی قراره تا
+  // آبان پرداختش کنیم» و «فاکتور فروش ... زدیم، قراره آخر ماه بپردازه» بدهی و طلبِ
+  // امروزند و «قرار» فقط زمانِ پول را می‌گوید (آزمون ۱۰۰ سناریو، R025 و R026). پیش‌فاکتور
+  // و سفارش همچنان چیزی نمی‌سازند.
+  const documentIssued = DOCUMENT_ISSUED.test(spoken) && !/پیش\s*فاکتور/.test(spoken);
+  // وعدهٔ پرداختِ طرف مقابل («قراره آخر ماه بپردازه») وقتی فاکتورش زده شده یا کارش
+  // تحویل شده، طلبِ امروز است؛ همان قاعدهٔ «هنوز پول نداده».
+  const unpaidHere = { out: readUnpaidSignal(text), in: /هنوز[^.،؛!؟]{0,18}(?:ن(?:گرفتیم|گرفتم|گرفته|داده|دادن|دادند|ریخته|ریختن|ریختند)|(?:دریافت|واریز|پرداخت)\s*ن(?:شده|کرده|کردیم|کردن|کردند))|پول(?:ی)?\s*(?:هم\s*)?نگرفت/.test(spoken)
+    // «فاکتور زدیم» صدورِ فاکتور است، نه پول؛ پیش از سنجیدنِ فعلِ پولِ انجام‌شده کنار می‌رود.
+    || ((documentIssued || deliveredInSpeech) && THEY_WILL_PAY.test(spoken) && !DONE_MONEY_VERB.test(spoken.replace(DOCUMENT_ISSUED_ALL, ' '))) };
+  const notYetReal = /سفارش|پیش\s*فاکتور/.test(spoken) || (/قرار\s*(?:است|بود)|قراره/.test(spoken) && !deliveredInSpeech && !documentIssued) || subject.delivered === 'no';
   const accrues = ['expense', 'purchase', 'asset-purchase', 'sale', 'income'].includes(eventKind) && !notYetReal;
   // «اجارهٔ ۶ ماه آینده ۳۰ میلیون شد ولی هنوز پرداخت نکردیم»: قراردادِ اجرانشده.
   // خدمتی که دوره‌اش هنوز نیامده و پولش هم نرفته، امروز نه هزینه است نه بدهی؛
@@ -1155,6 +1192,22 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       if (!own.length) movements.push({ id: `${target.id}-unpaid`, amountRef: target.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: '' });
       becameObligation.add(target.id);
       violations.push(`amounts.${target.id}:unpaid-obligation`);
+    }
+  }
+  // آینهٔ همان قاعده برای فروش و درآمد: «فاکتور فروش ۲۵ میلیونی ... زدیم، قراره آخر ماه
+  // بپردازه». مدل مبلغ را «پرداخت آینده» نامید — درست دربارهٔ پول — و طلبِ امروز گم شد
+  // (آزمون ۱۰۰ سناریو، R026). فقط وقتی یک مبلغ در میان است و پولی هم گفته نشده که آمد.
+  if (unpaidHere.in && !becameObligation.size && ['sale', 'income'].includes(eventKind) && accrues) {
+    const candidates = amounts.filter((item) => item.accepted && !isRetracted(item.id) && ['total', 'other', 'future-payment'].includes(item.role) && ['done', 'future'].includes(item.status));
+    const othersDone = amounts.some((item) => item.accepted && !isRetracted(item.id) && item.status === 'done' && !candidates.includes(item));
+    if (candidates.length === 1 && !othersDone && !futureCoverage) {
+      const [target] = candidates;
+      Object.assign(target, { role: target.role === 'future-payment' ? 'total' : target.role, status: 'done' });
+      const own = movements.filter((item) => item.amountRef === target.id);
+      for (const item of own) item.direction = 'none';
+      if (!own.length) movements.push({ id: `${target.id}-unpaid`, amountRef: target.id, direction: 'none', from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null }, evidence: '' });
+      becameObligation.add(target.id);
+      violations.push(`amounts.${target.id}:unpaid-receivable`);
     }
   }
   for (const id of executory) {

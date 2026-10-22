@@ -242,7 +242,7 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const insurance=insuranceSettlementValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const trade=tradeSettlementValidation(database,event,proposal.lines);
   const threshold=reviewCapitalizationThreshold(database);
-  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,{...initial,capitalizationThreshold:threshold}),...taxRefund.issues,...insurance.issues,...capitalizationIssues(threshold,proposal.lines)];
+  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,{...initial,capitalizationThreshold:threshold}),...taxRefund.issues,...insurance.issues,...capitalizationIssues(threshold,proposal.lines,{durable:initial?.intendedUse==='long-term-use'})];
   const blockers = [...(proposal.missingFacts || []),...(proposal.workflowBlockers || []),...natureIssues.map(q=>q.text)];
   const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
   if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');

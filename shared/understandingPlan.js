@@ -28,7 +28,7 @@ import { normalizePersian } from './normalize.js';
 import { persianMonthRange, persianToISO, todayPersian } from './persianDate.js';
 import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
-import { mentionsPropertyDeposit, saysRefundable } from './moneyPurpose.js';
+import { mentionsPropertyDeposit, paymentPurposeFromSpeech, receiptPurposeFromSpeech, saysRefundable } from './moneyPurpose.js';
 import { evidenceKey } from './eventUnderstanding.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
@@ -86,6 +86,28 @@ const DEPOSIT_IN_WORDS = /(?<![آ-ی])(?:ودیعه|رهن)|حسن\s*انجام|
 const TIME_BOUND_INCOME = /اجاره|کرایه(?!\s*(?:حمل|بار|ماشین\s*بار))|اشتراک|لایسنس|پشتیبانی|نگهداری|شارژ|حق\s*عضویت|آبونمان/;
 const THIS_MONTH_WORDS = /(?:این|همین)\s*ماه|ماه\s*جاری/;
 const PARTY_TITLE = /آقای|خانم|شرکت|دکتر|مهندس|حاج|فروشگاه|موسسه|مؤسسه|کارخانه/;
+/**
+ * نقش، نه نام: «تعمیرکار»، «مشتری»، «موجر». مدل این‌ها را نام طرف حساب می‌نوشت و
+ * بدهی و طلب و پیش‌دریافت به نامِ «تعمیرکار» و «مشتری» ساخته می‌شد؛ پرداختِ بعدی به
+ * «آقای رضایی» هیچ‌وقت به آن بدهی نمی‌رسید و هزینه دو بار ثبت می‌شد (آزمون ۱۰۰ سناریو،
+ * R028، R030، R037، R057، R058).
+ */
+const GENERIC_PARTY = /^(?:یه\s*|یک\s*)?(?:تعمیرکار|تعمیرکاره|مشتری|مشتریه|موجر|مالک\s*ملک|صاحب\s*(?:خونه|خانه|ملک|مغازه)|مستاجر|مستأجر|فروشنده|خریدار|راننده|کارگر|پیمانکار|نقاش|برقکار|لوله\s*کش|بنا|نصاب|پیک|باربر|سرویس\s*کار|تامین\s*کننده|تأمین\s*کننده|عرضه\s*کننده|طرف|شخص|نفر|یکی|همکار|کارمند|کارفرما)(?:\s*(?:مون|مان|ها|ه))?$/;
+/** تعویضِ قطعه‌ای که سوخته یا خراب شده: «کلید سوخته رو عوض کردیم»، «موتور خراب شد، یکی نو گذاشتیم». */
+const BROKEN = '(?:سوخت|سوخته|خراب|معیوب|شکست|شکسته|ترکید|ترکیده|از\\s*کار\\s*افتاد|از\\s*کار\\s*افتاده)';
+const REPLACE = '(?:عوض|تعویض|جایگزین|جاش|جایش|به\\s*جاش|به\\s*جای)';
+const REPLACED_BROKEN = new RegExp(`${BROKEN}[^.؛!؟]{0,50}${REPLACE}|${REPLACE}[^.؛!؟]{0,50}${BROKEN}`);
+/** بهسازیِ اساسیِ دارایی، نه تعمیرِ عادی: «کامل بازسازی و ارتقا دادیم». */
+const CAPITAL_WORK = /بازسازی|نوسازی|بهسازی|ارتقا|افزایش\s*ظرفیت/;
+/** فاکتورِ زده‌شده — نه پیش‌فاکتور. */
+const INVOICE_ISSUED = /(?<!پیش\s*)فاکتور(?:\s*فروش)?(?:ش)?[^.،؛!؟]{0,40}?(?:زدیم|زدم|صادر\s*(?:کردیم|کردم|شد|شده)|فرستادیم|رفته)(?![آ-ی])/;
+/** سندی که پیش‌تر آمده: «قبضی که اومده بود»، «بابت فاکتور قبلی»، «بدهیِ قبلی». */
+const PRIOR_DOCUMENT = /(?:قبض|فاکتور|صورت\s*حساب)[^.،؛!؟]{0,30}که\s*(?:اومده|آمده|رسیده|زده)\s*بود|(?:فاکتور|قبض|بدهی|طلب|خرید|فروش)\s*(?:ی\s*)?(?:قبلی|قبل)(?![آ-ی])|که\s*(?:قبلا|قبلاً)\s*(?:اومده|آمده|رسیده|ثبت\s*شده)/;
+/** برداشتِ اول‌شخص («برای خودم برداشتم») برداشتِ مالک است و پرسش ندارد. */
+const FIRST_PERSON_DRAWING = /(?:^|\s)(?:خودم|خودمون|خودمان|برداشتم|برداشتیم)(?=$|[\s.،؛!؟])/;
+const genericParty = (name) => GENERIC_PARTY.test(normalizePersian(name || '').replace(/[«»"]/g, '').trim());
+/** «شرکت آریا تجارت» طرف حساب است، نه بانک تجارت؛ همان قاعدهٔ اعتبارسنجی فهم. */
+const bankName = (name) => Boolean(name) && !(PARTY_TITLE.test(name) && !/بانک/.test(name)) && Boolean(detectBank(name));
 /** نوع‌هایی که ماهیتِ یک مبلغ‌اند، نه کل گفته؛ در گفتهٔ چندمبلغی به همه نمی‌رسند. */
 const PER_AMOUNT_KINDS = new Set(['advance-paid', 'advance-received', 'deposit']);
 
@@ -154,6 +176,11 @@ export function applyUnderstandingAnswers(understanding, answers = {}) {
       const existing = copy.dates.find((item) => item.role === id);
       if (iso && existing) Object.assign(existing, { iso, accepted: true, issue: null, provenance: 'user' });
       else if (iso) copy.dates.push({ id: `user-${id}`, role: id, expression: '', iso, accepted: true, provenance: 'user' });
+    }
+    // نامِ طرف حسابی که جمله فقط نقشش را گفته بود («تعمیرکار» ← «آقای رضایی»).
+    if (section === 'counterparties' && prop === 'name' && String(answer.value || '').trim()) {
+      const party = copy.counterparties.find((item) => item.id === id);
+      if (party) Object.assign(party, { name: String(answer.value).trim().slice(0, 100), provenance: 'user' });
     }
     if (section === 'subject' && id === 'use' && ['internal', 'resale', 'production', 'long-term'].includes(answer.value)) {
       copy.subject.use = answer.value;
@@ -454,7 +481,7 @@ function monthOf(iso) {
 
 function counterpartyFor(understanding, movement, amount) {
   const loan = ['loan-received', 'loan-repayment'].includes(understanding.event.kind);
-  const pool = loan ? understanding.counterparties : understanding.counterparties.filter((item) => !detectBank(item.name) && item.role !== 'bank');
+  const pool = loan ? understanding.counterparties : understanding.counterparties.filter((item) => !bankName(item.name) && item.role !== 'bank');
   const named = (name) => name && pool.find((item) => item.name === name || name.includes(item.name) || item.name.includes(name));
   const side = movement ? (movement.direction === 'in' ? movement.from : movement.to) : null;
   const bySide = side?.name ? named(side.name) : null;
@@ -550,6 +577,20 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   const partnerPaid = facts.event.kind === 'paid-by-partner' || Boolean(detectPartnerPaidDebt(said)) || Boolean(detectPartnerFundedSpend(said));
   if (PARTNER_CUE.test(said) && !partnerPaid && !/افزایش\s*سرمایه/.test(said)) toAccountant('حساب جاری شریک یا سهامدار با حسابدار است.');
   if (ADJUSTING_CUE.test(said)) toAccountant('ثبتِ تعدیلیِ پایان دوره (ذخیره یا سودِ تحقق‌یافته) قضاوت حسابدار است.');
+  // «آقای سعیدی ۸ میلیون ... برای خرج شخصی خودش برداشت»: برداشتِ شخصیِ کسی که با نام
+  // گفته شده — نه «خودم» — مالکِ دفتر است یا شریک. «برداشت مالک» نوشتنِ بی‌قضاوت، طلبِ
+  // شرکت از شریک را گم می‌کرد (آزمون ۱۰۰ سناریو، R042).
+  const drawing = facts.event.kind === 'owner-drawing' || paymentPurposeFromSpeech(said) === 'owner-drawing';
+  const namedDrawer = facts.counterparties.find((item) => PARTY_TITLE.test(item.name) && !bankName(item.name));
+  if (drawing && namedDrawer && !FIRST_PERSON_DRAWING.test(said)) {
+    toAccountant(`برداشتِ شخصیِ «${namedDrawer.name}»: مالکِ دفتر است یا شریک (جاری شریک)؟ تشخیصش با حسابدار است.`);
+  }
+  // «پروژهٔ شرکت آریا تجارت ... تموم شد و تحویل دادیم»: کار تحویل شد و مبلغی گفته نشد.
+  // بستنِ بی‌سند یعنی پیش‌دریافتِ همان مشتری هرگز درآمد نمی‌شد (R060).
+  if (!facts.amounts.length && ['income', 'sale'].includes(facts.event.kind) && facts.subject.delivered === 'yes'
+    && facts.counterparties.some((item) => !bankName(item.name))) {
+    toAccountant('کار یا کالا تحویل شد ولی مبلغی گفته نشد؛ اگر پیش‌دریافتی از این مشتری هست، شناسایی درآمدش با حسابدار است.');
+  }
   // «باقی حق بیمه ۹ میلیون رو دادیم»، «قسط دوم اجاره»: پرداختِ بعدیِ قراردادی که
   // پیش‌تر ثبت شده. پیش‌پرداختِ تازه با دورهٔ تازه نیست (دفتر برای یک بیمه‌نامهٔ ۱۲
   // میلیونی ۲۱ میلیون پیش‌پرداخت نشان می‌داد) و قسط وام هم نیست. وقتی مدل خودش
@@ -648,6 +689,12 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       }
       movement = { id: `${amount.id}-implied`, amountRef: amount.id, direction: implied, from: { kind: 'unknown', name: null }, to: { kind: 'unknown', name: null } };
     }
+    // «قبض تلفن دفتر رو خانم کریمی از جیب خودش داد»: مدل درست گفت از حساب شرکت پولی
+    // نرفت، و همین ردیف را بدهیِ بی‌نامِ پرداخت‌نشده کرد. پرداخت انجام شده — از جیب او؛
+    // هزینه همان است و جای سطر نقد را جاری او می‌گیرد (`fundedBy`، آزمون ۱۰۰ سناریو، R043).
+    if (funder && movement.direction === 'none' && amount.role !== 'credit-part' && !['sale', 'income', 'advance-received'].includes(facts.event.kind)) {
+      movement = { ...movement, direction: 'out' };
+    }
 
     if (movement.direction === 'transfer') {
       const from = resolution.endpoints?.[`${movement.id}.from`];
@@ -670,12 +717,52 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const resolved = counterparty ? resolution.counterparties?.[counterparty.id] : null;
     const pickedContact = counterparty ? answers[`counterparties.${counterparty.id}`]?.valueId : null;
     const contactId = pickedContact && pickedContact !== 'new' ? pickedContact : resolved?.status === 'exact' ? resolved.contactId : null;
-    const createContact = pickedContact === 'new' || (resolved?.status === 'new' && Boolean(counterparty));
+    // نقشِ بی‌نام («تعمیرکار»، «مشتری») طرف حسابِ تازه نمی‌سازد؛ نامش پرسیده می‌شود.
+    // استثنا: اجاره یا خدمتِ دوره‌داری که پولش آمد یا رفت ماه‌به‌ماه خودکار شناسایی می‌شود و
+    // تسویه‌ای با آن شخص ندارد («مستاجر اجارهٔ ۶ ماه رو جلو داد» — آزمون‌های موتور ۵). ودیعه،
+    // بدهی، طلب و پیش‌دریافتِ پروژه با همان شخص بسته می‌شوند و نام می‌خواهند.
+    const recognisedOverTime = movement.direction !== 'none' && !REFUNDABLE_WORDS.test(said)
+      && (TIME_BOUND_SERVICE_CATEGORIES.includes(facts.subject.category) || /اجاره|کرایه/.test(said));
+    const unnamed = Boolean(counterparty) && !contactId && genericParty(counterparty.name) && !recognisedOverTime;
+    const createContact = !unnamed && (pickedContact === 'new' || (resolved?.status === 'new' && Boolean(counterparty)));
 
-    const isSettlement = movement.direction !== 'none' && (facts.event.kind === 'settlement' || (priorBalance && ['paid-now', 'received-now', 'part'].includes(amount.role)));
+    // پرداخت به کسی یا دریافت از کسی که بدهی یا طلبِ باز دارد: «۳ میلیون آقای رضایی بابت
+    // تعمیر کولر رو ... دادیم» بعد از بدهیِ همان تعمیر. ثبتش به‌عنوان هزینه، هزینه را دو
+    // بار ثبت می‌کرد (آزمون ۱۰۰ سناریو، R037). حدس زده نمی‌شود: می‌پرسد تسویهٔ کدام سند
+    // است یا رویدادِ تازه.
+    const flowSide = movement.direction === 'out' ? 'payable' : movement.direction === 'in' ? 'receivable' : null;
+    const openForParty = contactId && flowSide
+      ? (resolution.documents?.[contactId] || []).filter((document) => document.direction === flowSide && ['obligation', 'invoice', 'ledger-balance'].includes(document.kind) && document.remaining > 0)
+      : [];
+    const settleChoice = answers[`settlements.${amount.id}`]?.valueId;
+    const explicitSettlement = facts.event.kind === 'settlement' || (priorBalance && ['paid-now', 'received-now', 'part'].includes(amount.role));
+    if (!explicitSettlement && openForParty.length && !settleChoice && !funder) {
+      question({
+        id: `settlements.${amount.id}`, kind: 'information', picker: 'document',
+        text: `«${counterparty.name}» ${flowSide === 'payable' ? 'بدهیِ' : 'طلبِ'} باز دارد. این ${money(amount.value)} تومان تسویهٔ کدام است؟`,
+        options: [...openForParty.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} تومان` })),
+          { value: 'new', label: flowSide === 'payable' ? 'هیچ‌کدام؛ هزینه یا خریدِ تازه است' : 'هیچ‌کدام؛ فروش یا درآمدِ تازه است' }],
+      });
+      continue;
+    }
+    // «قبض برق مهر که اومده بود رو امروز ... پرداخت کردیم»: پرداختِ سندی که پیش‌تر آمده و
+    // ثبت شده — بی‌طرف‌حسابی که بدهی‌اش را پیدا کند. هزینهٔ تازه نوشتنش بدهیِ قبض را باز
+    // می‌گذاشت و هزینه را دو بار ثبت می‌کرد (R035، پس از ثبتِ بدهیِ R025). کدام بدهی، با حسابدار.
+    if (!explicitSettlement && !openForParty.length && !funder && movement.direction === 'out' && PRIOR_DOCUMENT.test(said) && !settleChoice) {
+      toAccountant(`«${label}» پرداختِ قبض یا فاکتوری است که پیش‌تر آمده بود؛ تسویهٔ کدام بدهیِ ثبت‌شده است، با حسابدار است — هزینهٔ تازه نیست.`);
+      continue;
+    }
+    const isSettlement = movement.direction !== 'none' && (explicitSettlement || Boolean(settleChoice && settleChoice !== 'new' && openForParty.length));
     // تسویه و پیش‌پرداخت و وام بدون طرف حساب معنا ندارند. تعهدِ بی‌نام — «قبض
     // برق اومده» — همان مسیر امروز را می‌رود: اگر موتور طرف حساب بخواهد، خودش می‌پرسد.
     const needsCounterparty = isSettlement || (movement.direction === 'none' && Boolean(counterparty)) || ['advance-paid', 'advance-received', 'deposit', 'loan-received'].includes(facts.event.kind);
+    if (needsCounterparty && unnamed && !isSettlement && !answers[`counterparties.${counterparty.id}.name`]) {
+      question({
+        id: `counterparties.${counterparty.id}.name`, kind: 'information', picker: 'text', needsReread: false,
+        text: `«${counterparty.name}» نام طرف حساب نیست؛ ${movement.direction === 'none' ? 'این بدهی یا طلب' : 'این پول'} به نامِ چه کسی یا چه شرکتی ثبت شود؟`,
+      });
+      continue;
+    }
     if (needsCounterparty && counterparty && !contactId && !(createContact && !isSettlement) && !answers[`counterparties.${counterparty.id}`]) {
       question({
         id: `counterparties.${counterparty.id}`, kind: 'information', picker: 'contact',
@@ -783,7 +870,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       || (ADVANCE_WORDS.test(said) && !REFUNDABLE_WORDS.test(said) && amounts.filter((item) => item.accepted && item.status === 'done' && !retracted.has(item.id)).length === 1);
     const depositSibling = amounts.some((other) => other !== amount && other.accepted && other.partOf === amount.partOf
       && (other.role === 'deposit' || REFUNDABLE_WORDS.test(normalizePersian(other.evidence || ''))));
-    const purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' }
+    let purposes = amount.role === 'fee' ? { paymentPurpose: 'expense' }
       : type === 'expense' && refundableHere ? (typeof returns === 'boolean' ? { paymentPurpose: 'deposit', refundable: returns } : { paymentPurpose: 'deposit' })
         : advanceHere ? (type === 'expense' ? { paymentPurpose: 'advance' } : { receiptPurpose: 'advance' })
           : serviceUpfront ? { receiptPurpose: 'advance' }
@@ -793,6 +880,19 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
               // در گفتهٔ چندمبلغی، پیش‌پرداخت و ودیعه فقط از بخشِ خودِ مبلغ می‌آیند (بالا).
               : !scope.alone && PER_AMOUNT_KINDS.has(facts.event.kind) ? {}
                 : PURPOSE_BY_KIND[facts.event.kind] || {};
+    // همان داورِ قطعیِ مسیر فعلی (`moneyPurpose`): «مساعده» طلب از کارمند است، نه پیش‌پرداختِ
+    // خرید (R065)؛ واریزی که «نمی‌دونم از کیه» وجوهِ تعیین‌تکلیف‌نشده است، نه درآمد (R089).
+    const spokenScope = scope.alone ? said : `${scope.own} ${clause}`;
+    if (type === 'expense' && paymentPurposeFromSpeech(spokenScope) === 'employee-advance') purposes = { paymentPurpose: 'employee-advance' };
+    if (type === 'income' && receiptPurposeFromSpeech(spokenScope) === 'unknown') purposes = { receiptPurpose: 'unknown' };
+    // «کلید سوختهٔ قبلی رو عوض کردیم»: تعویضِ قطعهٔ خراب تعمیر است، نه خریدِ ملزومات (R048) —
+    // همان که «موتور کولر سوخت، یه موتور نو جاش گذاشتیم» تعمیر شد.
+    const replacedBroken = type === 'expense' && REPLACED_BROKEN.test(spokenScope);
+    if (replacedBroken) purposes = { paymentPurpose: 'expense' };
+    // «تابلوی برق ... کامل بازسازی و ارتقا دادیم»: بهسازیِ اساسیِ یک دارایی تعمیرِ عادی نیست؛
+    // مثل خریدِ دارایی، حد سرمایه‌ای دفتر می‌گوید دارایی ثابت است یا هزینهٔ دوره (R050).
+    const capitalWork = type === 'expense' && !replacedBroken && facts.subject.kind === 'asset' && CAPITAL_WORK.test(spokenScope);
+    if (capitalWork) purposes = { ...PURPOSE_BY_KIND['asset-purchase'] };
     // کالای ماندگار برای استفادهٔ خودمان، استفادهٔ بلندمدت است؛ حد سرمایه‌ای دفتر
     // می‌گوید دارایی است یا هزینه. آزمون زنده (V26): دستگاه کپی ۴۵ میلیونی هزینه شد.
     // موضوعِ مدل یکی است و برای کل گفته؛ در گفتهٔ چندمبلغی فقط به مبلغی می‌رسد که
@@ -804,10 +904,10 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «تعمیر کولر آبی دفتر»: مدل موضوع را خودِ کولر (دارایی) نامید و پولِ تعمیر دارایی
     // ثابت شد (محک دسته، مهر ۱۴۰۵). وقتی دستهٔ خودِ مدل خدمت است، پول بابت خدمتی روی
     // دارایی رفته، نه خریدِ آن.
-    const boughtService = subjectHere && SERVICE_ON_ASSET_CATEGORIES.has(facts.subject.category);
+    const boughtService = !capitalWork && (replacedBroken || (subjectHere && SERVICE_ON_ASSET_CATEGORIES.has(facts.subject.category)));
     // «اتو برقی برای خیاطی»: مدل دارایی را «برای تولید» نامید و موجودی کالا شد. دارایی ماده‌ای
     // نیست که در محصول مصرف شود؛ ابزارِ کار، استفادهٔ بلندمدت است.
-    const durableUse = facts.subject.kind === 'asset' && ['internal', 'production'].includes(facts.subject.use) && !boughtService;
+    const durableUse = capitalWork || (facts.subject.kind === 'asset' && ['internal', 'production'].includes(facts.subject.use) && !boughtService);
     const subjectIntent = durableUse ? 'long-term-use' : SUBJECT_USE_TO_INTENT[facts.subject.use];
     // پولِ تعمیر و سرویس، هر کاربردی که مدل برای خودِ دستگاه گفته باشد («بلندمدت»)، خریدِ
     // دارایی نیست (محک دسته، دور دوم: تعمیر کولر، ماشین، آسانسور و پرینتر).
@@ -862,7 +962,11 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // (اجاره ← درآمد اجاره)؛ بی آن درآمد اجاره در «سایر درآمدها» می‌نشست (همان قاعدهٔ پارسر).
     if (!category && type === 'income') category = incomeTwin(scope.alone ? said : `${scope.own} ${clause}`)?.category || null;
     const described = classifyCategory(describe, type).category;
+    // «آقای کاظمی ۱۲ میلیون نسیه از ما جنس برد»: دستهٔ مدل («مواد و کالا») دستهٔ خرید است و با
+    // پولِ آمده جور نیست؛ فروشِ کالا «فروش» است، نه «سایر درآمدها» (آزمون ۱۰۰ سناریو، R032).
+    if (!category && type === 'income' && facts.event.kind === 'sale' && fits('فروش')) category = 'فروش';
     category = category || (fits(described) ? described : (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها'));
+    if (replacedBroken) category = 'تعمیر و نگهداری';
     // «۶ میلیون اجارهٔ همین ماه»: پوششی که در ماهِ پرداخت تمام می‌شود هزینهٔ همین
     // دوره است. برای درآمد، پوششِ درونِ همین ماه چیزی را به بعد نمی‌برد.
     const paidMonth = paymentDate ? monthOf(paymentDate) : null;
@@ -937,7 +1041,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       // مسیر قطعی. نگهبان‌هایی که متن را می‌خوانند («بیمهٔ یک‌ساله» یعنی پیش‌پرداخت)
       // دیگر دورهٔ بیمه را به کرایهٔ حملِ کنارش نمی‌چسبانند.
       amount: amount.value, type, category, rawText: scope.alone ? transcript : scope.own, source, occurredAt: paymentDate,
-      accountId, contactId: contactId || null, contactName: counterparty?.name || '',
+      accountId, contactId: contactId || null, contactName: unnamed ? '' : counterparty?.name || '',
       linkContact: Boolean(contactId) || createContact, contactNameConfident: true,
       // «هیچ‌کدام»: تسویه فقط از مسیر سند باز (بالا)؛ این ردیف هزینه یا درآمد خودش است.
       settlement: 'none',
@@ -947,7 +1051,9 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       intendedUse, ...(boughtService && purposes.paymentPurpose === 'goods' ? { paymentPurpose: 'expense' } : purposes),
       ...(receiptPurpose ? { receiptPurpose } : {}),
       servicePeriodStart: periodStart, servicePeriodEnd: periodEnd,
-      deliveryDate: deliveryDate || (facts.subject.delivered === 'yes' ? paymentDate : null),
+      // فاکتورِ فروشی که زده شده، فروشِ انجام‌شده است: «فاکتور فروش ۲۵ میلیونی ... زدیم» بی
+      // تاریخ تحویل به «قاعده‌ای تعریف نشده» می‌خورد و طلبش ثبت نمی‌شد (R026).
+      deliveryDate: deliveryDate || (facts.subject.delivered === 'yes' || (type === 'income' && INVOICE_ISSUED.test(said)) ? paymentDate : null),
       amountScaleAmbiguous: Boolean(amount.scaleAmbiguous),
       eventNature: 'new', factSource: 'understanding', userConfirmed: true, needsReview: false, reviewReasons: [],
       confidenceDetails: { amount: { score: 1, reason: amount.provenance === 'user' ? 'مبلغ را ثبت‌کننده تعیین کرد.' : 'مبلغ از شاهدِ جمله خوانده و کنترل شد.' } },
@@ -1002,7 +1108,7 @@ function fundingOf(facts, said) {
 }
 
 function planPartnerPaid({ facts, said, amounts, retracted, resolution, answers, paymentDate, components, notes, question, toAccountant }) {
-  const parties = facts.counterparties.filter((item) => !detectBank(item.name) && item.role !== 'bank');
+  const parties = facts.counterparties.filter((item) => !bankName(item.name) && item.role !== 'bank');
   const spoken = detectPartnerPaidDebt(said);
   const sameName = (left, right) => Boolean(left && right) && (() => {
     const a = normalizePersian(left).replace(/آ/g, 'ا');
