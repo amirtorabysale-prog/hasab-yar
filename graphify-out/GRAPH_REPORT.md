@@ -1,16 +1,16 @@
 # Graph Report - hasabyar  (2026-10-22)
 
 ## Corpus Check
-- 803 files · ~1,082,511 words
+- 817 files · ~1,083,844 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 8488 nodes · 17476 edges · 516 communities (402 shown, 114 thin omitted)
+- 8516 nodes · 17927 edges · 527 communities (412 shown, 115 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 92 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `fb9fffc4`
+- Built from commit: `bb6ed50d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -21,50 +21,50 @@
 - financialEventStore.js
 - realtimeSpeech.js
 - toPersianDigits
-- index.js
+- db/chart.js
 - core.js
 - accountingDecision.js
 - periodSpeech.js
-- accounting.js
+- server/accounting.js
 - voiceIntent.js
-- App.jsx
-- fixtureOverdraft.js
-- understanding.js
-- CaptureSheets.jsx
+- formatAmount
+- ../server/db.js?wiring=1
+- db/understanding.js
+- format.js
 - DesignSystemGenerator
 - design_system.py
 - transactions.js
 - validate_data.py
-- partner-paid-debt.test.js
-- accountingRules.js
-- parsianBackup.js
-- access.js
+- db
+- guards.js
+- parsian-bak-import.test.js
+- http.js
 - voicePipeline.js
 - eventUnderstanding.js
 - moneyPurpose.js
 - normalizePersian
 - auth.js
 - Tailwind CSS Utility Reference
-- live-ten-regression.test.js
+- shared/review.js
 - persianDate.js
 - حساب‌یار — وضعیت اجرای پروژهٔ موتور تصمیم
 - normalize.js
-- recurring.js
-- navigation.jsx
+- cheques.js
+- App.jsx
 - engine5-p5-ledger.test.js
 - slide_search_core.py
-- engine5-p1-parser.test.js
+- banks.js
 - core.py
 - topicPromotion.js
-- insights.js
-- format.js
+- financialDna.js
+- ReviewQueuePage.jsx
 - scripts
 - TodayPage.jsx
 - Refactoring to Expose a Property
 - roleResolver.js
-- petty-cash.test.js
+- parsianBackup.js
 - search
-- db/firm.js
+- insights.js
 - Canvas Design System
 - accountingReviewAi.js
 - understandingPlan.js
@@ -90,8 +90,8 @@
 - html-token-validator.py
 - Error Handling Security Reference
 - shadcn/ui Accessibility Patterns
-- receipts.js
-- AccountingPage.jsx
+- ledgerImport.js
+- reviewAccountPreparation.js
 - JavaScript/TypeScript Security Patterns
 - Authentication Security Reference
 - Server-Side Request Forgery (SSRF) Prevention Reference
@@ -100,7 +100,7 @@
 - understanding-eval.mjs
 - invoices.js
 - engine5-p6-review.test.js
-- shadow
+- lg
 - Authorization Security Reference
 - Cross-Site Scripting (XSS) Prevention Reference
 - normalizeFinancialEvent
@@ -111,15 +111,15 @@
 - TailwindConfigGenerator
 - UI Styling Skill
 - counterparties.js
-- accounts.js
-- unidentifiedReceipts.js
+- invalidInput
+- currentTimeZone
 - radius
 - States and Variants
 - Business Logic Security Reference
 - File Security Reference
 - Security Logging Reference
 - BM25
-- db/payroll.js
+- audit
 - db/accountingTransfer.js
 - CollaborationPage.jsx
 - LedgerPage.jsx
@@ -137,21 +137,21 @@
 - دفترهای جدا و دسترسی تیم — مرحلهٔ ۴
 - پل دوطرفهٔ اکسل و پارسیان
 - server/accountingTransfer.js
-- db/tax.js
-- economicFamily.js
+- server/reconciliation.js
+- engine5-p3-decision.test.js
 - eventUnderstandingAi.js
 - imageIntake.js
-- cheques.js
-- settleSpeech.js
+- financialEvents.js
+- partner-paid-debt.test.js
 - theme.js
-- primitive
+- color
 - Motion Design Skill
 - db/backup.js
 - shadow-mode.test.js
-- todayPersian
+- index.js
 - api.js
-- server/inventory.js
-- engine5-p2-period.test.js
+- workspaces.js
+- scenarios-100-ai.test.js
 - Accessibility
 - generate-slide.py
 - fontSize
@@ -188,30 +188,30 @@
 - گزارش آزمون ۳۰ سناریوی تازه — با هوش مصنوعی واقعی روی سایت — ۱۵ مهر ۱۴۰۵
 - ده جایی که امروز تصمیم حسابداری ضمنی گرفته می‌شود
 - sandbox-ledger-check.mjs
-- counterpartySpeech.js
-- depreciationLedger.js
+- engine5-p1-parser.test.js
+- activeWorkspaceDatabase
 - ai-lessons.test.js
 - category-understanding.test.js
-- vatSpeech.js
+- reviewAssistant.js
 - Component Specifications
 - Choreography
 - Root Cause Tracing
 - Systematic Debugging
 - CatalogRefreshTest
 - 5. Re-render Optimization
-- دقت عددی گفتار — اصلاحات ۱۴۰۵/۰۶/۱۴
+- معماری ثبت صوتی سریع و امن
 - vat-settlement.test.js
-- taxAssistant.js
+- TimingContractsPanel.jsx
 - server/firm.js
-- dna-forward-traits.test.js
+- blue
 - unidentified-receipts.test.js
 - approval-family.test.js
 - insurance-settlement.test.js
 - AI-Slop Motion Patterns
 - Disney's 12 Principles — UI Adapted
 - TestShadcnInstaller
-- detect_domain
-- .generate
+- دقت عددی گفتار — اصلاحات ۱۴۰۵/۰۶/۱۴
+- validateUnderstanding
 - 7. JavaScript Performance
 - Quick Reference
 - ممیزی خط مبنای موتور حسابداری
@@ -219,7 +219,7 @@
 - نقشهٔ فازبندی‌شده — تبدیل حساب‌یار به ابزار دفتر حسابداری
 - آنچه هر ماژول واقعاً پوشش می‌دهد
 - scenario-run.mjs
-- documentService.js
+- FinancialDnaPanel.jsx
 - Tailwind Integration
 - Find Skills
 - View Transitions in Next.js
@@ -227,7 +227,7 @@
 - Patterns and Guidelines
 - transaction-edit-guards.test.js
 - engine5-live30.test.js
-- vat-guard.test.js
+- reviewInsurance.js
 - Emil Kowalski's Animation Principles
 - Token Architecture
 - design-tokens-starter.json
@@ -237,9 +237,9 @@
 - Quick Reference
 - محدودهٔ موتور تصمیم حسابداری حساب‌یار
 - اتصال به منابع رسمی سازمان امور مالیاتی — پیشنهاد طراحی
-- ../server/db.js?wiring=1
+- timing-contracts.test.js
 - جدول‌های تصمیم فاز ۲ — زمان و تخصیص دوره
-- journalWorkflow.js
+- backup-ledger-structure.test.js
 - balance-guard.test.js
 - LearningPage.jsx
 - queue-overdraft-and-duplicates.test.js
@@ -261,19 +261,19 @@
 - محدوده محصول حساب‌یار
 - دستورالعمل آزمون صوتی روی دفتر آزمایشی
 - «رقوم» as a brand for Hesabyar: meaning, history, linguistics and likely perception
-- prepayment-family.test.js
+- FakePeer
 - topic-label-paths.test.js
 - capitalization-threshold.test.js
 - MemoryStorage
 - MemoryStorage
-- server/tax.js
+- depreciation.js
 - recognition-run.test.js
 - understanding-acceptance.test.js
 - Jhey Tompkins' Animation Principles
 - Design Motion Principles
 - Workflow: Create Mode
 - embed-tokens.cjs
-- duration
+- purchasePurpose.js
 - Context Adaptation
 - Narrative Structure
 - Quality Checklist
@@ -283,10 +283,10 @@
 - 3. Server-Side Performance
 - طرح پیاده‌سازی WP-0 — ستون فقرات تصمیم
 - Name conflicts and trademark/search risk for «رقوم» / ".ruqom"
-- review-ai-economy.test.js
+- bank-voice-movement.test.js
 - review-rerun-ten-registration.test.js
 - topic-promotion-integrity.test.js
-- انبار دائمی و بهای تمام‌شده — مرحلهٔ ۹
+- event-transaction-consistency.test.js
 - ._base_config
 - Hit areas
 - Component Tokens
@@ -305,7 +305,7 @@
 - production-smoke.mjs
 - receiptOcr.js
 - aiFactContract.js
-- پشتیبان‌گیری و بازیابی حساب‌یار — مرحلهٔ ۵
+- حافظهٔ مالی و هشدار قابل اقدام
 - payroll.test.js
 - MemoryCache
 - stress-scenarios-ledger.test.js
@@ -317,7 +317,7 @@
 - دفتر کل دوطرفه و کنترل دوره — مرحلهٔ ۶
 - فاز ۱ — نگهبان‌ها (در حال اجرا)
 - آزمون ۲۰ سناریوی سخت ثبت حسابداری — ۲۷ مهر ۱۴۰۵ / ۱۸ اکتبر ۲۰۲۶
-- voice-corpus.test.js
+- حساب‌یار ۲ — دفتر مالی صوتی
 - accounting-decision-wiring.test.js
 - 11. CSS Transitions vs Keyframes (Emil)
 - journal-batch-integration.test.js
@@ -333,11 +333,11 @@
 - Common Patterns
 - بازآزمایی مسیر AI صف تا سند — ۱۴ مهر ۱۴۰۵
 - 12. Spring Physics (Emil)
-- primary
+- resolveAutomationPolicy
 - chart-review-roles.test.js
 - cheques.test.js
 - counterparty-and-bank-routing.test.js
-- white
+- shadowReport.js
 - Semantics and ARIA
 - Creation Gotchas
 - 2. Easing & Timing
@@ -347,14 +347,17 @@
 - 1. Eliminating Waterfalls
 - 2. Bundle Size Optimization
 - تطبیق بانک و صندوق — مرحلهٔ ۸
-- .test_add_components_already_installed
+- financial-event-store.test.js
 - فاز ۰ — ستون فقرات تصمیم (تمام)
 - موتور ۵ — گزارش ۳۰ آزمون زنده (۲۲ تا ۲۳ مهر ۱۴۰۵)
 - فایل آزمون استرس‌تست
 - گزارش آزمون ۳۰ سناریو — ۱۵ مهر ۱۴۰۵
 - تصمیم‌های پایه‌ای موتور تصمیم حسابداری
+- parsian-roundtrip-end-to-end.test.js
+- partial-settlement.test.js
 - duplicate-fingerprint.test.js
 - ledger-integrity-audit.test.js
+- امنیت Production و پایداری داده
 - production-smoke-markers.test.js
 - edit.mjs
 - Motion and zoom
@@ -368,6 +371,8 @@
 - sw.js
 - understanding-eval-all.mjs
 - سیاست امنیتی حسب‌یار
+- bank-account-routing.test.js
+- obligation-journal.test.js
 - حساب‌یار — قاعدهٔ کار برای عامل‌های کدنویس
 - Forms
 - $type
@@ -386,11 +391,16 @@
 - فازهای باقی‌مانده
 - Review assistant: specialized cash approval and catalog binding
 - دستیار مالیاتی منبع‌دار
+- items
 - pull_request_template.md
 - bankFeed.js
 - release.js
+- padding-x
 - icon-motion.test.js
+- xl
 - 3. Visual Effects
+- destructive
+- .test_add_components_no_components
 - async-cheap-condition-before-await.md
 - Prefer Statically Analyzable Paths
 - server-hoist-static-io.md
@@ -516,15 +526,17 @@
 1. `normalizePersian()` - 200 edges
 2. `audit()` - 171 edges
 3. `currentWorkspace()` - 135 edges
-4. `parseFinancialText()` - 126 edges
+4. `parseFinancialText()` - 129 edges
 5. `toPersianDigits()` - 119 edges
 6. `formatAmount()` - 112 edges
 7. `tempDatabase()` - 112 edges
-8. `../server/db.js?wiring=1` - 93 edges
-9. `invalidInput()` - 92 edges
-10. `activeWorkspaceDatabase()` - 92 edges
+8. `../server/db.js?wiring=1` - 106 edges
+9. `activeWorkspaceDatabase()` - 95 edges
+10. `currentTimeZone()` - 93 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `fixture()` --calls--> `ensureReviewAiSchema()`  [EXTRACTED]
+  test/accounting-review-ai.test.js → server/accountingReviewAi.js
 - `postLabeledExpense()` --calls--> `insertTransactionRows()`  [EXTRACTED]
   test/topic-promotion.test.js → server/db/transactions.js
 - `createPersianRecognizer()` --indirect_call--> `normalizePersian()`  [INFERRED]
@@ -533,185 +545,183 @@
   test/date-not-amount.test.js → shared/parser.js
 - `speak()` --calls--> `parseFinancialText()`  [EXTRACTED]
   test/bank-account-gap.test.js → shared/parser.js
-- `parse()` --calls--> `parseFinancialText()`  [EXTRACTED]
-  test/date-not-amount.test.js → shared/parser.js
 
 ## Import Cycles
 - 4-file cycle: `shared/economicFamily.js -> shared/purchasePurpose.js -> shared/partnerPaidSpeech.js -> shared/parser.js -> shared/economicFamily.js`
 
-## Communities (516 total, 114 thin omitted)
+## Communities (527 total, 115 thin omitted)
 
 ### Community 0 - "shared/parser.js"
 Cohesion: 0.03
-Nodes (90): DUE_DATE, FUTURE_PAYMENT, INCURRED, NOT_PAID_WITH_OBJECT, PAID_DONE, PAID_NOW, readUnpaidSignal(), UNPAID (+82 more)
+Nodes (100): DUE_DATE, FUTURE_PAYMENT, INCURRED, NOT_PAID_WITH_OBJECT, PAID_DONE, PAID_NOW, readUnpaidSignal(), UNPAID (+92 more)
 
 ### Community 1 - "chartOfAccounts.js"
-Cohesion: 0.06
-Nodes (71): attachMissingCounterpartyAnalytics(), ANALYTIC_KINDS, ANALYTIC_ROLES, bestNameMatch(), bulkMapLedgerAccounts(), CHART_CODING_STYLES, CHART_LEVELS, CHART_ROLES (+63 more)
+Cohesion: 0.08
+Nodes (52): attachMissingCounterpartyAnalytics(), ANALYTIC_ROLES, bestNameMatch(), bulkMapLedgerAccounts(), CHART_CODING_STYLES, CHART_LEVELS, CHART_ROLES, CHART_TYPES (+44 more)
 
 ### Community 2 - "tempPath.js"
 Cohesion: 0.03
-Nodes (55): databasePath, databasePath, databasePath, owner, databasePath, databasePath, session, signedIn (+47 more)
+Nodes (43): owner, databasePath, databasePath, databasePath, owner, owner, workspace, databasePath (+35 more)
 
 ### Community 3 - "financialEventStore.js"
-Cohesion: 0.05
-Nodes (122): roleAllows(), checkConfirmationAnswer(), confirmationAsk(), confirmationHint(), recordAccountantLesson(), actorName(), analyzeReviewEvent(), answerPending() (+114 more)
+Cohesion: 0.06
+Nodes (95): timingContracts(), addToNotice(), ALLOCATION_PLANS, answerEventQuestion(), approveFinancialEvent(), attachActualToShadowRun(), blockedDetail(), blockedRecognitionReason() (+87 more)
 
 ### Community 4 - "realtimeSpeech.js"
-Cohesion: 0.11
-Nodes (11): availableStorage(), createRealtimeTranscriber(), realtimeCooldown(), realtimeSpeechAvailable(), realtimeSpeechSupported(), rememberRealtimeFailure(), waitForIceGathering(), waitForOpen() (+3 more)
+Cohesion: 0.19
+Nodes (10): availableStorage(), createRealtimeTranscriber(), realtimeCooldown(), realtimeSpeechAvailable(), realtimeSpeechSupported(), rememberRealtimeFailure(), waitForIceGathering(), waitForOpen() (+2 more)
 
 ### Community 5 - "toPersianDigits"
-Cohesion: 0.04
-Nodes (84): bankById(), ChartPage, DnaPage, FirmConsolePage, TaxPage, digitsOnly(), coverageDate(), dayFormat (+76 more)
-
-### Community 6 - "index.js"
 Cohesion: 0.05
-Nodes (110): nextLedgerCode(), createAccountingTransferValidation(), listAccountingTransferValidations(), updateAccountingTransferBatchStatus(), saveAiLessonThreshold(), applyChartSuggestions(), attachCounterpartyAnalytics(), chartOverview() (+102 more)
+Nodes (62): AccountingPage, ChartPage, ExportAccessCard, FirmConsolePage, TaxPage, WorkspacePanel, ACCOUNTING_SECTIONS, AccountingPage() (+54 more)
+
+### Community 6 - "db/chart.js"
+Cohesion: 0.20
+Nodes (27): nextLedgerCode(), applySuggestedChartMappings(), chartMappingOverview(), dimensionBalance(), installDefaultChartTemplate(), listCostCenters(), applyChartSuggestions(), attachCounterpartyAnalytics() (+19 more)
 
 ### Community 7 - "core.js"
-Cohesion: 0.09
-Nodes (36): balanceSnapshot(), ensureOverdraftSchema(), negativeViolations(), recordOverdraftApproval(), approvedRequestFor(), approveOverdraftsForScript(), canonicalRequestBody(), categorySeed (+28 more)
+Cohesion: 0.06
+Nodes (58): approvalModeSource(), approvalRequiredError(), approvalSource(), balanceSnapshot(), currentApproval(), money(), negativeViolations(), OVERDRAFT_APPROVER_ROLES (+50 more)
 
 ### Community 8 - "accountingDecision.js"
-Cohesion: 0.08
-Nodes (52): coverageRunsPastMonth(), createDecision(), decide(), DECISION_STATUS, DECISION_STATUS_LABELS, decisionAuthorizesPosting(), DEFAULT_POLICIES, isDecisionStatus() (+44 more)
+Cohesion: 0.06
+Nodes (74): coverageRunsPastMonth(), createDecision(), decide(), DECISION_STATUS, DECISION_STATUS_LABELS, decisionAuthorizesPosting(), DEFAULT_POLICIES, isDecisionStatus() (+66 more)
 
 ### Community 9 - "periodSpeech.js"
 Cohesion: 0.04
-Nodes (66): ADJECTIVE, BARE, BARE_AFTER_SERVICE, BARE_BEFORE_SERVICE, BARE_NOT_AFTER, BARE_NOT_BEFORE, BARE_START_GAP, bareIsLength() (+58 more)
+Nodes (68): ADJECTIVE, BARE, BARE_AFTER_SERVICE, BARE_BEFORE_SERVICE, BARE_NOT_AFTER, BARE_NOT_BEFORE, BARE_START_GAP, bareIsLength() (+60 more)
 
-### Community 10 - "accounting.js"
-Cohesion: 0.11
-Nodes (70): ACCOUNT_TYPES, accountingError(), accountingPeriods(), assertAccountingPeriodOpen(), assertExportedEntryCorrection(), categoryLedgerAccount(), chequeLedgerAccounts(), cogsLedgerAccount() (+62 more)
+### Community 10 - "server/accounting.js"
+Cohesion: 0.09
+Nodes (81): ACCOUNT_TYPES, accountingError(), assertAccountingPeriodOpen(), assertExportedEntryCorrection(), categoryLedgerAccount(), chequeLedgerAccounts(), cogsLedgerAccount(), COUNTERPARTY_SOURCE_KINDS (+73 more)
 
 ### Community 11 - "voiceIntent.js"
 Cohesion: 0.05
-Nodes (58): CAPITAL_PATTERNS, FIXED_ASSET_PATTERNS, mentionsCapitalOrAsset(), OWNER_CAPITAL_INCREASE, amountFromTokens(), cleanName(), COUNTER_WORDS, CURRENCY_WORDS (+50 more)
+Nodes (61): CAPITAL_PATTERNS, FIXED_ASSET_PATTERNS, mentionsCapitalOrAsset(), OWNER_CAPITAL_INCREASE, amountFromTokens(), cleanName(), COUNTER_WORDS, CURRENCY_WORDS (+53 more)
 
-### Community 12 - "App.jsx"
-Cohesion: 0.06
-Nodes (36): capitalEntryPayload(), invoiceDraftPayload(), accessFromPayload(), AccountsPanel, App(), BackupPanel, DataPrivacyPanel, ExportAccessCard (+28 more)
+### Community 12 - "formatAmount"
+Cohesion: 0.07
+Nodes (49): bankById(), PettyCashPage, ReportPage, UnderstandingSheet, digitsOnly(), EMPTY_SUMMARY, isoToPersianInput(), PersianDateInput() (+41 more)
 
-### Community 13 - "fixtureOverdraft.js"
-Cohesion: 0.03
-Nodes (31): todayKey(), backupDirectory, databasePath, databasePath, owner, workspace, owner, workspace (+23 more)
+### Community 13 - "../server/db.js?wiring=1"
+Cohesion: 0.04
+Nodes (33): ../server/db.js?wiring=1, seedDemo(), count, todayKey(), backupDirectory, databasePath, owner, workspace (+25 more)
 
-### Community 14 - "understanding.js"
-Cohesion: 0.14
+### Community 14 - "db/understanding.js"
+Cohesion: 0.16
 Nodes (40): duplicateAllowed(), recordUnderstoodObligation(), answerUnderstandingCase(), applyEngineAnswers(), caseRow(), commitUnderstandingCase(), compareWithLegacy(), createUnderstandingCase() (+32 more)
 
-### Community 15 - "CaptureSheets.jsx"
-Cohesion: 0.08
-Nodes (31): counterpartyChoice(), ledgerBalanceTargets(), invoiceLinesTotal(), PettyCashPage, attachSheet(), openSheetCount(), openSheets, sheetRefCallback() (+23 more)
+### Community 15 - "format.js"
+Cohesion: 0.09
+Nodes (34): counterpartyChoice(), invoiceLinesTotal(), attachSheet(), openSheetCount(), openSheets, sheetRefCallback(), useSheetA11y(), matchingTransactionJournals() (+26 more)
 
 ### Community 16 - "DesignSystemGenerator"
-Cohesion: 0.06
-Nodes (21): DesignSystemGenerator, Generates design system recommendations from aggregated searches., Load reasoning rules from CSV., Find matching reasoning rule for a category., Apply reasoning rules to search results., Select best matching result based on priority keywords., apply_decision_rules(), _object_without_duplicates() (+13 more)
+Cohesion: 0.05
+Nodes (25): DesignSystemGenerator, Generates design system recommendations from aggregated searches., Load reasoning rules from CSV., Execute searches across multiple domains., Find matching reasoning rule for a category., Apply reasoning rules to search results., Select best matching result based on priority keywords., Extract results list from search result dict. (+17 more)
 
 ### Community 17 - "design_system.py"
-Cohesion: 0.06
-Nodes (43): ansi_ljust(), _button_outline_text_color(), _detect_page_type(), format_ascii_box(), format_markdown(), format_master_md(), format_page_override_md(), generate_design_system() (+35 more)
+Cohesion: 0.05
+Nodes (46): ansi_ljust(), _button_outline_text_color(), _detect_page_type(), _filter_anti_patterns_for_mode(), format_ascii_box(), format_markdown(), format_master_md(), format_page_override_md() (+38 more)
 
 ### Community 18 - "transactions.js"
-Cohesion: 0.05
-Nodes (94): transactionJournalIsPlain(), accountForBank(), resolveAccountId(), contactIdForName(), listContacts(), saveContact(), invalidInput(), parseStoredJson() (+86 more)
+Cohesion: 0.09
+Nodes (50): transactionJournalIsPlain(), closeDay(), previewDayClosing(), monthWindowForWorkspace(), finishProviderUsage(), recordRealtimeProviderDuration(), addLocalDays(), dayBounds() (+42 more)
 
 ### Community 19 - "validate_data.py"
 Cohesion: 0.08
-Nodes (45): read_rows(), TestAccessibilityGuidance, TestChartsTypographyAndIcons, TestCurrentReactGuidance, TestSemanticColors, _catalog_date(), _check_app_interface_contract(), _check_catalog_contract() (+37 more)
+Nodes (46): read_rows(), TestAccessibilityGuidance, TestChartsTypographyAndIcons, TestCurrentReactGuidance, TestSemanticColors, _catalog_date(), _check_app_interface_contract(), _check_catalog_contract() (+38 more)
 
-### Community 20 - "partner-paid-debt.test.js"
+### Community 20 - "db"
 Cohesion: 0.13
-Nodes (15): asSettlement(), balances(), db(), FAMILY, none, NOW, options, outputs (+7 more)
+Nodes (25): apply, create, planForWorkspace(), workspaces, listContacts(), saveContact(), db, CARD_GROUP() (+17 more)
 
-### Community 21 - "accountingRules.js"
-Cohesion: 0.10
-Nodes (26): affectsProfit(), applyFunding(), DOCUMENT_COUNTER_ROLES, plan(), planJournal(), planJournalCore(), purchaseCreditSide(), ruleError() (+18 more)
+### Community 21 - "guards.js"
+Cohesion: 0.06
+Nodes (33): check(), GUARD_VERDICTS, GUARDS, internalTransferGuard(), percentOf(), settlementFirstGuard(), SETTLING_KINDS, VAT_SPLIT_KINDS (+25 more)
 
-### Community 22 - "parsianBackup.js"
-Cohesion: 0.07
-Nodes (40): allocationReader(), buildVouchers(), cleanText(), decodeValue(), DESIGNATED, firstVariableText(), isNull(), latinDecoder (+32 more)
+### Community 22 - "parsian-bak-import.test.js"
+Cohesion: 0.11
+Nodes (20): applyTornBits(), buildParsianBackup(), dataPages(), emptyPage(), encodeRecord(), layout(), PARSIAN_TABLES, SIZES (+12 more)
 
-### Community 23 - "access.js"
-Cohesion: 0.07
-Nodes (33): minimumRoleForRequest(), ROLE_LABELS, roleRank, accessPayload(), ALWAYS_PROFESSIONAL, canChooseExperience(), canSeeScreen(), DEFAULT_BY_ROLE (+25 more)
+### Community 23 - "http.js"
+Cohesion: 0.06
+Nodes (34): minimumRoleForRequest(), ROLE_LABELS, roleAllows(), roleRank, backupUpload, cookies(), parsianBackupUpload, workspaceCookie() (+26 more)
 
 ### Community 24 - "voicePipeline.js"
 Cohesion: 0.06
-Nodes (30): bench, groups, rows, recordShadowRun(), ALWAYS_REVIEWED, NATURE_EXPLANATIONS, natureNeedsAccountant(), PAST_TOUCHING (+22 more)
+Nodes (38): bench, groups, rows, readNonCashInstrument(), asFundedSpend(), COMPANY_TITLES, detectPartnerFundedSpend(), detectPartnerPaidDebt() (+30 more)
 
 ### Community 25 - "eventUnderstanding.js"
 Cohesion: 0.05
-Nodes (56): ACCOUNT_SIDES, ALLOWED_KEYS, AMBIGUITY_KINDS, AMOUNT_BASES, AMOUNT_ROLES, AMOUNT_STATUSES, array(), choice() (+48 more)
+Nodes (38): ACCOUNT_SIDES, ALLOWED_KEYS, AMBIGUITY_KINDS, AMOUNT_BASES, AMOUNT_ROLES, AMOUNT_STATUSES, COMPUTE_OPS, CONDITION_KINDS (+30 more)
 
 ### Community 26 - "moneyPurpose.js"
-Cohesion: 0.08
-Nodes (40): BANK_INTEREST, CAPITAL_IN, clean(), DEPOSIT_NAME, EMPLOYEE_ADVANCE, judgmentReason(), LENDER, lenderFromSpeech() (+32 more)
+Cohesion: 0.06
+Nodes (51): CONFIDENCE_COMPONENTS, BANK_INTEREST, CAPITAL_IN, clean(), DEPOSIT_NAME, EMPLOYEE_ADVANCE, judgmentReason(), LENDER (+43 more)
 
 ### Community 27 - "normalizePersian"
 Cohesion: 0.13
-Nodes (33): deterministicView(), detectPettyCashFunding(), eventFingerprint(), key(), readEventNature(), readExplicitNonCash(), readMixedSettlement(), guardPeriodRates() (+25 more)
+Nodes (32): deterministicView(), insertTransactions(), includesNormalized(), isCorrectionCommand(), previewCorrection(), ALWAYS_REVIEWED, MIXED_SETTLEMENT_REASON, natureNeedsAccountant() (+24 more)
 
 ### Community 28 - "auth.js"
-Cohesion: 0.12
-Nodes (27): authenticateUser(), changePassword(), clearLoginFailures(), createSession(), deleteSession(), ensureAdmin(), hashPassword(), listUserSessions() (+19 more)
+Cohesion: 0.23
+Nodes (14): authenticateUser(), clearLoginFailures(), createSession(), deleteSession(), ensureAdmin(), hashPassword(), listUserSessions(), loginThrottle() (+6 more)
 
 ### Community 29 - "Tailwind CSS Utility Reference"
 Cohesion: 0.05
 Nodes (43): Arbitrary Values, Aspect Ratio, Background Colors, Border Color, Border Radius, Border Style, Border Width, Borders (+35 more)
 
-### Community 30 - "live-ten-regression.test.js"
-Cohesion: 0.15
-Nodes (16): includesNormalized(), isCorrectionCommand(), previewCorrection(), collapseRepeatedTransactions(), assessTransactionReview(), clampScore(), DEFAULT_FIELDS, normalizedField() (+8 more)
+### Community 30 - "shared/review.js"
+Cohesion: 0.23
+Nodes (10): collapseRepeatedTransactions(), assessTransactionReview(), clampScore(), DEFAULT_FIELDS, normalizedField(), REVIEW_FIELD_LABELS, reviewBatchSummary(), withReviewAssessment() (+2 more)
 
 ### Community 31 - "persianDate.js"
-Cohesion: 0.06
-Nodes (44): saidYear(), CARDINALS, COUNTED_UNITS, COVERAGE_BETWEEN, COVERAGE_LENGTH, COVERAGE_MASKS, COVERAGE_OBJECT, coverageStartsAfterPayment() (+36 more)
+Cohesion: 0.05
+Nodes (85): contractOnDate(), documentNumbersIn(), nearestJalali(), pickContract(), dayKey(), jalaliIso(), relativeIso(), resolveDate() (+77 more)
 
 ### Community 32 - "حساب‌یار — وضعیت اجرای پروژهٔ موتور تصمیم"
-Cohesion: 0.05
-Nodes (44): آزمون خانوادگیِ گفتار — چرا اصلاح یک جمله، شبیه‌هایش را درست نمی‌کرد — ۱۸ مهر ۱۴۰۵, آزمون زندهٔ ۱۰ تراکنش تازه و «تاریخ، مبلغ نیست» — ۱۶ مهر ۱۴۰۵ (`5d77e69` تا `ab43ceb`), آزمون ۱۵ چالشی و بستن ثبت غلطِ با اطمینان — ۱۸ مهر ۱۴۰۵, آزمون ۳۰ سناریوی تازه با AI واقعی روی سایت — ۱۵ مهر ۱۴۰۵, آزمون ۳۰ سناریوی تازه — ۱۵ مهر ۱۴۰۵ (محلی، مدل جایگزین), آنچه منتظر تأیید است, آنچه پیش از فاز ۳ باید انجام شود, بازبینی Claude از PR #97 تا #100 — ۱۵ مهر ۱۴۰۵ (+36 more)
+Cohesion: 0.04
+Nodes (45): آزمون خانوادگیِ گفتار — چرا اصلاح یک جمله، شبیه‌هایش را درست نمی‌کرد — ۱۸ مهر ۱۴۰۵, آزمون زندهٔ ۱۰ تراکنش تازه و «تاریخ، مبلغ نیست» — ۱۶ مهر ۱۴۰۵ (`5d77e69` تا `ab43ceb`), آزمون ۱۵ چالشی و بستن ثبت غلطِ با اطمینان — ۱۸ مهر ۱۴۰۵, آزمون ۳۰ سناریوی تازه با AI واقعی روی سایت — ۱۵ مهر ۱۴۰۵, آزمون ۳۰ سناریوی تازه — ۱۵ مهر ۱۴۰۵ (محلی، مدل جایگزین), آنچه منتظر تأیید است, آنچه پیش از فاز ۳ باید انجام شود, بازبینی Claude از PR #97 تا #100 — ۱۵ مهر ۱۴۰۵ (+37 more)
 
 ### Community 33 - "normalize.js"
-Cohesion: 0.09
-Nodes (37): fa(), INSURANCE_ROLE, insuranceSettlementContext(), insuranceSettlementProposal(), insuranceSettlementValidation(), MONEY_IN_KINDS, openRuns(), question() (+29 more)
+Cohesion: 0.18
+Nodes (18): prepareReviewProposal(), availableReviewedBalance(), tradeSettlementValidation(), insuranceNature(), isNotInsurancePremium(), isPayrollInsurancePayment(), STAFF_ADJACENT, DIGITS (+10 more)
 
-### Community 34 - "recurring.js"
+### Community 34 - "cheques.js"
 Cohesion: 0.07
-Nodes (62): listReconciliationImports(), coverageMatch(), coveredQuestion(), coveringSchedule(), coveringTransaction(), dueMonth(), ensureHoldColumn(), holdColumnChecked (+54 more)
+Nodes (56): bounceCheque(), cancelCheque(), CHEQUE_STATUSES, chequeAnalytic(), chequeEvent(), database(), hydrate(), insertChequeRow() (+48 more)
 
-### Community 35 - "navigation.jsx"
-Cohesion: 0.08
-Nodes (33): MONEY_POLICY, PRODUCT_POSITIONING, PROFILE_DEFINITIONS, profileDefinition(), Breadcrumb(), CARD_SECTIONS, findMenuItem(), LEDGER_SECTIONS (+25 more)
+### Community 35 - "App.jsx"
+Cohesion: 0.06
+Nodes (46): MONEY_POLICY, PRODUCT_POSITIONING, PROFILE_DEFINITIONS, profileDefinition(), AccountsPanel, BackupPanel, Breadcrumb(), DataPrivacyPanel (+38 more)
 
 ### Community 36 - "engine5-p5-ledger.test.js"
-Cohesion: 0.10
-Nodes (38): accountantReview(), answerWhichRent(), auditStages(), balances(), byCategory(), byType(), capture(), chartLedger() (+30 more)
+Cohesion: 0.11
+Nodes (33): accountantReview(), answerWhichRent(), auditStages(), balances(), byCategory(), byType(), capture(), chartLedger() (+25 more)
 
 ### Community 37 - "slide_search_core.py"
 Cohesion: 0.08
 Nodes (36): format_context(), format_result(), main(), Format a single search result for display, Format contextual recommendations for display., BM25, calculate_pattern_break(), detect_domain() (+28 more)
 
-### Community 38 - "engine5-p1-parser.test.js"
-Cohesion: 0.05
-Nodes (49): aliasPattern(), BANKS, COMPILED, detectBank(), detectTransferBanks(), MARKERS, maskNonBankNames(), mentionsMultipleBanks() (+41 more)
+### Community 38 - "banks.js"
+Cohesion: 0.07
+Nodes (37): aliasPattern(), BANKS, COMPILED, detectBank(), detectTransferBanks(), MARKERS, maskNonBankNames(), mentionsMultipleBanks() (+29 more)
 
 ### Community 39 - "core.py"
 Cohesion: 0.08
 Nodes (40): _contains_phrase(), _domain_keywords(), _exact_match_diagnostic(), _exact_row_identity(), _file_signature(), _get_bm25(), _legacy_successor_guidance(), _load_csv() (+32 more)
 
 ### Community 40 - "topicPromotion.js"
-Cohesion: 0.11
-Nodes (39): backfillLevelCodes(), meaningfulTopicLabel(), normalizeTopicLabel(), TOPIC_SOURCE_KIND, topicAnalytic(), topicLabelKey(), attachChartParent(), attachLabelToPostedEntry() (+31 more)
+Cohesion: 0.14
+Nodes (34): backfillLevelCodes(), normalizeTopicLabel(), TOPIC_SOURCE_KIND, topicAnalytic(), attachChartParent(), attachLabelToPostedEntry(), chartInstalled(), decideTopicPromotion() (+26 more)
 
-### Community 41 - "insights.js"
-Cohesion: 0.06
-Nodes (64): getCategories(), getSettings(), accountSources(), answerFinancialQuestion(), financialAnswer(), financialOverview(), financialTransactionRows(), LIQUID_KINDS (+56 more)
+### Community 41 - "financialDna.js"
+Cohesion: 0.09
+Nodes (38): accountantBrief(), cashPressure(), DNA_MINIMUMS, dnaCategoryProfiles(), entryDiscipline(), expenseBackbone(), financialDna(), incomeConcentration() (+30 more)
 
-### Community 42 - "format.js"
-Cohesion: 0.05
-Nodes (62): ReportPage, ReviewQueuePage, UnderstandingSheet, EMPTY_SUMMARY, isoToPersianInput(), PersianDateInput(), toLatinDigits(), matchingTransactionJournals() (+54 more)
+### Community 42 - "ReviewQueuePage.jsx"
+Cohesion: 0.08
+Nodes (39): ReviewQueuePage, DecisionQuestionCard(), draftForQuestion(), questionCardKey(), ConfidencePanel(), ReviewAssistant(), SPEAKERS, clean() (+31 more)
 
 ### Community 43 - "scripts"
 Cohesion: 0.05
@@ -719,47 +729,47 @@ Nodes (39): autoprefixer, concurrently, express, lucide-react, multer, dependenc
 
 ### Community 44 - "TodayPage.jsx"
 Cohesion: 0.10
-Nodes (31): DecisionQuestionCard(), draftForQuestion(), questionCardKey(), BARS, clamp(), HesabiMascot, KEY_KIND, KEY_OF_DIGIT (+23 more)
+Nodes (30): BARS, clamp(), HesabiMascot, KEY_KIND, KEY_OF_DIGIT, KEYS, latinDigit(), RIPPLE (+22 more)
 
 ### Community 45 - "Refactoring to Expose a Property"
 Cohesion: 0.05
 Nodes (32): Determinism as a property, Generating Property-Based Tests, Pin the edge cases you already know about, Put constraints in the strategy, not in `assume()`, Settings, Testing the error path, Classification, Failure patterns that recur (+24 more)
 
 ### Community 46 - "roleResolver.js"
-Cohesion: 0.12
-Nodes (29): autoMapNewAccount(), counterpartyAccountKey(), listLedgerAccounts(), applySuggestedChartMappings(), chartMappingOverview(), listChartAccounts(), mapLedgerAccountToChart(), suggestChartAccount() (+21 more)
+Cohesion: 0.19
+Nodes (16): autoMapNewAccount(), ensureOpeningEquityMapping(), listChartAccounts(), mapLedgerAccountToChart(), autoMapToChart(), CATEGORY_ROLES, COUNTERPARTY_ROLES, counterpartyRoleAccount() (+8 more)
 
-### Community 47 - "petty-cash.test.js"
-Cohesion: 0.14
-Nodes (14): NUMBER_WORDS, clean(), FUND_VERB, pettyCashHolder(), readPettyCash(), SPEND, STOP, databasePath (+6 more)
+### Community 47 - "parsianBackup.js"
+Cohesion: 0.13
+Nodes (26): balanced, buffer, parsed, plan, skipped, allocationReader(), buildVouchers(), cleanText() (+18 more)
 
 ### Community 48 - "search"
-Cohesion: 0.08
-Nodes (10): Resolve a deprecated in-domain alias, or expose a cross-domain redirect., Main search function with auto-domain detection, search(), _style_search_destination(), TestSearchDomains, read_rows(), TestStyleTaxonomy, read_rows() (+2 more)
+Cohesion: 0.07
+Nodes (11): Resolve a deprecated in-domain alias, or expose a cross-domain redirect., Main search function with auto-domain detection, search(), _style_search_destination(), TestDiagnosticsContracts, TestSearchDomains, read_rows(), TestStyleTaxonomy (+3 more)
 
-### Community 49 - "db/firm.js"
-Cohesion: 0.06
-Nodes (62): apply, create, planForWorkspace(), workspaces, audioDurationMs(), billingMonth(), estimateProviderCostMicrousd(), fourWeekWindows() (+54 more)
+### Community 49 - "insights.js"
+Cohesion: 0.07
+Nodes (65): audioDurationMs(), billingMonth(), estimateProviderCostMicrousd(), fourWeekWindows(), monthlyPackageChecklist(), nonNegativeRate(), normalizePlanId(), PERSIAN_MONTH_NAMES (+57 more)
 
 ### Community 50 - "Canvas Design System"
 Cohesion: 0.06
 Nodes (35): 1. Visual Communication First, 2. Minimal Text Integration, 3. Expert Craftsmanship, 4. Systematic Patterns, Analog Meditation, Approach, Canvas Boundaries, Canvas Design System (+27 more)
 
 ### Community 51 - "accountingReviewAi.js"
-Cohesion: 0.07
-Nodes (74): advanceRoleFor(), ensureReviewAiSchema(), fail(), inFlight, insurancePremium(), latestReviewProposal(), parseProposal(), premiumOnly() (+66 more)
+Cohesion: 0.11
+Nodes (35): advanceRoleFor(), fail(), inFlight, insurancePremium(), parseProposal(), premiumOnly(), proposalMatchesPlan(), proposeReview() (+27 more)
 
 ### Community 52 - "understandingPlan.js"
-Cohesion: 0.06
-Nodes (53): COMPANY_TITLES, detectPartnerFundedSpend(), detectPartnerPaidDebt(), isNumberish(), PERSON_TITLES, PERSONAL_DESTINATION, PERSONAL_SOURCE, readPerson() (+45 more)
+Cohesion: 0.08
+Nodes (38): ACCOUNTANT_KINDS, AFTER_SERVICE, amountScope(), AND_NOT_BOUNDARY, bankName(), buildUnderstandingPlan(), CATEGORY_TYPES, categoryFits() (+30 more)
 
 ### Community 53 - "parsianAccessFile.js"
 Cohesion: 0.12
 Nodes (28): args, buildParsianTransfer(), decodeRow(), documentRows(), encodeRow(), INDEX_CAPACITY, isAccessDatabase(), markPageUsed() (+20 more)
 
 ### Community 54 - "ورود سند و تطبیق"
-Cohesion: 0.11
-Nodes (14): CSV و تطبیق بانک, اصل ایمنی, توضیح صوتی, جریان رسید, سنجهٔ پایلوت, قواعد تکرارشونده, ورود سند و تطبیق, حافظهٔ مالی و هشدار قابل اقدام (+6 more)
+Cohesion: 0.29
+Nodes (7): CSV و تطبیق بانک, اصل ایمنی, توضیح صوتی, جریان رسید, سنجهٔ پایلوت, قواعد تکرارشونده, ورود سند و تطبیق
 
 ### Community 55 - "spacing"
 Cohesion: 0.06
@@ -798,8 +808,8 @@ Cohesion: 0.06
 Nodes (30): 10. Button & Interactive Feedback (Emil), 13. Origin-Aware Animations (Emil), 14. Scroll-Driven Animations (Jhey), 1. Enter & Exit Animations, 4. Optical Alignment, 5. Icon & State Animations (Jakub), 6. Shared Layout Animations (Jakub), 7. CSS Custom Properties & @property (Jhey) (+22 more)
 
 ### Community 64 - "README.md"
-Cohesion: 0.09
-Nodes (17): قواعد اجراشده, مهاجرت داده, کنترل کیفیت, یکپارچگی مالی — مرحلهٔ ۲, امنیت Production و پایداری داده, زیرفاز ۴.۳ — اعتبارسنجی و پاک‌سازی باینری رسید, متغیرهای Railway, محدودهٔ فاز ۴ (+9 more)
+Cohesion: 0.12
+Nodes (10): قواعد اجراشده, مهاجرت داده, کنترل کیفیت, یکپارچگی مالی — مرحلهٔ ۲, بازیابی اضطراری, تنظیم Railway, روش پیشنهادی ماهانه, سیاست داده (+2 more)
 
 ### Community 65 - "Layout"
 Cohesion: 0.06
@@ -822,12 +832,12 @@ Cohesion: 0.07
 Nodes (29): API Key Security, API Security Reference, Authentication, Authorization, Batching Attack Prevention, Content-Type Validation, CORS Configuration, Disable Introspection in Production (+21 more)
 
 ### Community 70 - "aiLessons.js"
-Cohesion: 0.13
-Nodes (27): aiLessonThreshold(), CATEGORY_ROLES, componentFromLines(), currentAccounts(), currentLearnings(), decideAiLesson(), exportAiLessons(), GENERIC_CATEGORIES (+19 more)
+Cohesion: 0.14
+Nodes (25): topicLabelKey(), CATEGORY_ROLES, componentFromLines(), currentAccounts(), currentLearnings(), decideAiLesson(), GENERIC_CATEGORIES, GENERIC_WORDS (+17 more)
 
 ### Community 71 - "categoryRules.js"
-Cohesion: 0.07
-Nodes (37): REVIEW_ACCOUNT_TYPES, bindReviewProposal(), identityRoles, sources, ACCOUNTANT_PERSON, ATTRIBUTIVE_HEADS, attributiveFirstWord(), BEFORE_HEAD (+29 more)
+Cohesion: 0.08
+Nodes (29): reviewedTimingCategory(), serviceCategoryFrom(), timingCategoryQuestion(), ACCOUNTANT_PERSON, ATTRIBUTIVE_HEADS, attributiveFirstWord(), BEFORE_HEAD, BILL_NOUNS (+21 more)
 
 ### Community 72 - "html-token-validator.py"
 Cohesion: 0.12
@@ -841,13 +851,13 @@ Nodes (29): Authentication Bypass on Error, Cleanup on Error, Dangerous Patterns
 Cohesion: 0.07
 Nodes (28): Accordion, Alert, ARIA Labels, Checkbox and Radio, Color Contrast, Command Palette Navigation, Component-Specific Patterns, Dialog/Modal Navigation (+20 more)
 
-### Community 75 - "receipts.js"
-Cohesion: 0.10
-Nodes (39): closeDay(), listDailyClosings(), previewDayClosing(), answerCollaborationRequest(), collaborationEntityExists(), createCollaborationRequest(), hydrateCollaborationRequest(), listCollaborationRequests() (+31 more)
+### Community 75 - "ledgerImport.js"
+Cohesion: 0.13
+Nodes (24): ANALYTIC_KINDS, ANALYTIC_ALIASES, analyticsByCanonicalName(), cleanText(), digitMap, headerKey(), importAnalyticRows(), importError() (+16 more)
 
-### Community 76 - "AccountingPage.jsx"
+### Community 76 - "reviewAccountPreparation.js"
 Cohesion: 0.14
-Nodes (18): AccountingPage, ACCOUNTING_SECTIONS, AccountingPage(), APPROVAL_STYLE, currentPersianPeriod(), EMPTY_GRID_ROW, JournalWorklistPanel(), ApprovalRequestsPanel() (+10 more)
+Nodes (21): suggestChartAccount(), LEDGER_DEPENDENT_ROLES, namedRoles, normalize(), prepareReviewAccount(), REVIEW_ACCOUNT_TYPES, reviewNormalSide(), typed() (+13 more)
 
 ### Community 77 - "JavaScript/TypeScript Security Patterns"
 Cohesion: 0.06
@@ -870,20 +880,20 @@ Cohesion: 0.07
 Nodes (28): Accessibility, Animation Triggers, Availability, Choosing Animation Style, Common Patterns, Composing Shared Elements with List Identity, Core Concepts, Critical Placement Rule (+20 more)
 
 ### Community 82 - "understanding-eval.mjs"
-Cohesion: 0.06
-Nodes (36): args, evaluateLegacy(), evaluateNew(), fetcher(), fixture, freshLedger(), judge(), key() (+28 more)
+Cohesion: 0.10
+Nodes (23): args, evaluateLegacy(), evaluateNew(), fetcher(), fixture, freshLedger(), judge(), key() (+15 more)
 
 ### Community 83 - "invoices.js"
-Cohesion: 0.23
-Nodes (18): createInvoice(), deleteInvoice(), ensureInvoiceServiceColumns(), explicitServicePeriod(), GENERIC_CATEGORY, getInvoice(), invoiceRows(), invoiceServiceGate() (+10 more)
+Cohesion: 0.10
+Nodes (51): contactIdForName(), deleteContact(), adjustStock(), inventoryOverview(), listProducts(), saveProduct(), createInvoice(), deleteInvoice() (+43 more)
 
 ### Community 84 - "engine5-p6-review.test.js"
 Cohesion: 0.10
 Nodes (20): aiOptions(), answerThroughToday(), capture(), captureOf(), close(), deterministicPreview(), fixedModel(), freshWorkspace() (+12 more)
 
-### Community 85 - "shadow"
-Cohesion: 0.18
-Nodes (15): lg, sm, $type, $value, $type, $value, shadow, lg (+7 more)
+### Community 85 - "lg"
+Cohesion: 0.60
+Nodes (5): lg, $type, $value, lg, lg
 
 ### Community 86 - "Authorization Security Reference"
 Cohesion: 0.07
@@ -894,12 +904,12 @@ Cohesion: 0.07
 Nodes (26): Angular, Content Security Policy (CSP), Cross-Site Scripting (XSS) Prevention Reference, CSS Context, Dangerous Sources, Django/Jinja2, DOM-based XSS Prevention, Framework-Specific Considerations (+18 more)
 
 ### Community 88 - "normalizeFinancialEvent"
-Cohesion: 0.06
-Nodes (43): answerError(), QUESTION_TEXTS, clamp(), COMPONENT_WEIGHTS, componentScore(), CONFIDENCE_COMPONENT_LABELS, CONFIDENCE_COMPONENTS, CONFIDENCE_THRESHOLDS (+35 more)
+Cohesion: 0.04
+Nodes (72): answerError(), checkConfirmationAnswer(), confirmationAsk(), confirmationHint(), QUESTION_TEXTS, answerPending(), pendingConfirmations(), openingEvent() (+64 more)
 
 ### Community 89 - "review-trade-settlement.test.js"
-Cohesion: 0.31
-Nodes (6): database(), event(), owner, prepared(), row(), seed()
+Cohesion: 0.13
+Nodes (18): businessFact(), contentWords(), FILLER, isHeadingChoiceQuestion(), isReviewAccountSetupQuestion(), legacyId(), normalize(), restates() (+10 more)
 
 ### Community 90 - "Cryptographic Security Reference"
 Cohesion: 0.07
@@ -922,20 +932,20 @@ Cohesion: 0.08
 Nodes (25): Accessibility Patterns, Alternative: Tailwind-Only Setup, Best Practices, Common Patterns, Component Layer: shadcn/ui, Component Library Guide, Component + Styling Setup, Core Stack (+17 more)
 
 ### Community 95 - "counterparties.js"
-Cohesion: 0.14
-Nodes (28): addCanonicalColumn(), analyticCode(), columnExists(), contactAnalytic(), counterpartySimilarError(), ensureCounterpartyIdentitySchema(), matchCounterparty(), mergeCounterparties() (+20 more)
+Cohesion: 0.19
+Nodes (22): addCanonicalColumn(), analyticCode(), columnExists(), contactAnalytic(), counterpartySimilarError(), ensureCounterpartyIdentitySchema(), matchCounterparty(), mergeCounterparties() (+14 more)
 
-### Community 96 - "accounts.js"
-Cohesion: 0.13
-Nodes (31): moneyAccountCard(), moneyLedgerAccounts(), movement(), listAccounts(), saveAccount(), transferBetweenAccounts(), forgetAiLesson(), cleanAmount() (+23 more)
+### Community 96 - "invalidInput"
+Cohesion: 0.16
+Nodes (38): moneyAccountCard(), moneyLedgerAccounts(), movement(), accountForBank(), listAccounts(), resolveAccountId(), saveAccount(), transferBetweenAccounts() (+30 more)
 
-### Community 97 - "unidentifiedReceipts.js"
-Cohesion: 0.26
-Nodes (15): analyticForContact(), listUnidentifiedReceipts(), markTransactionAccountingRole(), postEventJournal(), resolveEventAnalytic(), assertHoldHasNoResolutions(), ensureUnidentifiedSchema(), fa() (+7 more)
+### Community 97 - "currentTimeZone"
+Cohesion: 0.10
+Nodes (47): aiLessonThreshold(), ensureAiLessonSchema(), exportAiLessons(), forgetAiLesson(), listAiLessons(), saveAiLessonThreshold(), currentTimeZone(), answerEvent() (+39 more)
 
 ### Community 98 - "radius"
-Cohesion: 0.15
-Nodes (16): $type, $value, xl, $type, $value, $type, $value, radius (+8 more)
+Cohesion: 0.09
+Nodes (28): $type, $value, fast, normal, slow, $type, $value, $type (+20 more)
 
 ### Community 99 - "States and Variants"
 Cohesion: 0.08
@@ -954,28 +964,28 @@ Cohesion: 0.08
 Nodes (25): Alert Configuration, Attack Vector, Audit Trail Requirements, Dangerous Patterns, Events That Must Be Logged, Grep Patterns for Detection, Immutable Audit Logs, Insecure Patterns (+17 more)
 
 ### Community 103 - "BM25"
-Cohesion: 0.11
-Nodes (9): BM25, BM25 ranking algorithm for text search, Lowercase, normalize synonyms, split, remove punctuation, filter stopwords, Build BM25 index from documents, Score all documents against query, All indexed terms, for suggestion/typo-recovery purposes., TestBm25CoreBehavior, TestDiagnosticsContracts (+1 more)
+Cohesion: 0.09
+Nodes (11): BM25, detect_domain(), BM25 ranking algorithm for text search, Lowercase, normalize synonyms, split, remove punctuation, filter stopwords, Build BM25 index from documents, Score all documents against query, All indexed terms, for suggestion/typo-recovery purposes., Auto-detect the most relevant domain from query. Matches are weighted by… (+3 more)
 
-### Community 104 - "db/payroll.js"
-Cohesion: 0.23
-Nodes (20): employeeAnalytic(), database(), getPayrollRun(), hydrate(), importPayrollFile(), LIABILITY_KINDS, listPayrollRuns(), payPayrollLiability() (+12 more)
+### Community 104 - "audit"
+Cohesion: 0.11
+Nodes (46): employeeAnalytic(), updateAccountingTransferBatchStatus(), audit(), currentWorkspace(), submitFinancialEvent(), database(), getPayrollRun(), hydrate() (+38 more)
 
 ### Community 105 - "db/accountingTransfer.js"
-Cohesion: 0.19
-Nodes (25): ensureTransferEntriesSchema(), recordTransferBatchEntries(), normalizeAccountingTransferTarget(), normalizeTransferFileFormat(), accountingTransferBatchFile(), accountingTransferJournalRows(), accountingTransferMappings(), accountingTransferOverview() (+17 more)
+Cohesion: 0.16
+Nodes (38): ensureTransferEntriesSchema(), recordTransferBatchEntries(), ACCOUNTING_TRANSFER_TARGETS, normalizeAccountingTransferTarget(), normalizeTransferFileFormat(), accountingTransferBatchFile(), accountingTransferJournalRows(), accountingTransferMappings() (+30 more)
 
 ### Community 106 - "CollaborationPage.jsx"
 Cohesion: 0.23
 Nodes (12): CollaborationPage, COLLABORATION_TABS, CollaborationPage(), DeliverySpine(), persianPeriodToken(), recentPersianPeriods(), TransferSetupSection(), blockingOf() (+4 more)
 
 ### Community 107 - "LedgerPage.jsx"
-Cohesion: 0.08
-Nodes (31): FINANCIAL_SPEECH_PHRASES, LedgerPage, BankVoicePanel(), escapeHtml(), FinancialAnswerCard(), InventoryPanel(), InvoicesPanel(), isoToDateInput() (+23 more)
+Cohesion: 0.07
+Nodes (36): FINANCIAL_SPEECH_PHRASES, LedgerPage, CounterpartyMatchSheet(), BankVoicePanel(), escapeHtml(), FinancialAnswerCard(), InventoryPanel(), InvoicesPanel() (+28 more)
 
 ### Community 108 - "engine5-p2-period-review.test.js"
-Cohesion: 0.12
-Nodes (21): aiOptions, answer(), asks(), captured(), db(), fa(), lastScheduleKeys(), modelSaid() (+13 more)
+Cohesion: 0.05
+Nodes (44): readServicePeriod(), extractOccurrenceDate(), maskCoveragePhrases(), normalizeSpokenYears(), amounts(), fa(), NOW, parse() (+36 more)
 
 ### Community 109 - "engine5-p7-documents.test.js"
 Cohesion: 0.09
@@ -1002,8 +1012,8 @@ Cohesion: 0.09
 Nodes (34): generate(), listModels(), modelId(), modelUnavailable(), parseAudioWithGemini(), pickGeminiAudioModel(), providerFailure(), providerMessage() (+26 more)
 
 ### Community 115 - "gray"
-Cohesion: 0.08
-Nodes (27): $type, $value, $type, $value, $type, $value, $type, $value (+19 more)
+Cohesion: 0.11
+Nodes (19): $type, $value, $type, $value, $type, $value, $type, $value (+11 more)
 
 ### Community 116 - "Cross-Site Request Forgery (CSRF) Prevention Reference"
 Cohesion: 0.09
@@ -1026,68 +1036,68 @@ Cohesion: 0.08
 Nodes (24): آنچه از خود پارسیان خوانده شد (۱۴۰۵/۰۶/۰۶ — 2026-08-28), آنچه هنوز از این مسیر به دست نیامد, آنچه هنوز انجام نشده, اکسل بدون وابستگی تازه, تصمیم, خروجی, خواندن بکاپ — `server/parsianBackup.js`, دسترسی (+16 more)
 
 ### Community 121 - "server/accountingTransfer.js"
-Cohesion: 0.18
-Nodes (21): ACCOUNTING_TRANSFER_TARGETS, accountingTransferReadiness(), accountingTransferTarget(), buildAccountingTransferCsv(), buildAccountingTransferFile(), buildParsianMultipartPackage(), csvCell(), parsianDocumentsFromJournal() (+13 more)
+Cohesion: 0.20
+Nodes (19): accountingTransferReadiness(), accountingTransferTarget(), buildAccountingTransferCsv(), buildAccountingTransferFile(), buildParsianMultipartPackage(), csvCell(), parsianDocumentsFromJournal(), persianDateToken() (+11 more)
 
-### Community 122 - "db/tax.js"
+### Community 122 - "server/reconciliation.js"
+Cohesion: 0.07
+Nodes (62): citableTaxVersions(), aliases, BANK_CSV_FORMATS, candidateTransactions(), cleanHeader(), closeReconciliation(), columnMap(), detectFormat() (+54 more)
+
+### Community 123 - "engine5-p3-decision.test.js"
 Cohesion: 0.14
-Nodes (27): citableTaxVersions(), listTaxAssistantQuestions(), listTaxKnowledgeSources(), listTaxRates(), saveTaxDocumentRelation(), assertOfficialUrl(), CITABLE_CLASSES, citableVersionsAt() (+19 more)
-
-### Community 123 - "economicFamily.js"
-Cohesion: 0.08
-Nodes (40): awaitsSupplierGoods(), delivered(), deliveredThing(), deliveryLater(), direction(), FAMILY_RULES, FAMILY_VALUES, foldText() (+32 more)
+Nodes (11): aiOptions(), assertSupplierAdvance(), CONTRACT_PAID, CONTRACT_RECEIVED, modelFetcher(), MULTI_WITH_CONTRACT_PART, none, owner (+3 more)
 
 ### Community 124 - "eventUnderstandingAi.js"
-Cohesion: 0.29
-Nodes (11): callModel(), contractFingerprint(), ensureUnderstandingCacheSchema(), fail(), inFlight, requestBody(), UNDERSTANDING_INSTRUCTIONS, understandingCacheKey() (+3 more)
+Cohesion: 0.20
+Nodes (15): callModel(), contractFingerprint(), ensureUnderstandingCacheSchema(), fail(), inFlight, requestBody(), UNDERSTANDING_INSTRUCTIONS, understandingCacheKey() (+7 more)
 
 ### Community 125 - "imageIntake.js"
 Cohesion: 0.17
 Nodes (20): acceptReceiptImage(), assertDimensions(), detectImageType(), intakeError(), JPEG_FRAME, JPEG_STANDALONE, JPEG_STRIPPED, PNG_STRIPPED (+12 more)
 
-### Community 126 - "cheques.js"
-Cohesion: 0.27
-Nodes (17): attachReviewedCheque(), bounceCheque(), cancelCheque(), CHEQUE_STATUSES, chequeAnalytic(), chequeEvent(), chequeSummary(), clearCheque() (+9 more)
+### Community 126 - "financialEvents.js"
+Cohesion: 0.14
+Nodes (41): ensureReviewAiSchema(), latestReviewProposal(), proposalIsCurrent(), recordReviewFeedback(), recordAccountantLesson(), attachReviewedCheque(), assertEventChangeAllowed(), conflict() (+33 more)
 
-### Community 127 - "settleSpeech.js"
-Cohesion: 0.10
-Nodes (30): runsPastMonth(), amountSpans(), clauseOf(), CONTRACT_AT, contractFollows(), contractPartCues(), contractPrecedes(), LATER_INSTALMENT (+22 more)
+### Community 127 - "partner-paid-debt.test.js"
+Cohesion: 0.07
+Nodes (35): runsPastMonth(), BOUNCE_PATTERNS, CHEQUE_HINTS, detectSettleIntent(), DOCUMENT_SETTLE_PATTERNS, EXPLICIT_SETTLE_PATTERNS, extractDocumentNumber(), extractName() (+27 more)
 
 ### Community 128 - "theme.js"
 Cohesion: 0.16
 Nodes (14): ICONS, ThemeChoice(), ThemeToggle(), ErrorBoundary, applyTheme(), media(), resolvedTheme(), setTheme() (+6 more)
 
-### Community 129 - "primitive"
-Cohesion: 0.18
-Nodes (19): $type, $value, $type, $value, 500, 600, blue, green (+11 more)
+### Community 129 - "color"
+Cohesion: 0.21
+Nodes (14): $type, $value, 500, green, red, white, yellow, 500 (+6 more)
 
 ### Community 130 - "Motion Design Skill"
 Cohesion: 0.10
 Nodes (21): Button Press (Playful), Card Entrance (Premium), Choreography Essentials, Common Patterns, CRITICAL — never break, Duration Table, Easing Selection, Emotion-to-Motion Map (+13 more)
 
 ### Community 131 - "db/backup.js"
-Cohesion: 0.16
+Cohesion: 0.18
 Nodes (29): AAD, automaticBackupConfigured(), automaticBackupStatus(), backupDirectory(), backupError(), backupSummary(), binaryReplacer(), binaryReviver() (+21 more)
 
 ### Community 132 - "shadow-mode.test.js"
-Cohesion: 0.18
-Nodes (10): compareProposalWithActual(), DIFFERENCE_SEVERITY, PROFIT_ROLES, rolesOf(), totalOf(), touchesProfit(), databasePath, db() (+2 more)
+Cohesion: 0.29
+Nodes (4): databasePath, db(), ledgerSnapshot(), owner
 
-### Community 133 - "todayPersian"
-Cohesion: 0.10
-Nodes (43): nearestJalali(), dayKey(), jalaliIso(), relativeIso(), resolveDate(), readServiceLength(), dayOfPersianYear(), persianPeriodEnd() (+35 more)
+### Community 133 - "index.js"
+Cohesion: 0.14
+Nodes (21): activeWorkspaces(), adminState, app, backupTimer, dist, lastTopicSweep, port, recurringTimer (+13 more)
 
 ### Community 134 - "api.js"
-Cohesion: 0.13
-Nodes (36): clearOfflineSession(), currentCsrfToken(), currentOfflineScope(), currentWorkspaceId(), flushTransactionQueue(), protectedHeaders(), queueKey(), queueTransactions() (+28 more)
+Cohesion: 0.11
+Nodes (43): capitalEntryPayload(), invoiceDraftPayload(), accessFromPayload(), App(), useOnlineStatus(), clearOfflineSession(), currentCsrfToken(), currentOfflineScope() (+35 more)
 
-### Community 135 - "server/inventory.js"
-Cohesion: 0.20
-Nodes (18): approvalModeSource(), approvalRequiredError(), approvalSource(), currentApproval(), money(), OVERDRAFT_APPROVER_ROLES, overdraftError(), setApprovalSource() (+10 more)
+### Community 135 - "workspaces.js"
+Cohesion: 0.24
+Nodes (22): quotaError(), changePassword(), addWorkspaceMember(), archiveWorkspace(), assertWorkspaceRole(), createWorkspace(), listArchivedWorkspaces(), listUserWorkspaces() (+14 more)
 
-### Community 136 - "engine5-p2-period.test.js"
+### Community 136 - "scenarios-100-ai.test.js"
 Cohesion: 0.13
-Nodes (15): aiOptions, answer(), captured(), db(), fa(), none, outputs, owner (+7 more)
+Nodes (13): answer(), clone(), databasePath, env, fetcher(), fixture, NOW, oracle() (+5 more)
 
 ### Community 137 - "Accessibility"
 Cohesion: 0.10
@@ -1098,8 +1108,8 @@ Cohesion: 0.15
 Nodes (19): _e(), generate_chart_slide(), generate_cta_slide(), generate_deck(), generate_metrics_slide(), generate_problem_slide(), generate_solution_slide(), generate_testimonial_slide() (+11 more)
 
 ### Community 139 - "fontSize"
-Cohesion: 0.12
-Nodes (16): $type, $value, $type, $value, $type, $value, $type, $value (+8 more)
+Cohesion: 0.10
+Nodes (21): $type, $value, $type, $value, $type, $value, $type, $value (+13 more)
 
 ### Community 140 - "Modern Threats Reference"
 Cohesion: 0.08
@@ -1122,8 +1132,8 @@ Cohesion: 0.10
 Nodes (20): آزمون‌ها, فهم رویداد مالی با AI — طراحی و وضعیت, مجموعه‌های آزمون, مدل واقعی روی سایت — ۱۷ مهر ۱۴۰۵, مسیر تازه با فهمِ درست (`--provider=oracle`، بیان رسمی ۱۰ رویداد), مسیر فعلی روی ۶۰ گفته (`--provider=legacy`), ۱. مسیر امروز (پیش از این شاخه), ۱۰. راهنمای فعال‌سازی (+12 more)
 
 ### Community 145 - "parsianImport.js"
-Cohesion: 0.14
-Nodes (27): balanced, buffer, parsed, plan, skipped, ensureParsianSourceSchema(), parseParsianBackup(), AMOUNT_UNITS (+19 more)
+Cohesion: 0.20
+Nodes (21): ensureParsianSourceSchema(), AMOUNT_UNITS, buildParsianImportPlan(), commitParsianBackup(), DESIGNATED_ROLES, ensureImportLog(), internalMoeenCode(), JALALI_TO_ISO() (+13 more)
 
 ### Community 146 - "event-understanding.test.js"
 Cohesion: 0.10
@@ -1135,7 +1145,7 @@ Nodes (17): generate_css_for_background(), get_background_image(), get_curated_i
 
 ### Community 148 - "color"
 Cohesion: 0.11
-Nodes (19): $type, $value, background, destructive, foreground, muted-foreground, primary-hover, secondary (+11 more)
+Nodes (19): $type, $value, background, foreground, muted-foreground, primary, primary-hover, secondary (+11 more)
 
 ### Community 149 - "Injection Prevention Reference"
 Cohesion: 0.10
@@ -1146,8 +1156,8 @@ Cohesion: 0.11
 Nodes (18): Trace مسیر صدا (وضعیت پیش از این مرحله), آنچه عمداً هنوز انجام نشده, آنچه هنوز legacy است, اطمینان مؤلفه‌محور, تاریخچه, تطبیق بانکی, جریان تازه, زبان تأیید (+10 more)
 
 ### Community 151 - "counterparty-choice.test.js"
-Cohesion: 0.29
-Nodes (5): databasePath, db(), owner, postedLines(), workspace
+Cohesion: 0.13
+Nodes (11): settlementDirection(), settlementPreview(), databasePath, owner, workspace, databasePath, db(), owner (+3 more)
 
 ### Community 152 - "vat-refund-claim.test.js"
 Cohesion: 0.27
@@ -1178,16 +1188,16 @@ Cohesion: 0.11
 Nodes (18): Backdrop-Blur Workaround, CSS Animation Recipes, Directional Navigation, Fade, Floating Element Isolation (popovers, menus, tooltips, control clusters), Interactivity During Transitions, No Root Cross-Fade (Live Root), Persistent Element Isolation (+10 more)
 
 ### Community 159 - "فاکتور و حساب‌های دریافتنی/پرداختنی — مرحلهٔ ۷"
-Cohesion: 0.11
-Nodes (18): تسویهٔ سندهای موجود با صدا — ۱۴۰۵/۰۶/۲۱, ثبت صوتی طلب و بدهی, ثبت‌های دوطرفه, دامنه و محدودیت, ردیف کالا از گفتار, شخص خودش ساخته می‌شود, شمارهٔ سند به‌عنوان مبلغ, صدور (+10 more)
+Cohesion: 0.07
+Nodes (25): آزمون‌های رگرسیون, انبار دائمی و بهای تمام‌شده — مرحلهٔ ۹, ثبت‌های دوطرفه, رابط کاربری, روش ارزش‌گذاری, محدودیت‌های صریح, کنترل‌های داده و امنیت, تسویهٔ سندهای موجود با صدا — ۱۴۰۵/۰۶/۲۱ (+17 more)
 
 ### Community 160 - "فاز ۶: همکاری حسابدار، پایلوت و عملیات"
 Cohesion: 0.11
 Nodes (18): provider صدا یا OCR خراب شد, آزمون بازیابی, بستهٔ پایان ماه, دورهٔ سهمیه و هشدار پیش از سقف, دیتابیس سالم نیست, سهمیه یا بودجه تمام شد, صندوق درخواست توضیح, فاز ۶: همکاری حسابدار، پایلوت و عملیات (+10 more)
 
 ### Community 161 - "transferTemplates.js"
-Cohesion: 0.24
-Nodes (12): AMOUNT_UNITS, amountFor(), amountUnitLabel(), applyTransferTemplate(), FIELD_BY_ID, normalizeAmountUnit(), parsianHCode(), TRANSFER_FIELDS (+4 more)
+Cohesion: 0.19
+Nodes (15): AMOUNT_UNITS, amountFor(), amountUnitLabel(), applyTransferTemplate(), DEFAULT_TRANSFER_COLUMNS, FIELD_BY_ID, normalizeAmountUnit(), normalizeTransferColumns() (+7 more)
 
 ### Community 162 - "Jakub Krehel's Animation Principles"
 Cohesion: 0.29
@@ -1233,13 +1243,13 @@ Nodes (16): آنچه امروز درست است و نباید دست بخورد,
 Cohesion: 0.12
 Nodes (14): base, claimAmount, createdRows, describe(), event, fa(), income, ledger (+6 more)
 
-### Community 173 - "counterpartySpeech.js"
-Cohesion: 0.10
-Nodes (20): bareContactName(), CONTACT_STOP_WORDS, COUNTERPARTY_ROLE_NOUNS, counterpartyMoneyDirection(), CURRENCY_WORDS, DIRECTION_WORDS, extractContactCandidate(), extractContactName() (+12 more)
+### Community 173 - "engine5-p1-parser.test.js"
+Cohesion: 0.06
+Nodes (41): bareContactName(), CONTACT_STOP_WORDS, COUNTERPARTY_ROLE_NOUNS, counterpartyMoneyDirection(), CURRENCY_WORDS, DIRECTION_WORDS, extractContactCandidate(), extractContactName() (+33 more)
 
-### Community 174 - "depreciationLedger.js"
-Cohesion: 0.29
-Nodes (14): postedDepreciationMonths(), currentPersianMonthKey(), fixedAssetOverview(), ensureDepreciationSchema(), ledgerError(), listFixedAssets(), runDepreciation(), saveFixedAssetSettings() (+6 more)
+### Community 174 - "activeWorkspaceDatabase"
+Cohesion: 0.11
+Nodes (46): accountingPeriods(), listLedgerAccounts(), lockAccountingPeriod(), postedDepreciationMonths(), reopenAccountingPeriod(), trialBalance(), ensureOverdraftSchema(), approvalModeFor() (+38 more)
 
 ### Community 175 - "ai-lessons.test.js"
 Cohesion: 0.15
@@ -1249,9 +1259,9 @@ Nodes (11): amt(), CASH, fetcherFor(), model(), mv(), NOBODY, none, owner (+3 mo
 Cohesion: 0.15
 Nodes (12): amt(), ANSWERS, CASH, fetcherFor(), model(), mv(), NOBODY, none (+4 more)
 
-### Community 177 - "vatSpeech.js"
-Cohesion: 0.18
-Nodes (11): EXCLUSIVE, EXCLUSIVE_AFTER, INCLUSIVE, PRICE_QUALIFIERS, RATE, RATE_WORDS, readVatMention(), statedRate() (+3 more)
+### Community 177 - "reviewAssistant.js"
+Cohesion: 0.17
+Nodes (16): cashCounterparts, fail(), outgoingCashRoles, partyRoles, roleNames, saveReviewFacts(), settleBackRoles, sources (+8 more)
 
 ### Community 178 - "Component Specifications"
 Cohesion: 0.07
@@ -1273,25 +1283,25 @@ Nodes (15): Common Rationalizations, Overview, Phase 1: Root Cause Investigation
 Cohesion: 0.12
 Nodes (16): 5.10 Subscribe to Derived State, 5.11 Use Functional setState Updates, 5.12 Use Lazy State Initialization, 5.13 Use Transitions for Non-Urgent Updates, 5.14 Use useDeferredValue for Expensive Derived Renders, 5.15 Use useRef for Transient Values, 5.1 Calculate Derived State During Rendering, 5.2 Defer State Reads to Usage Point (+8 more)
 
-### Community 184 - "دقت عددی گفتار — اصلاحات ۱۴۰۵/۰۶/۱۴"
-Cohesion: 0.07
-Nodes (29): تاریخ رو به آینده, تایپ زنده هرگز وصل نمی‌شد — اصلاحات ۱۴۰۵/۰۶/۱۵, تقویت واژه‌های مالی و شکست بی‌صدایش, دسته‌بندی هزینه — اصلاحات ۱۴۰۵/۰۶/۱۵, دقت عددی گفتار — اصلاحات ۱۴۰۵/۰۶/۱۴, ساختار تازه, سقف ضبط, سنجش عملیاتی (+21 more)
+### Community 184 - "معماری ثبت صوتی سریع و امن"
+Cohesion: 0.12
+Nodes (16): تاریخ رو به آینده, تایپ زنده هرگز وصل نمی‌شد — اصلاحات ۱۴۰۵/۰۶/۱۵, تقویت واژه‌های مالی و شکست بی‌صدایش, دسته‌بندی هزینه — اصلاحات ۱۴۰۵/۰۶/۱۵, ساختار تازه, سقف ضبط, سنجش عملیاتی, علت ساختاری (+8 more)
 
 ### Community 185 - "vat-settlement.test.js"
-Cohesion: 0.15
-Nodes (6): databasePath, dist, root, databasePath, owner, workspace
+Cohesion: 0.29
+Nodes (3): databasePath, owner, workspace
 
-### Community 186 - "taxAssistant.js"
-Cohesion: 0.36
-Nodes (13): askTaxAssistant(), fail(), json(), listTaxAssistantQuestions(), listTaxKnowledgeSources(), matchingSources(), questionRow(), resolveTaxAssistantQuestion() (+5 more)
+### Community 186 - "TimingContractsPanel.jsx"
+Cohesion: 0.18
+Nodes (15): coverageDate(), dayFormat, MONTHS, periodKeyLabel(), RecognitionNote(), ContractList(), ContractRow(), ITEM_LABELS (+7 more)
 
 ### Community 187 - "server/firm.js"
 Cohesion: 0.24
 Nodes (12): buildFirmPortfolio(), FIRM_BLOCKER_RULES, FIRM_LEVEL_LABELS, FIRM_STALE_AFTER_DAYS, FIRM_WARNING_RULES, firmClientStatus(), firmPortfolioSummary(), idleDays() (+4 more)
 
-### Community 188 - "dna-forward-traits.test.js"
-Cohesion: 0.60
-Nodes (3): at(), busyRows(), monthRows()
+### Community 188 - "blue"
+Cohesion: 0.18
+Nodes (15): $type, $value, $type, $value, $type, $value, 50, 600 (+7 more)
 
 ### Community 189 - "unidentified-receipts.test.js"
 Cohesion: 0.25
@@ -1317,13 +1327,13 @@ Nodes (14): 10. Exaggeration, 11. Solid Drawing, 12. Appeal, 1. Squash and Stret
 Cohesion: 0.12
 Nodes (9): Test adding components in dry run mode., Test ShadcnInstaller class., Test adding all components without config., Test adding all components in dry run mode., Test listing installed components without config., Test listing installed components when none exist., Test initialization with custom project root., Test checking for non-existent shadcn config. (+1 more)
 
-### Community 195 - "detect_domain"
-Cohesion: 0.23
-Nodes (3): detect_domain(), Auto-detect the most relevant domain from query. Matches are weighted by…, TestDomainDetection
+### Community 195 - "دقت عددی گفتار — اصلاحات ۱۴۰۵/۰۶/۱۴"
+Cohesion: 0.15
+Nodes (13): دقت عددی گفتار — اصلاحات ۱۴۰۵/۰۶/۱۴, ۱. واژه‌های محاوره‌ای گم‌شده (بحرانی), ۱۰. جهت پول را فعل تعیین می‌کند، نه اسمِ کنارش, ۱۱. شناسه دیگر مبلغ شمرده نمی‌شود, ۱۲. یک ضبط پردازش‌نشدنی، کل صف آفلاین را قفل می‌کرد, ۲. مقیاس بدون عدد، دیگر مبلغ مطمئن نیست, ۳. عدد چسبیده به مقیاس, ۴. تاریخ گفته‌شده نادیده گرفته می‌شد (+5 more)
 
-### Community 196 - ".generate"
-Cohesion: 0.16
-Nodes (8): _filter_anti_patterns_for_mode(), Drop "avoid dark mode" advice once dark mode is the resolved answer., Execute searches across multiple domains., Extract results list from search result dict., Generate complete design system recommendation. variance/motion/density are…, Bucket a 1-10 dial value into its tier config. Returns None if value is None., _resolve_dial(), TestAntiPatternGating
+### Community 196 - "validateUnderstanding"
+Cohesion: 0.23
+Nodes (13): cleanLabel(), compute(), evidenceKey(), found(), foundLoosely(), persianMonthEnd(), pick(), readEvidenceAmounts() (+5 more)
 
 ### Community 197 - "7. JavaScript Performance"
 Cohesion: 0.13
@@ -1353,9 +1363,9 @@ Nodes (14): آنچه هر ماژول واقعاً پوشش می‌دهد, ارز
 Cohesion: 0.16
 Nodes (12): aiCalls, answersFile, call(), dbPath, entriesSince(), events(), journalIds(), ledgerDb (+4 more)
 
-### Community 204 - "documentService.js"
-Cohesion: 0.24
-Nodes (9): ADVANCE_POLICIES, ADVANCE_TREATMENTS, CASH_TWIN, DOCUMENT_SERVICE_POLICIES, documentServiceDecision(), ENGINE_POSTED_TREATMENTS, runsPastDocumentMonth(), saysDeposit() (+1 more)
+### Community 204 - "FinancialDnaPanel.jsx"
+Cohesion: 0.22
+Nodes (7): DnaPage, DnaHelix(), DnaIcon(), HERO_RUNGS, MENU_RUNGS, FinancialDnaPanel(), WeekdayBars()
 
 ### Community 205 - "Tailwind Integration"
 Cohesion: 0.14
@@ -1385,9 +1395,9 @@ Nodes (7): byType(), databasePath, db(), journalOf(), owner, recordSpoken(), wor
 Cohesion: 0.15
 Nodes (6): fetcherFor(), live(), NOBODY, none, owner, US
 
-### Community 212 - "vat-guard.test.js"
-Cohesion: 0.16
-Nodes (7): cashEvent(), databasePath, owner, PROFIT_ROLES, purchase(), REGISTERED, sale()
+### Community 212 - "reviewInsurance.js"
+Cohesion: 0.38
+Nodes (9): fa(), INSURANCE_ROLE, insuranceSettlementContext(), insuranceSettlementProposal(), insuranceSettlementValidation(), MONEY_IN_KINDS, openRuns(), question() (+1 more)
 
 ### Community 213 - "Emil Kowalski's Animation Principles"
 Cohesion: 0.15
@@ -1425,17 +1435,17 @@ Nodes (12): اصول غیرقابل‌مذاکره, خارج از محدودهٔ
 Cohesion: 0.09
 Nodes (19): اتصال به منابع رسمی سازمان امور مالیاتی — پیشنهاد طراحی, ۱. سه اتصال متفاوت که یکی نیستند, ۱۰. آنچه این اتصال تضمین نمی‌کند, ۲. اصل حاکم: اتصال، منبع را معتبر نمی‌کند, ۳. گام صفر: کاوش قابلیت منبع, ۴. معماری آداپتور, ۵. چرخهٔ اجرا, ۶. استناد: اینکه «نرم‌افزار به آن استناد کند» یعنی چه (+11 more)
 
-### Community 222 - "../server/db.js?wiring=1"
-Cohesion: 0.05
-Nodes (21): ../server/db.js?wiring=1, seedDemo(), count, owner, apiMethods, apiSource, serverRoutes, serverSource (+13 more)
+### Community 222 - "timing-contracts.test.js"
+Cohesion: 0.17
+Nodes (4): owner, databasePath, owner, workspace
 
 ### Community 223 - "جدول‌های تصمیم فاز ۲ — زمان و تخصیص دوره"
 Cohesion: 0.15
 Nodes (12): آنچه در این فاز ساخته **نمی‌شود**, آنچه نیاز به تأیید تو دارد, تست مشترک: قابل استرداد یا مصرف‌شدنی؟, تمایز نوع رویداد در دوره, جدول‌های تصمیم فاز ۲ — زمان و تخصیص دوره, جهت الف — پرداخت پیش از مصرف, جهت ب — مصرف پیش از پرداخت, جهت ج — دریافت پیش از انجام تعهد (+4 more)
 
-### Community 224 - "journalWorkflow.js"
-Cohesion: 0.32
-Nodes (11): journalWorklist(), APPROVAL_STATES, approvalStateLabel(), assertApprovalTransition(), backfillDocumentNumbers(), nextDocumentNumber(), normalizeApprovalState(), normalizeTemplateLines() (+3 more)
+### Community 224 - "backup-ledger-structure.test.js"
+Cohesion: 0.25
+Nodes (7): count(), databasePath, db(), HEADER, owner, source, target
 
 ### Community 225 - "balance-guard.test.js"
 Cohesion: 0.17
@@ -1491,7 +1501,7 @@ Nodes (11): Applying the Pattern, Defense-in-Depth Validation, Example from Sess
 
 ### Community 238 - "ShadcnInstaller"
 Cohesion: 0.20
-Nodes (7): main(), Handle shadcn/ui component installation., ShadcnInstaller, Tests for shadcn_add.py, Test listing installed components when they exist., Test getting installed components without config., Test adding components with empty list.
+Nodes (7): main(), Handle shadcn/ui component installation., ShadcnInstaller, Tests for shadcn_add.py, Test adding components that are already installed., Test listing installed components when they exist., Test getting installed components without config.
 
 ### Community 239 - ".check_shadcn_config"
 Cohesion: 0.21
@@ -1521,13 +1531,9 @@ Nodes (11): بعد از آزمون, دستورالعمل آزمون صوتی ر�
 Cohesion: 0.06
 Nodes (31): 1. What «رقوم» means in Persian dictionaries, and its other senses, 2. Confusion with near-homographs, especially «زقوم» (the tree of Hell), 3. History: سیاق, divan bookkeeping, and whether «رقوم» carries "accounting heritage", 4. Pronunciation, and how well the fixed Latin spelling "ruqom" fits, 5. Arabic and Turkish (Ottoman) perspective, 6. Modern Persian usage of «رقوم» / «رقومی» in finance, accounting and technical fields, Cited Findings, Cited Findings (+23 more)
 
-### Community 246 - "prepayment-family.test.js"
-Cohesion: 0.22
-Nodes (5): modelSaid, none, options, owner, workspace
-
 ### Community 247 - "topic-label-paths.test.js"
-Cohesion: 0.33
-Nodes (6): answerQueue(), approveQueued(), eventOf(), liveLabels(), owner, sql()
+Cohesion: 0.15
+Nodes (11): apiMethods, apiSource, serverRoutes, serverSource, serverSource(), answerQueue(), approveQueued(), eventOf() (+3 more)
 
 ### Community 248 - "capitalization-threshold.test.js"
 Cohesion: 0.24
@@ -1537,9 +1543,9 @@ Nodes (8): assetProposal(), databasePath, db(), fake(), owner, prepared(), purch
 Cohesion: 0.17
 Nodes (3): MemoryStorage, scopeA, scopeB
 
-### Community 251 - "server/tax.js"
+### Community 251 - "depreciation.js"
 Cohesion: 0.61
-Nodes (7): calculateInvoiceTax(), ensureColumn(), ensureTaxSchema(), listTaxRates(), saveTaxRate(), taxError(), taxReport()
+Nodes (6): assetStatus(), dueDepreciation(), monthsBetween(), nextPersianMonth(), straightLineSchedule(), asset
 
 ### Community 252 - "recognition-run.test.js"
 Cohesion: 0.32
@@ -1565,9 +1571,9 @@ Nodes (10): Infer First, Ask Second, Propose Context + Weighting, Required Readi
 Cohesion: 0.18
 Nodes (8): args, fs, minimal, MINIMAL_TOKENS, path, projectRoot, tokensPath, wrapStyle
 
-### Community 258 - "duration"
-Cohesion: 0.20
-Nodes (10): fast, normal, slow, $type, $value, $type, $value, duration (+2 more)
+### Community 258 - "purchasePurpose.js"
+Cohesion: 0.50
+Nodes (7): category(), GOODS_CATEGORIES, isRoutineExpense(), needsJudgment(), needsPurchasePurpose(), ROUTINE_EXPENSE_CATEGORIES, text()
 
 ### Community 259 - "Context Adaptation"
 Cohesion: 0.18
@@ -1605,9 +1611,9 @@ Nodes (10): آنچه در این بسته ساخته *نمی‌شود*, ایده
 Cohesion: 0.07
 Nodes (26): 1. Exact matches: is "ruqom" / «رقوم» already used as a brand, app, domain or registered trademark?, 2. Iran: products named «رقم» / «رقمی» / «سیاق» etc. in accounting or finance (confusion risk), 3. Globally: Raqam / Raqm / Raqami / Rakam / Raqim / Roqum (confusion risk outside Iran), 4. Search-engine crowding: what dominates «رقوم» and "ruqom" results, and how hard is ranking?, 5. Overall verdict: severity table and trademark/search risk, Cited Findings, Cited Findings, Cited Findings (+18 more)
 
-### Community 268 - "review-ai-economy.test.js"
-Cohesion: 0.39
-Nodes (5): database(), owner, prepared(), queued(), row()
+### Community 268 - "bank-voice-movement.test.js"
+Cohesion: 0.29
+Nodes (6): ACCOUNTS, databasePath, db(), owner, profitTotal(), workspace
 
 ### Community 269 - "review-rerun-ten-registration.test.js"
 Cohesion: 0.27
@@ -1617,9 +1623,9 @@ Nodes (7): cases, database(), event(), lines(), owner, prepared(), row()
 Cohesion: 0.27
 Nodes (7): balance(), chartOf(), lockThisMonth(), owner, sql(), sweepOne(), totals()
 
-### Community 271 - "انبار دائمی و بهای تمام‌شده — مرحلهٔ ۹"
-Cohesion: 0.29
-Nodes (7): آزمون‌های رگرسیون, انبار دائمی و بهای تمام‌شده — مرحلهٔ ۹, ثبت‌های دوطرفه, رابط کاربری, روش ارزش‌گذاری, محدودیت‌های صریح, کنترل‌های داده و امنیت
+### Community 271 - "event-transaction-consistency.test.js"
+Cohesion: 0.25
+Nodes (3): databasePath, owner, workspace
 
 ### Community 272 - "._base_config"
 Cohesion: 0.22
@@ -1658,7 +1664,7 @@ Cohesion: 0.20
 Nodes (9): Common Failures, Key Patterns, Overview, Rationalization Prevention, Red Flags - STOP, The Gate Function, The Iron Law, Verification Before Completion (+1 more)
 
 ### Community 281 - "فاز ۷: پل کنترل‌شده به نرم‌افزار حسابداری"
-Cohesion: 0.20
+Cohesion: 0.18
 Nodes (10): CSV استاندارد دفتر کل, تصمیم محصول, دروازهٔ آمادگی, دو مقصد فعلی, فاز ۷: پل کنترل‌شده به نرم‌افزار حسابداری, محتوای خروجی, پارسیان — فایل آمادهٔ نگاشت, پشتیبان و جداسازی دفتر (+2 more)
 
 ### Community 282 - "راهنمای سخت‌سازی Repository حسب‌یار"
@@ -1686,16 +1692,16 @@ Cohesion: 0.20
 Nodes (8): baseUrl, chunkUrls, entry, expectedSha, health, html, javascript, markers
 
 ### Community 288 - "receiptOcr.js"
-Cohesion: 0.33
-Nodes (8): clampConfidence(), extractReceiptData(), normalizedDate(), normalizeExtraction(), receiptError(), receiptOcrConfigured(), responseText(), SUPPORTED_IMAGE_TYPES
+Cohesion: 0.39
+Nodes (7): clampConfidence(), extractReceiptData(), normalizedDate(), normalizeExtraction(), receiptError(), responseText(), SUPPORTED_IMAGE_TYPES
 
 ### Community 289 - "aiFactContract.js"
 Cohesion: 0.31
 Nodes (8): AI_FACT_SCHEMA, ALLOWED_FIELDS, ALLOWED_SET, FORBIDDEN_FACT_FIELDS, FORBIDDEN_SET, MONEY_DIRECTIONS, normalizeFieldName(), validateExtraction()
 
-### Community 290 - "پشتیبان‌گیری و بازیابی حساب‌یار — مرحلهٔ ۵"
-Cohesion: 0.33
-Nodes (6): بازیابی اضطراری, تنظیم Railway, روش پیشنهادی ماهانه, سیاست داده, مدل امنیتی, پشتیبان‌گیری و بازیابی حساب‌یار — مرحلهٔ ۵
+### Community 290 - "حافظهٔ مالی و هشدار قابل اقدام"
+Cohesion: 0.29
+Nodes (7): حافظهٔ مالی و هشدار قابل اقدام, خط مبنا و حساسیت, دوام نقدینگی, قرارداد پاسخ مالی, مسیرهای API, نبض امروز و اولویت, کنترل انتشار
 
 ### Community 291 - "payroll.test.js"
 Cohesion: 0.22
@@ -1733,9 +1739,9 @@ Nodes (5): فاز ۱ — نگهبان‌ها (در حال اجرا), قرارد�
 Cohesion: 0.22
 Nodes (8): آزمون ۲۰ سناریوی سخت ثبت حسابداری — ۲۷ مهر ۱۴۰۵ / ۱۸ اکتبر ۲۰۲۶, ایرادها و اقدام لازم, روش آزمون, نتیجه تک‌تک سناریوها, نتیجه در یک نگاه, نکتهٔ مهم دربارهٔ سناریوی «کلید برق» (همان سؤال چت), چه چیزهایی خوب کار کرد, گام بعدی پیشنهادی
 
-### Community 302 - "voice-corpus.test.js"
-Cohesion: 0.33
-Nodes (5): amounts, counterBeforeDocument, curated, scaleSuffix, singleTemplates
+### Community 302 - "حساب‌یار ۲ — دفتر مالی صوتی"
+Cohesion: 0.29
+Nodes (7): اجرا, تست, حساب‌یار ۲ — دفتر مالی صوتی, داده و حریم خصوصی, فعال‌سازی صدا روی Railway, قابلیت‌ها, مسیر سریع و دقیق صدا
 
 ### Community 303 - "accounting-decision-wiring.test.js"
 Cohesion: 0.28
@@ -1766,8 +1772,8 @@ Cohesion: 0.25
 Nodes (8): Alt text, aria-hidden, Choosing how to announce a change, Live regions, Screen readers, SVG, Video and audio, Visually hidden content
 
 ### Community 310 - "input"
-Cohesion: 0.20
-Nodes (12): padding-x, padding-y, input, $type, $value, focus-ring, padding-x, padding-y (+4 more)
+Cohesion: 0.29
+Nodes (8): padding-y, input, $type, $value, focus-ring, padding-y, $type, $value
 
 ### Community 311 - "Property Selection"
 Cohesion: 0.22
@@ -1797,9 +1803,9 @@ Nodes (7): اسناد واقعی چهار ثبت تازه, اعتبارسنجی 
 Cohesion: 0.50
 Nodes (4): 12. Spring Physics (Emil), Interruptibility, Key Parameters, Spring for Mouse Position
 
-### Community 318 - "primary"
-Cohesion: 0.67
-Nodes (3): primary, $type, $value
+### Community 318 - "resolveAutomationPolicy"
+Cohesion: 0.38
+Nodes (6): capitalizationThreshold(), clamp01(), DEFAULT_AUTOMATION_POLICY, resolveAutomationPolicy(), UNDERSTANDING_MODES, UNDERSTANDING_SCOPES
 
 ### Community 319 - "chart-review-roles.test.js"
 Cohesion: 0.32
@@ -1813,9 +1819,9 @@ Nodes (6): balanceOfKind(), databasePath, db(), incomeTotal(), owner, workspace
 Cohesion: 0.29
 Nodes (5): databasePath, db(), owner, postedLines(), workspace
 
-### Community 322 - "white"
-Cohesion: 0.67
-Nodes (3): white, $type, $value
+### Community 322 - "shadowReport.js"
+Cohesion: 0.48
+Nodes (6): compareProposalWithActual(), DIFFERENCE_SEVERITY, PROFIT_ROLES, rolesOf(), totalOf(), touchesProfit()
 
 ### Community 323 - "Semantics and ARIA"
 Cohesion: 0.29
@@ -1873,13 +1879,29 @@ Nodes (6): تصمیم‌هایی که با شماست (هر وقت برگشتی�
 Cohesion: 0.29
 Nodes (6): اثر بر فازهای بعد, تصمیم‌های پایه‌ای موتور تصمیم حسابداری, ۱. واحد پایهٔ مبلغ: تومان, ۲. روش تخصیص پیش‌پرداخت: ماهانه، خط مستقیم, ۳. شناسایی در دورهٔ بسته: صف حسابدار, ۴. اختیار حسابدار: override کامل، با دلیل اجباری
 
+### Community 338 - "parsian-roundtrip-end-to-end.test.js"
+Cohesion: 0.29
+Nodes (5): databasePath, hasTemplate, owner, SOURCE, workspace
+
+### Community 339 - "partial-settlement.test.js"
+Cohesion: 0.33
+Nodes (5): databasePath, db(), owner, receivableOf(), workspace
+
+### Community 340 - "duplicate-fingerprint.test.js"
+Cohesion: 0.22
+Nodes (4): eventFingerprint(), key(), databasePath, owner
+
 ### Community 341 - "ledger-integrity-audit.test.js"
 Cohesion: 0.33
 Nodes (5): databasePath, db(), linesOf(), owner, workspace
 
-### Community 343 - "production-smoke-markers.test.js"
+### Community 342 - "امنیت Production و پایداری داده"
 Cohesion: 0.33
-Nodes (6): databasePath, dist, projectRoot, root, run, smoke()
+Nodes (6): امنیت Production و پایداری داده, زیرفاز ۴.۳ — اعتبارسنجی و پاک‌سازی باینری رسید, متغیرهای Railway, محدودهٔ فاز ۴, کنترل‌های اجراشده, کنترل‌های تکمیلی
+
+### Community 343 - "production-smoke-markers.test.js"
+Cohesion: 0.11
+Nodes (10): databasePath, dist, projectRoot, root, run, smoke(), databasePath, dist (+2 more)
 
 ### Community 344 - "edit.mjs"
 Cohesion: 0.29
@@ -1924,6 +1946,14 @@ Nodes (4): directory, root, status, steps
 ### Community 355 - "سیاست امنیتی حسب‌یار"
 Cohesion: 0.33
 Nodes (5): داده‌های ممنوع در Repository, سیاست امنیتی حسب‌یار, نسخه پشتیبانی‌شده, واکنش به Secret لو‌رفته, گزارش محرمانه آسیب‌پذیری
+
+### Community 356 - "bank-account-routing.test.js"
+Cohesion: 0.33
+Nodes (3): databasePath, owner, workspace
+
+### Community 357 - "obligation-journal.test.js"
+Cohesion: 0.40
+Nodes (4): balanced(), databasePath, db(), owner
 
 ### Community 358 - "حساب‌یار — قاعدهٔ کار برای عامل‌های کدنویس"
 Cohesion: 0.40
@@ -1997,6 +2027,10 @@ Nodes (4): Behavior, Limits, Review assistant: specialized cash approval and cat
 Cohesion: 0.40
 Nodes (4): دستیار مالیاتی منبع‌دار, عملیات, قرارداد ایمنی, نقش‌ها
 
+### Community 377 - "items"
+Cohesion: 0.40
+Nodes (5): closingItems(), items(), liveItems(), plannedTotal(), unrecognised()
+
 ### Community 378 - "pull_request_template.md"
 Cohesion: 0.40
 Nodes (4): استقرار و بازگشت, نوع تغییر, هدف تغییر, کنترل‌های اجباری
@@ -2009,9 +2043,21 @@ Nodes (3): BANK_SOURCE_KINDS, feedError(), normalizeBankLine()
 Cohesion: 0.70
 Nodes (3): healthPayload(), releaseIdentity(), SHA_VARIABLES
 
+### Community 381 - "padding-x"
+Cohesion: 0.67
+Nodes (4): padding-x, padding-x, $type, $value
+
+### Community 383 - "xl"
+Cohesion: 0.67
+Nodes (4): xl, xl, $type, $value
+
 ### Community 384 - "3. Visual Effects"
 Cohesion: 0.50
 Nodes (4): 3. Visual Effects, Blur as a Signal (Jakub), Gradients & Color Spaces (Jakub), Shadows Instead of Borders (Jakub)
+
+### Community 385 - "destructive"
+Cohesion: 0.67
+Nodes (3): destructive, $type, $value
 
 ### Community 390 - "Prefer Statically Analyzable Paths"
 Cohesion: 0.50
@@ -2070,24 +2116,24 @@ Cohesion: 0.50
 Nodes (4): `router.back()` and Browser Back Button, Shared Element Readiness, Transition Types, Types and Suspense
 
 ## Knowledge Gaps
-- **3461 isolated node(s):** `fs`, `path`, `projectRoot`, `tokensPath`, `MINIMAL_TOKENS` (+3456 more)
+- **3456 isolated node(s):** `fs`, `path`, `projectRoot`, `tokensPath`, `MINIMAL_TOKENS` (+3451 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **114 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **115 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `../server/db.js?wiring=1` connect `../server/db.js?wiring=1` to `db/backup.js`, `financialEventStore.js`, `index.js`, `core.js`, `engine5-p2-period.test.js`, `review-ai-economy.test.js`, `fixtureOverdraft.js`, `understanding.js`, `review-rerun-ten-registration.test.js`, `topic-promotion-integrity.test.js`, `transactions.js`, `event-understanding.test.js`, `partner-paid-debt.test.js`, `access.js`, `vat-refund-claim.test.js`, `moneyPurpose.js`, `auth.js`, `recurring.js`, `engine5-p5-ledger.test.js`, `engine5-p1-parser.test.js`, `insights.js`, `counterpartySpeech.js`, `depreciationLedger.js`, `ai-lessons.test.js`, `category-understanding.test.js`, `db/firm.js`, `petty-cash.test.js`, `purchase-purpose.test.js`, `parsianAccessFile.js`, `unidentified-receipts.test.js`, `approval-family.test.js`, `insurance-settlement.test.js`, `engine5-p4-ai.test.js`, `aiLessons.js`, `categoryRules.js`, `receipts.js`, `understanding-eval.mjs`, `invoices.js`, `engine5-live30.test.js`, `engine5-p6-review.test.js`, `review-trade-settlement.test.js`, `accounts.js`, `unidentifiedReceipts.js`, `balance-guard.test.js`, `queue-overdraft-and-duplicates.test.js`, `review-assistant.test.js`, `db/payroll.js`, `db/accountingTransfer.js`, `engine5-p2-period-review.test.js`, `engine5-p7-documents.test.js`, `prepayment-family.test.js`, `topic-label-paths.test.js`, `capitalization-threshold.test.js`, `db/tax.js`, `economicFamily.js`, `understanding-acceptance.test.js`, `cheques.js`?**
+- **Why does `../server/db.js?wiring=1` connect `../server/db.js?wiring=1` to `tempPath.js`, `db/backup.js`, `index.js`, `db/chart.js`, `core.js`, `workspaces.js`, `scenarios-100-ai.test.js`, `review-rerun-ten-registration.test.js`, `db/understanding.js`, `topic-promotion-integrity.test.js`, `transactions.js`, `event-understanding.test.js`, `db`, `http.js`, `vat-refund-claim.test.js`, `moneyPurpose.js`, `normalizePersian`, `auth.js`, `cheques.js`, `engine5-p5-ledger.test.js`, `banks.js`, `engine5-p1-parser.test.js`, `activeWorkspaceDatabase`, `ai-lessons.test.js`, `category-understanding.test.js`, `insights.js`, `purchase-purpose.test.js`, `parsianAccessFile.js`, `unidentified-receipts.test.js`, `approval-family.test.js`, `insurance-settlement.test.js`, `engine5-p4-ai.test.js`, `aiLessons.js`, `reviewAccountPreparation.js`, `invoices.js`, `engine5-live30.test.js`, `engine5-p6-review.test.js`, `normalizeFinancialEvent`, `review-trade-settlement.test.js`, `timing-contracts.test.js`, `invalidInput`, `currentTimeZone`, `backup-ledger-structure.test.js`, `balance-guard.test.js`, `queue-overdraft-and-duplicates.test.js`, `review-assistant.test.js`, `audit`, `db/accountingTransfer.js`, `engine5-p2-period-review.test.js`, `engine5-p7-documents.test.js`, `topic-label-paths.test.js`, `capitalization-threshold.test.js`, `engine5-p3-decision.test.js`, `understanding-acceptance.test.js`, `financialEvents.js`, `partner-paid-debt.test.js`?**
+  _High betweenness centrality (0.034) - this node is a cross-community bridge._
+- **Why does `normalizePersian()` connect `normalizePersian` to `shared/parser.js`, `chartOfAccounts.js`, `purchasePurpose.js`, `financialEventStore.js`, `realtimeSpeech.js`, `periodSpeech.js`, `voiceIntent.js`, `db/understanding.js`, `transactions.js`, `guards.js`, `voicePipeline.js`, `eventUnderstanding.js`, `moneyPurpose.js`, `persianDate.js`, `normalize.js`, `cheques.js`, `banks.js`, `engine5-p1-parser.test.js`, `insights.js`, `reviewAssistant.js`, `accountingReviewAi.js`, `understandingPlan.js`, `validateUnderstanding`, `aiLessons.js`, `categoryRules.js`, `reviewAccountPreparation.js`, `invoices.js`, `reviewInsurance.js`, `duplicate-fingerprint.test.js`, `counterparties.js`, `db/accountingTransfer.js`, `LedgerPage.jsx`, `engine5-p2-period-review.test.js`, `server/reconciliation.js`, `eventUnderstandingAi.js`, `financialEvents.js`, `partner-paid-debt.test.js`?**
   _High betweenness centrality (0.027) - this node is a cross-community bridge._
-- **Why does `parseFinancialText()` connect `shared/parser.js` to `todayPersian`, `index.js`, `accountingDecision.js`, `periodSpeech.js`, `engine5-p2-period.test.js`, `voiceIntent.js`, `App.jsx`, `fixtureOverdraft.js`, `transactions.js`, `partner-paid-debt.test.js`, `voicePipeline.js`, `moneyPurpose.js`, `normalizePersian`, `live-ten-regression.test.js`, `persianDate.js`, `normalize.js`, `recurring.js`, `engine5-p1-parser.test.js`, `sandbox-ledger-check.mjs`, `counterpartySpeech.js`, `roleResolver.js`, `petty-cash.test.js`, `voice-corpus.test.js`, `vatSpeech.js`, `understandingPlan.js`, `aiLessons.js`, `categoryRules.js`, `engine5-p6-review.test.js`, `normalizeFinancialEvent`, `LedgerPage.jsx`, `engine5-p2-period-review.test.js`, `gemini.js`, `economicFamily.js`, `settleSpeech.js`?**
-  _High betweenness centrality (0.024) - this node is a cross-community bridge._
-- **Why does `normalizePersian()` connect `normalizePersian` to `shared/parser.js`, `chartOfAccounts.js`, `financialEventStore.js`, `realtimeSpeech.js`, `todayPersian`, `periodSpeech.js`, `voiceIntent.js`, `understanding.js`, `transactions.js`, `voicePipeline.js`, `eventUnderstanding.js`, `moneyPurpose.js`, `live-ten-regression.test.js`, `persianDate.js`, `normalize.js`, `recurring.js`, `engine5-p1-parser.test.js`, `topicPromotion.js`, `insights.js`, `counterpartySpeech.js`, `roleResolver.js`, `petty-cash.test.js`, `db/firm.js`, `vatSpeech.js`, `accountingReviewAi.js`, `understandingPlan.js`, `aiLessons.js`, `categoryRules.js`, `receipts.js`, `counterparties.js`, `LedgerPage.jsx`, `engine5-p2-period-review.test.js`, `db/tax.js`, `economicFamily.js`, `eventUnderstandingAi.js`, `settleSpeech.js`?**
+- **Why does `tempDatabase()` connect `tempPath.js` to `shadow-mode.test.js`, `scenarios-100-ai.test.js`, `bank-voice-movement.test.js`, `../server/db.js?wiring=1`, `review-rerun-ten-registration.test.js`, `event-transaction-consistency.test.js`, `topic-promotion-integrity.test.js`, `event-understanding.test.js`, `guards.js`, `http.js`, `counterparty-choice.test.js`, `vat-refund-claim.test.js`, `moneyPurpose.js`, `normalizePersian`, `payroll.test.js`, `engine5-p5-ledger.test.js`, `stress-scenarios-ledger.test.js`, `banks.js`, `topicPromotion.js`, `engine5-p1-parser.test.js`, `roleResolver.js`, `ai-lessons.test.js`, `accounting-decision-wiring.test.js`, `category-understanding.test.js`, `insights.js`, `journal-batch-integration.test.js`, `link-counterparties.test.js`, `purchase-purpose.test.js`, `vat-settlement.test.js`, `unidentified-receipts.test.js`, `approval-family.test.js`, `chart-review-roles.test.js`, `cheques.test.js`, `counterparty-and-bank-routing.test.js`, `insurance-settlement.test.js`, `engine5-p4-ai.test.js`, `financial-event-store.test.js`, `reviewAccountPreparation.js`, `parsian-roundtrip-end-to-end.test.js`, `engine5-live30.test.js`, `duplicate-fingerprint.test.js`, `engine5-p6-review.test.js`, `ledger-integrity-audit.test.js`, `partial-settlement.test.js`, `production-smoke-markers.test.js`, `normalizeFinancialEvent`, `review-trade-settlement.test.js`, `transaction-edit-guards.test.js`, `timing-contracts.test.js`, `backup-ledger-structure.test.js`, `balance-guard.test.js`, `queue-overdraft-and-duplicates.test.js`, `bank-account-routing.test.js`, `obligation-journal.test.js`, `review-assistant.test.js`, `engine5-p2-period-review.test.js`, `engine5-p7-documents.test.js`, `topic-label-paths.test.js`, `capitalization-threshold.test.js`, `engine5-p3-decision.test.js`, `recognition-run.test.js`, `understanding-acceptance.test.js`, `partner-paid-debt.test.js`?**
   _High betweenness centrality (0.018) - this node is a cross-community bridge._
 - **Are the 3 inferred relationships involving `normalizePersian()` (e.g. with `banks.js` and `wordsToNumber()`) actually correct?**
   _`normalizePersian()` has 3 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `fs`, `path`, `projectRoot` to the rest of the system?**
-  _3461 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _3456 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `shared/parser.js` be split into smaller, more focused modules?**
-  _Cohesion score 0.031127602556173986 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.02750965250965251 - nodes in this community are weakly interconnected._
 - **Should `chartOfAccounts.js` be split into smaller, more focused modules?**
-  _Cohesion score 0.059319482083709726 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.07773664727657324 - nodes in this community are weakly interconnected._

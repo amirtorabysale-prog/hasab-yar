@@ -565,8 +565,8 @@ test('منفی: ماه آینده در دورهٔ باز دست نمی‌خور�
 // ---------------------------------------------------------------------------
 
 test('کار دقیقه‌ای سرور هر دفتر را شناسایی می‌کند و بستن دوره پیش از قفل شناسایی را اجرا می‌کند', async () => {
-  const { readFileSync } = await import('node:fs');
-  const source = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  const { serverSource } = await import('./helpers/serverSource.js');
+  const source = serverSource();
   const job = source.slice(source.indexOf('function runRecurringJob'), source.indexOf('runRecurringJob();'));
   assert.match(job, /for \(const workspace of workspaces\)/);
   assert.match(job, /runInWorkspace\(workspace\.id, \{ role: 'owner' \}, \(\) => runRecognition\(\)\)/, 'هر دفتر، جدا');
@@ -1805,8 +1805,8 @@ test('منفی: ماندهٔ رویدادِ برنامه‌دار، و پیش‌
 });
 
 test('بستن دوره و تأیید سند دستی، ماندهٔ بی‌برنامه را برمی‌گردانند', async () => {
-  const { readFileSync } = await import('node:fs');
-  const source = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  const { serverSource } = await import('./helpers/serverSource.js');
+  const source = serverSource();
   const lockRoute = source.slice(source.indexOf("app.post('/api/accounting/periods/:period/lock'"), source.indexOf("app.post('/api/accounting/periods/:period/reopen'"));
   assert.match(lockRoute, /unscheduledTimingBalances: unscheduled/);
   const approval = source.slice(source.indexOf("app.post('/api/accounting/journal/:id/approval'"), source.indexOf("app.get('/api/accounting/templates'"));

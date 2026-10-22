@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { MENU } from '../src/app/menu.js';
+import { serverSource } from './helpers/serverSource.js';
 
 /**
  * خواسته‌های مالک محصول (مهر ۱۴۰۵) — منوی تخت و دفتر اسناد با زمان ثبت:
@@ -73,7 +74,7 @@ test('دفتر اسناد: زمان ثبت با ساعت و دقیقه و نام
   const server = source('server/db/journal.js');
   assert.match(server, /journalOverview/);
   assert.match(server, /createdByName/, 'نام نمایشی ثبت‌کننده از سرور می‌آید');
-  const index = source('server/index.js');
+  const index = serverSource();
   assert.match(index, /journalOverview\(request\.query\)/);
 });
 

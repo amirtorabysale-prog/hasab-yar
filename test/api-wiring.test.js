@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { serverSource as readServerSource } from './helpers/serverSource.js';
 
 /**
  * رابط و سرور باید با هم بخوانند — پیش از اینکه کاربر رویش کلیک کند.
@@ -19,7 +20,7 @@ function sourceFiles(directory, pattern = /\.jsx?$/) {
 }
 
 const apiSource = readFileSync('src/lib/api.js', 'utf8');
-const serverSource = readFileSync('server/index.js', 'utf8');
+const serverSource = readServerSource();
 
 /**
  * کلیدهای شیء `api` — چیزی که صفحه‌ها صدا می‌زنند.

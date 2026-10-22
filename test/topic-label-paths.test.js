@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { tempDatabase } from './helpers/tempPath.js';
+import { serverSource } from './helpers/serverSource.js';
 
 /**
  * برچسب موضوعی در همهٔ راه‌های ثبت، ویرایش و تصمیم (بررسی تغییرات z.ai، ۲۸ مهر ۱۴۰۵،
@@ -192,8 +193,13 @@ test('برچسبی که ماه پیش به آستانه رسید هم پیشنه
 });
 
 test('دیدن صف و صفحهٔ برچسب‌ها پیشنهادی نمی‌سازد؛ کار دقیقه‌ای می‌سازد', () => {
-  const server = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
-  const route = (path) => server.slice(server.indexOf(`app.get('${path}'`), server.indexOf('\n});', server.indexOf(`app.get('${path}'`)));
+  const server = serverSource();
+  // پایانِ همان مسیر: «});»ِ سطرِ خودش، چه در index.js چه با تورفتگیِ تابع ثبت در server/routes/.
+  const route = (path) => {
+    const start = server.indexOf(`app.get('${path}'`);
+    assert.ok(start >= 0, path);
+    return server.slice(start, start + server.slice(start).search(/\n\s*\}\);/));
+  };
   assert.doesNotMatch(route('/api/financial-events/review-queue'), /topicPromotionSweep/);
   assert.doesNotMatch(route('/api/topics/overview'), /topicPromotionSweep/);
   const job = server.slice(server.indexOf('function runRecurringJob'), server.indexOf('runRecurringJob();'));

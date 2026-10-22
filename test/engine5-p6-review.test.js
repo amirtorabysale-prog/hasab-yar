@@ -5,6 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import { tempDatabase } from './helpers/tempPath.js';
+import { serverSource } from './helpers/serverSource.js';
 import { FIXTURE_OVERDRAFT } from './helpers/fixtureOverdraft.js';
 import { parseFinancialText } from '../shared/parser.js';
 import { FACT_QUESTIONS } from '../shared/factRequirements.js';
@@ -363,7 +364,7 @@ test('کارت امروز: مسیر جواب در تجربهٔ ساده باز �
   assert.equal(minimumRoleForRequest('POST', '/confirmations/abc/answer'), minimumRoleForRequest('POST', '/confirmations/abc/confirm'));
   assert.equal(pathNeedsProfessional('/confirmations/abc/answer'), false);
   assert.equal(pathNeedsProfessional('/financial-events/abc/answer'), true, 'ابزار حسابدار همچنان حرفه‌ای است');
-  const server = readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
+  const server = serverSource();
   assert.match(server, /app\.post\('\/api\/confirmations\/:id\/answer'/);
   await withVite(async (vite) => {
     const { PendingQuestionView } = await vite.ssrLoadModule('/src/features/today/TodayPage.jsx');
