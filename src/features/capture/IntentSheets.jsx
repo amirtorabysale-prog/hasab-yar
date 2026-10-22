@@ -239,9 +239,11 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
 
         {isCheque ? <>
           <label className="mt-3 block text-xs font-bold text-muted">{draft.direction === 'payable' ? 'گیرندهٔ چک' : 'صاحب چک'}
-            <input value={draft.contactName || ''} onChange={(event) => setDraft({ ...draft, contactName: event.target.value })}
-              placeholder="نام شخص یا شرکت" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+            <input value={draft.contactName || ''} onChange={(event) => setDraft({ ...draft, contactName: event.target.value, contactGuessed: false })}
+              placeholder="نام شخص یا شرکت" aria-describedby={draft.contactGuessed ? 'intent-contact-guessed' : undefined}
+              className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
           </label>
+          {draft.contactGuessed && <p id="intent-contact-guessed" className="mt-1 text-[11px] leading-5 text-muted">نام از گفته‌ات برداشته شد؛ اگر درست نیست، اصلاحش کن.</p>}
           <div className="mt-3">
             <p className="text-xs font-bold text-muted">این چک بابت چیست؟</p>
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -262,10 +264,19 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
                   : 'تا انتخاب نکنی ثبت نمی‌شود: اگر بابت حساب قبلی باشد و «تازه» ثبت شود، همان معامله دو بار در سود دوره می‌آید.'}
             </p>
           </div>
-        </> : <label className="mt-3 block text-xs font-bold text-muted">عنوان
-          <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-            className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
-        </label>}
+        </> : <>
+          {/* نام طرف حساب پیش از این روی کارت نبود: بی‌صدا ذخیره می‌شد، و اگر از جمله درنمی‌آمد راهی برای نوشتنش نبود. */}
+          <label className="mt-3 block text-xs font-bold text-muted">طرف حساب
+            <input value={draft.contactName || ''} onChange={(event) => setDraft({ ...draft, contactName: event.target.value, contactGuessed: false })}
+              placeholder="نام شخص یا شرکت" aria-describedby={draft.contactGuessed ? 'intent-contact-guessed' : undefined}
+              className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+          </label>
+          {draft.contactGuessed && <p id="intent-contact-guessed" className="mt-1 text-[11px] leading-5 text-muted">نام از گفته‌ات برداشته شد؛ اگر درست نیست، اصلاحش کن.</p>}
+          <label className="mt-3 block text-xs font-bold text-muted">عنوان
+            <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+              className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink" />
+          </label>
+        </>}
 
         {draft.occurredAt && <p className="mt-3 text-xs text-muted">تاریخ بدهکار/طلبکار شدن: <b className="text-ink">{persianDate(draft.occurredAt)}</b></p>}
       {draft.dueAt && <p className="mt-1 text-xs text-muted">سررسید: <b className="text-ink">{persianDate(draft.dueAt)}</b></p>}

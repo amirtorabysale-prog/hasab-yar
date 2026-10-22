@@ -49,6 +49,10 @@ export const CONTACT_STOP_WORDS = new Set([
   'وصول', 'بردیم', 'بردم', 'بردن', 'برد',
   // «به شرکت آریا داشتیم» نام را «شرکت آریا داشتیم» می‌ساخت.
   'داشتیم', 'داشتم', 'داشت', 'داشتن',
+  // «به مستاجر پول دادیم»: «پول» خودِ موضوع است و هرگز نام طرف حساب نیست.
+  'پول', 'پولی',
+  // «کارمند‌ها» پس از یکسان‌سازی «کارمند ها» می‌شود و «ها» به‌تنهایی نام می‌شد.
+  'ها', 'های',
 ]);
 
 // واژه‌های عددی نباید بخشی از نام شوند: «آقای احمدی سه میلیون» نام را
@@ -92,6 +96,35 @@ export function isRoleOrSubjectWord(word, next = '') {
   return stem !== word && (COUNTERPARTY_ROLE_NOUNS.has(stem) || SUBJECT_HEADS.has(stem));
 }
 
+const PLURAL = /(?:ها|ان|ا)$/;
+const isPluralRole = (word) => {
+  const stem = word.replace(POSSESSIVE, '').replace(PLURAL, '');
+  return stem !== word.replace(POSSESSIVE, '') && COUNTERPARTY_ROLE_NOUNS.has(stem);
+};
+
+/**
+ * واژه‌هایی که برای نام بی‌عنوان برداشته شدند ولی نام نیستند.
+ *
+ * نقشِ تنها («مستاجر»، «صاحبخانه») طرف حساب است و می‌ماند: ودیعهٔ مستاجر بدهی است
+ * نه درآمد، و تصمیم سند به همین نام تکیه دارد. «بیمه پاسارگاد» هم نام است. ولی
+ * موضوعِ تنها («اجاره»، «حقوق»، «قسط») و جمعِ نقش («کارمندا»، «کارگرها»، «مشتریان»)
+ * یک طرف حساب نیستند: «بابت اجاره ۲ میلیون بدهکاریم» طرف حسابی به نام «اجاره» و
+ * «حقوق کارمندا ۵۰ میلیون بدهکاریم» یکی به نام «حقوق کارمندا» می‌ساخت.
+ */
+function notAName(words) {
+  if (!words.length) return true;
+  if (words.length === 1 && SUBJECT_HEADS.has(words[0].replace(POSSESSIVE, ''))) return true;
+  return words.some(isPluralRole);
+}
+
+// «مستاجر رضایی» همان «رضایی» است؛ نقشِ پیش از نام، مثل نقشِ پس از آن، کنار می‌رود
+// تا یک شخص دو طرف حساب نشود. نقشِ تنها می‌ماند.
+function bareName(words) {
+  if (notAName(words)) return '';
+  const leadingRole = words.length > 1 && COUNTERPARTY_ROLE_NOUNS.has(words[0].replace(POSSESSIVE, ''));
+  return (leadingRole ? words.slice(1) : words).join(' ');
+}
+
 export const TITLE_PREFIXES = ['آقای', 'اقای', 'خانم', 'جناب', 'مهندس', 'دکتر', 'حاج', 'حاجی', 'سرکار خانم', 'شرکت', 'سازمان', 'مؤسسه', 'موسسه'];
 
 /**
@@ -128,7 +161,8 @@ function bareContactName(text) {
       picked.push(words[ahead]);
     }
     // «از ملت دادیم»: نام بانک حسابِ پرداخت است، نه طرف حساب.
-    if (picked.length && !detectBank(picked.join(' '))) return picked.join(' ');
+    const name = bareName(picked);
+    if (name && !detectBank(name)) return name;
   }
   for (let index = 0; index < words.length; index += 1) {
     if (!DIRECTION_WORDS.has(words[index])) continue;
@@ -144,7 +178,7 @@ function bareContactName(text) {
       if (!usable(words[back])) break;
       before.unshift(words[back]);
     }
-    if (before.length) return before.join(' ');
+    if (bareName(before)) return bareName(before);
     // «بدهکار شد حسن» یا «طلب دارم از حسن» → واژهٔ پس از فعل. واژه‌های پرکنندهٔ
     // میانی رد می‌شوند، وگرنه «شد» جلوی رسیدن به نام را می‌گرفت.
     const after = [];
@@ -154,7 +188,7 @@ function bareContactName(text) {
       if (!usable(words[ahead])) break;
       after.push(words[ahead]);
     }
-    if (after.length) return after.join(' ');
+    if (bareName(after)) return bareName(after);
   }
   return '';
 }

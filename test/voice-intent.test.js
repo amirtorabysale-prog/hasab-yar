@@ -143,8 +143,14 @@ test('روی صفحهٔ طلب و بدهی، نام بدون عنوان هم ف�
   assert.equal(inObligations('از رضا دو میلیون طلب دارم').contactName, 'رضا');
   assert.equal(inObligations('بدهکار شد حسن').contactName, 'حسن');
   assert.equal(inObligations('به شرکت پارس بدهکارم').contactName, 'شرکت پارس');
-  // مسیر عمومی همچنان محافظه‌کار است؛ آنجا حدس نام خطای بیشتری می‌سازد تا فایده.
-  assert.equal(detect('حسن سه میلیون بدهکار شد').contactName, '');
+  // صفحهٔ امروز هم همین کارت طلب و بدهی را باز می‌کند و همان‌جا موضوع روشن است. نام
+  // بی‌عنوان برداشته می‌شود ولی «حدسی» علامت می‌خورد تا روی کارت دیده و اصلاح شود.
+  // پارسر عمومی (ثبت روزانه) همچنان نام بی‌عنوان را قطعی نمی‌گیرد.
+  const general = detect('حسن سه میلیون بدهکار شد');
+  assert.equal(general.contactName, 'حسن');
+  assert.equal(general.contactGuessed, true);
+  assert.equal(owed.contactGuessed, true);
+  assert.equal(inObligations('به شرکت پارس بدهکارم').contactGuessed, undefined);
 });
 
 // «بدهکار شد» و «بدهکار شدم» جهت مخالف دارند؛ اشتباه‌گرفتنشان طلب را بدهی ثبت می‌کند.

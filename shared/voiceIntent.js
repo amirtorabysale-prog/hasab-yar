@@ -602,6 +602,12 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
   // «ماهی ۱۰ میلیون» کنار «شش ماه آینده» نرخ است، نه جمع.
   const rateOnly = !seriesRead && rateStandsForTotal(withoutChequeArticle(text), spoken, now);
   const finalAmount = seriesRead ? seriesRead.total : rateOnly ? 0 : spoken;
+  // کارت طلب و بدهی یا چک باز می‌شود، پس موضوع روشن است و نامِ بی‌عنوانِ کنار فعل جهت
+  // یا پس از «از/به» هم برداشته می‌شود. «رضا ۲ میلیون تومان بدهکار شد» که نمونهٔ خودِ
+  // صفحهٔ امروز است، طلبی بی‌طرف حساب می‌ساخت. نام بی‌عنوان حدس است: روی کارت دیده و
+  // اصلاح می‌شود، و نامی شبیه طرف حساب موجود پیش از ثبت پرسیده می‌شود.
+  const titledName = obligationContext ? extractContactName(input) : contactName;
+  const partyName = contactName || extractContactName(input, { allowBare: true });
   return {
     intent: isCheque ? 'cheque' : 'obligation',
     direction,
@@ -615,9 +621,10 @@ export function detectVoiceIntent(input, { now = new Date(), context = '' } = {}
     ...(series ? { chequeCount: series, ...(seriesRead ? { perChequeAmount: seriesRead.per } : {}) } : {}),
     // چک خرید یا فروش با ارزش افزوده: کل مبلغ چک بهای کالا یا درآمد نیست.
     ...(isCheque && /ارزش\s*افزوده|مالیات\s*بر\s*ارزش/.test(text) ? { vatMentioned: true } : {}),
-    contactName,
+    contactName: partyName,
+    ...(partyName && !titledName ? { contactGuessed: true } : {}),
     ...splitDateRoles(input, { now, isCheque }),
-    title: [isCheque ? (series ? `${series.toLocaleString('fa-IR')} چک` : 'چک') : '', contactName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
+    title: [isCheque ? (series ? `${series.toLocaleString('fa-IR')} چک` : 'چک') : '', partyName].filter(Boolean).join(' ') || (isCheque ? 'چک' : 'طلب/بدهی'),
     transcript: text,
   };
 }
@@ -808,7 +815,8 @@ export function intentConfidenceFields(intent) {
 
   const fields = { amount: intent.amount ? 0.95 : 0.2, kind: intent.ambiguous ? 0.55 : 0.94 };
   if (['obligation', 'cheque', 'invoice'].includes(intent.intent)) {
-    fields.counterparty = intent.contactName ? 0.9 : 0.5;
+    // نام بی‌عنوان از جمله حدس است، نه شنیدهٔ قطعی.
+    fields.counterparty = intent.contactName ? (intent.contactGuessed ? 0.7 : 0.9) : 0.5;
   }
   if (intent.occurredAt || intent.dueAt) fields.date = 0.93;
   return { fields, blockers };
