@@ -53,18 +53,42 @@ test('voice fixture: multiple transactions stay separate', () => {
  * چیزی است که کاربر موقع تایپ تجربه می‌کند — و هنوز هر دو رگرسیون بالا را
  * می‌گرفت.
  */
+// بار کاری مرجع: رشته، regex، split و map روی یک جملهٔ مالی — همان نوع کاری که
+// پارسر می‌کند، ولی بی‌هیچ کدی از برنامه، تا کند شدن پارسر آن را کند نکند.
+const REFERENCE_TEXT = 'امروز دوازده میلیون و هفتصد و پنجاه هزار تومان فروش نقدی داشتیم و بخشی را به بانک ملت واریز کردیم';
+function referenceRound() {
+  const startedAt = performance.now();
+  let sink = 0;
+  for (let index = 0; index < 20_000; index += 1) {
+    sink += REFERENCE_TEXT.replace(/\s+/g, ' ').split(' ').map((word) => word.length).reduce((sum, length) => sum + length, 0)
+      + (/(?:میلیون|هزار)/.test(REFERENCE_TEXT) ? 1 : 0);
+  }
+  assert.ok(sink > 0);
+  return performance.now() - startedAt;
+}
+
 test('local parser is fast enough for live preview', () => {
   const round = () => {
     const startedAt = performance.now();
-    for (let index = 0; index < 2_000; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
+    for (let index = 0; index < 1_000; index += 1) parseFinancialText(fixtures[index % fixtures.length][0]);
     return performance.now() - startedAt;
   };
 
-  round();                                        // گرم‌کردن
-  const best = Math.min(round(), round(), round());
-  // کمینهٔ سه دور، نه یک دور: کل مجموعه موازی اجرا می‌شود و یک دورِ گرفتار
-  // رقابت CPU چیزی دربارهٔ سرعت پارسر نمی‌گوید. آستانه دست‌نخورده می‌ماند —
-  // رگرسیون‌های واقعی (۱۳۵۲ و ۲۶۵۷ میلی‌ثانیه در برابر پایهٔ ۶۰۰) کمینه را
-  // هم با خودشان بالا می‌بردند.
-  assert.ok(best < 1_000, `پارسر کند شده است: ${Math.round(best)} میلی‌ثانیه`);
+  round(); referenceRound();                      // گرم‌کردن
+  // زمان مطلق به بار دستگاه بسته بود، نه به پارسر: همان کد صبح ۲٫۶ و عصر ۹ ثانیه
+  // طول کشید و در اجرای موازی کل مجموعه، کمینهٔ سه دور هم از آستانهٔ ۱۰۰۰ میلی‌ثانیه
+  // رد می‌شد. حالا هر دور پارسر کنار یک دور بار مرجع در همان لحظه سنجیده می‌شود؛
+  // بار دستگاه هر دو را با هم کند می‌کند و نسبتشان می‌ماند.
+  //
+  // اندازه‌گیری مهر ۱۴۰۵ با همین جمله‌ها: کمینهٔ نسبت بی‌بار ۵٫۶ تا ۶٫۳، و زیر بار ۱۶
+  // پروسهٔ پرمصرف ۴٫۸ تا ۵٫۴، در حالی که زمان مطلق پنج برابر شد. کندیِ ساختگی ۱٫۹
+  // برابر در پارسر نسبت را به ۱۰ رساند. آستانهٔ ۹ همان حساسیت آستانهٔ قبلی را دارد
+  // (۱۰۰۰ در برابر پایهٔ ۶۰۰، یعنی حدود ۱٫۷ برابر)؛ رگرسیون‌های واقعی گذشته (۱۳۵۲ و
+  // ۲۶۵۷ میلی‌ثانیه، یعنی ۲٫۲ و ۴٫۴ برابر) از آن رد نمی‌شدند.
+  const ratios = Array.from({ length: 5 }, () => {
+    const reference = referenceRound();
+    return round() / reference;
+  });
+  const best = Math.min(...ratios);
+  assert.ok(best < 9, `پارسر کند شده است: ${best.toFixed(1)} برابرِ بار مرجع (عادی ۵ تا ۶٫۵)`);
 });
