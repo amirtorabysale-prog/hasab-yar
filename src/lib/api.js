@@ -456,6 +456,8 @@ export const api = {
   transferFields: () => request('/api/accountant-transfer/fields'),
   parsianBackupPreview: (file, options) => request('/api/import/parsian-backup/preview', { method: 'POST', body: parsianBackupForm(file, options) }),
   parsianBackupCommit: (file, options) => request('/api/import/parsian-backup/commit', { method: 'POST', body: parsianBackupForm(file, options) }),
+  parsianPhaseBPreview: () => request('/api/import/parsian-backup/phase-b'),
+  parsianPhaseBCommit: (contactIds) => request('/api/import/parsian-backup/phase-b', { method: 'POST', body: JSON.stringify({ contactIds }) }),
   downloadImportTemplate: async () => {
     const response = await reachServer('/api/import/template', { credentials: 'same-origin', headers: protectedHeaders(false) });
     if (!response.ok) throw new Error('دریافت الگوی اکسل ممکن نشد.');

@@ -150,7 +150,157 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
         </ul>
       </div>}
     </div>}
+
+    <ParsianPhaseB canManage={canManage} notify={notify} refresh={refresh} />
   </section>;
+}
+
+/**
+ * فاز ب — وصل‌کردن کدینگ واردشده به بخش‌های روزمرهٔ حساب‌یار.
+ *
+ * بانک‌ها و صندوق و تنخواه که در ورود اول فقط معین کدینگ بودند، حساب عملیاتی
+ * می‌گیرند و کارتشان همان لحظه گردش اسناد واردشده را نشان می‌دهد. تفصیلی‌های
+ * «طرف حساب» با تأیید کاربر شخص می‌شوند و کارت حسابشان از دفتر کل پر می‌شود.
+ * هیچ سند تازه‌ای ساخته نمی‌شود.
+ */
+function ParsianPhaseB({ canManage, notify, refresh }) {
+  const [preview, setPreview] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setBusy(true); setError(''); setResult(null);
+    try {
+      const outcome = await api.parsianPhaseBPreview();
+      setPreview(outcome);
+      setSelected(new Set(outcome.suggestedContactIds || []));
+    } catch (issue) { setPreview(null); setError(issue.message); }
+    setBusy(false);
+  };
+
+  const toggle = (id) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const run = async () => {
+    const moneyCount = (preview?.money || []).filter((moeen) => !moeen.bound && (moeen.kind !== 'petty' || moeen.fundPossible)).length;
+    const question = `${toPersianDigits(moneyCount)} حساب پولی (صندوق/بانک/تنخواه) ساخته یا وصل شود و ${toPersianDigits(selected.size)} تفصیلی به شخص تبدیل شود؟\nهیچ سند تازه‌ای ثبت نمی‌شود و هیچ مبلغی جابه‌جا نمی‌شود؛ فقط اسناد موجود به کارت‌های درست وصل می‌شوند.`;
+    if (!window.confirm(question)) return;
+    setBusy(true); setError('');
+    try {
+      const outcome = await api.parsianPhaseBCommit([...selected]);
+      setResult(outcome); setPreview(null);
+      await refresh();
+      notify('حساب‌های عملیاتی و اشخاص ساخته شدند؛ کارت‌ها از همین لحظه گردش را نشان می‌دهند.');
+    } catch (issue) { setError(issue.message); }
+    setBusy(false);
+  };
+
+  if (!preview && !result && !error) {
+    return <div className="mt-5 rounded-xl border border-dashed border-line p-4">
+      <p className="text-[13px] font-bold">قدم بعد: حساب‌های عملیاتی و اشخاص</p>
+      <p className="mt-1 text-[12px] leading-6 text-muted">ورود بکاپ، کدینگ و اسناد را آورد؛ بانک‌ها، تنخواه و اشخاص برای دیده‌شدن در بخش‌های خودشان باید از همان کدینگ ساخته شوند — بدون هیچ سند تازه‌ای.</p>
+      <button type="button" disabled={!canManage || busy} onClick={load} className="tap mt-2 rounded-lg border border-line bg-paper px-4 text-[13px] font-bold hover:bg-paper hover:text-ink disabled:opacity-45">
+        {busy ? 'در حال بررسی…' : 'بررسی و ساخت حساب‌های عملیاتی'}
+      </button>
+      {!canManage && <p className="mt-2 text-[12px] text-muted">این کار فقط از نقش مدیر یا مالک انجام می‌شود.</p>}
+    </div>;
+  }
+
+  return <div className="mt-5 rounded-xl border border-dashed border-line p-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-[13px] font-bold">قدم بعد: حساب‌های عملیاتی و اشخاص</p>
+      {preview && <button type="button" disabled={busy} onClick={load} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">بررسی دوباره</button>}
+    </div>
+    {error && <div role="alert" className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3 text-[13px] leading-6 text-expense">{error}</div>}
+
+    {preview && !preview.eligible && <div className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3 text-[13px] font-bold leading-6 text-expense">{preview.message}</div>}
+
+    {preview?.eligible && <>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy || !canManage} onClick={run} className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-45 hover:bg-accent/90 active:bg-accent/80">
+          {busy ? 'در حال ساخت…' : `ساخت ${toPersianDigits(preview.money.filter((moeen) => !moeen.bound && (moeen.kind !== 'petty' || moeen.fundPossible)).length)} حساب پولی + ${toPersianDigits(selected.size)} شخص`}
+        </button>
+        <span className="text-[12px] leading-6 text-muted">هیچ سندی ثبت نمی‌شود؛ فقط اتصال اسناد موجود.</span>
+      </div>
+
+      {preview.money.length > 0 && <div className="mt-3">
+        <p className="text-[13px] font-bold">حساب‌های پولی از کدینگ</p>
+        <div className="mt-2 overflow-x-auto rounded-lg border border-line">
+          <table className="w-full min-w-[560px] text-right text-[12px]">
+            <thead className="border-b border-line bg-surface text-muted"><tr>
+              <th className="p-2 font-bold">کد معین پارسیان</th><th className="p-2 font-bold">نام</th><th className="p-2 font-bold">نوع</th>
+              <th className="p-2 font-bold">ردیف سند</th><th className="p-2 font-bold">ماندهٔ فعلی</th><th className="p-2 font-bold">وضعیت</th>
+            </tr></thead>
+            <tbody>{preview.money.map((moeen) => <tr key={moeen.code} className="border-b border-line">
+              <td className="numbers p-2">{toPersianDigits(moeen.levelCode)}</td>
+              <td className="p-2">{moeen.name}</td>
+              <td className="p-2 text-muted">{moeen.kindLabel}</td>
+              <td className="numbers p-2">{toPersianDigits(moeen.lineCount)}</td>
+              <td className="numbers p-2">{formatAmount(moeen.balance)}</td>
+              <td className="p-2">{moeen.bound
+                ? <span className="text-muted">از قبل وصل است</span>
+                : moeen.kind === 'petty' && !moeen.fundPossible
+                  ? <span className="text-muted">گردش/مانده ندارد؛ ساخته نمی‌شود</span>
+                  : moeen.reuseExistingCash
+                    ? <span className="text-income">به «{moeen.reuseExistingCashName}» وصل می‌شود</span>
+                    : <span className="text-income">حساب {moeen.kindLabel} تازه</span>}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        <p className="mt-1 text-[11px] leading-5 text-muted">کارت هر حساب، گردش همان معین را از اسناد واردشده نشان می‌دهد. بانکِ هر حساب را بعداً از «تنظیمات ← صندوق و بانک» انتخاب کن. سقف تنخواه را از «تنخواه‌گردان» تعیین کن.</p>
+      </div>}
+
+      {preview.contacts.length > 0 && <div className="mt-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[13px] font-bold">تبدیل تفصیلی‌ها به شخص ({toPersianDigits(selected.size)} از {toPersianDigits(preview.contacts.length)})</p>
+          <div className="flex gap-2 text-[12px]">
+            <button type="button" onClick={() => setSelected(new Set(preview.contacts.map((contact) => contact.id)))} className="tap rounded-lg border border-line bg-paper px-3 py-1 font-bold">همه</button>
+            <button type="button" onClick={() => setSelected(new Set(preview.suggestedContactIds || []))} className="tap rounded-lg border border-line bg-paper px-3 py-1 font-bold">پیشنهادی‌ها</button>
+            <button type="button" onClick={() => setSelected(new Set())} className="tap rounded-lg border border-line bg-paper px-3 py-1 font-bold">هیچ</button>
+          </div>
+        </div>
+        <p className="mt-1 text-[11px] leading-5 text-muted">فقط تفصیلی‌هایی که واقعاً شخص‌اند را انتخاب کن؛ نام‌های حسابداری‌نما (مالیات، تهاتر، ارزش افزوده، پرداختنی و…) از پیش‌انتخاب کنار گذاشته شده‌اند. ردیف‌های هر شخص از حساب مشترک معین به کارت خودش می‌رود و کدینگش همان می‌ماند.</p>
+        <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-line">
+          <table className="w-full min-w-[560px] text-right text-[12px]">
+            <thead className="sticky top-0 border-b border-line bg-surface text-muted"><tr>
+              <th className="p-2"></th><th className="p-2 font-bold">تفصیلی</th><th className="p-2 font-bold">سمت</th>
+              <th className="p-2 font-bold">ردیف</th><th className="p-2 font-bold">ماندهٔ بدهکار</th><th className="p-2 font-bold">ماندهٔ بستانکار</th>
+            </tr></thead>
+            <tbody>{preview.contacts.map((contact) => <tr key={contact.id} className={`border-b border-line ${selected.has(contact.id) ? '' : 'opacity-60'}`}>
+              <td className="p-2"><input type="checkbox" checked={selected.has(contact.id)} onChange={() => toggle(contact.id)} aria-label={`انتخاب ${contact.name}`} /></td>
+              <td className="p-2">{contact.name}</td>
+              <td className="p-2 text-muted">{contact.sides.includes('receivable') && contact.sides.includes('payable') ? 'دریافتنی و پرداختنی' : contact.sides.includes('receivable') ? 'دریافتنی' : contact.sides.includes('payable') ? 'پرداختنی' : '—'}</td>
+              <td className="numbers p-2">{toPersianDigits(contact.lineCount)}</td>
+              <td className="numbers p-2">{formatAmount(contact.debit - contact.credit) >= 0 ? formatAmount(contact.debit - contact.credit) : '—'}</td>
+              <td className="numbers p-2">{contact.credit - contact.debit > 0 ? formatAmount(contact.credit - contact.debit) : '—'}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </div>}
+
+      {preview.warnings?.length > 0 && <ul className="mt-2 space-y-1 text-[12px] leading-6 text-accent">{preview.warnings.map((item, index) => <li key={index}>• {item}</li>)}</ul>}
+    </>}
+
+    {result && <div className="mt-3 space-y-2">
+      <div className="rounded-lg border border-income/40 bg-income/5 p-3 text-[13px] leading-6">
+        <b>ساخته شد.</b> حساب عملیاتی: <b className="numbers">{toPersianDigits(result.accounts.created)}</b> تازه و <b className="numbers">{toPersianDigits(result.accounts.bound)}</b> وصل‌شده
+        {result.petty > 0 && <> — تنخواه: <b className="numbers">{toPersianDigits(result.petty)}</b></>}
+        — شخص تازه: <b className="numbers">{toPersianDigits(result.contacts.created)}</b>{result.contacts.reused > 0 ? ` (+${toPersianDigits(result.contacts.reused)} موجود)` : ''}
+        — ردیف سندِ به‌کارت‌وصل‌شده: <b className="numbers">{toPersianDigits(result.linesRepointed)}</b>.
+        <div className="mt-1 text-muted">ماندهٔ کامل هر حساب در کارت حساب اوست؛ بانک‌ها در «تنظیمات ← صندوق و بانک» و اشخاص در «اشخاص». هیچ سند تازه‌ای ثبت نشد.</div>
+      </div>
+      {(result.warnings?.length > 0 || result.skipped?.length > 0) && <ul className="space-y-1 text-[12px] leading-6 text-accent">
+        {result.skipped.map((item, index) => <li key={`s${index}`}>• {item}</li>)}
+        {result.warnings.map((item, index) => <li key={`w${index}`}>• {item}</li>)}
+      </ul>}
+      <button type="button" disabled={busy} onClick={load} className="tap rounded-lg border border-line bg-paper px-3 text-[12px] font-bold">بررسی دوباره</button>
+    </div>}
+  </div>;
 }
 
 function SummaryTile({ label, value, tone = '' }) {

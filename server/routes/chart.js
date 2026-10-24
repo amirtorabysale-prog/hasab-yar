@@ -7,6 +7,7 @@ import {
   activeWorkspaceDatabase, applyChartSuggestions, chartOverview, dimensionReport, importChart, installChartTemplate, importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, attachCounterpartyAnalytics, clearChartMappings, mapLedgerAccount, mapLedgerAccountsInBulk, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry, saveAccountingTransferSettings,
 } from '../db.js';
 import { commitParsianBackup, previewParsianBackup } from '../parsianImport.js';
+import { commitParsianPhaseB, previewParsianPhaseB } from '../parsianPhaseB.js';
 import {
   topicLabelStats, listTopicPromotions, decideTopicPromotion, saveTopicPromotionThreshold, topicPromotionThreshold,
 } from '../topicPromotion.js';
@@ -73,6 +74,17 @@ export function registerChartRoutes(app) {
       // است؛ بدون این، خروجی برگشتی با پیش‌فرض تومان ده برابر کوچک‌تر درمی‌آمد.
       saveAccountingTransferSettings({ targetSystem: 'parsian-review-csv', amountUnit: result.amountUnit });
       return response.status(201).json(result);
+    } catch (error) { return next(error); }
+  });
+  // فاز ب: ساخت حساب‌های عملیاتی و اشخاص از کدینگِ واردشده — بدون هیچ سند تازه.
+  app.get('/api/import/parsian-backup/phase-b', (_request, response, next) => {
+    try { return response.json(previewParsianPhaseB(activeWorkspaceDatabase())); } catch (error) { return next(error); }
+  });
+  app.post('/api/import/parsian-backup/phase-b', (request, response, next) => {
+    try {
+      return response.json(commitParsianPhaseB(activeWorkspaceDatabase(), {
+        contactIds: request.body?.contactIds, createdBy: request.user?.id || null,
+      }));
     } catch (error) { return next(error); }
   });
   app.post('/api/chart/import', chartUpload.single('chart'), (request, response, next) => {
