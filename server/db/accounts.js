@@ -3,6 +3,7 @@ import { assertAccountingPeriodOpen, periodForDate, postAccountTransferJournal, 
 import { audit, cleanAmount, currentTimeZone, currentWorkspace, db, insertSetting, invalidInput } from './core.js';
 import { bankById, detectBank } from '../../shared/banks.js';
 import { pickPettyCashAccount } from '../../shared/pettyCashSpeech.js';
+import { LEDGER_ONLY_SOURCES_SQL } from '../balanceGuard.js';
 
 export function listAccounts() {
   // حساب تنخواه در ستون نوع «سایر» است؛ بیرون از این تابع با نوع «تنخواه»
@@ -16,7 +17,7 @@ export function listAccounts() {
         JOIN ledger_accounts a ON a.id=l.account_id JOIN journal_entries j ON j.id=l.entry_id
         LEFT JOIN journal_entries original ON original.id=j.reverses_entry_id
         WHERE a.source_kind='operational-account' AND a.source_key=accounts.id
-          AND (j.source_type='account_transfer' OR original.source_type='account_transfer')),0) AS balance
+          AND (j.source_type IN (${LEDGER_ONLY_SOURCES_SQL}) OR original.source_type IN (${LEDGER_ONLY_SOURCES_SQL}))),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
     LEFT JOIN petty_cash_funds petty ON petty.account_id=accounts.id
     GROUP BY accounts.id ORDER BY accounts.active DESC,accounts.sort_order,accounts.name`).all();

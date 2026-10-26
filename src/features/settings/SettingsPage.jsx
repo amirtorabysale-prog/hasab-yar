@@ -116,6 +116,7 @@ export function SettingsPage({ initial, accounts = [], notify, refresh, onLogout
       </div>
       <label className="mt-3 block text-[13px] text-muted">حساسیت هشدارهای مالی<select value={settings.alertSensitivity || 'balanced'} onChange={(event) => setSettings({ ...settings, alertSensitivity: event.target.value })} className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3 text-ink"><option value="low">کم؛ فقط تغییرهای بزرگ</option><option value="balanced">متعادل؛ پیشنهاد حساب‌یار</option><option value="high">زیاد؛ هشدار زودتر</option></select><span className="mt-1 block text-xs leading-5">مبلغ غیرعادی و رشد هزینه فقط با خط مبنای کافی سنجیده می‌شود؛ این گزینه آستانه را تغییر می‌دهد، نه داده را.</span></label>
       <LedgerUnitSetting canManage={canManage} notify={notify} refresh={refresh} />
+      <CompanyProfileCard raw={settings.companyProfile} />
       <button onClick={save} className="tap w-full rounded-lg bg-accent font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">ذخیره تنظیمات</button>
     </section>
   </main>;
@@ -125,6 +126,23 @@ export function SettingsPage({ initial, accounts = [], notify, refresh, onLogout
  * واحد مبلغ دفتر: تومان یا ریال. فقط پیش از اولین مبلغ عوض می‌شود؛ پس از آن قفل است،
  * چون عوض کردنش یعنی همهٔ عددهای قبلی ده برابر یا یک‌دهم خوانده شوند.
  */
+/** مشخصات شرکت که از بکاپ پارسیان آمده (کد اقتصادی، شناسهٔ ملی، نشانی)؛ فقط برای دیدن. */
+function CompanyProfileCard({ raw }) {
+  let profile = null;
+  try { profile = raw ? JSON.parse(raw) : null; } catch { profile = null; }
+  if (!profile) return null;
+  const rows = [['کد اقتصادی', profile.economicCode], ['شناسهٔ ملی', profile.nationalId], ['کد پستی', profile.postalCode], ['تلفن', profile.phone],
+    ['استان و شهر', [profile.province, profile.city].filter(Boolean).join('، ')], ['نشانی', profile.address]].filter(([, value]) => value);
+  if (!rows.length) return null;
+  return <div className="rounded-lg border border-line bg-paper px-3 py-3">
+    <p className="text-sm font-bold">مشخصات شرکت</p>
+    <p className="mt-1 text-xs text-muted">{profile.source === 'parsian-backup' ? 'از بکاپ پارسیان آمده است.' : ''}</p>
+    <dl className="mt-2 grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
+      {rows.map(([label, value]) => <div key={label} className="flex gap-2"><dt className="shrink-0 text-muted">{label}:</dt><dd className={label === 'نشانی' ? '' : 'numbers'}>{value}</dd></div>)}
+    </dl>
+  </div>;
+}
+
 function LedgerUnitSetting({ canManage, notify, refresh }) {
   const [state, setState] = useState(null);
   const [choice, setChoice] = useState('');

@@ -3,6 +3,10 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
+// بازهٔ بکاپ معمولاً سال گذشته است؛ تاریخ بی‌سال گمراه می‌کرد.
+const datedFormat = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: 'long', day: 'numeric' });
+const withYear = (iso) => { const date = new Date(iso); return Number.isNaN(date.getTime()) ? '—' : datedFormat.format(date); };
+
 /**
  * توزیع هفتگی یک سری واحد از جنس «بزرگی» است، نه هویت؛ پس یک رنگ می‌گیرد و
  * روز اوج با برچسب مستقیم مشخص می‌شود، نه با رنگ دوم.
@@ -65,6 +69,11 @@ export function FinancialDnaPanel({ notify }) {
         </div>
         <BarChart3 size={22} className="shrink-0 text-accent" />
       </div>
+      {dna.basis?.source === 'parsian-import' && <p className="mt-3 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
+        این پروفایل <b className="text-ink">بر پایهٔ اسناد واردشده از بکاپ پارسیان</b> است، از {withYear(dna.basis.from)} تا {withYear(dna.basis.to)}
+        ({toPersianDigits(dna.basis.rows)} ردیف درآمد و هزینه). وقتی ثبت روزانه در همین دفتر کافی شد، DNA از ثبت‌های تازه ساخته می‌شود.
+        انضباط ثبت و سهم ثبت صوتی از بکاپ سنجیدنی نیستند و ادعا نمی‌شوند.
+      </p>}
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ['شکل پرونده', brief.shape],
@@ -103,7 +112,7 @@ export function FinancialDnaPanel({ notify }) {
               </span>
             </div>)}
           </div>}
-          {trait.id === 'income-concentration' && <div className="mt-3 space-y-1">
+          {['income-concentration', 'customer-concentration', 'supplier-concentration', 'product-concentration'].includes(trait.id) && <div className="mt-3 space-y-1">
             {trait.evidence.top.map((item) => <div key={item.category} className="flex items-center justify-between text-xs">
               <span className="text-muted">{item.category}</span>
               <span className="numbers font-bold">{toPersianDigits(item.percent)}٪</span>

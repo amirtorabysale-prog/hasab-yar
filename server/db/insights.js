@@ -10,6 +10,7 @@ import { normalizePersian } from '../../shared/parser.js';
 import { periodForDate } from '../accounting.js';
 import { summarize } from './transactions.js';
 import { unitLabel } from '../../shared/amountUnit.js';
+import { archivedSalesByProduct } from '../parsianExtras.js';
 
 function financialTransactionRows(window, filters = {}) {
   const clauses = ["transactions.status!='deleted'", 'transactions.journal_deferred=0', 'transactions.occurred_at>=?', 'transactions.occurred_at<?'];
@@ -84,7 +85,58 @@ export function financialDnaOverview({ months = 6, now = new Date() } = {}) {
     FROM transactions WHERE status='confirmed' AND capital_flow='' AND accounting_role='' AND occurred_at>=? ORDER BY occurred_at`).all(from.toISOString());
   // فشار پرداخت تنها صفتی است که به آینده نگاه می‌کند و ورودی‌اش تعهدهای باز
   // است، نه تراکنش‌های گذشته.
-  return financialDna(rows, { timeZone: currentTimeZone(), now, months, obligations: listObligations({ status: 'open' }) });
+  const recent = financialDna(rows, { timeZone: currentTimeZone(), now, months, obligations: listObligations({ status: 'open' }) });
+  if (recent.sufficiency.level === 'ok') return { ...recent, basis: { source: 'transactions' } };
+  // دفتری که تازه از بکاپ پارسیان آمده هنوز ثبت روزانه ندارد، ولی سابقهٔ واقعی دارد.
+  // DNA از همان اسناد و در بازهٔ خود بکاپ ساخته می‌شود و صریح می‌گوید بر پایهٔ چیست.
+  const imported = importedLedgerDnaRows();
+  if (!imported.length) return { ...recent, basis: { source: 'transactions' } };
+  const dates = imported.map((row) => row.occurredAt).sort();
+  // ماه آخر بکاپ اگر ناتمام باشد، مثل «ماه جاری» از روند کنار می‌ماند.
+  const anchor = new Date(new Date(dates.at(-1)).getTime() + 24 * 60 * 60 * 1000);
+  const dna = financialDna(imported, { timeZone: currentTimeZone(), now: anchor, months: 0, obligations: [], sales: archivedSalesByProduct(activeWorkspaceDatabase()) });
+  return {
+    ...dna,
+    basis: { source: 'parsian-import', from: dates[0], to: dates.at(-1), rows: imported.length, recentRows: rows.length,
+      label: 'بر پایهٔ اسناد واردشده از بکاپ پارسیان' },
+  };
+}
+
+/**
+ * درآمد و هزینهٔ هر سندِ واردشده از پارسیان، به شکل ردیف DNA: هر حساب درآمد یا
+ * هزینه در هر سند یک ردیف با خالص همان سند (برگشت از فروش و سند اختتامیه که خالص
+ * منفی دارند، ردیف نمی‌شوند). طرف حساب، شخصِ ردیف طلب (برای درآمد) یا بدهی (برای
+ * هزینه) در همان سند است. زمان ثبت واقعی در بکاپ نیست و ساختگی پر نمی‌شود.
+ */
+export function importedLedgerDnaRows() {
+  const database = activeWorkspaceDatabase();
+  try {
+    const amounts = database.prepare(`SELECT l.entry_id AS entryId,j.occurred_at AS occurredAt,a.type,COALESCE(c.name,a.name) AS category,
+        SUM(l.credit)-SUM(l.debit) AS net
+      FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id
+      JOIN parsian_imported_entries p ON p.entry_id=j.id
+      JOIN ledger_accounts a ON a.id=l.account_id LEFT JOIN chart_accounts c ON c.id=a.chart_account_id
+      WHERE a.type IN ('income','expense') AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reverses_entry_id=j.id)
+      GROUP BY l.entry_id,a.id`).all();
+    const parties = new Map();
+    for (const line of database.prepare(`SELECT l.entry_id AS entryId,a.type,contacts.name,l.debit,l.credit
+      FROM journal_lines l JOIN parsian_imported_entries p ON p.entry_id=l.entry_id
+      JOIN ledger_accounts a ON a.id=l.account_id
+      JOIN analytic_accounts an ON an.id=l.analytic_id AND an.source_kind='contact'
+      JOIN contacts ON contacts.id=an.source_key
+      WHERE a.type IN ('asset','liability')`).all()) {
+      const entry = parties.get(line.entryId) || { income: null, expense: null };
+      if (line.type === 'asset' && line.debit > 0 && (!entry.income || line.debit > entry.income.amount)) entry.income = { name: line.name, amount: line.debit };
+      if (line.type === 'liability' && line.credit > 0 && (!entry.expense || line.credit > entry.expense.amount)) entry.expense = { name: line.name, amount: line.credit };
+      parties.set(line.entryId, entry);
+    }
+    return amounts.map((row) => {
+      const amount = row.type === 'income' ? Number(row.net) : -Number(row.net);
+      if (!(amount > 0)) return null;
+      return { amount, type: row.type, category: row.category, source: 'parsian-import', occurredAt: row.occurredAt, createdAt: null,
+        counterparty: parties.get(row.entryId)?.[row.type]?.name || '' };
+    }).filter(Boolean);
+  } catch { return []; } // دفتر بی‌ورود پارسیان: جدول نشانه‌گذاری ساخته نشده
 }
 
 /**
@@ -113,10 +165,16 @@ export function financialOverview(now = new Date()) {
   const invoices = listInvoices().items;
   const openInvoices = invoices.filter((item) => !['draft', 'cancelled', 'paid'].includes(item.displayStatus) && Number(item.balanceDue) > 0);
   const openObligations = listObligations({ status: 'open' });
+  // ماندهٔ طرف حساب در دفتر کل که سند بازی پشتش نیست (ماندهٔ افتتاحیه، سند دستی، بکاپ
+  // پارسیان) هم طلب یا بدهی واقعی است؛ «بی‌پوشش» یعنی سهمی که تعهد و فاکتور باز نشمرده‌اند،
+  // پس هیچ مبلغی دو بار شمرده نمی‌شود. بی‌این، دفتر واردشده از پارسیان طلب صفر نشان می‌داد.
+  const contacts = listContacts();
+  const ledgerReceivable = contacts.reduce((sum, item) => sum + Number(item.uncoveredReceivable || 0), 0);
+  const ledgerPayable = contacts.reduce((sum, item) => sum + Number(item.uncoveredPayable || 0), 0);
   const receivable = openObligations.filter((item) => item.direction === 'receivable').reduce((sum, item) => sum + Number(item.amount), 0)
-    + openInvoices.filter((item) => item.documentType === 'sales').reduce((sum, item) => sum + Number(item.balanceDue), 0);
+    + openInvoices.filter((item) => item.documentType === 'sales').reduce((sum, item) => sum + Number(item.balanceDue), 0) + ledgerReceivable;
   const payable = openObligations.filter((item) => item.direction === 'payable').reduce((sum, item) => sum + Number(item.amount), 0)
-    + openInvoices.filter((item) => item.documentType === 'purchase').reduce((sum, item) => sum + Number(item.balanceDue), 0);
+    + openInvoices.filter((item) => item.documentType === 'purchase').reduce((sum, item) => sum + Number(item.balanceDue), 0) + ledgerPayable;
   const overdueObligations = openObligations.filter((item) => item.dueAt && new Date(item.dueAt) < now);
   const overdueInvoices = openInvoices.filter((item) => item.dueAt && new Date(item.dueAt) < now);
   const overdueItems = [...overdueObligations.map(obligationSource), ...overdueInvoices.map(invoiceSource)];
@@ -220,7 +278,7 @@ export function financialOverview(now = new Date()) {
   const snoozedIds = snoozedFinancialAlertIds(now);
   const visibleAlerts = alerts.filter((item) => !snoozedIds.has(item.id)).sort((left, right) => Number(right.priority || 0) - Number(left.priority || 0));
   return {
-    cash, receivable, payable, overdue: overdueItems.length,
+    cash, receivable, payable, ledgerReceivable, ledgerPayable, overdue: overdueItems.length,
     cashBasis: true, basisLabel: 'مبنای دریافت و پرداخت', unit: unitLabel(), accounts,
     runway, runwayDays: baseRunway, month, monthScope, alerts: visibleAlerts, priorityAlert: prioritizeAlerts(visibleAlerts),
     alertSensitivity: settings.alertSensitivity || 'balanced', disclaimer: FINANCIAL_DISCLAIMER,

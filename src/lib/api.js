@@ -356,6 +356,7 @@ export const api = {
   // آورده و دارایی ثابت؛ ثبت عادی نیست چون سود دوره را تکان نمی‌دهد.
   saveCapitalEntry: (payload) => request('/api/capital-entries', { method: 'POST', body: JSON.stringify(payload) }),
   invoices: (params = {}) => request(`/api/invoices?${new URLSearchParams(params)}`),
+  parsianInvoiceArchive: (kind = '') => request(`/api/invoices/parsian-archive?${new URLSearchParams({ kind })}`),
   invoice: (id) => request(`/api/invoices/${id}`),
   saveInvoice: (payload) => request('/api/invoices', { method: 'POST', body: JSON.stringify(payload) }),
   issueInvoice: (id, payload = {}) => request(`/api/invoices/${id}/issue`, { method: 'POST', body: JSON.stringify(payload) }),

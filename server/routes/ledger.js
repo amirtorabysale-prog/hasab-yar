@@ -5,8 +5,10 @@
 
 import {
   adjustStock, beginProviderUsage, createInvoice, deleteContact, deleteInvoice, deleteObligation, deleteReceipt, deleteRecurringRule, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, inventoryOverview, counterpartyCard, issueInvoice, listContacts, listInvoices, listObligations, listProducts, listReceipts, listRecurringRules, markInvoicePaid, receiptCandidates, receiptImage, recordInvoicePayment, saveContact, saveObligation, saveRecurringRule, settleObligation, settlePayableBalanceByPartner, settleLedgerBalance, confirmReceipt, saveProduct, saveReceipt, typicalAmounts, updateReceipt,
+  activeWorkspaceDatabase,
 } from '../db.js';
 import { parseFinancialText } from '../parser.js';
+import { listParsianInvoiceArchive } from '../parsianExtras.js';
 import { averagesInToman, parseResultInLedgerUnit } from '../../shared/amountUnit.js';
 import { extractReceiptData, receiptOcrConfigured } from '../receiptOcr.js';
 import { SUPPORTED_RECEIPT_TYPES, acceptReceiptImage } from '../imageIntake.js';
@@ -38,6 +40,11 @@ export function registerLedgerRoutes(app) {
   app.post('/api/recurring', (request, response, next) => { try { response.status(201).json({ item: saveRecurringRule(request.body) }); } catch (error) { next(error); } });
   app.delete('/api/recurring/:id', (request, response) => response.status(deleteRecurringRule(request.params.id) ? 204 : 404).end());
   app.get('/api/invoices', (request, response) => response.json(listInvoices({ status: request.query.status, documentType: request.query.documentType })));
+  // فاکتورهای بکاپ پارسیان: بایگانی فقط‌خواندنی، هر کدام با سند پارسیانِ خودش؛ در طلب و بدهی شمرده نمی‌شوند.
+  app.get('/api/invoices/parsian-archive', (request, response, next) => {
+    try { return response.json(listParsianInvoiceArchive(activeWorkspaceDatabase(), { kind: String(request.query.kind || '').slice(0, 30) })); }
+    catch (error) { return next(error); }
+  });
   app.get('/api/invoices/:id', (request, response) => { const item = getInvoice(request.params.id); return item ? response.json({ item }) : response.status(404).json({ message: 'فاکتور پیدا نشد.' }); });
   app.post('/api/invoices', (request, response, next) => { try { response.status(201).json({ item: createInvoice(request.body) }); } catch (error) { next(error); } });
   app.post('/api/invoices/:id/issue', (request, response, next) => { try { const item = issueInvoice(request.params.id, request.body || {}); return item ? response.json({ item }) : response.status(404).json({ message: 'سند پیدا نشد.' }); } catch (error) { return next(error); } });

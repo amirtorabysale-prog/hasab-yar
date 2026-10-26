@@ -6,8 +6,9 @@
 // بایت‌های ردیف حذف‌شده‌ای که آرایهٔ slot به آن اشاره نمی‌کند.
 
 const PAGE_SIZE = 8192;
-const TYPES = { tinyint: 48, smallint: 52, int: 56, float: 62, nvarchar: 231 };
-const SIZES = { tinyint: 1, smallint: 2, int: 4, float: 8 };
+const TYPES = { tinyint: 48, smallint: 52, int: 56, float: 62, nvarchar: 231, decimal: 106, bit: 104 };
+// decimal(18,2): یک بایت علامت و هشت بایت عدد. bitها یک بایت را با جای بیت خود شریک‌اند.
+const SIZES = { tinyint: 1, smallint: 2, int: 4, float: 8, decimal: 9, bit: 1 };
 
 // چیدمان ستون‌ها همان ترتیب و آفستی است که در بکاپ واقعی پارسیان دیده شد.
 export const PARSIAN_TABLES = {
@@ -17,20 +18,37 @@ export const PARSIAN_TABLES = {
   tbl_Tafsili: [['KolCode', 'smallint'], ['MoeenCode', 'smallint'], ['Code', 'int'], ['CName', 'nvarchar']],
   tbl_Document: [
     ['ID', 'int'], ['Sanad_Num', 'int'], ['SanadDate', 'nvarchar'], ['KolCode', 'smallint'], ['MoeenCode', 'smallint'],
-    ['TafsiliCode', 'int'], ['Comment', 'nvarchar'], ['Bed', 'float'], ['Bes', 'float'], ['SanadComment', 'nvarchar'],
+    ['TafsiliCode', 'int'], ['Comment', 'nvarchar'], ['Bed', 'float'], ['Bes', 'float'], ['SanadComment', 'nvarchar'], ['Factor_Num', 'int'],
   ],
   // حساب‌هایی که پارسیان برای هر کار تعیین کرده؛ کل و معین smallint، تفصیلی int.
   tbl_AccSetting: [['ID', 'int'], ...['Cash', 'Sell', 'Wage', 'Asset'].flatMap((key) => [[`${key}_K`, 'smallint'], [`${key}_M`, 'smallint'], [`${key}_T`, 'int']])],
   tbl_VATSetting: [['ID', 'int'], ...['VATSale', 'VATBuy'].flatMap((key) => [[`${key}_K`, 'int'], [`${key}_M`, 'int'], [`${key}_T`, 'int']])],
+  // اطلاعات پایه بیرون از اسناد، با همان نوع ستون‌های بکاپ واقعی (کد کالا float، تعداد decimal، بیت مشترک).
+  tbl_GoodsGroup: [['Code', 'smallint'], ['CName', 'nvarchar'], ['IsService', 'bit']],
+  tbl_Goods: [['Code', 'float'], ['GroupCode', 'smallint'], ['CName', 'nvarchar'], ['UnitName_1', 'nvarchar'], ['Equal', 'decimal'], ['Price_1', 'float'], ['VATPercent', 'decimal'], ['HaveChild', 'bit'], ['IsActive', 'bit']],
+  tbl_Telephone: [['ID', 'int'], ['KolCode', 'smallint'], ['MoeenCode', 'smallint'], ['TafsiliCode', 'int'], ['CName', 'nvarchar'], ['Tel', 'nvarchar'],
+    ['Mobile', 'nvarchar'], ['Address', 'nvarchar'], ['CodeEco', 'nvarchar'], ['CodeNat', 'nvarchar'], ['CodePost', 'nvarchar']],
+  tbl_FactorKind: [['Code', 'smallint'], ['CName', 'nvarchar'], ['HaveDocument', 'bit']],
+  tbl_Factor: [['ID', 'int'], ['Factor_Num', 'int'], ['Factor_Date', 'nvarchar'], ['TitleCode', 'smallint'], ['Sanad_Num', 'int'], ['GoodsCode', 'float'],
+    ['Tedad', 'decimal'], ['Price', 'float'], ['Discont', 'float'], ['GoodsComment', 'nvarchar'], ['FactorComment', 'nvarchar']],
+  tbl_CoSpec: [['ID', 'int'], ['ECOcode', 'nvarchar'], ['PostalCode', 'nvarchar'], ['Code', 'nvarchar'], ['Address', 'nvarchar'], ['Tel', 'nvarchar'], ['Estate', 'nvarchar'], ['City', 'nvarchar']],
+  // رازی که خواننده هرگز نباید بخواند (کلید سامانهٔ مؤدیان در بکاپ واقعی همین‌جاست).
+  tbl_NEWMovadianInfo: [['ID', 'int'], ['PrivateKey', 'nvarchar'], ['Token', 'nvarchar']],
 };
 
 function layout(columns) {
   let fixed = 4;
   let variable = 0;
+  let bitByte = null;
+  let bitCount = 0;
   return columns.map(([name, type], index) => {
     const column = { name, type, xtype: TYPES[type], colid: index + 1 };
     if (type === 'nvarchar') { variable += 1; return { ...column, length: 400, xoffset: -variable }; }
-    const result = { ...column, length: SIZES[type], xoffset: fixed };
+    if (type === 'bit') {
+      if (bitByte === null || bitCount === 8) { bitByte = fixed; fixed += 1; bitCount = 0; }
+      return { ...column, length: 1, xoffset: bitByte, bitpos: bitCount++ };
+    }
+    const result = { ...column, length: SIZES[type], xoffset: fixed, ...(type === 'decimal' ? { xprec: 18, xscale: 2 } : {}) };
     fixed += SIZES[type];
     return result;
   });
@@ -52,6 +70,11 @@ export function encodeRecord(columns, values) {
     if (column.type === 'smallint') head.writeInt16LE(value, column.xoffset);
     if (column.type === 'int') head.writeInt32LE(value, column.xoffset);
     if (column.type === 'float') head.writeDoubleLE(value, column.xoffset);
+    if (column.type === 'bit' && value) head[column.xoffset] |= 1 << column.bitpos;
+    if (column.type === 'decimal') {
+      head[column.xoffset] = value < 0 ? 0 : 1;
+      head.writeBigUInt64LE(BigInt(Math.round(Math.abs(value) * 10 ** column.xscale)), column.xoffset + 1);
+    }
   }
   const variableColumns = columns.filter((column) => column.xoffset < 0).sort((first, second) => second.xoffset - first.xoffset);
   const texts = variableColumns.map((column) => Buffer.from(values[column.name] ?? '', 'utf16le'));
@@ -127,7 +150,7 @@ export function buildParsianBackup(tables, { stale = [], deleted = [], seed = 1,
   const objectColumns = layout([['id', 'int'], ['xtype', 'smallint'], ['name', 'nvarchar']]);
   const columnColumns = layout([
     ['id', 'int'], ['xtype', 'tinyint'], ['typestat', 'tinyint'], ['xusertype', 'smallint'], ['length', 'smallint'],
-    ['xprec', 'tinyint'], ['xscale', 'tinyint'], ['colid', 'smallint'], ['xoffset', 'smallint'], ['name', 'nvarchar'],
+    ['xprec', 'tinyint'], ['xscale', 'tinyint'], ['colid', 'smallint'], ['xoffset', 'smallint'], ['bitpos', 'tinyint'], ['name', 'nvarchar'],
   ]);
   const allocated = new Set();
   const pages = [];
@@ -141,7 +164,7 @@ export function buildParsianBackup(tables, { stale = [], deleted = [], seed = 1,
     for (const column of columns) {
       syscolumns.push(encodeRecord(columnColumns, {
         id: objectId, xtype: column.xtype, typestat: 0, xusertype: column.xtype, length: column.length,
-        xprec: 0, xscale: 0, colid: column.colid, xoffset: column.xoffset, name: column.name,
+        xprec: column.xprec || 0, xscale: column.xscale || 0, colid: column.colid, xoffset: column.xoffset, bitpos: column.bitpos || 0, name: column.name,
       }));
     }
     const records = (tables[name] || []).map((row) => encodeRecord(columns, row));

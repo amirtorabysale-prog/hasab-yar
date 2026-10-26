@@ -39,8 +39,30 @@ const TABLES = {
   tbl_ACCGroup: { required: ['Code', 'CName'], optional: [], missingTableAllowed: true },
   tbl_Document: {
     required: ['ID', 'Sanad_Num', 'SanadDate', 'KolCode', 'MoeenCode', 'TafsiliCode', 'Bed', 'Bes'],
-    optional: ['Comment', 'SanadComment'],
+    optional: ['Comment', 'SanadComment', 'Factor_Num'],
   },
+};
+
+// اطلاعات پایهٔ بیرون از اسناد: کالا، کارت طرف حساب (تلفن، نشانی، کد اقتصادی)،
+// فاکتورها و مشخصات شرکت. هیچ‌کدام اجباری نیست؛ نبودن یا ناخوانا بودنشان فقط
+// هشدار است و ورود اسناد را نمی‌بندد. فقط همین ستون‌ها خوانده می‌شوند.
+//
+// جدول‌هایی که راز دارند هرگز خوانده نمی‌شوند: tbl_NEWMovadianInfo (کلید خصوصی و
+// توکن سامانهٔ مؤدیان)، tbl_User (رمز کاربران)، tbl_LC و tbl_Company (قفل و مجوز).
+const EXTRA_TABLES = {
+  tbl_Goods: { required: ['Code', 'CName'], optional: ['GroupCode', 'UnitName_1', 'Price_1', 'VATPercent', 'Barcode'], missingTableAllowed: true },
+  tbl_GoodsGroup: { required: ['Code', 'CName'], optional: ['IsService'], missingTableAllowed: true },
+  tbl_Telephone: {
+    required: ['CName'], optional: ['KolCode', 'MoeenCode', 'TafsiliCode', 'Tel', 'Mobile', 'Address', 'CodeEco', 'CodeNat', 'CodePost'],
+    missingTableAllowed: true,
+  },
+  tbl_FactorKind: { required: ['Code', 'CName'], optional: [], missingTableAllowed: true },
+  tbl_Factor: {
+    required: ['ID', 'Factor_Num', 'Factor_Date', 'TitleCode'],
+    optional: ['Sanad_Num', 'GoodsCode', 'Tedad', 'Price', 'Discont', 'GoodsComment', 'FactorComment', 'SarResid_Date'],
+    missingTableAllowed: true,
+  },
+  tbl_CoSpec: { required: [], optional: ['ECOcode', 'PostalCode', 'Code', 'Address', 'Tel', 'Estate', 'City'], missingTableAllowed: true },
 };
 
 // حساب‌هایی که خود پارسیان در تنظیماتش برای هر کار تعیین کرده (صندوق، فروش،
@@ -201,6 +223,20 @@ function decodeValue(record, column) {
       case 62: return page.readDoubleLE(at);
       case 175: return cleanText(latinDecoder.decode(page.subarray(at, at + column.length)));
       case 239: return cleanText(page.toString('utf16le', at, at + column.length));
+      // bit: چند ستون یک بایت را با جای بیت خودشان شریک‌اند.
+      case 104: return ((page[at] >> (column.bitpos & 7)) & 1) === 1;
+      // decimal/numeric: بایت اول علامت (۱ مثبت)، بقیه عدد صحیح little-endian، تقسیم بر ۱۰ به توان مقیاس.
+      case 106: case 108: {
+        let magnitude = 0n;
+        for (let index = column.length - 1; index >= 1; index -= 1) magnitude = (magnitude << 8n) | BigInt(page[at + index]);
+        const value = Number(magnitude) / 10 ** (column.xscale || 0);
+        return page[at] === 1 ? value : -value;
+      }
+      case 60: return (page.readInt32LE(at) * 2 ** 32 + page.readUInt32LE(at + 4)) / 10000;
+      case 122: return page.readInt32LE(at) / 10000;
+      case 61: return new Date(Date.UTC(1900, 0, 1) + page.readInt32LE(at + 4) * 86_400_000 + Math.round(page.readUInt32LE(at) * 10 / 3)).toISOString();
+      case 58: return new Date(Date.UTC(1900, 0, 1) + page.readUInt16LE(at + 2) * 86_400_000 + page.readUInt16LE(at) * 60_000).toISOString();
+      case 189: case 173: return page.subarray(at, at + column.length).toString('hex');
       default: return undefined;
     }
   }
@@ -210,6 +246,7 @@ function decodeValue(record, column) {
   const to = offset + record.varEnds[index];
   if (column.xtype === 231) return cleanText(page.toString('utf16le', from, to));
   if (column.xtype === 167) return cleanText(latinDecoder.decode(page.subarray(from, to)));
+  if (column.xtype === 165) return page.subarray(from, to).toString('hex');
   return undefined;
 }
 
@@ -241,6 +278,10 @@ function readCatalog(pagesByObject, stats) {
         length: page.readInt16LE(at + 12),
         colid: page.readInt16LE(at + 16),
         xoffset: page.readInt16LE(at + 18),
+        // دقت و مقیاس decimal و جای بیت در بایت مشترک ستون‌های bit.
+        xprec: page[at + 14],
+        xscale: page[at + 15],
+        bitpos: page[at + 20],
         name: firstVariableText(record),
       };
       if (!columns.has(column.objectId)) columns.set(column.objectId, []);
@@ -376,11 +417,68 @@ function parseLocatedBackup(buffer, fileName) {
       kol: row.KolCode, moeen: row.MoeenCode, taf: row.TafsiliCode || 0,
       bed: row.Bed ?? 0, bes: row.Bes ?? 0,
       comment: row.Comment || '', sanadComment: row.SanadComment || '',
+      factor: row.Factor_Num || 0,
     });
   }
   if (!parsed.documents.rows.length) warnings.push('هیچ ردیف سندی در بکاپ نیست؛ فقط کدینگ وارد می‌شود.');
   parsed.documents.vouchers = buildVouchers(parsed.documents.rows);
+  parsed.extras = readExtras(context, warnings);
   return parsed;
+}
+
+/**
+ * کالا، کارت طرف حساب، فاکتورها و مشخصات شرکت. هر جدول جدا خوانده می‌شود و
+ * خطای یکی فقط همان را کنار می‌گذارد؛ اسناد و کدینگ هرگز به این‌ها وابسته نیستند.
+ */
+function readExtras(context, warnings) {
+  const tables = {};
+  for (const [name, spec] of Object.entries(EXTRA_TABLES)) {
+    try {
+      tables[name] = readTable(name, spec, context).rows;
+      context.parsed.stats.rows[name] = tables[name].length;
+    } catch (error) {
+      tables[name] = [];
+      warnings.push(`جدول ${name} خوانده نشد (${error.message})؛ بقیهٔ ورود دست نمی‌خورد.`);
+    }
+  }
+  const groups = new Map(tables.tbl_GoodsGroup.map((row) => [row.Code, { name: row.CName || '', service: row.IsService === true }]));
+  const goods = tables.tbl_Goods.filter((row) => row.CName).map((row) => ({
+    code: row.Code, name: row.CName, unit: row.UnitName_1 || '', price: Number(row.Price_1) || 0,
+    vatPercent: Number(row.VATPercent) || 0, barcode: row.Barcode || '',
+    group: groups.get(row.GroupCode)?.name || '', service: groups.get(row.GroupCode)?.service || false,
+  }));
+  const cards = tables.tbl_Telephone.filter((row) => row.CName).map((row) => ({
+    kol: row.KolCode || 0, moeen: row.MoeenCode || 0, taf: row.TafsiliCode || 0, name: row.CName,
+    tel: row.Tel || '', mobile: row.Mobile || '', address: row.Address || '',
+    economicCode: row.CodeEco || '', nationalId: row.CodeNat || '', postalCode: row.CodePost || '',
+  }));
+  // فاکتور از ردیف‌هایش ساخته می‌شود. tbl_FactNum فقط گزارش ساخت است و جمعش پس از
+  // اصلاح به‌روز نمی‌شود؛ مبلغ درست همان ردیف‌ها و ردیف طرف حساب در سند است.
+  const kinds = new Map(tables.tbl_FactorKind.map((row) => [row.Code, row.CName || '']));
+  const byFactor = new Map();
+  for (const row of tables.tbl_Factor) {
+    const key = `${row.TitleCode}:${row.Factor_Num}`;
+    if (!byFactor.has(key)) {
+      byFactor.set(key, {
+        title: row.TitleCode, titleName: kinds.get(row.TitleCode) || '', number: row.Factor_Num, date: row.Factor_Date || '',
+        sanad: row.Sanad_Num || 0, comment: row.FactorComment || '', dueDate: row.SarResid_Date || '', lines: [],
+      });
+    }
+    const invoice = byFactor.get(key);
+    if (!invoice.sanad && row.Sanad_Num) invoice.sanad = row.Sanad_Num;
+    invoice.lines.push({ id: row.ID, goodsCode: row.GoodsCode ?? null, quantity: Number(row.Tedad) || 0, unitPrice: Number(row.Price) || 0,
+      discount: Number(row.Discont) || 0, comment: row.GoodsComment || '' });
+  }
+  for (const invoice of byFactor.values()) invoice.lines.sort((first, second) => first.id - second.id);
+  const [company] = tables.tbl_CoSpec;
+  return {
+    goods, cards,
+    invoices: [...byFactor.values()].sort((first, second) => first.title - second.title || first.number - second.number),
+    company: company ? {
+      economicCode: company.ECOcode || '', nationalId: company.Code || '', postalCode: company.PostalCode || '',
+      address: company.Address || '', phone: company.Tel || '', province: company.Estate || '', city: company.City || '',
+    } : null,
+  };
 }
 
 /** گروه‌بندی ردیف‌های سند بر شمارهٔ سند پارسیان، مرتب بر تاریخ و شماره. مبلغ‌ها دست نمی‌خورند. */

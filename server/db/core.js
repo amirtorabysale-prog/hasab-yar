@@ -13,7 +13,7 @@ import { ensureTaxAssistantSchema } from '../taxAssistant.js';
 import { ensureTaxKnowledgeSchema, migrateTaxKnowledgeSources } from '../taxKnowledge.js';
 import { ensureTaxSchema } from '../tax.js';
 import { normalizeAmountUnit, setAmountUnitResolver } from '../../shared/amountUnit.js';
-import { balanceSnapshot, currentApproval, ensureOverdraftSchema, negativeViolations, overdraftError, recordOverdraftApproval, setApprovalSource } from '../balanceGuard.js';
+import { balanceSnapshot, currentApproval, ensureOverdraftSchema, negativeViolations, overdraftError, recordOverdraftApproval, setApprovalSource, takeImportedHistoryAcknowledgement } from '../balanceGuard.js';
 import {
   CONTROL_SCHEMA_SQL, categorySeed, ensureCategorySeed, ensureColumnOn, ensureVoiceMetricSchema,
   ensureTransactionReviewSchema, ensureInvoiceSchema, ensureReceiptAutomationSchema,
@@ -70,9 +70,10 @@ function guardedExec(active, sql) {
   if (/^COMMIT\b/.test(statement) && openTransactions.has(active)) {
     const before = openTransactions.get(active);
     openTransactions.delete(active);
+    const history = takeImportedHistoryAcknowledgement(active);
     const violations = negativeViolations(active, before);
     if (violations.length) {
-      const approval = currentApproval(active);
+      const approval = currentApproval(active) || history;
       if (!approval) {
         exec('ROLLBACK');
         throw withApprovalMode(overdraftError(violations));
@@ -83,6 +84,7 @@ function guardedExec(active, sql) {
   }
   if (/^ROLLBACK\b/.test(statement)) {
     openTransactions.delete(active);
+    takeImportedHistoryAcknowledgement(active);
     // نگهبان خودش برگردانده باشد، ROLLBACK دومِ فراخوان نباید خطای «تراکنشی باز
     // نیست» بسازد و خطای اصلی را بپوشاند.
     try { return exec(sql); } catch (error) {

@@ -70,7 +70,10 @@ export function normalizeDnaRows(rows = [], timeZone = 'Asia/Tehran') {
   return rows.map((row) => {
     const occurredAt = parseMoment(row.occurredAt);
     if (!occurredAt) return null;
-    const createdAt = parseMoment(row.createdAt) || occurredAt;
+    // سند واردشده از بکاپ زمان ثبت واقعی ندارد (زمان ورود، زمان ثبت نیست)؛ پس انضباط
+    // ثبت فقط از ردیف‌هایی سنجیده می‌شود که زمان ثبتشان معلوم است.
+    const knownCreatedAt = parseMoment(row.createdAt);
+    const createdAt = knownCreatedAt || occurredAt;
     const amount = Math.round(Number(row.amount) || 0);
     if (amount <= 0) return null;
     const type = row.type === 'income' ? 'income' : 'expense';
@@ -81,6 +84,9 @@ export function normalizeDnaRows(rows = [], timeZone = 'Asia/Tehran') {
       type,
       category: String(row.category || '').trim() || (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها'),
       source: String(row.source || 'text'),
+      imported: row.source === 'parsian-import',
+      lagKnown: Boolean(knownCreatedAt),
+      counterparty: String(row.counterparty || '').trim(),
       occurredAt,
       createdAt,
       day: when.day,
@@ -210,7 +216,8 @@ function incomeConcentration(rows) {
  * تفاوت «مشتری که هر روز ثبت می‌کند» با «مشتری که روز آخر ماه شصت سند می‌ریزد»
  * مستقیم روی برنامهٔ کاری دفتر اثر دارد و از هیچ گزارش مالی دیگری پیدا نیست.
  */
-function entryDiscipline(rows) {
+function entryDiscipline(allRows) {
+  const rows = allRows.filter((row) => row.lagKnown);
   if (!rows.length) return null;
   const lags = rows.map((row) => row.lagDays);
   const sameDay = rows.filter((row) => row.lagDays === 0).length;
@@ -239,7 +246,9 @@ function entryDiscipline(rows) {
   };
 }
 
-function voiceAdoption(rows) {
+function voiceAdoption(allRows) {
+  // سند پارسیان هرگز با صدا ثبت نشده؛ شمردنش «سهم صوتی صفر» جعلی می‌ساخت.
+  const rows = allRows.filter((row) => !row.imported);
   if (!rows.length) return null;
   const voice = rows.filter((row) => row.source === 'voice').length;
   return {
@@ -248,6 +257,46 @@ function voiceAdoption(rows) {
     value: `${share(voice, rows.length)}٪`,
     detail: 'نسبت ثبت‌هایی که با صدا وارد شده‌اند؛ برای سنجش اینکه ابزار واقعاً جا افتاده یا نه.',
     evidence: { voice, total: rows.length },
+  };
+}
+
+/**
+ * مشتریان یا تأمین‌کنندگان اصلی: سهم هر طرف حساب از درآمد یا هزینه‌ای که طرفش معلوم
+ * است (ردیف طلب یا بدهیِ همان سند). کمتر از هشت ردیفِ طرف‌دار، ادعا نیست.
+ */
+function counterpartyConcentration(rows, type) {
+  const owned = rows.filter((row) => row.type === type && row.counterparty);
+  if (owned.length < 8) return null;
+  const totals = new Map();
+  for (const row of owned) totals.set(row.counterparty, (totals.get(row.counterparty) || 0) + row.amount);
+  const total = owned.reduce((sum, row) => sum + row.amount, 0);
+  const ranked = [...totals].map(([category, amount]) => ({ category, amount, percent: share(amount, total) })).sort((left, right) => right.amount - left.amount);
+  const topThree = ranked.slice(0, 3).reduce((sum, item) => sum + item.percent, 0);
+  const income = type === 'income';
+  return {
+    id: income ? 'customer-concentration' : 'supplier-concentration',
+    label: income ? 'مشتریان اصلی' : 'تأمین‌کنندگان اصلی',
+    value: `${ranked[0].percent}٪ از «${ranked[0].category}»`,
+    detail: topThree >= 70
+      ? `${Math.min(3, ranked.length)} ${income ? 'مشتری' : 'تأمین‌کننده'} اول ${topThree}٪ ${income ? 'فروشی' : 'خریدی'} را دارند که طرف حسابش معلوم است؛ ${income ? 'وصول طلب همین چند نفر کل جریان نقد را می‌سازد' : 'قطع یا تأخیر همین چند نفر کار را می‌خواباند'}.`
+      : `${income ? 'فروش' : 'خرید'} میان ${ranked.length} طرف حساب پخش شده است.`,
+    evidence: { top: ranked.slice(0, 5), parties: ranked.length, sample: owned.length },
+  };
+}
+
+/** کالاهای اصلی فروش، از ردیف فاکتورهای فروش (بایگانی پارسیان). */
+function productConcentration(sales) {
+  const items = (sales || []).filter((item) => item.product && Number(item.amount) > 0);
+  if (items.length < 2) return null;
+  const total = items.reduce((sum, item) => sum + Number(item.amount), 0);
+  const ranked = items.map((item) => ({ category: item.product, amount: Number(item.amount), percent: share(Number(item.amount), total) }))
+    .sort((left, right) => right.amount - left.amount);
+  return {
+    id: 'product-concentration',
+    label: 'کالاهای اصلی فروش',
+    value: `${ranked[0].percent}٪ از «${ranked[0].category}»`,
+    detail: `${items.length} کالا فروش داشته‌اند؛ ${Math.min(3, items.length)} کالای اول ${ranked.slice(0, 3).reduce((sum, item) => sum + item.percent, 0)}٪ مبلغ فروش را می‌سازند.`,
+    evidence: { top: ranked.slice(0, 5), sample: items.length },
   };
 }
 
@@ -413,7 +462,7 @@ function accountantBrief(rows, months, traits) {
  * اثر انگشت مالی یک پرونده.
  * `rows` همان ردیف‌های تراکنش دورهٔ موردنظر است؛ این تابع هیچ کوئری نمی‌زند.
  */
-export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Date(), months = 0, obligations = [] } = {}) {
+export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Date(), months = 0, obligations = [], sales = [] } = {}) {
   const normalized = normalizeDnaRows(rows, timeZone);
   const sufficiency = sufficiencyOf(normalized);
   // مخرج باید ماه‌هایی باشد که واقعاً داده دارند، نه پنجره‌ای که درخواست شده.
@@ -438,6 +487,9 @@ export function financialDna(rows = [], { timeZone = 'Asia/Tehran', now = new Da
     weekdayPattern(normalized),
     expenseBackbone(normalized, monthCount),
     incomeConcentration(normalized),
+    counterpartyConcentration(normalized, 'income'),
+    counterpartyConcentration(normalized, 'expense'),
+    productConcentration(sales),
     entryDiscipline(normalized),
     voiceAdoption(normalized),
     trendShape(normalized, nowParts.month),

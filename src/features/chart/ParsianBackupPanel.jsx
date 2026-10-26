@@ -70,13 +70,15 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
     const question = skippedParts.length
       ? `${toPersianDigits(importableCount)} سند به‌صورت پیش‌نویس وارد شود و این‌ها فقط در همین گزارش بمانند: ${skippedParts.join('، ')}؟`
       : `${toPersianDigits(importableCount)} سند به‌صورت پیش‌نویس وارد شود؟`;
-    if (!window.confirm(`${question}\nاین کار فقط در دفتر خام مجاز است و یک‌بار انجام می‌شود.`)) return;
+    const extrasLine = extrasSentence(preview.extras);
+    if (!window.confirm(`${question}${extrasLine ? `\nهمراهش: ${extrasLine}.` : ''}\nاین کار فقط در دفتر خام مجاز است و یک‌بار انجام می‌شود.`)) return;
     setBusy(true); setError('');
     try {
       const outcome = await api.parsianBackupCommit(file, { amountUnit, kolTypes });
       setResult(outcome); setPreview(null); setFile(null);
       await refresh();
-      notify('بکاپ پارسیان وارد شد؛ اسناد به‌صورت پیش‌نویس منتظر تأیید تو هستند.');
+      if (outcome.phaseB?.error || outcome.extras?.error) notify('اسناد پارسیان وارد شدند، ولی بخشی از اطلاعات پایه نیامد؛ گزارش زیر را ببین.');
+      else notify('بکاپ پارسیان وارد شد؛ اسناد به‌صورت پیش‌نویس منتظر تأیید تو هستند.');
     } catch (issue) {
       setError(issue.message);
       if (issue.details?.errors?.length) {
@@ -95,6 +97,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
       فایل بکاپ SQL Server نرم‌افزار پارسیان را مستقیم بارگذاری کن؛ بدون نصب SQL Server و بدون Excel. اول پیش‌نمایش کامل می‌بینی — کدینگ، تفصیلی‌ها و
       تک‌تک سندها با وضعیت ترازشان — بعد با تأیید خودت وارد می‌شود. ورود فقط در <b>دفتر خام</b> (بدون هیچ سند و کدینگ) ممکن است و یک‌بار انجام می‌شود.
       اسناد متوازن به‌صورت <b>پیش‌نویس</b> می‌آیند تا در میز کار سندها تأییدشان کنی.
+      {' '}همراه اسناد، بانک‌ها و صندوق با مانده، اشخاص با تلفن و کد اقتصادی، کالاها، بایگانی فاکتورها و مشخصات شرکت هم می‌آیند و DNA مالی از همین اسناد ساخته می‌شود.
     </p>
 
     <fieldset className="mt-3" disabled={!canManage || busy}>
@@ -142,6 +145,9 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
       {summary.unitBlockedCount > 0 && <SummaryTile label="متوازن، ولی واحد جا نمی‌شود" value={summary.unitBlockedCount} tone="text-accent" />}
       {summary.invalidCount > 0 && <SummaryTile label="ایراد دیگر" value={summary.invalidCount} tone="text-expense" />}
     </div>}
+    {preview?.extras && extrasSentence(preview.extras) && <p className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[12px] leading-6 text-muted">
+      همراه اسناد وارد می‌شود: <b className="text-ink">{extrasSentence(preview.extras)}</b>. بانک‌ها، صندوق و اشخاص هم از همین کدینگ ساخته می‌شوند؛ هیچ سند تازه‌ای ثبت نمی‌شود.
+    </p>}
 
     {preview && <div className="mt-4 space-y-4">
       <p className="text-[12px] leading-5 text-muted">
@@ -166,6 +172,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
         حساب دفتر کل: <b className="numbers">{toPersianDigits(result.ledgerAccounts)}</b> — سند پیش‌نویس: <b className="numbers">{toPersianDigits(result.journals.entries)}</b> سند با جمع <b className="numbers">{formatAmount(result.journals.total)}</b> {unitLabel(result.ledgerUnit)} (واحد فایل: {unitLabel(result.amountUnit)}).
         <div className="mt-1 text-muted">سندها در میز کار سندها منتظر تأییدند؛ شماره‌گذاری داخلی از نو و تاریخ‌ها شمسیِ خود فایل‌اند.</div>
       </div>
+      <ImportFilled result={result} />
       <NextStepsToParsian result={result} />
       {result.skippedVouchers.length > 0 && <div className="rounded-lg border border-expense/40 bg-expense/5 p-3">
         <p className="text-[13px] font-bold text-expense">{toPersianDigits(result.skippedVouchers.length)} سند وارد نشد — با هشدار باقی ماند</p>
@@ -177,8 +184,53 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
       </div>}
     </div>}
 
-    <ParsianPhaseB canManage={canManage} notify={notify} refresh={refresh} />
+    <ParsianPhaseB canManage={canManage} notify={notify} refresh={refresh} autoDone={Boolean(result?.phaseB?.accounts)} />
   </section>;
+}
+
+/** جملهٔ کوتاه «چه چیزهایی همراه اسناد می‌آید» برای پیش‌نمایش و پرسش تأیید. */
+function extrasSentence(extras) {
+  if (!extras) return '';
+  const parts = [
+    extras.goods ? `${toPersianDigits(extras.goods)} کالا` : '',
+    extras.cards ? `${toPersianDigits(extras.cards)} کارت طرف حساب (تلفن، نشانی، کد اقتصادی)` : '',
+    extras.salesInvoices ? `${toPersianDigits(extras.salesInvoices)} فاکتور فروش` : '',
+    extras.purchaseInvoices ? `${toPersianDigits(extras.purchaseInvoices)} فاکتور خرید` : '',
+    extras.company ? 'مشخصات شرکت' : '',
+  ].filter(Boolean);
+  return parts.join('، ');
+}
+
+/**
+ * گزارش «کدام بخش‌ها پر شدند» پس از ورود: بانک و صندوق، اشخاص، کالا، بایگانی
+ * فاکتورها، مشخصات شرکت و DNA. هر چیزی که نیامد با دلیلش گفته می‌شود.
+ */
+function ImportFilled({ result }) {
+  const phaseB = result.phaseB || {};
+  const extras = result.extras || {};
+  const rows = [
+    !phaseB.error && phaseB.accounts && ['صندوق و بانک', `${toPersianDigits(phaseB.accounts.created + phaseB.accounts.bound)} حساب پولی با ماندهٔ همان اسناد${phaseB.petty ? ` و ${toPersianDigits(phaseB.petty)} تنخواه` : ''}`, 'تنظیمات ← صندوق و بانک، و کارت هر حساب'],
+    !phaseB.error && phaseB.contacts && ['اشخاص و طرف حساب‌ها', `${toPersianDigits(phaseB.contacts.created + phaseB.contacts.reused)} شخص، ${toPersianDigits(phaseB.contacts.enriched || 0)} با تلفن و کد اقتصادی؛ طلب و بدهی هر کدام از دفتر کل`, 'دفتر مالی ← اشخاص و کارت طرف حساب'],
+    extras.products && ['کالا', `${toPersianDigits(extras.products.created)} کالا با واحد و قیمت فروش (اگر در پارسیان بود)؛ موجودی تعدادی را با شمارش بگذار`, 'دفتر مالی ← انبار'],
+    extras.invoices && ['فاکتورها', `${toPersianDigits(extras.invoices.byKind?.sales || 0)} فروش و ${toPersianDigits(extras.invoices.byKind?.purchase || 0)} خرید، بایگانی فقط‌خواندنی با سند پارسیانِ هر کدام`, 'دفتر مالی ← فاکتورها'],
+    extras.company && ['مشخصات شرکت', 'کد اقتصادی، شناسهٔ ملی و نشانی', 'تنظیمات ← عمومی'],
+    ['DNA مالی', 'از همین اسناد، در بازهٔ خود بکاپ: مشتریان و تأمین‌کنندگان اصلی، کالاهای اصلی، ستون فقرات هزینه و روند', 'منوی DNA مالی'],
+  ].filter(Boolean);
+  const problems = [phaseB.error, typeof phaseB.skipped === 'string' ? phaseB.skipped : '', extras.error,
+    ...(Array.isArray(phaseB.skipped) ? phaseB.skipped : []), ...(extras.warnings || [])].filter(Boolean);
+  return <div className="rounded-lg border border-line bg-paper p-3">
+    <p className="text-[13px] font-bold">بخش‌هایی که از همین بکاپ پر شدند</p>
+    <ul className="mt-2 space-y-2 text-[12px] leading-6">
+      {rows.map(([title, detail, where]) => <li key={title} className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+        <b className="shrink-0 text-income">✓ {title}</b>
+        <span>{detail}</span>
+        <span className="text-muted sm:mr-auto">({where})</span>
+      </li>)}
+    </ul>
+    {problems.length > 0 && <ul className="mt-2 space-y-1 border-t border-line pt-2 text-[12px] leading-6 text-accent">
+      {problems.map((item, index) => <li key={index}>• {item}</li>)}
+    </ul>}
+  </div>;
 }
 
 /**
@@ -189,7 +241,7 @@ export default function ParsianBackupPanel({ canManage, notify, refresh }) {
  * «طرف حساب» با تأیید کاربر شخص می‌شوند و کارت حسابشان از دفتر کل پر می‌شود.
  * هیچ سند تازه‌ای ساخته نمی‌شود.
  */
-function ParsianPhaseB({ canManage, notify, refresh }) {
+function ParsianPhaseB({ canManage, notify, refresh, autoDone = false }) {
   const [preview, setPreview] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [result, setResult] = useState(null);
@@ -228,8 +280,10 @@ function ParsianPhaseB({ canManage, notify, refresh }) {
 
   if (!preview && !result && !error) {
     return <div className="mt-5 rounded-xl border border-dashed border-line p-4">
-      <p className="text-[13px] font-bold">قدم بعد: حساب‌های عملیاتی و اشخاص</p>
-      <p className="mt-1 text-[12px] leading-6 text-muted">ورود بکاپ، کدینگ و اسناد را آورد؛ بانک‌ها، تنخواه و اشخاص برای دیده‌شدن در بخش‌های خودشان باید از همان کدینگ ساخته شوند — بدون هیچ سند تازه‌ای.</p>
+      <p className="text-[13px] font-bold">{autoDone ? 'تفصیلی‌های دیگر و بررسی دوباره' : 'قدم بعد: حساب‌های عملیاتی و اشخاص'}</p>
+      <p className="mt-1 text-[12px] leading-6 text-muted">{autoDone
+        ? 'بانک‌ها و اشخاص پیشنهادی همین حالا ساخته شدند. اگر تفصیلی دیگری هم شخص است (مثلاً نامی که شبیه حساب بود و کنار ماند)، از این‌جا انتخاب و اضافه کن.'
+        : 'بانک‌ها، تنخواه و اشخاص برای دیده‌شدن در بخش‌های خودشان از همان کدینگ ساخته می‌شوند — بدون هیچ سند تازه‌ای. ورود تازه این کار را خودش انجام می‌دهد؛ این‌جا برای دفتری است که پیش‌تر وارد شده.'}</p>
       <button type="button" disabled={!canManage || busy} onClick={load} className="tap mt-2 rounded-lg border border-line bg-paper px-4 text-[13px] font-bold hover:bg-paper hover:text-ink disabled:opacity-45">
         {busy ? 'در حال بررسی…' : 'بررسی و ساخت حساب‌های عملیاتی'}
       </button>

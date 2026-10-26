@@ -29,6 +29,8 @@ import { normalizedCounterpartyInput } from './counterparties.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { audit } from './db/core.js';
 import { nextLedgerCode } from './accounting.js';
+import { acknowledgeImportedHistory } from './balanceGuard.js';
+import { applyParsianCards } from './parsianExtras.js';
 
 const KOL_CASH = '10';
 const KOL_BANK = '11';
@@ -195,6 +197,18 @@ export function previewParsianPhaseB(database) {
   };
 }
 
+/**
+ * فاز ب بلافاصله پس از ورود اسناد، با پیش‌انتخابِ پیش‌نمایش: همهٔ حساب‌های پولی و
+ * تفصیلی‌هایی که شخص‌اند (نام‌های حسابداری‌نما مثل مالیات و ارزش افزوده کنار
+ * می‌مانند). تا پیش از این، فاز ب دکمهٔ جدایی پایین صفحه بود و بعد از ورود، بانک‌ها و
+ * اشخاص خالی می‌ماندند. بقیهٔ تفصیلی‌ها هر وقت لازم شد از همان بخش «قدم بعد» شخص می‌شوند.
+ */
+export function completeParsianImport(database, { createdBy = null } = {}) {
+  const preview = previewParsianPhaseB(database);
+  if (!preview.eligible) return { skipped: preview.message };
+  return commitParsianPhaseB(database, { contactIds: preview.suggestedContactIds, createdBy });
+}
+
 /** نام حساب یکتا؛ نام تکراری پسوند شماره می‌گیرد (همان قاعدهٔ تنخواه‌گردان). */
 function uniqueAccountName(database, base) {
   if (!database.prepare('SELECT 1 FROM accounts WHERE name=?').get(base)) return base;
@@ -243,7 +257,7 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
   const result = {
     accounts: { created: 0, bound: 0, existing: 0, ledgerCreated: 0 },
     petty: 0,
-    contacts: { created: 0, reused: 0 },
+    contacts: { created: 0, reused: 0, enriched: 0 },
     analyticsLinked: 0,
     linesRepointed: 0,
     chartRolesSet: 0,
@@ -357,10 +371,15 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
           result.linesRepointed += Number(repointed.changes || 0);
         }
       }
+      // تلفن، نشانی و کدهای کارت پارسیانِ همین تفصیلی‌ها روی کارت شخص.
+      if (applyParsianCards(database, contact.id, group.map((candidate) => candidate.id))) result.contacts.enriched += 1;
       audit(existing ? 'update' : 'create', 'contact', contact.id, {
         source: 'parsian-phase-b', reused: Boolean(existing), tafsili: group.map((candidate) => candidate.code), createdBy,
       });
     }
+    // وصل‌کردن سابقه پولی جابه‌جا نمی‌کند؛ اگر ماندهٔ واقعیِ بانکی در بکاپ منفی است،
+    // نگهبان موجودی آن را با همین دلیل ثبت می‌کند، نه اینکه کل اتصال را برگرداند.
+    acknowledgeImportedHistory(database, { reason: 'ماندهٔ منفی از اسناد واردشدهٔ بکاپ پارسیان؛ اتصال حساب به سابقه، پولی جابه‌جا نکرد.', userId: createdBy, role: 'import' });
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');

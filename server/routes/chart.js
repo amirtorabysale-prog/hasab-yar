@@ -7,7 +7,7 @@ import {
   activeWorkspaceDatabase, amountRecordsInLedger, applyChartSuggestions, chartOverview, dimensionReport, importChart, installChartTemplate, importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, attachCounterpartyAnalytics, clearChartMappings, mapLedgerAccount, mapLedgerAccountsInBulk, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry, saveAccountingTransferSettings,
 } from '../db.js';
 import { commitParsianBackup, previewParsianBackup } from '../parsianImport.js';
-import { commitParsianPhaseB, previewParsianPhaseB } from '../parsianPhaseB.js';
+import { commitParsianPhaseB, completeParsianImport, previewParsianPhaseB } from '../parsianPhaseB.js';
 import {
   topicLabelStats, listTopicPromotions, decideTopicPromotion, saveTopicPromotionThreshold, topicPromotionThreshold,
 } from '../topicPromotion.js';
@@ -77,6 +77,9 @@ export function registerChartRoutes(app) {
       // واحدی که دفتر برای مبلغ‌های پارسیانش گفت، همان واحد فایل انتقال به پارسیان
       // است؛ بدون این، خروجی برگشتی با پیش‌فرض تومان ده برابر کوچک‌تر درمی‌آمد.
       saveAccountingTransferSettings({ targetSystem: 'parsian-review-csv', amountUnit: result.amountUnit });
+      // بانک، صندوق، تنخواه و اشخاص همان لحظه از کدینگ واردشده؛ خطایش اسناد را برنمی‌گرداند.
+      try { result.phaseB = completeParsianImport(activeWorkspaceDatabase(), { createdBy: request.user?.id || null }); }
+      catch (error) { result.phaseB = { error: `اسناد وارد شدند، ولی ساخت بانک‌ها و اشخاص انجام نشد: ${error.message} — از بخش «قدم بعد» دوباره بزن.` }; }
       return response.status(201).json(result);
     } catch (error) { return next(error); }
   });

@@ -20,6 +20,16 @@ import { unitLabel } from '../shared/amountUnit.js';/**
  * حسابی که از قبل منفی بوده، جلویش گرفته نمی‌شود.
  */
 
+/**
+ * سندهایی که ردیف تراکنش ندارند و پول حساب را مستقیم در دفتر کل جابه‌جا می‌کنند:
+ * انتقال میان حساب‌ها، سند دستی و انبوه (اسناد بکاپ پارسیان هم همین‌اند)، سند
+ * اصلاحی و ماندهٔ افتتاحیهٔ واردشده از اکسل. بقیهٔ مسیرها (ثبت گفتاری، پرداخت
+ * فاکتور، چک، تسویه) ردیف تراکنش دارند و همان شمرده می‌شود. بی‌این فهرست، کارت
+ * بانکِ واردشده از پارسیان گردش کامل را نشان می‌داد و ماندهٔ همان حساب صفر بود.
+ */
+export const LEDGER_ONLY_SOURCES = Object.freeze(['account_transfer', 'manual-batch', 'adjustment', 'opening_import']);
+export const LEDGER_ONLY_SOURCES_SQL = LEDGER_ONLY_SOURCES.map((source) => `'${source}'`).join(',');
+
 const BALANCE_SQL = `SELECT accounts.id,accounts.name,COALESCE(accounts.allow_negative,0) AS allowNegative,
   accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.status!='deleted' AND COALESCE(transactions.journal_deferred,0)=0 THEN
     CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END ELSE 0 END),0)
@@ -27,7 +37,7 @@ const BALANCE_SQL = `SELECT accounts.id,accounts.name,COALESCE(accounts.allow_ne
     JOIN ledger_accounts a ON a.id=l.account_id JOIN journal_entries j ON j.id=l.entry_id
     LEFT JOIN journal_entries original ON original.id=j.reverses_entry_id
     WHERE a.source_kind='operational-account' AND a.source_key=accounts.id
-      AND (j.source_type='account_transfer' OR original.source_type='account_transfer')),0) AS balance
+      AND (j.source_type IN (${LEDGER_ONLY_SOURCES_SQL}) OR original.source_type IN (${LEDGER_ONLY_SOURCES_SQL}))),0) AS balance
   FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id
   GROUP BY accounts.id`;
 
@@ -111,6 +121,22 @@ export function setApprovalSource(source, modeSource) {
 }
 export function currentApproval(database) {
   try { return approvalSource(database) || null; } catch { return null; }
+}
+
+/**
+ * ورود سابقهٔ واقعی (بکاپ پارسیان) پولی جابه‌جا نمی‌کند؛ وقتی حساب پولی به اسناد
+ * گذشته وصل می‌شود و ماندهٔ واقعی‌اش منفی است، این منفی‌بودن یک واقعیت گذشته است
+ * نه عملیات تازه. همان تراکنش یک‌بار با این دلیل در `overdraft_approvals` ثبت
+ * می‌شود (قابل حسابرسی) و جلوی اتصال گرفته نمی‌شود. فقط برای COMMIT بعدیِ همان اتصال.
+ */
+const importedHistory = new WeakMap();
+export function acknowledgeImportedHistory(connection, approval) {
+  importedHistory.set(connection, { ...approval });
+}
+export function takeImportedHistoryAcknowledgement(connection) {
+  const approval = importedHistory.get(connection) || null;
+  importedHistory.delete(connection);
+  return approval;
 }
 
 /** وقتی تأیید لازم است اما نیامده: خطای یکسان برای صندوق، کالا و سند صادرشده. */

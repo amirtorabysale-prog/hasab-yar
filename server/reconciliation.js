@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { unitLabel } from '../shared/amountUnit.js';
+import { LEDGER_ONLY_SOURCES_SQL } from './balanceGuard.js';
 
 function reconciliationError(message, code = 'RECONCILIATION_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -245,9 +246,15 @@ function importSummary(database, row) {
     FROM bank_statement_lines WHERE import_id=?`).get(row.id);
   const lastBalance = database.prepare(`SELECT statement_balance AS balance FROM bank_statement_lines
     WHERE import_id=? AND statement_balance IS NOT NULL ORDER BY occurred_at DESC,row_number DESC LIMIT 1`).get(row.id)?.balance ?? null;
-  const book = database.prepare(`SELECT accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END),0) AS balance
+  const book = Number(database.prepare(`SELECT accounts.opening_balance + COALESCE(SUM(CASE WHEN transactions.type='income' THEN transactions.amount ELSE -transactions.amount END),0) AS balance
     FROM accounts LEFT JOIN transactions ON transactions.account_id=accounts.id AND transactions.status!='deleted' AND transactions.journal_deferred=0 AND transactions.occurred_at<=?
-    WHERE accounts.id=? GROUP BY accounts.id`).get(row.periodEnd, row.accountId)?.balance ?? 0;
+    WHERE accounts.id=? GROUP BY accounts.id`).get(row.periodEnd, row.accountId)?.balance ?? 0)
+    // همان سندهای بی‌ردیف‌تراکنش که ماندهٔ حساب می‌شمارد (انتقال، سند دستی و بکاپ، افتتاحیهٔ اکسل)، تا پایان دورهٔ صورت‌حساب.
+    + Number(database.prepare(`SELECT COALESCE(SUM(l.debit-l.credit),0) AS amount FROM journal_lines l
+      JOIN ledger_accounts a ON a.id=l.account_id JOIN journal_entries j ON j.id=l.entry_id
+      LEFT JOIN journal_entries original ON original.id=j.reverses_entry_id
+      WHERE a.source_kind='operational-account' AND a.source_key=? AND j.occurred_at<=?
+        AND (j.source_type IN (${LEDGER_ONLY_SOURCES_SQL}) OR original.source_type IN (${LEDGER_ONLY_SOURCES_SQL}))`).get(row.accountId, row.periodEnd)?.amount || 0);
   const summary = { ...row, ...Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value || 0)])), statementBalance: lastBalance, bookBalance: Number(book), difference: lastBalance == null ? null : Number(lastBalance) - Number(book) };
   summary.blockingReasons = [
     ...(summary.unmatchedCount ? [`${summary.unmatchedCount} ردیف هنوز تعیین‌تکلیف نشده است.`] : []),

@@ -38,6 +38,7 @@ import { ledgerAccountForChart } from './ledgerImport.js';
 import { assertAccountingPeriodOpen, createJournalBatch, ensureParsianSourceSchema, nextLedgerCode, periodForDate } from './accounting.js';
 import { persianToISO } from '../shared/persianDate.js';
 import { AMOUNT_UNITS, convertAmount, normalizeAmountUnit, unitLabel } from '../shared/amountUnit.js';
+import { importParsianExtras, parsianExtrasSummary } from './parsianExtras.js';
 
 const JOURNAL_CHUNK = 200;
 const TYPE_LABELS = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
@@ -414,6 +415,8 @@ export function previewParsianBackup(database, buffer, fileName, { amountUnit, k
       blockedVouchers: plan.summary.unitBlockedCount,
     } : null,
     warnings: plan.warnings,
+    // کالا، کارت طرف حساب، فاکتورها و مشخصات شرکت که همراه اسناد وارد می‌شوند.
+    extras: parsianExtrasSummary(parsed),
     designatedRoles: plan.designatedRoles,
     kolTypeChoices: plan.kolTypeChoices.map((choice) => ({
       ...choice,
@@ -570,6 +573,14 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
   }
 
   logImport('complete', `ورود کامل: ${created.entries} سند پیش‌نویس، واحد فایل ${unitLabel(unit)}، واحد دفتر ${unitLabel(ledgerUnit)}.`, created.entries);
+  // اطلاعات پایه (کالا، کارت طرف حساب، بایگانی فاکتورها، مشخصات شرکت) پس از اسناد.
+  // خطایش اسناد واردشده را برنمی‌گرداند؛ فقط گفته می‌شود چه نیامد.
+  let extras;
+  try {
+    extras = importParsianExtras(database, parsed, { fileUnit: unit, ledgerUnit, analyticIdByKey, designated: parsed.chart.designated, createdBy });
+  } catch (error) {
+    extras = { error: `اسناد و کدینگ وارد شدند، ولی کالا و فاکتورها و کارت‌های طرف حساب نیامدند: ${error.message}` };
+  }
   const skipped = plan.vouchers.filter((voucher) => !voucher.importable).map(voucherPreview);
   return {
     chart: chartResult,
@@ -582,5 +593,6 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     ledgerUnit,
     skippedVouchers: skipped,
     summary: plan.summary,
+    extras,
   };
 }
