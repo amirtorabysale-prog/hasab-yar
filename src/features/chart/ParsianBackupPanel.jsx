@@ -209,7 +209,7 @@ function ImportFilled({ result }) {
   const phaseB = result.phaseB || {};
   const extras = result.extras || {};
   const rows = [
-    !phaseB.error && phaseB.accounts && ['صندوق و بانک', `${toPersianDigits(phaseB.accounts.created + phaseB.accounts.bound)} حساب پولی با ماندهٔ همان اسناد${phaseB.petty ? ` و ${toPersianDigits(phaseB.petty)} تنخواه` : ''}`, 'تنظیمات ← صندوق و بانک، و کارت هر حساب'],
+    !phaseB.error && phaseB.accounts && ['صندوق و بانک', `${toPersianDigits(phaseB.accounts.bound + phaseB.accounts.ledgerCreated)} حساب پولی با ماندهٔ همان اسناد${phaseB.petty ? ` و ${toPersianDigits(phaseB.petty)} تنخواه` : ''}`, 'تنظیمات ← صندوق و بانک، و کارت هر حساب'],
     !phaseB.error && phaseB.contacts && ['اشخاص و طرف حساب‌ها', `${toPersianDigits(phaseB.contacts.created + phaseB.contacts.reused)} شخص، ${toPersianDigits(phaseB.contacts.enriched || 0)} با تلفن و کد اقتصادی؛ طلب و بدهی هر کدام از دفتر کل`, 'دفتر مالی ← اشخاص و کارت طرف حساب'],
     extras.products && ['کالا', `${toPersianDigits(extras.products.created)} کالا با واحد و قیمت فروش (اگر در پارسیان بود)؛ موجودی تعدادی را با شمارش بگذار`, 'دفتر مالی ← انبار'],
     extras.invoices && ['فاکتورها', `${toPersianDigits(extras.invoices.byKind?.sales || 0)} فروش و ${toPersianDigits(extras.invoices.byKind?.purchase || 0)} خرید، بایگانی فقط‌خواندنی با سند پارسیانِ هر کدام`, 'دفتر مالی ← فاکتورها'],
@@ -368,7 +368,7 @@ function ParsianPhaseB({ canManage, notify, refresh, autoDone = false }) {
 
     {result && <div className="mt-3 space-y-2">
       <div className="rounded-lg border border-income/40 bg-income/5 p-3 text-[13px] leading-6">
-        <b>ساخته شد.</b> حساب عملیاتی: <b className="numbers">{toPersianDigits(result.accounts.created)}</b> تازه و <b className="numbers">{toPersianDigits(result.accounts.bound)}</b> وصل‌شده
+        <b>ساخته شد.</b> حساب پولی وصل‌شده: <b className="numbers">{toPersianDigits(result.accounts.bound + result.accounts.ledgerCreated)}</b> ({toPersianDigits(result.accounts.created)} تازه)
         {result.petty > 0 && <> — تنخواه: <b className="numbers">{toPersianDigits(result.petty)}</b></>}
         — شخص تازه: <b className="numbers">{toPersianDigits(result.contacts.created)}</b>{result.contacts.reused > 0 ? ` (+${toPersianDigits(result.contacts.reused)} موجود)` : ''}
         — ردیف سندِ به‌کارت‌وصل‌شده: <b className="numbers">{toPersianDigits(result.linesRepointed)}</b>.

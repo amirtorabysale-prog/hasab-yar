@@ -115,7 +115,7 @@ function BulkMappingBar({ mapping, chartAccounts, notify, onChanged }) {
 
 const CHART_TABS = ['mapping', 'chart', 'dimensions', 'import', 'parsian'];
 
-export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
+export function ChartPage({ access, notify, initialTab = '', onTabChange, refreshApp }) {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [csv, setCsv] = useState('');
@@ -237,7 +237,7 @@ export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
 
     {tab === 'dimensions' && <DimensionsPanel overview={overview} canManage={canManage} notify={notify} refresh={load} dimension={dimension} setDimension={setDimension} />}
 
-    {tab === 'parsian' && <div className="mt-4"><ParsianBackupPanel canManage={canManage} notify={notify} refresh={load} /></div>}
+    {tab === 'parsian' && <div className="mt-4"><ParsianBackupPanel canManage={canManage} notify={notify} refresh={async () => { await load(); await refreshApp?.(); }} /></div>}
 
     {tab === 'import' && <div className="mt-4 space-y-5">
       <ExcelImportPanel canManage={canManage} notify={notify} refresh={load} />
