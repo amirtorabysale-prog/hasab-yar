@@ -35,7 +35,7 @@ function phaseBTables() {
   const moeen = [
     { KolCode: 10, Code: 1, CName: 'صندوق' },
     { KolCode: 10, Code: 2, CName: 'تنخواه گردانها' },
-    { KolCode: 11, Code: 1, CName: 'رفاه بهشت آيين' },
+    { KolCode: 11, Code: 1, CName: 'بانک نمونه' },
     { KolCode: 11, Code: 2, CName: 'شاپرک' },
     { KolCode: 12, Code: 2, CName: 'مشتریان' },
     { KolCode: 23, Code: 1, CName: 'بستانکاران تجاري' },
@@ -43,9 +43,9 @@ function phaseBTables() {
     { KolCode: 62, Code: 1, CName: 'خريد' },
   ];
   const tafsili = [
-    { KolCode: 12, MoeenCode: 2, Code: 1, CName: 'شرکت طلايي سبز گستر بهشهر' },
+    { KolCode: 12, MoeenCode: 2, Code: 1, CName: 'شرکت نمونه سبز' },
     { KolCode: 12, MoeenCode: 2, Code: 2, CName: 'ماليات حقوق' },
-    { KolCode: 23, MoeenCode: 1, Code: 1, CName: 'شرکت شيميايي آنا سيمين' },
+    { KolCode: 23, MoeenCode: 1, Code: 1, CName: 'شرکت شیمیایی نمونه' },
   ];
   let id = 1;
   const row = (sanad, date, kolCode, moeenCode, taf, bed, bes, comment) => ({
@@ -132,11 +132,11 @@ test('پیش‌نمایش فاز ب: معین‌های پولی، بازاستف
     // سه تفصیلی طرف حساب؛ مالیات حقوق شخص نیست.
     assert.equal(preview.contacts.length, 3);
     const byName = Object.fromEntries(preview.contacts.map((contact) => [contact.name, contact]));
-    assert.equal(byName['شرکت طلايي سبز گستر بهشهر'].suggested, true);
-    assert.equal(byName['شرکت شيميايي آنا سيمين'].suggested, true);
+    assert.equal(byName['شرکت نمونه سبز'].suggested, true);
+    assert.equal(byName['شرکت شیمیایی نمونه'].suggested, true);
     assert.equal(byName['ماليات حقوق'].suggested, false);
-    assert.deepEqual(byName['شرکت طلايي سبز گستر بهشهر'].sides, ['receivable']);
-    assert.deepEqual(byName['شرکت شيميايي آنا سيمين'].sides, ['payable']);
+    assert.deepEqual(byName['شرکت نمونه سبز'].sides, ['receivable']);
+    assert.deepEqual(byName['شرکت شیمیایی نمونه'].sides, ['payable']);
     assert.equal(preview.suggestedContactIds.length, 2);
   });
 });
@@ -170,8 +170,8 @@ test('ثبت فاز ب: کارت‌ها وصل می‌شوند، هیچ سندی
 
     // حساب‌های عملیاتی: صندوق پیش‌فرض + دو بانک (تنخواه ساخته نشد).
     const accounts = database.listAccounts();
-    assert.deepEqual(accounts.map((account) => account.name).sort(), ['رفاه بهشت آيين', 'شاپرک', 'صندوق نقدی']);
-    const refah = accounts.find((account) => account.name === 'رفاه بهشت آيين');
+    assert.deepEqual(accounts.map((account) => account.name).sort(), ['بانک نمونه', 'شاپرک', 'صندوق نقدی']);
+    const refah = accounts.find((account) => account.name === 'بانک نمونه');
     const shaparak = accounts.find((account) => account.name === 'شاپرک');
     assert.equal(refah.kind, 'bank');
     // ماندهٔ فهرست حساب‌ها دید عملیاتی است (تراکنش و انتقال)؛ مرجع، کارت حساب است.
@@ -195,8 +195,8 @@ test('ثبت فاز ب: کارت‌ها وصل می‌شوند، هیچ سندی
     // کارت طرف حساب: مشتری و تأمین‌کننده، از دفتر کل.
     const contacts = database.listContacts();
     assert.equal(contacts.length, 2);
-    const customer = contacts.find((contact) => contact.name.includes('طلايي سبز'));
-    const vendor = contacts.find((contact) => contact.name.includes('آنا سيمين'));
+    const customer = contacts.find((contact) => contact.name.includes('نمونه سبز'));
+    const vendor = contacts.find((contact) => contact.name.includes('شیمیایی نمونه'));
     assert.equal(customer.kind, 'customer');
     assert.equal(vendor.kind, 'vendor');
     const customerCard = database.counterpartyCard(customer.id);
@@ -207,14 +207,14 @@ test('ثبت فاز ب: کارت‌ها وصل می‌شوند، هیچ سندی
     // تفصیلی روی ردیف‌ها مانده و به شخص وصل شده؛ تفصیلی غیرشخصی همان معین مشترک را دارد.
     const repointed = active.prepare(`SELECT journal_lines.analytic_id AS analytic,ledger_accounts.source_kind AS sk
       FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
-      WHERE journal_lines.analytic_id=(SELECT id FROM analytic_accounts WHERE name='شرکت طلايي سبز گستر بهشهر')`).all();
+      WHERE journal_lines.analytic_id=(SELECT id FROM analytic_accounts WHERE name='شرکت نمونه سبز')`).all();
     assert.equal(repointed.length, 2);
     assert.ok(repointed.every((line) => line.sk === 'customer-receivable'));
     const taxLine = active.prepare(`SELECT ledger_accounts.source_kind AS sk FROM journal_lines
       JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
       WHERE journal_lines.analytic_id=(SELECT id FROM analytic_accounts WHERE name='ماليات حقوق')`).all();
     assert.ok(taxLine.every((line) => line.sk === 'chart-account'));
-    const linkedAnalytic = active.prepare(`SELECT source_kind AS sk,source_key AS skey FROM analytic_accounts WHERE name='شرکت طلايي سبز گستر بهشهر'`).get();
+    const linkedAnalytic = active.prepare(`SELECT source_kind AS sk,source_key AS skey FROM analytic_accounts WHERE name='شرکت نمونه سبز'`).get();
     assert.equal(linkedAnalytic.sk, 'contact');
     assert.equal(linkedAnalytic.skey, customer.id);
 
@@ -316,8 +316,7 @@ if (existsSync(realPath)) {
       assert.deepEqual(preview.money.map((moeen) => [moeen.code, moeen.kind]), [
         ['100001', 'cash'], ['100002', 'petty'], ['110001', 'bank'], ['110002', 'bank'],
       ]);
-      assert.equal(preview.money.find((moeen) => moeen.code === '110001').name, 'رفاه بهشت آيين');
-      assert.equal(preview.money.find((moeen) => moeen.code === '110002').name, 'شاپرک');
+      const bankName = (code) => preview.money.find((moeen) => moeen.code === code).name;
       // تفصیلی‌های شخص‌نما از پیش‌انتخاب کنار مانده‌اند.
       const notSuggested = preview.contacts.filter((contact) => !contact.suggested).map((contact) => contact.name);
       for (const name of ['ارزش افزوده خريد', 'تهاتر', 'مشتريان پوز', 'حقوق پرداختني پرسنل', 'ماليات حقوق']) {
@@ -346,16 +345,18 @@ if (existsSync(realPath)) {
         FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
         JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id WHERE chart_accounts.code=?`).get(code).net);
       const accounts = database.listAccounts();
-      const refah = accounts.find((account) => account.name === 'رفاه بهشت آيين');
-      const shaparak = accounts.find((account) => account.name === 'شاپرک');
+      const refah = accounts.find((account) => account.name === bankName('110001'));
+      const shaparak = accounts.find((account) => account.name === bankName('110002'));
       assert.notEqual(bankNet('110001'), 0, 'بانک رفاه باید گردش واردشده داشته باشد');
       assert.equal(database.moneyAccountCard(refah.id).totals.balance, bankNet('110001'));
       assert.equal(database.moneyAccountCard(shaparak.id).totals.balance, bankNet('110002'));
 
-      // کارت سپاهان پخش سادات — بیشترین گردش مشتری‌ها — با ماندهٔ دفتر کل یکی است.
-      const contact = database.listContacts().find((item) => item.name.includes('سپاهان پخش سادات'));
+      // کارت پرگردش‌ترین شخص با ماندهٔ دفتر کل یکی است (نام مشتری در مخزن عمومی نمی‌آید).
+      const busiest = active.prepare(`SELECT analytic_id AS id,COUNT(*) AS n FROM journal_lines JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
+        WHERE analytic_accounts.source_kind='contact' GROUP BY analytic_id ORDER BY n DESC LIMIT 1`).get();
+      const contact = { id: active.prepare('SELECT source_key AS id FROM analytic_accounts WHERE id=?').get(busiest.id).id };
       const expected = active.prepare(`SELECT COALESCE(SUM(journal_lines.debit)-SUM(journal_lines.credit),0) AS net FROM journal_lines
-        WHERE analytic_id=(SELECT id FROM analytic_accounts WHERE name LIKE '%سپاهان پخش سادات%')`).get().net;
+        WHERE analytic_id=?`).get(busiest.id).net;
       assert.equal(database.counterpartyCard(contact.id).totals.balance, Number(expected));
 
       // اجرای دوباره: هیچ تکراری.
