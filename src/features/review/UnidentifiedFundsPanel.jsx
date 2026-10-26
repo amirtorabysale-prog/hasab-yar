@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 /**
  * وجوه ناشناس — تعیین تکلیف پولی که منشأش بعداً معلوم شد.
@@ -22,7 +22,7 @@ function ResolveForm({ hold, targets, invoices, contacts, notify, onDone }) {
     try {
       const payload = { ...form, amount: Number(digits(form.amount)), vatAmount: Number(digits(form.vatAmount)) || 0, occurredAt: form.occurredAt || undefined };
       const { item } = await api.resolveUnidentified(hold.lineId, payload);
-      notify(`تعیین تکلیف ثبت شد؛ ماندهٔ این وجه ${formatAmount(item.remaining)} تومان.`);
+      notify(`تعیین تکلیف ثبت شد؛ ماندهٔ این وجه ${formatAmount(item.remaining)} ${unitLabel()}.`);
       await onDone();
     } catch (error) { notify(error.message); }
     finally { setBusy(false); }
@@ -33,7 +33,7 @@ function ResolveForm({ hold, targets, invoices, contacts, notify, onDone }) {
       <option value="">انتخاب کن</option>
       {Object.entries(targets).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
     </select></label>
-    <label>مبلغ (تومان)<input inputMode="numeric" required value={form.amount} onChange={set('amount')} className={`${field} numbers`} /></label>
+    <label>مبلغ ({unitLabel()})<input inputMode="numeric" required value={form.amount} onChange={set('amount')} className={`${field} numbers`} /></label>
     {form.target === 'invoice' && <label className="sm:col-span-2">فاکتور فروش<select required value={form.invoiceId} onChange={set('invoiceId')} className={field}>
       <option value="">انتخاب کن</option>
       {invoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.number} — {invoice.contactName || invoice.customerName} — مانده {formatAmount(invoice.balanceDue)}</option>)}
@@ -82,7 +82,7 @@ export function UnidentifiedFundsPanel({ notify }) {
     <div className="mt-2 divide-y divide-line">
       {data.items.map((hold) => <article key={hold.lineId} className="py-3 text-[13px]">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span><b className="numbers">{formatAmount(hold.amount)}</b> تومان · {persianDate(hold.occurredAt)} · سند <span className="numbers">{toPersianDigits(hold.reference)}</span></span>
+          <span><b className="numbers">{formatAmount(hold.amount)}</b> {unitLabel()} · {persianDate(hold.occurredAt)} · سند <span className="numbers">{toPersianDigits(hold.reference)}</span></span>
           <span className="rounded border border-expense/40 bg-expense/5 px-2 py-0.5 text-[12px] font-bold text-expense">مانده <span className="numbers">{formatAmount(hold.remaining)}</span></span>
         </div>
         {hold.evidence && <p dir="auto" className="mt-1 text-[12px] text-muted">{hold.evidence}</p>}

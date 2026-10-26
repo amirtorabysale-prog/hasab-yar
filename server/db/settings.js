@@ -1,5 +1,67 @@
-import { audit, currentWorkspace, db, getSettings, invalidInput, setWorkspaceProfileType } from './core.js';
+import { audit, currentWorkspace, db, getSettings, invalidInput, ledgerAmountUnit, setWorkspaceProfileType } from './core.js';
 import { resolveAutomationPolicy } from '../../shared/automationPolicy.js';
+import { AMOUNT_UNITS, convertAmount, normalizeAmountUnit, unitLabel } from '../../shared/amountUnit.js';
+
+// هر جدولی که مبلغی به واحد دفتر نگه می‌دارد. تا یکی از آن‌ها ردیف دارد، واحد عوض
+// نمی‌شود؛ وگرنه عددهای قبلی بی‌صدا ده برابر یا یک‌دهم خوانده می‌شدند.
+const AMOUNT_TABLES = Object.freeze([
+  'transactions', 'journal_entries', 'obligations', 'invoices', 'invoice_payments', 'receipts', 'cheques',
+  'recurring_rules', 'financial_events', 'understanding_cases', 'bank_statement_lines', 'petty_cash_funds',
+  'stock_movements', 'recognition_schedule_items', 'payroll_runs', 'daily_closings',
+]);
+
+/** شمار ردیف‌های مبلغ‌دار این دفتر، فقط آن‌هایی که صفر نیستند. */
+export function amountRecordsInLedger() {
+  const counts = {};
+  const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
+  for (const table of AMOUNT_TABLES) {
+    if (!exists.get(table)) continue;
+    const count = Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
+    if (count) counts[table] = count;
+  }
+  const opening = Number(db.prepare('SELECT COUNT(*) AS count FROM accounts WHERE opening_balance<>0').get().count);
+  if (opening) counts.openingBalances = opening;
+  if (exists.get('products')) {
+    const priced = Number(db.prepare('SELECT COUNT(*) AS count FROM products WHERE buy_price<>0 OR sale_price<>0 OR average_cost<>0 OR inventory_value<>0').get().count);
+    if (priced) counts.pricedProducts = priced;
+  }
+  return counts;
+}
+
+/**
+ * عوض کردن واحد مبلغ دفتر — فقط پیش از اولین مبلغ.
+ *
+ * دو تنظیمی که خودشان مبلغ‌اند (حد هشدار مانده و حد سرمایه‌ای شدن) همراه واحد
+ * تبدیل می‌شوند تا همان معنای قبلی را بدهند.
+ */
+export function setLedgerAmountUnit(value) {
+  if (!Object.hasOwn(AMOUNT_UNITS, value)) throw invalidInput('واحد مبلغ دفتر باید «تومان» یا «ریال» باشد.', 'AMOUNT_UNIT_INVALID');
+  const previous = ledgerAmountUnit();
+  const next = normalizeAmountUnit(value);
+  if (previous === next) return { amountUnit: next, label: unitLabel(next), changed: false };
+  const records = amountRecordsInLedger();
+  if (Object.keys(records).length) {
+    throw Object.assign(invalidInput(
+      `واحد مبلغ فقط در دفتری عوض می‌شود که هنوز هیچ مبلغی ندارد؛ این دفتر به ${unitLabel(previous)} مبلغ ثبت‌شده دارد.`,
+      'AMOUNT_UNIT_LOCKED',
+    ), { status: 409, details: { records } });
+  }
+  const scale = (amount) => convertAmount(amount, previous, next) ?? Math.round(Number(amount) * AMOUNT_UNITS[next].perToman / AMOUNT_UNITS[previous].perToman);
+  const settings = getSettings();
+  const policy = (() => { try { return JSON.parse(settings.automationPolicy || '{}'); } catch { return {}; } })();
+  const write = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    write.run('amountUnit', next);
+    if (Number(settings.lowBalanceThreshold) > 0) write.run('lowBalanceThreshold', String(scale(settings.lowBalanceThreshold)));
+    if (Number(policy.capitalizationThreshold) > 0) {
+      write.run('automationPolicy', JSON.stringify({ ...policy, capitalizationThreshold: scale(policy.capitalizationThreshold) }));
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  audit('update', 'settings', 'amountUnit', { from: previous, to: next });
+  return { amountUnit: next, label: unitLabel(next), changed: true };
+}
 
 /**
  * سیاست خودکارسازی این دفتر.

@@ -1,5 +1,6 @@
 import { describeEvent } from './financialEvent.js';
 import { resolveAutomationPolicy } from './automationPolicy.js';
+import { unitLabel } from './amountUnit.js';
 
 /**
  * موتور اطمینان — مؤلفه‌محور، نه یک عدد خام.
@@ -160,7 +161,7 @@ const money = (value) => new Intl.NumberFormat('fa-IR').format(Math.round(Number
  */
 export function humanSummary(event) {
   if (!event) return '';
-  const parts = [describeEvent(event), `${money(event.amount)} تومان`];
+  const parts = [describeEvent(event), `${money(event.amount)} ${unitLabel()}`];
   if (event.dueAt) parts.push('با سررسید مشخص');
   return parts.join(' — ');
 }

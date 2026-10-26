@@ -1456,7 +1456,10 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     const millionAbbreviation = MILLION_ABBREVIATIONS.includes(abbreviation)
       ? `«${span.raw} ${abbreviation}» کوتاه‌نوشت مقیاس است و مبلغ دقیقش روشن نیست؛ مبلغ را با «میلیون» یا «هزار» بگو.`
       : null;
-    if (context.includes('ریال') && !containsAny(context, ['تومان', 'تومن'])) amount = Math.round(amount / 10);
+    // ریالِ گفته‌شده برای منطق این پارسر به تومان می‌آید؛ عدد دقیقش هم می‌ماند تا
+    // دفتر ریالی همان را بگیرد، نه تومانِ گردشده ضرب در ده (shared/amountUnit.js).
+    const spokenRial = context.includes('ریال') && !containsAny(context, ['تومان', 'تومن']) && Number.isSafeInteger(amount) ? amount : null;
+    if (spokenRial != null) amount = Math.round(amount / 10);
     const average = Number(averages[classified.type] || 0);
     const unusual = average > 0 && amount >= average * 5;
     const ambiguous = classified.confidence < 0.7;
@@ -1504,6 +1507,7 @@ export function parseFinancialText(rawInput, { learnings = [], averages = {}, so
     if (judgment) reviewReasons.sort((left, right) => Number(right === judgment) - Number(left === judgment));
     const transaction = {
       amount, type: classified.type, category: classified.category,
+      ...(spokenRial != null ? { spokenRial } : {}),
       // مقیاس محاوره‌ای ابهام دارد و حدس‌زدنش خطای هزاربرابری می‌سازد.
       // مقدار همان ×۱۰۰۰ می‌ماند تا مسیر قدیمی نشکند؛ این پرچم می‌گوید موتور
       // تصمیم باید بپرسد.

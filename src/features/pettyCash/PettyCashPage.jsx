@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
 import { useSheetA11y } from '../../components/sheetA11y.js';
-import { formatAmount, persianDate } from '../../lib/format.js';
+import { formatAmount, persianDate, unitLabel } from '../../lib/format.js';
 
 /**
  * تنخواه‌گردان — پولِ شرکت که دست یک نفر است تا خرج‌های کوچک را بدهد.
@@ -66,7 +66,7 @@ export function PettyCashPage({ accounts = [], access, notify, refresh, autoCrea
       void run(() => api.updatePettyCash(fund.id, { ceiling: Number(digitsOnly(action.amount)) }), 'سقف تنخواه به‌روز شد.');
     } else if (kind === 'close') {
       void run(() => api.closePettyCash(fund.id, { toAccountId: action.accountId }),
-        fund.balance > 0 ? `تنخواه بسته شد و ${formatAmount(fund.balance)} تومان به حساب برگشت.` : 'تنخواه بسته شد.');
+        fund.balance > 0 ? `تنخواه بسته شد و ${formatAmount(fund.balance)} ${unitLabel()} به حساب برگشت.` : 'تنخواه بسته شد.');
     }
   };
 
@@ -96,10 +96,10 @@ export function PettyCashPage({ accounts = [], access, notify, refresh, autoCrea
         <input required value={creating.holderName} onChange={(event) => setCreating({ ...creating, holderName: event.target.value })}
           placeholder="مثلاً رضایی" className="tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-[14px] text-ink" />
       </label>
-      <label className="block text-[12px] text-muted">سقف تنخواه (تومان)
+      <label className="block text-[12px] text-muted">سقف تنخواه ({unitLabel()})
         <input required inputMode="numeric" value={creating.ceiling} onChange={(event) => setCreating({ ...creating, ceiling: digitsOnly(event.target.value) })}
           className="tap numbers mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-[15px] font-bold text-ink" />
-        {Number(creating.ceiling) > 0 && <span className="numbers mt-1 block text-xs">{formatAmount(creating.ceiling)} تومان</span>}
+        {Number(creating.ceiling) > 0 && <span className="numbers mt-1 block text-xs">{formatAmount(creating.ceiling)} {unitLabel()}</span>}
       </label>
       <label className="block text-[12px] text-muted">از کدام حساب پرداخت شد؟
         <select required value={creating.fromAccountId} onChange={(event) => setCreating({ ...creating, fromAccountId: event.target.value })}
@@ -137,16 +137,16 @@ export function PettyCashPage({ accounts = [], access, notify, refresh, autoCrea
         <h2 className="text-lg font-extrabold">
           {action.kind === 'replenish' ? `شارژ تنخواه ${action.fund.holderName}` : action.kind === 'ceiling' ? 'تغییر سقف تنخواه' : `بستن تنخواه ${action.fund.holderName}`}
         </h2>
-        {action.kind !== 'close' && <label className="mt-4 block text-xs text-muted">{action.kind === 'ceiling' ? 'سقف تازه (تومان)' : 'مبلغ شارژ (تومان)'}
+        {action.kind !== 'close' && <label className="mt-4 block text-xs text-muted">{action.kind === 'ceiling' ? `سقف تازه (${unitLabel()})` : `مبلغ شارژ (${unitLabel()})`}
           <input autoFocus required inputMode="numeric" value={action.amount} onChange={(event) => setAction({ ...action, amount: digitsOnly(event.target.value) })}
             className="tap numbers mt-2 w-full rounded-lg border border-line bg-surface px-3 text-xl font-extrabold" />
           {action.kind === 'replenish' && <span className="mt-1 block text-xs leading-5">
-            پیشنهاد همان مبلغ خرج‌شده است ({formatAmount(action.fund.spent)} تومان) تا تنخواه دوباره به سقفش برسد.
+            پیشنهاد همان مبلغ خرج‌شده است ({formatAmount(action.fund.spent)} {unitLabel()}) تا تنخواه دوباره به سقفش برسد.
           </span>}
         </label>}
         {action.kind === 'close' && <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-[12px] leading-6 text-accent">
-          {action.fund.balance > 0 ? `باقی‌ماندهٔ ${formatAmount(action.fund.balance)} تومان به حسابی که انتخاب کنی برمی‌گردد.`
-            : action.fund.balance < 0 ? `${action.fund.holderName} ${formatAmount(-action.fund.balance)} تومان بیش از تنخواه خرج کرده؛ همین مبلغ از حسابی که انتخاب کنی به او پرداخت می‌شود.`
+          {action.fund.balance > 0 ? `باقی‌ماندهٔ ${formatAmount(action.fund.balance)} ${unitLabel()} به حسابی که انتخاب کنی برمی‌گردد.`
+            : action.fund.balance < 0 ? `${action.fund.holderName} ${formatAmount(-action.fund.balance)} ${unitLabel()} بیش از تنخواه خرج کرده؛ همین مبلغ از حسابی که انتخاب کنی به او پرداخت می‌شود.`
               : 'تنخواه مانده‌ای ندارد و فقط بسته می‌شود.'}
         </p>}
         {action.kind !== 'ceiling' && <label className="mt-3 block text-xs text-muted">{action.kind === 'close' ? 'حساب برگشت' : 'از کدام حساب؟'}
@@ -172,7 +172,7 @@ function FundCard({ fund, canManage, onAction }) {
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="font-extrabold">{fund.holderName}</p>
-        <p className="mt-0.5 text-xs text-muted">{fund.status === 'open' ? 'باز' : `بسته شده${fund.closedAt ? ` · ${persianDate(fund.closedAt)}` : ''}`} · سقف <span className="numbers">{formatAmount(fund.ceiling)}</span> تومان</p>
+        <p className="mt-0.5 text-xs text-muted">{fund.status === 'open' ? 'باز' : `بسته شده${fund.closedAt ? ` · ${persianDate(fund.closedAt)}` : ''}`} · سقف <span className="numbers">{formatAmount(fund.ceiling)}</span> {unitLabel()}</p>
       </div>
       <div className="text-left">
         <b className={`numbers block text-lg ${fund.balance < 0 ? 'text-expense' : ''}`}>{formatAmount(fund.balance)}</b>
@@ -182,8 +182,8 @@ function FundCard({ fund, canManage, onAction }) {
     {fund.status === 'open' && <>
       <div className="mt-3 h-2 overflow-hidden rounded bg-line"><div className="h-full bg-accent" style={{ width: `${ratio}%` }} /></div>
       <p className="mt-2 text-[12px] text-muted">
-        {fund.overspent > 0 ? <span className="text-expense">{formatAmount(fund.overspent)} تومان بیش از تنخواه خرج شده است.</span>
-          : fund.spent > 0 ? <>خرج‌شده و منتظر شارژ: <b className="numbers text-ink">{formatAmount(fund.spent)}</b> تومان</> : 'تنخواه پر است.'}
+        {fund.overspent > 0 ? <span className="text-expense">{formatAmount(fund.overspent)} {unitLabel()} بیش از تنخواه خرج شده است.</span>
+          : fund.spent > 0 ? <>خرج‌شده و منتظر شارژ: <b className="numbers text-ink">{formatAmount(fund.spent)}</b> {unitLabel()}</> : 'تنخواه پر است.'}
       </p>
     </>}
     {canManage && <div className="mt-3 flex flex-wrap gap-2">

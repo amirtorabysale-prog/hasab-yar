@@ -1,6 +1,7 @@
 import { reviewNature } from '../shared/reviewNature.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { payrollLedgerAccounts } from './accounting.js';
+import { unitLabel } from '../shared/amountUnit.js';
 
 /**
  * پرداخت لیست بیمه از صف حسابدار — تسویهٔ بدهی لیست حقوق، نه هزینهٔ تازه.
@@ -71,7 +72,7 @@ export function insuranceSettlementProposal(database, text, amount, event) {
   const { run } = context;
   return {
     summary: 'پرداخت بیمهٔ لیست حقوق',
-    explanation: `تسویهٔ بیمهٔ پرداختنی لیست ${run.period} (سهم کارمند و کارفرما) به مبلغ ${fa(run.total)} تومان. هزینهٔ سهم کارفرما هنگام ثبت لیست شناسایی شده و دوباره هزینه نمی‌شود.`,
+    explanation: `تسویهٔ بیمهٔ پرداختنی لیست ${run.period} (سهم کارمند و کارفرما) به مبلغ ${fa(run.total)} ${unitLabel()}. هزینهٔ سهم کارفرما هنگام ثبت لیست شناسایی شده و دوباره هزینه نمی‌شود.`,
     missingFacts: [], questions: [],
     lines: [
       { role: INSURANCE_ROLE, accountId: context.accountId, key: 'بیمهٔ پرداختنی (تأمین اجتماعی)', debit: amount, credit: 0 },

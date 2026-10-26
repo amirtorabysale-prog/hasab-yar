@@ -1,4 +1,5 @@
 import { ECONOMIC_FAMILIES, FAMILY_UNKNOWN, isFactPresent } from './economicFamily.js';
+import { unitLabel } from './amountUnit.js';
 
 // جایش در `economicFamily.js` است تا حلقهٔ import ساخته نشود؛ مصرف‌کننده‌ها
 // آن را از همین‌جا برمی‌دارند چون مفهوماً به واقعیت مربوط است.
@@ -310,8 +311,8 @@ export const FACT_QUESTIONS = Object.freeze({
       if (!(base > 0)) return [];
       const money = (value) => value.toLocaleString('fa-IR');
       return [
-        { value: base, label: `${money(base)} تومان` },
-        { value: base * 1000, label: `${money(base * 1000)} تومان` },
+        { value: base, label: `${money(base)} ${unitLabel()}` },
+        { value: base * 1000, label: `${money(base * 1000)} ${unitLabel()}` },
       ];
     },
   }),

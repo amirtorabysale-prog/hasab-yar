@@ -34,6 +34,7 @@ function persianMonthOf(iso) {
 }
 import { judgmentReason } from './moneyPurpose.js';
 import { readsContractRemainder } from './priorSettlement.js';
+import { unitLabel } from './amountUnit.js';
 
 /**
  * پنج وضعیت.
@@ -649,7 +650,7 @@ export const DEFAULT_POLICIES = Object.freeze([
       if (Number.isSafeInteger(threshold) && Number(facts?.amount) < threshold) {
         return {
           treatment: TREATMENTS.PERIOD_EXPENSE, recognitionMethod: RECOGNITION_METHODS.IMMEDIATE, recognitionDate: facts?.occurredAt || null,
-          assumptions: [`مبلغ زیر حد سرمایه‌ای شدن دفتر (${threshold.toLocaleString('fa-IR')} تومان) است و طبق سیاست دفتر هزینه می‌شود.`],
+          assumptions: [`مبلغ زیر حد سرمایه‌ای شدن دفتر (${threshold.toLocaleString('fa-IR')} ${unitLabel()}) است و طبق سیاست دفتر هزینه می‌شود.`],
         };
       }
       return {

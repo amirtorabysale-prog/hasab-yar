@@ -5,6 +5,7 @@
 
 import { addLocalDays, currentTimeZone, dayBounds, db, localDay } from '../core.js';
 import { hydrateTransaction } from './rows.js';
+import { unitLabel } from '../../../shared/amountUnit.js';
 
 export function getToday() {
   const today = localDay();
@@ -93,6 +94,6 @@ export function report(range = 'month', now = new Date()) {
   const categories = [...grouped.values()].sort((a, b) => b.amount - a.amount)
     .map((item) => ({ ...item, share: Math.round(item.amount / totalsByType[item.type] * 100) }));
   const biggestExpense = categories.find((item) => item.type === 'expense');
-  const insight = biggestExpense ? `بیشترین هزینهٔ این بازه مربوط به «${biggestExpense.name}» و مبلغ آن ${new Intl.NumberFormat('fa-IR').format(biggestExpense.amount)} تومان بوده است.` : '';
+  const insight = biggestExpense ? `بیشترین هزینهٔ این بازه مربوط به «${biggestExpense.name}» و مبلغ آن ${new Intl.NumberFormat('fa-IR').format(biggestExpense.amount)} ${unitLabel()} بوده است.` : '';
   return { basis: 'cash', basisLabel: 'مبنای دریافت و پرداخت', summary, points, categories, insight };
 }

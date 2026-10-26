@@ -12,6 +12,7 @@ import {
 import { parseFinancialText } from '../parser.js';
 import { previewCorrection } from '../../shared/correction.js';
 import { applyDnaSignals } from '../../shared/dnaSignals.js';
+import { averagesInToman, parseResultInLedgerUnit } from '../../shared/amountUnit.js';
 import { parseFinancialAudio } from '../voice.js';
 import { createRealtimeTranscriptionCall } from '../openaiRealtime.js';
 import { voiceProviderStatus } from '../voiceProviderState.js';
@@ -24,7 +25,8 @@ export function registerCaptureRoutes(app) {
     const text = String(request.body?.text || '').trim();
     if (!text || text.length > 1500) return response.status(400).json({ message: 'متن ثبت مالی معتبر نیست.' });
     // برداشت با الگوی خودِ پرونده سنجیده می‌شود؛ چیزی رد یا ثبت نمی‌شود، فقط به صف بررسی می‌رود.
-    return response.json(applyDnaSignals(parseFinancialText(text, { learnings: getLearnings(), averages: typicalAmounts() }), dnaProfiles()));
+    // گفتار به تومان خوانده می‌شود و پیش از مقایسه با الگوی دفتر به واحد دفتر می‌رود.
+    return response.json(applyDnaSignals(parseResultInLedgerUnit(parseFinancialText(text, { learnings: getLearnings(), averages: averagesInToman(typicalAmounts()) })), dnaProfiles()));
   });
   app.post('/api/parse/audio', upload.single('audio'), async (request, response, next) => {
     const startedAt = Date.now();
@@ -34,8 +36,8 @@ export function registerCaptureRoutes(app) {
       if (!request.file) return response.status(400).json({ message: 'فایل صدا دریافت نشد.' });
       durationMs = audioDurationMs(request.file.buffer, request.file.mimetype) || Math.min(60_000, Math.max(0, Number(request.body?.durationMs) || 0));
       usageId = beginProviderUsage('server_voice', 'pipeline', { attemptId: request.body?.attemptId || request.get('x-voice-attempt') || '' });
-      const parsed = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: typicalAmounts() });
-      const result = applyDnaSignals(parsed, dnaProfiles());
+      const parsed = await parseFinancialAudio({ buffer: request.file.buffer, mimeType: request.file.mimetype || 'application/octet-stream', hint: request.body?.hint, durationMs, categories: getCategories(), learnings: getLearnings(), averages: averagesInToman(typicalAmounts()) });
+      const result = applyDnaSignals(parseResultInLedgerUnit(parsed), dnaProfiles());
       recordVoiceMetric({
         provider: result.provider || result.engine,
         model: result.model,

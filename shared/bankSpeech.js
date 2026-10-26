@@ -41,6 +41,8 @@ export function detectPettyCashFunding(input, { accounts = [], now } = {}) {
   return {
     intent: 'petty-fund', holder: petty.holder || fund?.holderName || '', fundId: fund?.id || null,
     amount: amount || (fund ? Math.max(0, Number(fund.pettyCeiling || 0) - Number(fund.balance || 0)) : 0),
+    // کسری سقف از حساب تنخواه آمده و به واحد دفتر است، نه تومانِ گفته‌شده.
+    ...(!amount && fund ? { amountInLedgerUnit: true } : {}),
     needsAmount: !amount, fromAccountId, transcript: String(input), occurredAt: parsed.transactions[0]?.occurredAt || null,
   };
 }

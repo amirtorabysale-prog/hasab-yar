@@ -1,3 +1,5 @@
+import { currentAmountUnit, tomanToLedger } from '../shared/amountUnit.js';
+
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DEFAULT_MODEL = 'gpt-5.4-mini';
 
@@ -28,7 +30,13 @@ function responseText(body) {
 }
 
 function normalizeExtraction(raw, { model }) {
-  const amount = Math.round(Number(raw?.amount) || 0);
+  // مدل جمع را به تومان می‌دهد و ریال را بر ۱۰ تقسیم می‌کند. دفتر ریالی همان عدد چاپ‌شدهٔ
+  // رسید را می‌گیرد (اگر رسید ریالی است) تا رقم آخر گم نشود؛ دفتر تومانی همان قبلی را.
+  const toman = Math.round(Number(raw?.amount) || 0);
+  const printed = Math.round(Number(raw?.sourceAmount) || 0);
+  const amount = currentAmountUnit() === 'rial'
+    ? (raw?.currencySource === 'rial' && printed > 0 ? printed : tomanToLedger(toman))
+    : toman;
   const confidence = clampConfidence(raw?.confidence);
   const fieldConfidence = Object.fromEntries(['amount', 'occurredAt', 'merchant', 'type', 'paymentMethod'].map((field) => [field, clampConfidence(raw?.fieldConfidence?.[field])]));
   const reasons = [];
@@ -71,6 +79,7 @@ export async function extractReceiptData({ buffer, mimeType, note = '', categori
     type: 'object', additionalProperties: false,
     properties: {
       amount: { type: ['integer', 'null'], description: 'Grand total converted to toman. If source is rial, divide by 10.' },
+      sourceAmount: { type: ['integer', 'null'], description: 'Grand total exactly as printed, in the currency named by currencySource, before any conversion.' },
       occurredAt: { type: ['string', 'null'], description: 'ISO 8601 date/time when readable; otherwise null.' },
       merchant: { type: 'string' },
       type: { type: 'string', enum: ['income', 'expense'] },
@@ -82,7 +91,7 @@ export async function extractReceiptData({ buffer, mimeType, note = '', categori
       fieldConfidence: {
         type: 'object', additionalProperties: false,
         properties: Object.fromEntries(['amount', 'occurredAt', 'merchant', 'type', 'paymentMethod'].map((field) => [field, { type: 'number', minimum: 0, maximum: 1 }])),
-        required: ['amount', 'occurredAt', 'merchant', 'type', 'paymentMethod'],
+        required: ['amount', 'sourceAmount', 'occurredAt', 'merchant', 'type', 'paymentMethod'],
       },
       rawText: { type: 'string' },
     },

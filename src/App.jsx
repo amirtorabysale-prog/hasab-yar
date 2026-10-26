@@ -1,4 +1,5 @@
 import { needsUnquantifiedReview, UNQUANTIFIED_REVIEW_REASON } from '../shared/reviewIntake.js';
+import { averagesInToman, draftInLedgerUnit, parseResultInLedgerUnit } from '../shared/amountUnit.js';
 import { Check, Menu, RotateCcw, WifiOff } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { BottomNav, DesktopNav, Drawer, allowedScreens } from './app/navigation.jsx';
@@ -24,7 +25,7 @@ import { detectPartnerPaidDebt } from '../shared/partnerPaidSpeech.js';
 import { COMPOSITE_AMOUNT_MESSAGE, hasCompositeAmounts, inferLearningKeyword, parseFinancialText } from '../shared/parser.js';
 import { isCorrectionCommand, previewCorrection } from '../shared/correction.js';
 import { detectCaptureTransfer, detectPettyCashFunding } from '../shared/bankSpeech.js';
-import { toPersianDigits } from './lib/format.js';
+import { setLedgerAmountUnit, toPersianDigits, unitLabel } from './lib/format.js';
 import { useScreenNavigation } from './app/useScreenNavigation.js';
 import { useIntentDrafts } from './app/useIntentDrafts.js';
 import { useOfflineAudioSync } from './app/useOfflineAudioSync.js';
@@ -118,6 +119,9 @@ export default function App() {
   const [access, setAccess] = useState({ user: null, workspaces: [], workspace: null });
   const { screen, section, setSection, drawer, setDrawer, menuSearchRef, navigate } = useScreenNavigation(access);
   const [data, setData] = useState({ transactions: [], summary: EMPTY_SUMMARY, categories: [], accounts: [], settings: {}, learnings: [], averages: {}, dnaProfiles: null, overview: {}, contacts: [], obligations: [], recurring: [], closings: [], closingPreview: null });
+  // برچسب مبلغ (تومان یا ریال) و تبدیل گفتار در همهٔ صفحه‌ها از واحد همین دفتر؛ در
+  // همین رندر گذاشته می‌شود تا اولین نمایش هم برچسب درست داشته باشد.
+  setLedgerAmountUnit(data.settings.amountUnit);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   const [manualText, setManualText] = useState('');
@@ -271,7 +275,8 @@ export default function App() {
     if (routeIntent(text, 'text')) { setManualText(''); return; }
     // همان کنترلی که سرور روی مسیر صدا می‌زند؛ ثبت متنی محلی پارس می‌شود و نباید
     // از الگوی خودِ پرونده بی‌خبر بماند.
-    const result = applyDnaSignals(parseFinancialText(text, { learnings: data.learnings, averages: data.averages, source: 'text' }), data.dnaProfiles);
+    // پارسر به تومان می‌خواند (مردم «تومان» می‌گویند)؛ نتیجه پیش از هر مقایسه با دفتر به واحد دفتر می‌رود.
+    const result = applyDnaSignals(parseResultInLedgerUnit(parseFinancialText(text, { learnings: data.learnings, averages: averagesInToman(data.averages), source: 'text' })), data.dnaProfiles);
     if (!result.transactions?.length) setFailure({ transcript: text, message: result.clarification });
     else { setParseResult({ ...result, engine: 'local-text', latencyMs: 0 }); setManualText(''); }
   };
@@ -315,12 +320,12 @@ export default function App() {
     // مبلغش معلوم است (همان خرج‌شده)، و «از ملت به تنخواه منتقل کردیم» مقصدش
     // در حساب‌های عادی نیست. هیچ‌کدام هزینه نیست.
     const pettyFunding = detectPettyCashFunding(transcript, { accounts: data.accounts || [] });
-    if (pettyFunding) { setIntentDraft(pettyFunding); return true; }
+    if (pettyFunding) { setIntentDraft(draftInLedgerUnit(pettyFunding)); return true; }
     // بدهی شرکت که شریک یا مدیرعامل از پول شخصی‌اش داد: نه پولی از صندوق رفته،
     // نه فروش داراییِ او درآمد شرکت است. کارت تسویه سند باز را می‌بندد و طرفش
     // جاری همان شریک می‌شود.
     const partnerPaid = detectPartnerPaidDebt(transcript);
-    if (partnerPaid) { setSettleDraft(partnerPaid); return true; }
+    if (partnerPaid) { setSettleDraft(draftInLedgerUnit(partnerPaid)); return true; }
     // فهم گفتهٔ مرکب با AI، فقط وقتی دفتر آن را فعال کرده. همان گفته‌هایی که
     // مسیر قطعی امروز به حسابدار می‌داد یا تکه‌تکه می‌کرد؛ گفتهٔ ساده همان مسیر
     // رایگان می‌ماند.
@@ -348,12 +353,12 @@ export default function App() {
     // هم فعل تسویه، و اگر اول مسیر ساخت برود یک طلب تازه می‌سازد به‌جای بستن
     // طلب موجود.
     const transfer = detectCaptureTransfer(transcript, { accounts: data.accounts || [] });
-    if (transfer) { setIntentDraft(transfer); return true; }
+    if (transfer) { setIntentDraft(draftInLedgerUnit(transfer)); return true; }
     const settle = detectSettleIntent(transcript);
-    if (settle) { setSettleDraft(settle); return true; }
+    if (settle) { setSettleDraft(draftInLedgerUnit(settle)); return true; }
     const found = detectVoiceIntent(transcript);
     if (!found) return false;
-    setIntentDraft(found);
+    setIntentDraft(draftInLedgerUnit(found));
     return true;
   };
 
@@ -593,7 +598,7 @@ export default function App() {
         <a href="#main-content" className="skip-link">پرش به محتوای اصلی</a>
         <DesktopNav screen={screen} section={section} searchRef={menuSearchRef} navigate={navigate} businessName={data.settings.businessName} profileType={data.settings.profileType} access={access} switchWorkspace={switchWorkspace} />
         <div id="main-content" className="safe-bottom min-w-0 lg:col-start-2">
-          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden hover:bg-paper hover:text-ink"><Menu size={21} /></button><div className="min-w-0"><p className="text-xs text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><div className="flex shrink-0 items-center gap-2"><span className="hidden rounded-full border border-line bg-paper px-3 py-1 text-xs text-muted sm:inline">مبالغ به تومان</span><ThemeToggle /></div></header>
+          <header className="workspace-topbar"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setDrawer(true)} aria-label="بازکردن منوی بخش‌ها" aria-expanded={drawer} className="tap grid place-items-center rounded-lg border border-line lg:hidden hover:bg-paper hover:text-ink"><Menu size={21} /></button><div className="min-w-0"><p className="text-xs text-muted">{access.workspace?.name || data.settings.businessName || 'دفتر فعال'}</p><Breadcrumb access={access} screen={screen} section={section} profileType={data.settings.profileType} /></div></div><div className="flex shrink-0 items-center gap-2"><span className="hidden rounded-full border border-line bg-paper px-3 py-1 text-xs text-muted sm:inline">مبالغ به {unitLabel()}</span><ThemeToggle /></div></header>
           <Suspense fallback={<ScreenLoading />}>
           {/* کلید = صفحه؛ عوض‌شدنش فقط همین پوسته را دوباره سوار می‌کند و گذر آرام یک‌بار اجرا می‌شود.
               تعویض بخش‌های درون یک صفحه (مثل برگه‌های دفتر) کلید را عوض نمی‌کند تا همان‌جا سریع بماند. */}

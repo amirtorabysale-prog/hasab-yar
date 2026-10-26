@@ -1,4 +1,5 @@
-// از DNA مالی به تصمیمِ پیش از ثبت.
+
+import { unitLabel } from './amountUnit.js';// از DNA مالی به تصمیمِ پیش از ثبت.
 //
 // تا امروز DNA فقط یک برگهٔ تماشایی بود و هیچ تصمیمی را عوض نمی‌کرد. تنها کنترل
 // مبلغِ پیش از ثبت، مقایسه با میانگین کلی همهٔ ثبت‌ها بود؛ میانگینی که خرید ملک و
@@ -36,7 +37,7 @@ export function dnaSignals(profiles, transaction = {}) {
   if (profile && profile.count >= DNA_SIGNAL_MINIMUM_SAMPLES && profile.median > 0 && amount >= profile.median * DNA_AMOUNT_RATIO) {
     signals.push({
       code: 'dna-amount-out-of-pattern',
-      message: `مبلغ «${category}» در این پرونده معمولاً ${money(profile.median)} تومان است؛ این ثبت ${Math.round(amount / profile.median)} برابر آن است.`,
+      message: `مبلغ «${category}» در این پرونده معمولاً ${money(profile.median)} ${unitLabel()} است؛ این ثبت ${Math.round(amount / profile.median)} برابر آن است.`,
     });
   }
 

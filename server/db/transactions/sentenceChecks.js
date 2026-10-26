@@ -12,6 +12,7 @@ import { assertAccountingPeriodOpen, periodForDate } from '../../accounting.js';
 import { automationPolicy } from '../settings.js';
 import { extractContactName } from '../../../shared/voiceIntent.js';
 import { COMPOSITE_AMOUNT_MESSAGE, extractAmounts, hasCompositeAmounts } from '../../../shared/parser.js';
+import { tomanToLedger } from '../../../shared/amountUnit.js';
 import { saveContact } from '../contacts.js';
 import { matchCounterparty } from '../../counterparties.js';
 import { approveFinancialEvent, recordFinancialEvent } from '../../financialEventStore.js';
@@ -158,7 +159,8 @@ export function queueCompositeUtterance(transcript, { clientId = '', source = 't
   const text = String(transcript || '').trim().slice(0, 1000);
   if (!hasCompositeAmounts(text)) throw invalidInput('این گفته چند مبلغ وابسته ندارد.');
   const amounts = extractAmounts(text).spans.map((span) => span.amount).filter((amount) => Number.isSafeInteger(amount) && amount > 0);
-  const referenceAmount = Math.max(...amounts);
+  // مبلغ گفته به تومان است؛ مرجع پرونده به واحد دفتر نگه داشته می‌شود.
+  const referenceAmount = tomanToLedger(Math.max(...amounts));
   if (!Number.isSafeInteger(referenceAmount) || referenceAmount > 999_999_999_999) throw invalidInput('مبالغ گفته معتبر نیستند.');
   const event = normalizeFinancialEvent({
     kind: EVENT_KINDS.REVIEW_PLACEHOLDER, amount: referenceAmount,
@@ -180,7 +182,7 @@ export function queueUnmatchedSettlement(transcript, { clientId = '', source = '
   const text=String(transcript || '').trim().slice(0,1000),draft=detectSettleIntent(text) || detectPartnerPaidDebt(text);
   if(!draft) throw invalidInput('گفته باید درخواست تسویه با مبلغ مشخص باشد.');
   const amounts=extractAmounts(text).spans.map(s=>s.amount).filter(n=>Number.isSafeInteger(n) && n>0);
-  const amount=Math.max(...amounts);
+  const amount=tomanToLedger(Math.max(...amounts));
   if(!Number.isSafeInteger(amount) || amount>999_999_999_999) throw invalidInput('مبلغ مرجع معتبر لازم است.');
   // چک برگشتی هم تسویه نیست و هم نباید گم شود: چک از اسناد دریافتنی (یا
   // پرداختنی) برمی‌گردد و طلب یا بدهی دوباره باز می‌شود؛ کدام چک، با حسابدار.

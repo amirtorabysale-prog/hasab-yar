@@ -1,4 +1,5 @@
 import { extractAmounts, normalizePersian, parseFinancialText } from './parser.js';
+import { ledgerToToman, tomanToLedger } from './amountUnit.js';
 
 // «اشتباه شد…» و «اشتباه گفتم…» همان‌قدر طبیعی‌اند که «نه…»، ولی شناخته
 // نمی‌شدند: جمله به‌جای اصلاحِ ثبت قبلی، یک ثبت تازه می‌ساخت. «ببخشید» عمداً
@@ -29,15 +30,17 @@ export function previewCorrection(command, current = {}, { learnings = [], accou
   // «نه» در ابتدای جمله یک اصلاح‌گر گفتاری است، نه عدد ۹.
   const amountText = text.replace(/^نه\s*[،,:-]?\s*/, '');
   const amountSpan = extractAmounts(amountText).spans[0];
-  if (amountSpan?.amount > 0 && Number(amountSpan.amount) !== Number(current.amount)) {
-    changes.amount = amountSpan.amount;
+  // مبلغ گفته‌شده به تومان است و ثبت قبلی به واحد دفتر؛ مقایسه و اصلاح در واحد دفتر.
+  const spokenAmount = amountSpan?.amount > 0 ? tomanToLedger(amountSpan.amount) : 0;
+  if (spokenAmount > 0 && spokenAmount !== Number(current.amount)) {
+    changes.amount = spokenAmount;
     changedFields.push('amount');
   }
 
   const explicitIncome = /(درآمد|فروش|دریافت|واریز|گرفتم)/.test(text);
   const explicitExpense = /(هزینه|خرج|خرید|پرداخت|دادم)/.test(text);
   const matchedCategory = categories.find((category) => includesNormalized(text, category.name));
-  const classifierAmount = amountSpan?.amount || Number(current.amount) || 1;
+  const classifierAmount = amountSpan?.amount || Math.round(ledgerToToman(current.amount)) || 1;
   const classified = parseFinancialText(`${classifierAmount} تومان ${text}`, { learnings, source: 'text' }).transactions[0];
   const categoryIntent = /(بزن|دسته|جزو)/.test(text) || matchedCategory || (classified?.category && !/^سایر /.test(classified.category));
   if (matchedCategory && matchedCategory.name !== current.category) {

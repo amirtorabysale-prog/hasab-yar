@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { PersianDateInput, digitsOnly } from '../../components/common.jsx';
-import { formatAmount, persianDate } from '../../lib/format.js';
+import { formatAmount, persianDate, unitLabel } from '../../lib/format.js';
 import { RecognitionNote } from '../../components/RecognitionNote.jsx';
 import { useSheetA11y } from '../../components/sheetA11y.js';
 
@@ -182,8 +182,8 @@ function QuestionField({ question, accounts, value, onChange }) {
   if (question.picker === 'amount') {
     return <label className="block">{label}
       <input inputMode="numeric" dir="ltr" value={value?.value || ''} onChange={(event) => onChange({ value: Number(digitsOnly(event.target.value)) || '' })}
-        placeholder="مبلغ به تومان" className="tap numbers mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left text-lg" />
-      {Number(value?.value) > 0 && <span className="numbers mt-1 block text-xs text-muted">{formatAmount(value.value)} تومان</span>}
+        placeholder={`مبلغ به ${unitLabel()}`} className="tap numbers mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left text-lg" />
+      {Number(value?.value) > 0 && <span className="numbers mt-1 block text-xs text-muted">{formatAmount(value.value)} {unitLabel()}</span>}
     </label>;
   }
   if (question.picker === 'date') {

@@ -12,6 +12,7 @@ import { ensureReconciliationSchema } from '../reconciliation.js';
 import { ensureTaxAssistantSchema } from '../taxAssistant.js';
 import { ensureTaxKnowledgeSchema, migrateTaxKnowledgeSources } from '../taxKnowledge.js';
 import { ensureTaxSchema } from '../tax.js';
+import { normalizeAmountUnit, setAmountUnitResolver } from '../../shared/amountUnit.js';
 import { balanceSnapshot, currentApproval, ensureOverdraftSchema, negativeViolations, overdraftError, recordOverdraftApproval, setApprovalSource } from '../balanceGuard.js';
 import {
   CONTROL_SCHEMA_SQL, categorySeed, ensureCategorySeed, ensureColumnOn, ensureVoiceMetricSchema,
@@ -265,6 +266,8 @@ db.prepare("UPDATE transactions SET account_id='cash' WHERE account_id IS NULL O
 const defaults = {
   businessName: '', currency: 'تومان', timezone: 'Asia/Tehran', profileType: 'business',
   onboardingDone: 'false', openingBalance: '0', ownerName: '', lowBalanceThreshold: '2000000', alertSensitivity: 'balanced',
+  // واحد مبلغ‌های این دفتر؛ فقط در دفتر بی‌مبلغ عوض می‌شود (server/db/settings.js).
+  amountUnit: 'toman',
 };
 
 export const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
@@ -413,6 +416,13 @@ export function closeAllDatabases() {
 export function getSettings() {
   return Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map((row) => [row.key, row.value]));
 }
+
+/** واحد مبلغ دفترِ همین درخواست (پیش‌فرض تومان). shared/amountUnit.js از همین می‌خواند. */
+export function ledgerAmountUnit() {
+  return normalizeAmountUnit(db.prepare("SELECT value FROM settings WHERE key='amountUnit'").get()?.value);
+}
+
+setAmountUnitResolver(ledgerAmountUnit);
 
 export function currentTimeZone() {
   const candidate = getSettings().timezone || 'Asia/Tehran';

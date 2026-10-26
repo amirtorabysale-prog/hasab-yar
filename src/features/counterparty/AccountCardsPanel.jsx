@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BANKS, bankById } from '../../../shared/banks.js';
 import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 import { CounterpartyCardPanel } from './CounterpartyCardPanel.jsx';
 import { JournalEntrySheet } from '../accounting/JournalEntrySheet.jsx';
 
@@ -86,7 +86,7 @@ function MoneyCard({ account, onBack, notify }) {
           <p className="text-xs text-muted">موجودی</p>
           <p className="mt-1 flex items-baseline gap-2">
             <span className={`numbers text-[28px] font-extrabold leading-none ${balance < 0 ? 'text-expense' : ''}`}>{balance < 0 ? '− ' : ''}{formatAmount(Math.abs(balance))}</span>
-            <small className="text-[13px] text-muted">تومان</small>
+            <small className="text-[13px] text-muted">{unitLabel()}</small>
           </p>
           {balance < 0 && <p className="mt-1 text-xs text-expense">موجودی منفی است؛ برداشتی ثبت شده که پولش در این حساب نبوده.</p>}
         </div>
@@ -161,7 +161,7 @@ function AccountForm({ section, onSaved, onCancel, notify }) {
       <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })}
         placeholder={suggested || (isBank ? 'نام حساب، مثلاً جاری ملت شرکت' : 'نام صندوق، مثلاً صندوق فروشگاه')}
         className="tap w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
-      <label className="block text-xs text-muted">موجودی ابتدای دوره (تومان)
+      <label className="block text-xs text-muted">موجودی ابتدای دوره ({unitLabel()})
         <input inputMode="numeric" value={draft.openingBalance} onChange={(event) => setDraft({ ...draft, openingBalance: digitsOnly(event.target.value) })}
           placeholder="۰" className="numbers tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-[13px]" />
       </label>

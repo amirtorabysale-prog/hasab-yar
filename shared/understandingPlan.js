@@ -30,6 +30,7 @@ import { detectPartnerFundedSpend, detectPartnerPaidDebt } from './partnerPaidSp
 import { readServicePeriod } from './periodSpeech.js';
 import { mentionsPropertyDeposit, paymentPurposeFromSpeech, receiptPurposeFromSpeech, saysRefundable } from './moneyPurpose.js';
 import { evidenceKey } from './eventUnderstanding.js';
+import { unitLabel } from './amountUnit.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -650,7 +651,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     const label = amount.evidence || amount.role;
     if (retracted.has(amount.id)) { notes.push({ amountRef: amount.id, kind: 'retracted', text: `«${label}» در همان گفته اصلاح شد و کنار گذاشته شد.` }); continue; }
     if (amount.status === 'context') {
-      if (amount.role === 'prior-balance' && amount.accepted) notes.push({ amountRef: amount.id, kind: 'context', text: `${money(amount.value)} تومان بدهی یا طلبِ قبلی است؛ دوباره ثبت نمی‌شود.` });
+      if (amount.role === 'prior-balance' && amount.accepted) notes.push({ amountRef: amount.id, kind: 'context', text: `${money(amount.value)} ${unitLabel()} بدهی یا طلبِ قبلی است؛ دوباره ثبت نمی‌شود.` });
       continue;
     }
     if (amount.status === 'future') { notes.push({ amountRef: amount.id, kind: 'future', text: `«${label}» هنوز انجام نشده؛ تا انجام نشود سندی ندارد.` }); continue; }
@@ -662,7 +663,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // فقط جزءِ پذیرفته‌شده جای کل را می‌گیرد؛ جزءِ کنارگذاشته (تکرار یا بی‌عدد)
     // نباید کل را از ثبت بیندازد.
     const doneParts = amounts.filter((part) => part.partOf === amount.id && part.accepted && !retracted.has(part.id) && part.status === 'done' && SPLIT_ROLES.has(part.role));
-    if (doneParts.length) { notes.push({ amountRef: amount.id, kind: 'total', text: `جمع کل ${money(amount.value)} تومان؛ اجزایش جداگانه ثبت می‌شوند.` }); continue; }
+    if (doneParts.length) { notes.push({ amountRef: amount.id, kind: 'total', text: `جمع کل ${money(amount.value)} ${unitLabel()}؛ اجزایش جداگانه ثبت می‌شوند.` }); continue; }
     if (amount.partOf && JUDGMENT_PART_ROLES.has(amount.role)) {
       toAccountant(`«${label}» بخشی از یک مبلغ کل است (مالیات، تخفیف یا سود)؛ تفکیکش با حسابدار است.`);
       continue;
@@ -708,7 +709,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       const toId = answers[`movements.${movement.id}.to`]?.valueId || to?.accountId;
       if (fromId && toId && fromId !== toId) {
         components.push({ id: amount.id, amountRef: amount.id, kind: 'transfer', amount: amount.value, fromAccountId: fromId, toAccountId: toId,
-          occurredAt: paymentDate, label: `انتقال ${money(amount.value)} تومان بین حساب‌های خود شرکت`, item: null });
+          occurredAt: paymentDate, label: `انتقال ${money(amount.value)} ${unitLabel()} بین حساب‌های خود شرکت`, item: null });
       }
       continue;
     }
@@ -739,8 +740,8 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     if (!explicitSettlement && openForParty.length && !settleChoice && !funder) {
       question({
         id: `settlements.${amount.id}`, kind: 'information', picker: 'document',
-        text: `«${counterparty.name}» ${flowSide === 'payable' ? 'بدهیِ' : 'طلبِ'} باز دارد. این ${money(amount.value)} تومان تسویهٔ کدام است؟`,
-        options: [...openForParty.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} تومان` })),
+        text: `«${counterparty.name}» ${flowSide === 'payable' ? 'بدهیِ' : 'طلبِ'} باز دارد. این ${money(amount.value)} ${unitLabel()} تسویهٔ کدام است؟`,
+        options: [...openForParty.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} ${unitLabel()}` })),
           { value: 'new', label: flowSide === 'payable' ? 'هیچ‌کدام؛ هزینه یا خریدِ تازه است' : 'هیچ‌کدام؛ فروش یا درآمدِ تازه است' }],
       });
       continue;
@@ -794,18 +795,18 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       if (!target) {
         question({
           id: `settlements.${amount.id}`, kind: 'information', picker: 'document',
-          text: `این ${money(amount.value)} تومان بابت کدام ${direction === 'payable' ? 'بدهی' : 'طلب'} «${counterparty.name}» است؟`,
-          options: documents.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} تومان` })),
+          text: `این ${money(amount.value)} ${unitLabel()} بابت کدام ${direction === 'payable' ? 'بدهی' : 'طلب'} «${counterparty.name}» است؟`,
+          options: documents.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} ${unitLabel()}` })),
         });
         continue;
       }
       if (target.remaining < amount.value) {
-        toAccountant(`ماندهٔ «${target.reference}» (${money(target.remaining)} تومان) از مبلغ این پرداخت کمتر است.`);
+        toAccountant(`ماندهٔ «${target.reference}» (${money(target.remaining)} ${unitLabel()}) از مبلغ این پرداخت کمتر است.`);
         continue;
       }
       const totalOpen = documents.reduce((sum, document) => sum + document.remaining, 0);
       if (priorBalance?.accepted && priorBalance.value !== totalOpen) {
-        notes.push({ amountRef: priorBalance.id, kind: 'warning', text: `جمله ${money(priorBalance.value)} تومان گفته ولی ماندهٔ باز در دفتر ${money(totalOpen)} تومان است؛ فقط پرداخت امروز ثبت می‌شود.` });
+        notes.push({ amountRef: priorBalance.id, kind: 'warning', text: `جمله ${money(priorBalance.value)} ${unitLabel()} گفته ولی ماندهٔ باز در دفتر ${money(totalOpen)} ${unitLabel()} است؛ فقط پرداخت امروز ثبت می‌شود.` });
       }
       const endpoint = resolution.endpoints?.[`${movement.id}.${movement.direction === 'in' ? 'to' : 'from'}`];
       const accountId = answers[`movements.${movement.id}.account`]?.valueId || endpoint?.accountId || null;
@@ -817,7 +818,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       components.push({
         id: amount.id, amountRef: amount.id, kind: 'settlement', amount: amount.value, accountId, contactId, occurredAt: paymentDate,
         target: { kind: target.kind, id: target.id, reference: target.reference, remaining: target.remaining }, direction, item: null,
-        label: `${direction === 'payable' ? 'پرداخت' : 'دریافت'} ${money(amount.value)} تومان ${direction === 'payable' ? 'به' : 'از'} ${counterparty.name} — تسویهٔ «${target.reference}»`,
+        label: `${direction === 'payable' ? 'پرداخت' : 'دریافت'} ${money(amount.value)} ${unitLabel()} ${direction === 'payable' ? 'به' : 'از'} ${counterparty.name} — تسویهٔ «${target.reference}»`,
       });
       continue;
     }
@@ -1072,7 +1073,7 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       durationMonths: durationMonths || null,
       // پیش‌دریافتِ اجاره یا خدمتِ دوره‌دار بی‌دوره هرگز درآمد نمی‌شود؛ دوره پرسیده می‌شود.
       timeBound: timeBoundIncome && movement.direction !== 'none',
-      label: `${verb} ${money(amount.value)} تومان${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}`,
+      label: `${verb} ${money(amount.value)} ${unitLabel()}${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}`,
     });
   }
 
@@ -1171,13 +1172,13 @@ function planPartnerPaid({ facts, said, amounts, retracted, resolution, answers,
   if (!target) {
     question({
       id: `settlements.${amount.id}`, kind: 'information', picker: 'document',
-      text: `این ${money(amount.value)} تومان کدام ${side}ِ «${creditor.name}» را بست؟`,
-      options: documents.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} تومان` })),
+      text: `این ${money(amount.value)} ${unitLabel()} کدام ${side}ِ «${creditor.name}» را بست؟`,
+      options: documents.map((document) => ({ value: document.id, label: `${document.reference} — مانده ${money(document.remaining)} ${unitLabel()}` })),
     });
     return;
   }
   if (target.remaining < amount.value) {
-    toAccountant(`ماندهٔ «${target.reference}» (${money(target.remaining)} تومان) از مبلغ این پرداخت کمتر است.`);
+    toAccountant(`ماندهٔ «${target.reference}» (${money(target.remaining)} ${unitLabel()}) از مبلغ این پرداخت کمتر است.`);
     return;
   }
   const payerResolved = resolution.counterparties?.[payer.id];
@@ -1186,7 +1187,7 @@ function planPartnerPaid({ facts, said, amounts, retracted, resolution, answers,
     target: { kind: target.kind, id: target.id, reference: target.reference, remaining: target.remaining }, direction,
     paidBy: { name: payer.name, contactId: payerResolved?.status === 'exact' ? payerResolved.contactId : null }, item: null,
     label: direction === 'payable'
-      ? `بستن ${money(amount.value)} تومان بدهی «${creditor.name}» (${target.reference}) از پول شخصی ${payer.name} — بدون برداشت از صندوق یا بانک`
-      : `وصول ${money(amount.value)} تومان طلب از «${creditor.name}» (${target.reference}) به حساب شخصی ${payer.name} — بدون ورود به صندوق یا بانک`,
+      ? `بستن ${money(amount.value)} ${unitLabel()} بدهی «${creditor.name}» (${target.reference}) از پول شخصی ${payer.name} — بدون برداشت از صندوق یا بانک`
+      : `وصول ${money(amount.value)} ${unitLabel()} طلب از «${creditor.name}» (${target.reference}) به حساب شخصی ${payer.name} — بدون ورود به صندوق یا بانک`,
   });
 }

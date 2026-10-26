@@ -1,7 +1,7 @@
 import { BarChart3 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 /**
  * توزیع هفتگی یک سری واحد از جنس «بزرگی» است، نه هویت؛ پس یک رنگ می‌گیرد و
@@ -14,7 +14,7 @@ function WeekdayBars({ rows }) {
   // است و عدد واقعی کنارش می‌ماند، پس چیزی بزرگ‌نمایی نمی‌شود.
   const highest = Math.max(...rows.map((item) => item.percent), 1);
   return <div className="mt-3 space-y-1.5">
-    {rows.map((item) => <div key={item.day} className="flex items-center gap-2" title={`${item.day}: ${formatAmount(item.amount)} تومان`}>
+    {rows.map((item) => <div key={item.day} className="flex items-center gap-2" title={`${item.day}: ${formatAmount(item.amount)} ${unitLabel()}`}>
       <span className="w-16 shrink-0 text-xs text-muted">{item.day}</span>
       <div className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-paper">
         <div className="h-full rounded-full bg-accent" style={{ width: `${item.percent ? Math.max(4, Math.round((item.percent / highest) * 100)) : 0}%` }} />
@@ -70,7 +70,7 @@ export function FinancialDnaPanel({ notify }) {
           ['شکل پرونده', brief.shape],
           ['سند در ماه', toPersianDigits(brief.documentsPerMonth)],
           ['انضباط ثبت', brief.discipline],
-          ['ثبت معمول درآمد', `${formatAmount(brief.typicalIncome)} تومان`],
+          ['ثبت معمول درآمد', `${formatAmount(brief.typicalIncome)} ${unitLabel()}`],
         ].map(([label, value]) => <div key={label} className="rounded-lg bg-paper p-3">
           <span className="text-xs text-muted">{label}</span>
           <b className="mt-1 block text-[13px] leading-6">{value}</b>

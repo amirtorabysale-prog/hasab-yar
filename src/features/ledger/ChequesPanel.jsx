@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ReceiptText } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { PersianDateInput } from '../../components/common.jsx';
-import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 /**
  * دفتر چک.
@@ -97,7 +97,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
         <input value={draft.counterpartyName} onChange={(event) => setDraft({ ...draft, counterpartyName: event.target.value })}
           placeholder="نام صاحب چک" className="tap rounded-lg border border-line px-3 text-[13px]" />
         <input inputMode="numeric" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: event.target.value.replace(/\D/g, '') })}
-          placeholder="مبلغ تومان" className="tap numbers rounded-lg border border-line px-3 text-[13px]" />
+          placeholder={`مبلغ ${unitLabel()}`} className="tap numbers rounded-lg border border-line px-3 text-[13px]" />
         <input value={draft.serial} onChange={(event) => setDraft({ ...draft, serial: event.target.value })}
           placeholder="شماره چک" className="tap numbers rounded-lg border border-line px-3 text-[13px]" />
         <input value={draft.bankName} onChange={(event) => setDraft({ ...draft, bankName: event.target.value })}

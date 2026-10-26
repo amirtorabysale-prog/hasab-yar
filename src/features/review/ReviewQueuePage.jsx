@@ -8,7 +8,7 @@ import { ConfidencePanel } from '../capture/CaptureSheets.jsx';
 import { EntryTable } from './ReviewEntry.jsx';
 import { PATHS, reviewCase, reviewPath } from './reviewCase.js';
 import { api } from '../../lib/api.js';
-import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 import { DecisionQuestionCard, questionCardKey } from '../../components/DecisionQuestionCard.jsx';
 import { periodKeyLabel } from '../../components/RecognitionNote.jsx';
 import { PersianDateInput } from '../../components/common.jsx';
@@ -82,8 +82,8 @@ function ReviewedCompositeEditor({ item, ai, onSaved, notify }) {
           <option value="">انتخاب سرفصل سطر {toPersianDigits(index + 1)}</option>
           {accounts.map((account) => <option key={account.id} value={account.id}>{account.code} · {account.name}</option>)}
         </select>
-        <input aria-label={`بدهکار سطر ${index + 1} به تومان`} inputMode="numeric" placeholder="بدهکار (تومان)" value={line.debit} onChange={(event) => updateLine(index, { debit: event.target.value, credit: '' })} className="w-32 rounded border border-line bg-paper p-2" />
-        <input aria-label={`بستانکار سطر ${index + 1} به تومان`} inputMode="numeric" placeholder="بستانکار (تومان)" value={line.credit} onChange={(event) => updateLine(index, { credit: event.target.value, debit: '' })} className="w-32 rounded border border-line bg-paper p-2" />
+        <input aria-label={`بدهکار سطر ${index + 1} به ${unitLabel()}`} inputMode="numeric" placeholder={`بدهکار (${unitLabel()})`} value={line.debit} onChange={(event) => updateLine(index, { debit: event.target.value, credit: '' })} className="w-32 rounded border border-line bg-paper p-2" />
+        <input aria-label={`بستانکار سطر ${index + 1} به ${unitLabel()}`} inputMode="numeric" placeholder={`بستانکار (${unitLabel()})`} value={line.credit} onChange={(event) => updateLine(index, { credit: event.target.value, debit: '' })} className="w-32 rounded border border-line bg-paper p-2" />
         <select aria-label={`تفصیلی سطر ${index + 1}`} value={line.analyticId || ''} onChange={(event) => updateLine(index, { analyticId: event.target.value })} className="min-w-[110px] rounded border border-line bg-paper p-2">
           <option value="">بدون تفصیلی</option>
           {analytics.map((analytic) => <option key={analytic.id} value={analytic.id}>{analytic.code} · {analytic.name}</option>)}
@@ -112,7 +112,7 @@ function ContractAnswer({ question, disabled, onAnswer }) {
     <p className="font-bold leading-6">{question.text}</p>
     {question.id === 'contract.reference' && <div className="mt-1 flex flex-col gap-1">
       {question.candidates.map((candidate) => <button key={candidate.eventId} disabled={disabled} onClick={() => onAnswer({ contractEventId: candidate.eventId })} className={button}>
-        {candidate.documentNumber ? `سند ${toPersianDigits(candidate.documentNumber)} — ` : ''}{candidate.occurredAt ? persianDate(candidate.occurredAt) : ''} — {formatAmount(candidate.amount)} تومان (شناسایی‌نشده: {formatAmount(candidate.remaining)})
+        {candidate.documentNumber ? `سند ${toPersianDigits(candidate.documentNumber)} — ` : ''}{candidate.occurredAt ? persianDate(candidate.occurredAt) : ''} — {formatAmount(candidate.amount)} {unitLabel()} (شناسایی‌نشده: {formatAmount(candidate.remaining)})
       </button>)}
     </div>}
     {question.id === 'contract.ended' && <div className="mt-1 flex flex-wrap gap-1">
@@ -211,7 +211,7 @@ function ReviewQueueRow({ item, busy, leaving, onApprove, onReject, onAnswered, 
 
   return <article className={`review-card py-5 ${leaving ? 'rq-leaving' : ''}`} data-path={kase.path}>
     <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <p className="numbers text-[17px] font-extrabold">{formatAmount(item.amount)} <span className="text-[13px] font-bold text-muted">تومان</span></p>
+      <p className="numbers text-[17px] font-extrabold">{formatAmount(item.amount)} <span className="text-[13px] font-bold text-muted">{unitLabel()}</span></p>
       <p className="text-[13px] text-muted">{persianDate(item.occurredAt)}{item.dueAt ? ` · سررسید ${persianDate(item.dueAt)}` : ''}</p>
       <span className={`ms-auto rounded-full border px-2.5 py-0.5 text-[12px] font-extrabold ${tone.chip}`}>{kase.badge}</span>
     </header>
@@ -308,10 +308,10 @@ function CapitalizationThresholdField({ value, busy, onSave }) {
   const digits = (text) => String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[^\d]/g, '');
   const next = digits(draft) ? Number(digits(draft)) : null;
   return <div className="rounded-lg border border-line bg-surface p-3">
-    <p className="text-[12px] font-extrabold">حد سرمایه‌ای دارایی کم‌ارزش {value ? <span className="numbers">— {toPersianDigits(Number(value).toLocaleString('fa-IR'))} تومان</span> : '— تصویب نشده'}</p>
+    <p className="text-[12px] font-extrabold">حد سرمایه‌ای دارایی کم‌ارزش {value ? <span className="numbers">— {toPersianDigits(Number(value).toLocaleString('fa-IR'))} {unitLabel()}</span> : '— تصویب نشده'}</p>
     <p className="mt-1 text-xs leading-5 text-muted">خرید تجهیز و اموالِ کمتر از این مبلغ هزینهٔ دوره ثبت می‌شود و از آن به بالا دارایی ثابت. خالی بماند، برای هر خرید تجهیز سؤال پرسیده می‌شود.</p>
     <div className="mt-2 flex gap-2">
-      <input inputMode="numeric" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="مثلاً ۲۰۰۰۰۰۰۰" aria-label="حد سرمایه‌ای به تومان" className="tap numbers min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
+      <input inputMode="numeric" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="مثلاً ۲۰۰۰۰۰۰۰" aria-label={`حد سرمایه‌ای به ${unitLabel()}`} className="tap numbers min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-[13px]" />
       <button disabled={busy || next === (value || null)} onClick={() => onSave(next)} className="tap rounded-lg border border-accent px-3 text-[12px] font-bold text-accent disabled:opacity-40">{next ? 'ثبت' : 'برداشتن'}</button>
     </div>
   </div>;
@@ -476,7 +476,7 @@ function RecognitionNotices({ notices, navigate, notify, onSeen }) {
       <span>
         <b>{periodKeyLabel(notice.periodKey)}</b>: <span className="numbers">{toPersianDigits(notice.postedItems)}</span> قسط
         {notice.expenseAmount > 0 && <> · هزینه <span className="numbers">{formatAmount(notice.expenseAmount)}</span></>}
-        {notice.incomeAmount > 0 && <> · درآمد <span className="numbers">{formatAmount(notice.incomeAmount)}</span></>} تومان
+        {notice.incomeAmount > 0 && <> · درآمد <span className="numbers">{formatAmount(notice.incomeAmount)}</span></>} {unitLabel()}
       </span>
       <span className="flex gap-2">
         <button onClick={() => navigate?.('ledger', 'timing')} className="tap rounded-lg border border-line bg-surface px-3 font-bold hover:bg-paper hover:text-ink">جزئیات</button>

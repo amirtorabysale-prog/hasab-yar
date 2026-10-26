@@ -21,6 +21,7 @@ import { DECISION_STATUS } from '../../shared/accountingDecision.js';
 import { ROUTES } from '../../shared/confidenceEngine.js';
 import { ADVANCE_TREATMENTS, ENGINE_POSTED_TREATMENTS, documentAdvanceDecision, documentRouting, documentServiceDecision, readDocumentService } from '../../shared/documentService.js';
 import { readPrepaymentMention } from '../../shared/prepaymentSpeech.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
@@ -136,10 +137,10 @@ export function recordCheque(values = {}) {
   // با جمع کاملش به حسابدار می‌رود.
   const chequeCount = Math.round(Number(values.chequeCount) || 1);
   if (chequeCount > 1) {
-    const each = Number(values.perChequeAmount) > 0 ? ` (هر برگ ${Number(values.perChequeAmount).toLocaleString('fa-IR')} تومان)` : '';
+    const each = Number(values.perChequeAmount) > 0 ? ` (هر برگ ${Number(values.perChequeAmount).toLocaleString('fa-IR')} ${unitLabel()})` : '';
     return queueChequeForAccountant(db_, party, {
       prefix: 'cheque-series', category: values.category || null,
-      reason: `سری ${chequeCount.toLocaleString('fa-IR')} چک${each} به جمع ${amount.toLocaleString('fa-IR')} تومان؛ سررسید هر برگ گفته نشده و یک چک تک ثبت نشد. برگ‌ها با سررسیدشان در صف حسابدار ثبت می‌شوند.`,
+      reason: `سری ${chequeCount.toLocaleString('fa-IR')} چک${each} به جمع ${amount.toLocaleString('fa-IR')} ${unitLabel()}؛ سررسید هر برگ گفته نشده و یک چک تک ثبت نشد. برگ‌ها با سررسیدشان در صف حسابدار ثبت می‌شوند.`,
     });
   }
   // «چک دادیم برای خرید مواد اولیه» موجودی می‌خرد، نه هزینهٔ این ماه. همان

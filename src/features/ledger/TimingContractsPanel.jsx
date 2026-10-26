@@ -1,7 +1,7 @@
 import { BellRing, CalendarClock, CheckCheck, ChevronDown, ChevronUp, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 import { coverageDate, periodKeyLabel } from '../../components/RecognitionNote.jsx';
 
 /**
@@ -29,9 +29,9 @@ function NoticeCard({ notice, onSeen }) {
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold">{periodKeyLabel(notice.periodKey)}: {toPersianDigits(notice.postedItems)} قسط خودکار ثبت شد</p>
         <p className="mt-1 text-xs leading-6 text-muted">
-          {notice.expenseAmount > 0 && <>هزینه {formatAmount(notice.expenseAmount)} تومان</>}
+          {notice.expenseAmount > 0 && <>هزینه {formatAmount(notice.expenseAmount)} {unitLabel()}</>}
           {notice.expenseAmount > 0 && notice.incomeAmount > 0 && ' · '}
-          {notice.incomeAmount > 0 && <>درآمد {formatAmount(notice.incomeAmount)} تومان</>}
+          {notice.incomeAmount > 0 && <>درآمد {formatAmount(notice.incomeAmount)} {unitLabel()}</>}
           {!total && 'بدون مبلغ'}
         </p>
         <p className="mt-1 text-xs leading-6 text-muted">
@@ -63,7 +63,7 @@ function ContractRow({ item, defaultOpen = true }) {
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-line"><div className={`h-full ${item.kind === 'deferred' ? 'bg-income' : 'bg-accent'}`} style={{ width: `${progress}%` }} /></div>
         <p className="mt-2 text-xs text-muted">
           {item.next && item.state !== 'cancelled'
-            ? <>قسط بعدی: {periodKeyLabel(item.next.periodKey)} — {formatAmount(item.next.amount)} تومان{item.next.status !== 'planned' && <b className="text-expense"> ({ITEM_LABELS[item.next.status]})</b>}</>
+            ? <>قسط بعدی: {periodKeyLabel(item.next.periodKey)} — {formatAmount(item.next.amount)} {unitLabel()}{item.next.status !== 'planned' && <b className="text-expense"> ({ITEM_LABELS[item.next.status]})</b>}</>
             : item.state === 'done' ? 'همهٔ قسط‌ها ثبت شده است.' : ''}
         </p>
       </div>
@@ -144,7 +144,7 @@ export function TimingContractsView({ data, showClosed = false, onToggleClosed =
     <nav aria-label="تفکیک پیش‌پرداخت و پیش‌دریافت" className="section-navigation">
       {tabs.map(([id, label, count]) => <button key={id} type="button" aria-current={activeKind === id ? 'page' : undefined} onClick={() => setKind(id)}>{label}{count > 0 && <span className="mr-1 text-xs opacity-70">({toPersianDigits(count)})</span>}</button>)}
     </nav>
-    <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ {meta.label}</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(remaining)}</b><span className="text-xs text-muted">تومان · {toPersianDigits(activeCount)} قرارداد در جریان</span></div>
+    <div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">ماندهٔ {meta.label}</p><b className="numbers mt-2 block text-base sm:text-lg">{formatAmount(remaining)}</b><span className="text-xs text-muted">{unitLabel()} · {toPersianDigits(activeCount)} قرارداد در جریان</span></div>
     {data.notices.length > 0 && <div className="space-y-2">
       <h3 className="font-extrabold">خبر ثبت‌های ماهانه {unseen.length > 0 && <span className="text-xs font-bold text-accent">({toPersianDigits(unseen.length)} دیده‌نشده)</span>}</h3>
       {data.notices.slice(0, 4).map((notice) => <NoticeCard key={notice.periodKey} notice={notice} onSeen={seen} />)}
@@ -152,11 +152,11 @@ export function TimingContractsView({ data, showClosed = false, onToggleClosed =
     {attentionCount > 0 && <div className="rounded-xl border border-expense/40 bg-warn-bg/50 p-3">
       <p className="flex items-center gap-2 text-sm font-extrabold text-expense"><TriangleAlert size={17} />نیاز به اقدام حسابدار ({toPersianDigits(attentionCount)})</p>
       <ul className="mt-2 space-y-1 text-xs leading-6">
-        {blocked.map((item) => <li key={item.key}>قسط {periodKeyLabel(item.periodKey)} «{[item.category, item.counterparty].filter(Boolean).join(' — ')}» ({formatAmount(item.amount)} تومان): {item.reason}</li>)}
-        {held.map((item) => <li key={item.key}>قسط {periodKeyLabel(item.periodKey)} ({formatAmount(item.amount)} تومان) نگه داشته شد: {item.reason}</li>)}
+        {blocked.map((item) => <li key={item.key}>قسط {periodKeyLabel(item.periodKey)} «{[item.category, item.counterparty].filter(Boolean).join(' — ')}» ({formatAmount(item.amount)} {unitLabel()}): {item.reason}</li>)}
+        {held.map((item) => <li key={item.key}>قسط {periodKeyLabel(item.periodKey)} ({formatAmount(item.amount)} {unitLabel()}) نگه داشته شد: {item.reason}</li>)}
         {unscheduled.map((item) => <li key={item.accountId}>{item.wrongSign
-          ? <>«{item.accountName}» ماندهٔ وارونه دارد ({formatAmount(Math.abs(item.balance || 0))} تومان)؛ سندی بیرون از برنامه آن را جابه‌جا کرده و باید اصلاح شود.</>
-          : <>«{item.accountName}» {formatAmount(item.residual || 0)} تومان مانده دارد که برنامهٔ ماهانه ندارد؛ دوره‌اش را حسابدار در صف بررسی می‌دهد.</>}</li>)}
+          ? <>«{item.accountName}» ماندهٔ وارونه دارد ({formatAmount(Math.abs(item.balance || 0))} {unitLabel()})؛ سندی بیرون از برنامه آن را جابه‌جا کرده و باید اصلاح شود.</>
+          : <>«{item.accountName}» {formatAmount(item.residual || 0)} {unitLabel()} مانده دارد که برنامهٔ ماهانه ندارد؛ دوره‌اش را حسابدار در صف بررسی می‌دهد.</>}</li>)}
       </ul>
       <p className="mt-2 text-xs text-muted">این موارد در «صف بررسی حسابدار» با دکمهٔ اقدام آمده‌اند.</p>
     </div>}

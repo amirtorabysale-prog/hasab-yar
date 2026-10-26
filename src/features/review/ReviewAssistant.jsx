@@ -5,7 +5,7 @@ import { EntryTable } from './ReviewEntry.jsx';
 import { proposalBrief, remainingBlockers } from './reviewCase.js';
 import { reviewQuestions, reviewSavedAnswers } from '../../../shared/reviewQuestions.js';
 import { api } from '../../lib/api.js';
-import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 /**
  * «تحلیل کن» در صف حسابدار — بازطراحی پس از بازخورد مالک محصول (۲۹ مهر ۱۴۰۵):
@@ -68,7 +68,7 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
     const props = { value, onChange: (e) => answerQuestion(q, e.target.value), 'aria-label': q.text, className: 'mt-2 block w-full rounded-lg border border-line bg-surface p-2.5 text-[14px]' };
     if (q.id === 'nature.vat-refund' && ai?.taxRefundCandidates?.length) return <>
       <input {...props} list={`tax-sources-${item.id}`} placeholder="شماره سال/سند، مثلاً ۱۴۰۵/۱۲" />
-      <datalist id={`tax-sources-${item.id}`}>{ai.taxRefundCandidates.map((c) => <option key={c.lineId} value={c.reference}>{c.accountName} · {persianDate(c.occurredAt)} · مانده {formatAmount(c.available)} تومان</option>)}</datalist>
+      <datalist id={`tax-sources-${item.id}`}>{ai.taxRefundCandidates.map((c) => <option key={c.lineId} value={c.reference}>{c.accountName} · {persianDate(c.occurredAt)} · مانده {formatAmount(c.available)} {unitLabel()}</option>)}</datalist>
     </>;
     if (['occurredAt', 'dueAt'].includes(q.field)) return <input {...props} type="date" />;
     // جوابِ بسته («وجه در اختیار شرکت»، «برداشت شخصی» …) کارتِ انتخاب است، نه متنِ آزاد.
@@ -194,10 +194,10 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
         {hasAnswerChanges && <button type="button" disabled={loading || busy} onClick={analyze} className="tap mt-2 rounded-lg bg-accent px-3 text-[13px] font-bold text-on-fill disabled:opacity-40">ذخیره و بازبینی پیشنهاد</button>}
       </details>}
 
-      {ai.tradeSettlement && <div className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6"><b>ماندهٔ واقعی طرف‌حساب: {formatAmount(ai.tradeSettlement.available)} تومان</b><p>این سند {formatAmount(ai.tradeSettlement.amount)} تومان؛ مانده پس از آن {formatAmount(ai.tradeSettlement.available - ai.tradeSettlement.amount)} تومان.</p><p className="text-muted">پرداخت بدهی و وصول طلب، درآمد یا هزینهٔ تازه نیست.</p></div>}
-      {ai.taxRefundClaim && <div className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6"><b>سند مبنای طلب مالیاتی: <span className="numbers" dir="ltr">{toPersianDigits(ai.taxRefundClaim.reference)}</span></b><p>{persianDate(ai.taxRefundClaim.occurredAt)} · {ai.taxRefundClaim.accountName} · ماندهٔ قابل وصول <span className="numbers">{formatAmount(ai.taxRefundClaim.available)}</span> تومان</p><p className="text-muted">با تأیید تو، وصول به همین سند وصل می‌شود؛ درآمد تازه ثبت نمی‌شود.</p></div>}
+      {ai.tradeSettlement && <div className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6"><b>ماندهٔ واقعی طرف‌حساب: {formatAmount(ai.tradeSettlement.available)} {unitLabel()}</b><p>این سند {formatAmount(ai.tradeSettlement.amount)} {unitLabel()}؛ مانده پس از آن {formatAmount(ai.tradeSettlement.available - ai.tradeSettlement.amount)} {unitLabel()}.</p><p className="text-muted">پرداخت بدهی و وصول طلب، درآمد یا هزینهٔ تازه نیست.</p></div>}
+      {ai.taxRefundClaim && <div className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6"><b>سند مبنای طلب مالیاتی: <span className="numbers" dir="ltr">{toPersianDigits(ai.taxRefundClaim.reference)}</span></b><p>{persianDate(ai.taxRefundClaim.occurredAt)} · {ai.taxRefundClaim.accountName} · ماندهٔ قابل وصول <span className="numbers">{formatAmount(ai.taxRefundClaim.available)}</span> {unitLabel()}</p><p className="text-muted">با تأیید تو، وصول به همین سند وصل می‌شود؛ درآمد تازه ثبت نمی‌شود.</p></div>}
       {ai.newCounterparty && <p className="mt-3 rounded-lg border border-accent/30 bg-accent/5 p-3 text-[13px] leading-6"><b>طرف‌حساب تازه: {ai.newCounterparty.name}</b> — با تأیید تو، شخص و تفصیلی‌اش ساخته می‌شوند.</p>}
-      {ai.inventoryItems?.length > 0 && <div className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6"><b>ورود انبار همراه سند</b>{ai.inventoryItems.map((i, n) => <p key={n}>{i.name} · {i.quantity} {i.unit} · بهای کل {formatAmount(i.total)} تومان{i.newProduct ? ' · کالای تازه' : ''}</p>)}</div>}
+      {ai.inventoryItems?.length > 0 && <div className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6"><b>ورود انبار همراه سند</b>{ai.inventoryItems.map((i, n) => <p key={n}>{i.name} · {i.quantity} {i.unit} · بهای کل {formatAmount(i.total)} {unitLabel()}{i.newProduct ? ' · کالای تازه' : ''}</p>)}</div>}
       <EntryTable lines={ai.lines || []} title="سند پیشنهادی" />
       {ai.mappingRepairs?.map((repair) => <div key={repair.ledgerAccountId} className="mt-3 rounded-lg border border-line p-3 text-[13px] leading-6">
         <p>حساب «{repair.accountName}» به صندوق نگاشت شده؛ معین مناسب «{repair.chartCode} {repair.chartName}» است. اصلاح نگاشت، نمایش کدینگ {repair.affectedLines} سطر قبلی را هم تغییر می‌دهد؛ مبلغ و بانک اسناد تغییر نمی‌کند.</p>

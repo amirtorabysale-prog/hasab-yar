@@ -1,4 +1,5 @@
-/**
+
+import { unitLabel } from '../shared/amountUnit.js';/**
  * صندوق، بانک و تنخواه منفی نمی‌شوند — مگر با تأیید حسابدار.
  *
  * پولِ نقدی که نیست را نمی‌شود خرج کرد. ماندهٔ منفیِ صندوق تقریباً همیشه یعنی
@@ -76,7 +77,7 @@ export function negativeViolations(database, before) {
 const money = (value) => Math.abs(Math.round(Number(value) || 0)).toLocaleString('fa-IR');
 
 export function overdraftError(violations) {
-  const parts = violations.map((item) => `«${item.name}» ${item.before < 0 ? `از منفی ${money(item.before)}` : `از ${money(item.before)}`} به منفی ${money(item.after)} تومان`);
+  const parts = violations.map((item) => `«${item.name}» ${item.before < 0 ? `از منفی ${money(item.before)}` : `از ${money(item.before)}`} به منفی ${money(item.after)} ${unitLabel()}`);
   return Object.assign(new Error(`با این ثبت موجودی ${parts.join(' و ')} می‌رسد. صندوق و بانک منفی نمی‌شوند مگر با تأیید حسابدار؛ اگر واقعاً چنین است (اضافه‌برداشت یا ثبتی که جا افتاده)، با دلیل تأیید کن.`), {
     code: 'NEGATIVE_BALANCE', status: 409, requiresAction: true, details: { approvalKind: 'cash', accounts: violations },
   });

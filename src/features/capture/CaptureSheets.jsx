@@ -7,7 +7,7 @@ import { Check, ChevronLeft, CircleAlert, Pencil, RotateCcw, Sparkles, X } from 
 import { useEffect, useState } from 'react';
 import { CONFIDENCE_COMPONENT_LABELS } from '../../../shared/confidenceEngine.js';
 import { REVIEW_FIELD_LABELS, assessTransactionReview, reviewBatchSummary } from '../../../shared/review.js';
-import { formatAmount, formatSignedAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, formatSignedAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 import { pickBankAccount } from '../../../shared/banks.js';
 import { pickPettyCashAccount } from '../../../shared/pettyCashSpeech.js';
 import { detectPartnerFundedSpend } from '../../../shared/partnerPaidSpeech.js';
@@ -152,7 +152,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
           {editAmount ? (
             <input autoFocus inputMode="numeric" value={item.amount} onChange={(event) => patchField('amount', { amount: Number(event.target.value.replace(/\D/g, '')) })} onBlur={() => setEditAmount(false)} onKeyDown={(event) => { if (event.key === 'Enter') setEditAmount(false); }} className="numbers mx-auto block w-full bg-transparent text-center text-4xl font-extrabold tracking-[-.02em] outline-none" />
           ) : <div className="flex items-center justify-center gap-2"><span className="numbers text-4xl font-extrabold tracking-[-.02em]">{formatAmount(item.amount)}</span><Pencil size={16} className="text-muted" /></div>}
-          <span className="mt-1 block text-[13px] text-muted">تومان</span>
+          <span className="mt-1 block text-[13px] text-muted">{unitLabel()}</span>
         </button>
         {/* دوره و برنامهٔ ماهانه از همان پیش‌نمایش سرور که ثبت می‌سازد. */}
         {previewReady && <RecognitionNote recognition={preflight.previews[index]?.recognition} servicePeriod={preflight.previews[index]?.servicePeriod} decided={preflight.previews[index]?.decisionStatus === 'decided'} />}
@@ -186,8 +186,8 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
                 {settlement.balance === 0
                   ? 'حسابش الان صاف است.'
                   : settlement.balance > 0
-                    ? <>طلب شما از او <b className="numbers text-ink">{formatAmount(settlement.balance)}</b> تومان است.</>
-                    : <>بدهی شما به او <b className="numbers text-ink">{formatAmount(Math.abs(settlement.balance))}</b> تومان است.</>}
+                    ? <>طلب شما از او <b className="numbers text-ink">{formatAmount(settlement.balance)}</b> {unitLabel()} است.</>
+                    : <>بدهی شما به او <b className="numbers text-ink">{formatAmount(Math.abs(settlement.balance))}</b> {unitLabel()} است.</>}
               </p>
               {settlement.direction && <div className="mt-2 grid grid-cols-2 gap-2 text-[12px] font-bold">
                 <button onClick={() => setChoice({ settlement: settlement.direction })}
@@ -263,7 +263,7 @@ export function CorrectionSheet({ draft, accounts, close, confirm }) {
   const [busy, setBusy] = useState(false);
   const { current, preview } = draft;
   const valueFor = (field, source) => {
-    if (field === 'amount') return `${formatAmount(source.amount)} تومان`;
+    if (field === 'amount') return `${formatAmount(source.amount)} ${unitLabel()}`;
     if (field === 'type') return source.type === 'income' ? 'درآمد' : 'هزینه';
     if (field === 'account') return source.accountName || accounts.find((account) => account.id === source.accountId)?.name || 'حساب پیش‌فرض';
     return source.category;

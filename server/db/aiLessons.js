@@ -10,6 +10,7 @@ import { detectVoiceIntent } from '../../shared/voiceIntent.js';
 import { natureNeedsAccountant, readEventNature, readExplicitNonCash, readNonCashInstrument } from '../../shared/eventNature.js';
 import { normalizePersian } from '../../shared/normalize.js';
 import { normalizeTopicLabel, topicLabelKey } from '../chartOfAccounts.js';
+import { parseResultInLedgerUnit } from '../../shared/amountUnit.js';
 
 /**
  * پارسر از AI یاد می‌گیرد — خواستهٔ مالک محصول (۲۹ مهر ۱۴۰۵).
@@ -119,7 +120,8 @@ export function deterministicView(text, { learnings = [], accounts = [], now = n
   if (intent) return { path: 'card', reason: `intent:${intent.intent}` };
   // همان کاری که `insertTransactionRows` می‌کند: اصلاحِ ثبت قبلی و چکِ وصول‌نشده ردیف نقدی نمی‌سازند.
   if (natureNeedsAccountant(readEventNature(text)) || readNonCashInstrument(text) || readExplicitNonCash(text)) return { path: 'queue', reason: 'non-cash' };
-  const rows = (parseFinancialText(text, { learnings, source: 'text', now }).transactions || [])
+  // ردیف‌های پارسر به واحد دفتر، همان واحدی که اجزای AI دارند.
+  const rows = (parseResultInLedgerUnit(parseFinancialText(text, { learnings, source: 'text', now })).transactions || [])
     .filter((row) => Number.isSafeInteger(row.amount) && row.amount > 0)
     // ردیفِ پرداخت‌نشده («قراره تا آبان پرداختش کنیم») تعهد باز می‌کند، نه ردیف نقدی.
     .map((row) => ({ amount: row.amount, type: row.type, category: row.category, unpaid: row.unpaidSignal === true }));
@@ -204,10 +206,10 @@ function recordStructural({ caseId, componentId, text, final, parser, flags, par
 function recordCategory({ caseId, componentId, text, final, parser, row, item, learnings, now, confirmedBy = 'ai' }) {
   const keyword = learnableKeyword(item.topicLabel, text, item.category);
   // درسی که همین جمله را درست نمی‌کند (یا جهتش را عوض می‌کند) درس نیست.
-  const trial = keyword && (parseFinancialText(text, {
+  const trial = keyword && (parseResultInLedgerUnit(parseFinancialText(text, {
     learnings: [{ keyword, category: item.category, source: 'ai' }, ...learnings.filter((learning) => normalizePersian(learning.keyword) !== normalizePersian(keyword))],
     source: 'text', now,
-  }).transactions || []).some((candidate) => candidate.amount === item.amount && candidate.type === item.type && candidate.category === item.category);
+  })).transactions || []).some((candidate) => candidate.amount === item.amount && candidate.type === item.type && candidate.category === item.category);
   if (!trial) return recordStructural({ caseId, componentId, text, final, parser, flags: ['category-unlearnable'], parserCategory: row.category });
   const key = `category|${topicLabelKey(keyword)}|${item.category}`;
   const existing = db.prepare('SELECT * FROM ai_lessons WHERE lesson_key=?').get(key);

@@ -1,4 +1,5 @@
-const formatNumber = (value) => new Intl.NumberFormat('fa-IR').format(Math.round(Number(value) || 0));
+
+import { unitLabel } from '../lib/format.js';const formatNumber = (value) => new Intl.NumberFormat('fa-IR').format(Math.round(Number(value) || 0));
 
 export function todayExamples(profileType = 'business') {
   return profileType === 'personal'
@@ -40,12 +41,12 @@ export function buildTodayPulse({ summary = {}, overview = {}, transactions = []
   }
   const net = Number(summary.netCashFlow ?? summary.profit ?? 0);
   if (net < 0) {
-    return { tone: 'danger', eyebrow: 'نبض امروز', title: 'پرداخت امروز از دریافت بیشتر است', detail: `${formatNumber(Math.abs(net))} تومان خروج نقدی خالص ثبت شده؛ یک‌بار هزینه‌های امروز را مرور کن.` };
+    return { tone: 'danger', eyebrow: 'نبض امروز', title: 'پرداخت امروز از دریافت بیشتر است', detail: `${formatNumber(Math.abs(net))} ${unitLabel()} خروج نقدی خالص ثبت شده؛ یک‌بار هزینه‌های امروز را مرور کن.` };
   }
   if (Number(overview.runwayDays) <= 14 && overview.runwayDays != null) {
     return { tone: 'warning', eyebrow: 'نبض نقدینگی', title: `دوام نقدینگی حدود ${Number(overview.runwayDays)} روز است`, detail: 'وصول طلب‌های نزدیک و پرداخت‌های پیش رو را همین امروز مرور کن.' };
   }
-  return { tone: 'good', eyebrow: 'نبض امروز', title: 'جریان نقدی امروز مثبت است', detail: `${formatNumber(net)} تومان دریافت خالص بیشتر از پرداخت ثبت شده است.` };
+  return { tone: 'good', eyebrow: 'نبض امروز', title: 'جریان نقدی امروز مثبت است', detail: `${formatNumber(net)} ${unitLabel()} دریافت خالص بیشتر از پرداخت ثبت شده است.` };
 }
 
 export function buildTodayTasks({ transactions = [], overview = {}, closing = null, profileType = 'business', pendingAudioCount = 0 } = {}) {
@@ -54,7 +55,7 @@ export function buildTodayTasks({ transactions = [], overview = {}, closing = nu
   const suspiciousCount = transactions.filter((item) => item.needsReview).length;
   if (suspiciousCount > 0) tasks.push({ id: 'review', tone: 'warning', action: 'ledger', title: `${suspiciousCount} ثبت نیاز به بازبینی دارد`, detail: 'مبلغ یا دسته را پیش از بستن روز دوباره بررسی کن.' });
   if (Number(overview.overdue) > 0) tasks.push({ id: 'overdue', tone: 'danger', action: 'ledger', title: `${Number(overview.overdue)} سررسید عقب‌افتاده`, detail: 'طلب یا بدهی عقب‌افتاده را تسویه یا زمان‌بندی کن.' });
-  if (closing && Number(closing.difference) !== 0) tasks.push({ id: 'cash-mismatch', tone: 'danger', action: 'close', title: `${formatNumber(Math.abs(Number(closing.difference)))} تومان اختلاف صندوق`, detail: 'علت ثبت‌شده را تکمیل کن یا صندوق را دوباره بشمار.' });
+  if (closing && Number(closing.difference) !== 0) tasks.push({ id: 'cash-mismatch', tone: 'danger', action: 'close', title: `${formatNumber(Math.abs(Number(closing.difference)))} ${unitLabel()} اختلاف صندوق`, detail: 'علت ثبت‌شده را تکمیل کن یا صندوق را دوباره بشمار.' });
   if (profileType === 'business' && transactions.length > 0 && !closing) tasks.push({ id: 'close-day', tone: 'primary', action: 'close', title: 'امروز هنوز بسته نشده', detail: 'صندوق را بشمار و اختلاف احتمالی را ثبت کن.' });
   return tasks;
 }

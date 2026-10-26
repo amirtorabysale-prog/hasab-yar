@@ -1,4 +1,18 @@
+import { setAmountUnitResolver } from '../../shared/amountUnit.js';
+
+export { currentAmountUnit, tomanToLedger, unitLabel } from '../../shared/amountUnit.js';
+
 const fa = new Intl.NumberFormat('fa-IR');
+
+// واحد مبلغ دفتر فعال، از تنظیماتی که bootstrap آورده. با عوض‌شدن دفتر، bootstrap
+// دوباره خوانده و همین مقدار تازه می‌شود؛ برچسب‌ها در رندر بعدی همان را نشان می‌دهند.
+// resolver فقط وقتی نصب می‌شود که برنامه واحد را بگذارد، نه با import این فایل؛
+// وگرنه آزمونی که هم سرور و هم این فایل را بار می‌کند resolver سرور را می‌پوشاند.
+let ledgerUnit = 'toman';
+export function setLedgerAmountUnit(unit) {
+  ledgerUnit = unit === 'rial' ? 'rial' : 'toman';
+  setAmountUnitResolver(() => ledgerUnit);
+}
 
 export const formatAmount = (value) => fa.format(Math.round(Number(value) || 0));
 export const formatSignedAmount = (item) => `${item.type === 'income' ? '+' : '−'} ${formatAmount(item.amount)}`;

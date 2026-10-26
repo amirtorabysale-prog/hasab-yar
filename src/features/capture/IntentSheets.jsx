@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSheetA11y } from '../../components/sheetA11y.js';
 import { api } from '../../lib/api.js';
-import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 import { invoiceLinesTotal } from '../../../shared/voiceIntent.js';
 import { matchSettleTargets, ledgerBalanceTargets } from '../../../shared/settleSpeech.js';
 
@@ -76,14 +76,14 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
         <p className="text-xs font-bold text-muted">مبلغ</p>
         {draft.needsAmount && !isInvoice && !isEquityMove ? <>
           {/* جمله بیش از یک مبلغ داشت یا مبلغی نگفت؛ حدس نمی‌زنیم، می‌پرسیم. */}
-          <input dir="ltr" inputMode="numeric" value={draft.amount || ''} placeholder="مبلغ به تومان"
+          <input dir="ltr" inputMode="numeric" value={draft.amount || ''} placeholder={`مبلغ به ${unitLabel()}`}
             onChange={(event) => setDraft({ ...draft, amount: Number(String(event.target.value).replace(/[^\d]/g, '')) || 0 })}
             className="tap mt-1 w-full rounded-lg border border-line bg-paper px-3 text-left text-lg numbers" />
           <p className="mt-1 text-xs leading-5 text-expense">
             {isPetty && pettyFund && draft.amount ? 'مبلغی گفته نشد؛ همان مبلغ خرج‌شده پیشنهاد شد تا تنخواه به سقفش برگردد.'
               : draft.amountHint ? 'جمله بیش از یک مبلغ داشت؛ مبلغ همین سند را خودت بنویس.' : 'مبلغ از جمله برداشت نشد؛ خودت بنویس.'}
           </p>
-        </> : <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">تومان</span></b>}
+        </> : <b className="numbers mt-1 block text-2xl">{formatAmount(draft.amount)} <span className="text-[12px] font-normal text-muted">{unitLabel()}</span></b>}
       </div>
 
       {isPetty ? <>
@@ -100,7 +100,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
         </label>
         <p className="mt-3 rounded-lg bg-accent/5 px-3 py-3 text-xs leading-6 text-accent">
           {pettyFund
-            ? `تنخواه ${pettyFund.holderName} با سقف ${formatAmount(pettyFund.pettyCeiling)} تومان باز است؛ این مبلغ به آن اضافه می‌شود.`
+            ? `تنخواه ${pettyFund.holderName} با سقف ${formatAmount(pettyFund.pettyCeiling)} ${unitLabel()} باز است؛ این مبلغ به آن اضافه می‌شود.`
             : 'برای این نفر تنخواه بازی نیست؛ تنخواه تازه با همین مبلغ به‌عنوان سقف ساخته می‌شود.'}
           {' '}پرداخت تنخواه هزینه نیست؛ فقط پول شرکت از این حساب به دست او می‌رود.
         </p>
@@ -119,7 +119,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left text-sm numbers" />
         </label>
         <p className="mt-3 rounded-lg bg-accent/5 px-3 py-3 text-xs leading-6 text-accent">{draft.fee > 0
-          ? `مبلغ انتقال فقط ماندهٔ دو حساب را جابه‌جا می‌کند؛ کارمزد ${Number(draft.fee).toLocaleString('fa-IR')} تومان هزینهٔ کارمزد بانکیِ حساب مبدأ ثبت می‌شود.`
+          ? `مبلغ انتقال فقط ماندهٔ دو حساب را جابه‌جا می‌کند؛ کارمزد ${Number(draft.fee).toLocaleString('fa-IR')} ${unitLabel()} هزینهٔ کارمزد بانکیِ حساب مبدأ ثبت می‌شود.`
           : 'فقط ماندهٔ مبدأ و مقصد جابه‌جا می‌شود؛ این انتقال درآمد یا هزینه نیست.'}</p>
       </> : isEquityMove ? <>
         <label className="mt-3 block text-xs font-bold text-muted">{isCapital ? 'عنوان آورده' : 'نام دارایی'}
@@ -185,7 +185,7 @@ export function IntentSheet({ draft, setDraft, accounts = [], close, confirm }) 
             «ده عدد چای هرکدام پنجاه هزار تومان».
           </p>}
           {(draft.lines || []).length > 0 && <p className="numbers mt-2 text-right text-xs text-muted">
-            جمع ردیف‌ها: <b className="text-ink">{formatAmount(linesTotal)}</b> تومان
+            جمع ردیف‌ها: <b className="text-ink">{formatAmount(linesTotal)}</b> {unitLabel()}
           </p>}
         </div>
 
@@ -393,7 +393,7 @@ export function SettleSheet({ draft, obligations = [], contacts = [], close, con
           ))}
         </div>
 
-        {selected && <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-xs text-accent">مبلغ این تسویه: <b className="numbers">{formatAmount(selected.paymentAmount)}</b> تومان از ماندهٔ <b className="numbers">{formatAmount(selected.amount)}</b> تومان.</p>}
+        {selected && <p className="mt-3 rounded-lg bg-accent/5 px-3 py-2 text-xs text-accent">مبلغ این تسویه: <b className="numbers">{formatAmount(selected.paymentAmount)}</b> {unitLabel()} از ماندهٔ <b className="numbers">{formatAmount(selected.amount)}</b> {unitLabel()}.</p>}
         {draft.occurredAt && <p className="mt-3 text-xs text-muted">تاریخ تسویه: <b className="text-ink">{persianDate(draft.occurredAt)}</b></p>}
       </>}
 

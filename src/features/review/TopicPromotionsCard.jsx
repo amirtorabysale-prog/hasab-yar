@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, persianDate, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 /**
  * پیشنهادهای ارتقای برچسب موضوعی — طرح ترکیبی مالک محصول.
@@ -39,7 +39,7 @@ function PromotionCard({ promotion, notify, onDecided, canDecide }) {
     <p className="mt-1 text-xs leading-6 text-muted">دستهٔ مستقل بسازیم؟ با تأیید، دسته و معین کدینگ ساخته می‌شود، <b className="text-ink">{toPersianDigits(promotion.migrationCount)} سطر قبلیِ همین برچسب</b> به دستهٔ تازه منتقل می‌شود و واژه یاد گرفته می‌شود. مبالغ و توازن سندها عوض نمی‌شود.{promotion.lockedLineCount > 0 && <> <b className="text-ink">{toPersianDigits(promotion.lockedLineCount)} سطر</b> در دورهٔ بسته است و جابه‌جا نمی‌شود.</>}</p>
     {promotion.samples?.length > 0 && <ul className="mt-2 space-y-1 rounded-lg border border-line bg-surface p-2 text-[11px] leading-5 text-muted">
       {promotion.samples.map((sample) => <li key={sample.entryId} className="truncate">
-        {persianDate(sample.occurredAt)} · <span className="numbers">{formatAmount(sample.amount)}</span> تومان · {sample.accountName}{sample.memo ? ` · ${sample.memo.slice(0, 40)}` : ''}
+        {persianDate(sample.occurredAt)} · <span className="numbers">{formatAmount(sample.amount)}</span> {unitLabel()} · {sample.accountName}{sample.memo ? ` · ${sample.memo.slice(0, 40)}` : ''}
       </li>)}
       {promotion.occurrences > promotion.samples.length && <li>… و <span className="numbers">{toPersianDigits(promotion.occurrences - promotion.samples.length)}</span> سطر دیگر</li>}
     </ul>}

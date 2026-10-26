@@ -4,7 +4,7 @@ import { BANKS, bankById, detectBank } from '../../../shared/banks.js';
 import { profileDefinition } from '../../../shared/product.js';
 import { api } from '../../lib/api.js';
 import { digitsOnly } from '../../components/common.jsx';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 const ACCOUNT_KINDS = [['cash', 'صندوق'], ['bank', 'بانک'], ['wallet', 'کیف پول'], ['other', 'سایر']];
 
@@ -115,10 +115,50 @@ export function SettingsPage({ initial, accounts = [], notify, refresh, onLogout
         <label className="text-[13px] text-muted">هشدار کاهش مانده<input inputMode="numeric" value={settings.lowBalanceThreshold || ''} onChange={(event) => setSettings({ ...settings, lowBalanceThreshold: event.target.value.replace(/\D/g, '') })} className="tap numbers mt-2 w-full rounded-lg border border-line px-3" /></label>
       </div>
       <label className="mt-3 block text-[13px] text-muted">حساسیت هشدارهای مالی<select value={settings.alertSensitivity || 'balanced'} onChange={(event) => setSettings({ ...settings, alertSensitivity: event.target.value })} className="tap mt-2 w-full rounded-lg border border-line bg-surface px-3 text-ink"><option value="low">کم؛ فقط تغییرهای بزرگ</option><option value="balanced">متعادل؛ پیشنهاد حساب‌یار</option><option value="high">زیاد؛ هشدار زودتر</option></select><span className="mt-1 block text-xs leading-5">مبلغ غیرعادی و رشد هزینه فقط با خط مبنای کافی سنجیده می‌شود؛ این گزینه آستانه را تغییر می‌دهد، نه داده را.</span></label>
-      <div className="rounded-lg bg-warn-bg px-3 py-2 text-[12px] leading-6 text-muted">واحد نمایش و ذخیره نسخه فعلی تومان است. مهاجرت آینده به ریال بدون تغییر معنای مبالغ موجود انجام می‌شود.</div>
+      <LedgerUnitSetting canManage={canManage} notify={notify} refresh={refresh} />
       <button onClick={save} className="tap w-full rounded-lg bg-accent font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">ذخیره تنظیمات</button>
     </section>
   </main>;
+}
+
+/**
+ * واحد مبلغ دفتر: تومان یا ریال. فقط پیش از اولین مبلغ عوض می‌شود؛ پس از آن قفل است،
+ * چون عوض کردنش یعنی همهٔ عددهای قبلی ده برابر یا یک‌دهم خوانده شوند.
+ */
+function LedgerUnitSetting({ canManage, notify, refresh }) {
+  const [state, setState] = useState(null);
+  const [choice, setChoice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api.ledgerAmountUnit().then((result) => { setState(result); setChoice(result.amountUnit); }).catch(() => setState(null)), []);
+  useEffect(() => { load(); }, [load]);
+  if (!state) return null;
+  const save = async () => {
+    if (!canManage || choice === state.amountUnit) return;
+    setBusy(true);
+    try {
+      const result = await api.setLedgerAmountUnit(choice);
+      await refresh();
+      await load();
+      notify(`واحد مبلغ این دفتر ${result.label} شد.`);
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+  return <fieldset className="rounded-lg border border-line bg-paper px-3 py-3" disabled={!canManage || state.locked || busy}>
+    <legend className="px-1 text-[13px] font-bold">واحد مبلغ دفتر: {state.label}</legend>
+    <p className="text-[12px] leading-6 text-muted">
+      همهٔ مبلغ‌های این دفتر به همین واحد ثبت و نمایش داده می‌شوند. دفتر ریالی برای کار با پارسیان است که مبلغ را به ریال نگه می‌دارد؛
+      گفتهٔ «۲ میلیون تومان» در دفتر ریالی هم درست خوانده و به ریال ثبت می‌شود.
+    </p>
+    {state.locked
+      ? <p className="mt-1 text-[12px] leading-6 text-muted">این دفتر مبلغ ثبت‌شده دارد و واحدش دیگر عوض نمی‌شود. برای واحد دیگر، دفتر تازه بساز و پیش از هر ثبتی واحدش را انتخاب کن.</p>
+      : <div className="mt-2 flex flex-wrap items-center gap-4 text-[13px]">
+        {[['toman', 'تومان'], ['rial', 'ریال']].map(([value, label]) => <label key={value} className="flex items-center gap-1.5">
+          <input type="radio" name="ledger-amount-unit" value={value} checked={choice === value} onChange={() => setChoice(value)} /> {label}
+        </label>)}
+        {canManage && <button type="button" onClick={save} disabled={busy || choice === state.amountUnit}
+          className="tap rounded-lg border border-line bg-surface px-3 text-[12px] font-bold disabled:opacity-45">ذخیرهٔ واحد</button>}
+      </div>}
+  </fieldset>;
 }
 
 /**
@@ -142,7 +182,7 @@ export function DataPrivacyPanel({ access, notify }) {
     try { await api.deleteReceipt(receipt.id); await load(); notify('تصویر رسید و فرادادهٔ آن حذف شد.'); }
     catch (error) { notify(error.message); }
   };
-  return <section className="mx-auto mt-5 max-w-[760px] px-4"><div className="rounded-xl border border-line bg-surface p-4"><h2 className="font-extrabold">حریم خصوصی و نگهداری داده</h2><div className="mt-3 space-y-2 text-[13px] leading-6 text-muted"><p>صدای کاربر فقط در حافظه برای تبدیل به متن پردازش می‌شود و فایل صوتی روی سرور نگه‌داری نمی‌شود.</p><p>تصاویر رسید تا زمان حذف دستی یا بازیابی یک پشتیبان نگه‌داری می‌شوند. حذف تصویر روی تراکنش مالی ثبت‌شده اثری ندارد.</p><p>پشتیبان‌های خودکار پس از بازهٔ نگهداری تنظیم‌شده به‌صورت امن از پوشهٔ پشتیبان حذف می‌شوند.</p></div>{receipts.length > 0 && <div className="mt-4 divide-y divide-line border-y border-line">{receipts.map((receipt) => <div key={receipt.id} className="flex min-h-[64px] items-center gap-2 py-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{receipt.fileName}</p><p className="mt-1 text-xs text-muted">{receipt.amount ? `${formatAmount(receipt.amount)} تومان` : 'بدون مبلغ'} · {new Intl.DateTimeFormat('fa-IR').format(new Date(receipt.createdAt))}</p></div><a href={api.workspacePath(`/api/receipts/${receipt.id}/image`)} target="_blank" rel="noreferrer" className="tap grid place-items-center rounded-lg border border-line px-3 text-xs font-bold hover:bg-paper hover:text-ink">دیدن</a>{canDelete && <button onClick={() => remove(receipt)} className="tap grid place-items-center text-expense" aria-label={`حذف ${receipt.fileName}`}><Trash2 size={18} /></button>}</div>)}</div>}</div></section>;
+  return <section className="mx-auto mt-5 max-w-[760px] px-4"><div className="rounded-xl border border-line bg-surface p-4"><h2 className="font-extrabold">حریم خصوصی و نگهداری داده</h2><div className="mt-3 space-y-2 text-[13px] leading-6 text-muted"><p>صدای کاربر فقط در حافظه برای تبدیل به متن پردازش می‌شود و فایل صوتی روی سرور نگه‌داری نمی‌شود.</p><p>تصاویر رسید تا زمان حذف دستی یا بازیابی یک پشتیبان نگه‌داری می‌شوند. حذف تصویر روی تراکنش مالی ثبت‌شده اثری ندارد.</p><p>پشتیبان‌های خودکار پس از بازهٔ نگهداری تنظیم‌شده به‌صورت امن از پوشهٔ پشتیبان حذف می‌شوند.</p></div>{receipts.length > 0 && <div className="mt-4 divide-y divide-line border-y border-line">{receipts.map((receipt) => <div key={receipt.id} className="flex min-h-[64px] items-center gap-2 py-2"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{receipt.fileName}</p><p className="mt-1 text-xs text-muted">{receipt.amount ? `${formatAmount(receipt.amount)} ${unitLabel()}` : 'بدون مبلغ'} · {new Intl.DateTimeFormat('fa-IR').format(new Date(receipt.createdAt))}</p></div><a href={api.workspacePath(`/api/receipts/${receipt.id}/image`)} target="_blank" rel="noreferrer" className="tap grid place-items-center rounded-lg border border-line px-3 text-xs font-bold hover:bg-paper hover:text-ink">دیدن</a>{canDelete && <button onClick={() => remove(receipt)} className="tap grid place-items-center text-expense" aria-label={`حذف ${receipt.fileName}`}><Trash2 size={18} /></button>}</div>)}</div>}</div></section>;
 }
 
 export function BackupPanel({ access, notify, refresh }) {

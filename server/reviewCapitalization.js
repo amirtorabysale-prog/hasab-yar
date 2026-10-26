@@ -1,5 +1,6 @@
 import { resolveAutomationPolicy } from '../shared/automationPolicy.js';
 import { reviewQuestionFact } from '../shared/reviewQuestions.js';
+import { unitLabel } from '../shared/amountUnit.js';
 
 /**
  * حد سرمایه‌ای مصوب دفتر در صف حسابدار.
@@ -24,10 +25,10 @@ export function capitalizationIssues(threshold, lines = [], { durable = false } 
   // «پرینتر لیزری ۲۵ میلیونی» با حد ۲۰ میلیون، با پیشنهاد «ملزومات اداری» ثبت شد (R049).
   const expensed = lines.filter((line) => line.role === 'expense-category').reduce((sum, line) => sum + Number(line.debit || 0), 0);
   if (durable && !asset && expensed >= threshold) {
-    return [{ id: 'policy.capitalization-threshold', text: `این کالای ماندگار (${fa(expensed)} تومان) هم‌اندازه یا بالاتر از حد سرمایه‌ای مصوب دفتر (${fa(threshold)} تومان) است؛ طبق سیاست دفتر دارایی ثابت با عمر مفید ثبت می‌شود، نه هزینهٔ دوره.` }];
+    return [{ id: 'policy.capitalization-threshold', text: `این کالای ماندگار (${fa(expensed)} ${unitLabel()}) هم‌اندازه یا بالاتر از حد سرمایه‌ای مصوب دفتر (${fa(threshold)} ${unitLabel()}) است؛ طبق سیاست دفتر دارایی ثابت با عمر مفید ثبت می‌شود، نه هزینهٔ دوره.` }];
   }
   if (!asset || asset >= threshold) return [];
-  return [{ id: 'policy.capitalization-threshold', text: `بهای این مورد (${fa(asset)} تومان) کمتر از حد سرمایه‌ای مصوب دفتر (${fa(threshold)} تومان) است؛ طبق سیاست دفتر هزینهٔ دوره ثبت می‌شود، نه دارایی ثابت.` }];
+  return [{ id: 'policy.capitalization-threshold', text: `بهای این مورد (${fa(asset)} ${unitLabel()}) کمتر از حد سرمایه‌ای مصوب دفتر (${fa(threshold)} ${unitLabel()}) است؛ طبق سیاست دفتر هزینهٔ دوره ثبت می‌شود، نه دارایی ثابت.` }];
 }
 
 /** سؤال‌هایی که سیاست مصوب دفتر پاسخشان را دارد، پرسیده نمی‌شوند. */
@@ -44,6 +45,6 @@ export function withoutPolicyAnsweredQuestions(questions = [], threshold, amount
 
 export function capitalizationPromptLine(threshold) {
   return threshold
-    ? `سیاست مصوب این دفتر: خرید تجهیز و اموال با بهای کمتر از ${threshold} تومان هزینهٔ دوره است و از آن به بالا دارایی ثابت (با پرسش عمر مفید). دربارهٔ سیاست سرمایه‌ای شدن سؤال نپرس.`
+    ? `سیاست مصوب این دفتر: خرید تجهیز و اموال با بهای کمتر از ${threshold} ${unitLabel()} هزینهٔ دوره است و از آن به بالا دارایی ثابت (با پرسش عمر مفید). دربارهٔ سیاست سرمایه‌ای شدن سؤال نپرس.`
     : '';
 }

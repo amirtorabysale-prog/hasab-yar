@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Landmark, Mic } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { detectBankMovementIntent } from '../../../shared/bankSpeech.js';
+import { draftInLedgerUnit } from '../../../shared/amountUnit.js';
 import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../../lib/liveSpeech.js';
-import { formatAmount } from '../../lib/format.js';
+import { formatAmount, unitLabel } from '../../lib/format.js';
 
 /**
  * گفتنِ کار بانکی، همان‌جا که تطبیق بانک انجام می‌شود.
@@ -28,7 +29,7 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
   const active = accounts.filter((account) => account.active !== false);
 
   const understand = (text) => {
-    const intent = detectBankMovementIntent(text, { accounts: active });
+    const intent = draftInLedgerUnit(detectBankMovementIntent(text, { accounts: active }));
     setHeard(text);
     if (!intent) {
       setDraft(null);
@@ -61,13 +62,13 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
         const account = await api.saveAccount({
           name: draft.bankName, kind: 'bank', bankId: draft.bankId, openingBalance: draft.openingBalance || 0,
         });
-        notify(`حساب «${account.name}» ساخته شد${draft.openingBalance ? ` با موجودی ${formatAmount(draft.openingBalance)} تومان` : ''}.`);
+        notify(`حساب «${account.name}» ساخته شد${draft.openingBalance ? ` با موجودی ${formatAmount(draft.openingBalance)} ${unitLabel()}` : ''}.`);
       } else {
         await api.transferBetweenAccounts({
           fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId,
           amount: draft.amount, note: draft.transcript,
         });
-        notify(`${formatAmount(draft.amount)} تومان منتقل شد؛ این جابه‌جایی نه درآمد است نه هزینه.`);
+        notify(`${formatAmount(draft.amount)} ${unitLabel()} منتقل شد؛ این جابه‌جایی نه درآمد است نه هزینه.`);
       }
       setDraft(null); setHeard(''); setTyped('');
       await refresh?.();
@@ -111,13 +112,13 @@ export default function BankVoicePanel({ accounts = [], notify, refresh }) {
       <p className="font-extrabold text-accent">ساخت حساب «{draft.bankName}»</p>
       <p className="mt-1 text-[12px] leading-6 text-muted">
         {draft.openingBalance
-          ? <>با موجودی اولیهٔ <b className="numbers text-ink">{formatAmount(draft.openingBalance)}</b> تومان؛ همان لحظه سند افتتاحیه می‌خورد.</>
+          ? <>با موجودی اولیهٔ <b className="numbers text-ink">{formatAmount(draft.openingBalance)}</b> {unitLabel()}؛ همان لحظه سند افتتاحیه می‌خورد.</>
           : 'بدون موجودی اولیه. هر وقت خواستی از تنظیمات واردش کن.'}
       </p>
     </div>}
 
     {draft?.intent === 'transfer' && <div className="mt-3 rounded-lg border border-accent/50 bg-warn-bg px-3 py-3">
-      <p className="text-[13px] font-extrabold text-accent">انتقال {formatAmount(draft.amount)} تومان</p>
+      <p className="text-[13px] font-extrabold text-accent">انتقال {formatAmount(draft.amount)} {unitLabel()}</p>
       {draft.partial && <p className="mt-1 text-[12px] leading-6 text-muted">
         فقط یک طرف را گفتی. طرف دیگر را خودت انتخاب کن — پول از حسابی که کسی نگفته نباید کم شود.
       </p>}

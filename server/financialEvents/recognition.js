@@ -10,6 +10,7 @@ import { periodForDate, postJournalEntry } from '../accounting.js';
 import { resolveEventAnalytic, resolveEventRole } from '../roleResolver.js';
 import { storeError, ensureFinancialEventSchema, writeAudit, ledgerBalance } from './base.js';
 import { lockedPeriodSet, blockedDetail, blockedRecognitionReason, decisionForEvent, ALLOCATION_PLANS, notBeforeDate } from './schedule.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 // ---------------------------------------------------------------------------
 // اجرای اقلام شناسایی در سررسید
@@ -54,7 +55,7 @@ function postRecognitionItem(database, item, { event, decision, occurredAt, acto
     const balance = ledgerBalance(database, lines[timingIndex].accountId);
     const available = prepaid ? balance : -balance;
     if (available < item.amount) {
-      throw Object.assign(storeError(`ماندهٔ ${prepaid ? 'پیش‌پرداخت' : 'درآمد انتقالی'} (${available.toLocaleString('fa-IR')} تومان) از قلم ${item.periodKey} (${item.amount.toLocaleString('fa-IR')} تومان) کمتر است؛ احتمالاً استرداد یا اصلاحی بیرون از برنامه ثبت شده. حسابدار برنامهٔ قرارداد را بررسی کند.`, 'RECOGNITION_BALANCE_SHORT', 409), { available, accountId: lines[timingIndex].accountId });
+      throw Object.assign(storeError(`ماندهٔ ${prepaid ? 'پیش‌پرداخت' : 'درآمد انتقالی'} (${available.toLocaleString('fa-IR')} ${unitLabel()}) از قلم ${item.periodKey} (${item.amount.toLocaleString('fa-IR')} ${unitLabel()}) کمتر است؛ احتمالاً استرداد یا اصلاحی بیرون از برنامه ثبت شده. حسابدار برنامهٔ قرارداد را بررسی کند.`, 'RECOGNITION_BALANCE_SHORT', 409), { available, accountId: lines[timingIndex].accountId });
     }
   }
   const posted = postJournalEntry(database, {

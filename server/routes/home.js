@@ -4,11 +4,12 @@
 // احراز هویت، CSRF و مرز نقش و تجربه پیش از این‌ها در index.js اعمال می‌شود.
 
 import {
-  allWorkspaces, answerFinancialQuestion, commercialStatus, financialDnaOverview, financialOverview, getCategories, getLearnings, getSettings, getToday, listAccounts, listContacts, listDailyClosings, listObligations, previewDayClosing, listRecurringRules, materializeRecurringRules, pilotPortfolio, pilotWorkspaceDashboard, dnaProfiles, automationPolicy, firmPortfolio, report, savePilotCheckin, saveSettings, snoozeFinancialAlert, typicalAmounts, updateWorkspaceCommercialPlan, workspaceOperationalSignals,
+  amountRecordsInLedger, ledgerAmountUnit, setLedgerAmountUnit, allWorkspaces, answerFinancialQuestion, commercialStatus, financialDnaOverview, financialOverview, getCategories, getLearnings, getSettings, getToday, listAccounts, listContacts, listDailyClosings, listObligations, previewDayClosing, listRecurringRules, materializeRecurringRules, pilotPortfolio, pilotWorkspaceDashboard, dnaProfiles, automationPolicy, firmPortfolio, report, savePilotCheckin, saveSettings, snoozeFinancialAlert, typicalAmounts, updateWorkspaceCommercialPlan, workspaceOperationalSignals,
 } from '../db.js';
 import { understandingProvider } from '../eventUnderstandingAi.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 import { automaticBackupStatus } from '../backup.js';
-import { accessPayload, requireSystemAdmin } from './http.js';
+import { accessPayload, requireRank, requireSystemAdmin } from './http.js';
 
 export function registerHomeRoutes(app) {
   // DNA مالی پرونده: اثر انگشت رفتاری و پروفایل یک‌نگاهی برای دفتر.
@@ -89,4 +90,16 @@ export function registerHomeRoutes(app) {
     } catch (error) { return next(error); }
   });
   app.patch('/api/settings', (request, response) => response.json({ settings: saveSettings(request.body || {}) }));
+  // واحد مبلغ دفتر؛ فقط در دفتر بی‌مبلغ و فقط با نقش مدیر یا مالک عوض می‌شود.
+  app.get('/api/settings/amount-unit', (_request, response, next) => {
+    try {
+      const records = amountRecordsInLedger();
+      const amountUnit = ledgerAmountUnit();
+      return response.json({ amountUnit, label: unitLabel(amountUnit), locked: Object.keys(records).length > 0, records });
+    } catch (error) { return next(error); }
+  });
+  app.put('/api/settings/amount-unit', (request, response, next) => {
+    if (!requireRank(request, response, 'manager')) return undefined;
+    try { return response.json(setLedgerAmountUnit(request.body?.amountUnit)); } catch (error) { return next(error); }
+  });
 }

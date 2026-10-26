@@ -1,12 +1,15 @@
+import { tomanToLedger } from '../shared/amountUnit.js';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const FINANCIAL_UNIT = 'تومان';
 export const FINANCIAL_DISCLAIMER = 'محاسبه فقط بر پایهٔ دریافت‌ها و پرداخت‌های ثبت‌شده است؛ سود حسابداری، مالیات و تعهدات ثبت‌نشده را شامل نمی‌شود.';
 
+// کمترین تغییرِ معنادار به تومان تعریف شده و در واحد دفتر سنجیده می‌شود.
 export function sensitivityProfile(value = 'balanced') {
-  if (value === 'high') return { id: 'high', growthRatio: 1.2, anomalyRatio: 2, minimumDelta: 300_000 };
-  if (value === 'low') return { id: 'low', growthRatio: 1.5, anomalyRatio: 3, minimumDelta: 1_000_000 };
-  return { id: 'balanced', growthRatio: 1.35, anomalyRatio: 2.5, minimumDelta: 500_000 };
+  if (value === 'high') return { id: 'high', growthRatio: 1.2, anomalyRatio: 2, minimumDelta: tomanToLedger(300_000) };
+  if (value === 'low') return { id: 'low', growthRatio: 1.5, anomalyRatio: 3, minimumDelta: tomanToLedger(1_000_000) };
+  return { id: 'balanced', growthRatio: 1.35, anomalyRatio: 2.5, minimumDelta: tomanToLedger(500_000) };
 }
 
 export function exactWindow(now = new Date(), days = 30, offsetDays = 0) {

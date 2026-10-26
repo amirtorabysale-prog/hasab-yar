@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { unitLabel } from '../shared/amountUnit.js';
 
 function reconciliationError(message, code = 'RECONCILIATION_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -250,7 +251,7 @@ function importSummary(database, row) {
   const summary = { ...row, ...Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value || 0)])), statementBalance: lastBalance, bookBalance: Number(book), difference: lastBalance == null ? null : Number(lastBalance) - Number(book) };
   summary.blockingReasons = [
     ...(summary.unmatchedCount ? [`${summary.unmatchedCount} ردیف هنوز تعیین‌تکلیف نشده است.`] : []),
-    ...(summary.difference != null && summary.difference !== 0 ? [`ماندهٔ بانک و دفتر ${Math.abs(summary.difference).toLocaleString('fa-IR')} تومان اختلاف دارد.`] : []),
+    ...(summary.difference != null && summary.difference !== 0 ? [`ماندهٔ بانک و دفتر ${Math.abs(summary.difference).toLocaleString('fa-IR')} ${unitLabel()} اختلاف دارد.`] : []),
   ];
   summary.canClose = summary.status === 'open' && summary.blockingReasons.length === 0;
   return summary;

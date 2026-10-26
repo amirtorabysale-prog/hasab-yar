@@ -7,6 +7,7 @@ import {
   adjustStock, beginProviderUsage, createInvoice, deleteContact, deleteInvoice, deleteObligation, deleteReceipt, deleteRecurringRule, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, inventoryOverview, counterpartyCard, issueInvoice, listContacts, listInvoices, listObligations, listProducts, listReceipts, listRecurringRules, markInvoicePaid, receiptCandidates, receiptImage, recordInvoicePayment, saveContact, saveObligation, saveRecurringRule, settleObligation, settlePayableBalanceByPartner, settleLedgerBalance, confirmReceipt, saveProduct, saveReceipt, typicalAmounts, updateReceipt,
 } from '../db.js';
 import { parseFinancialText } from '../parser.js';
+import { averagesInToman, parseResultInLedgerUnit } from '../../shared/amountUnit.js';
 import { extractReceiptData, receiptOcrConfigured } from '../receiptOcr.js';
 import { SUPPORTED_RECEIPT_TYPES, acceptReceiptImage } from '../imageIntake.js';
 import { upload } from './http.js';
@@ -66,7 +67,7 @@ export function registerLedgerRoutes(app) {
       // برچسب کلاینت و مختصات GPS عکس موبایل هیچ‌کدام وارد پایگاه‌دادهٔ مالی نمی‌شوند.
       const image = acceptReceiptImage(request.file.buffer, request.file.mimetype);
       const note = String(request.body.note || '');
-      const parsed = parseFinancialText(note, { learnings: getLearnings(), averages: typicalAmounts(), source: 'text' });
+      const parsed = parseResultInLedgerUnit(parseFinancialText(note, { learnings: getLearnings(), averages: averagesInToman(typicalAmounts()), source: 'text' }));
       const noteSuggestion = parsed.transactions[0] || null;
       let extraction = null;
       let warning = null;

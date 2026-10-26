@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { useSheetA11y } from '../../components/sheetA11y.js';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 function ReviewHistory({entryId}) {
   const [history,setHistory]=useState(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
@@ -100,7 +100,7 @@ export default function JournalExplorer({ revision, workspaceId }) {
   }, [page, search, state, revision, workspaceId, retry]);
   return <section className="mt-5 space-y-4" aria-label="اسناد حسابداری" dir="rtl">
     <div className="rounded-xl border border-line bg-surface p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold">اسناد حسابداری</h2><p className="mt-1 text-xs leading-6 text-muted">روی هر سند کلیک کنید تا با همهٔ جزئیات — سطرها، زمان ثبت و سابقهٔ تأیید — باز شود. مبالغ به تومان است.</p></div><span className="rounded-lg bg-paper px-3 py-2 text-sm">{toPersianDigits(data.total)} سند</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-extrabold">اسناد حسابداری</h2><p className="mt-1 text-xs leading-6 text-muted">روی هر سند کلیک کنید تا با همهٔ جزئیات — سطرها، زمان ثبت و سابقهٔ تأیید — باز شود. مبالغ به {unitLabel()} است.</p></div><span className="rounded-lg bg-paper px-3 py-2 text-sm">{toPersianDigits(data.total)} سند</span></div>
       <form className="mt-4 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); setPage(1); setSearch(query); }}>
         <input aria-label="جست‌وجوی سند" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="شماره سند، شرح یا شناسه منبع…" className="tap min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 text-sm" />
         <button className="tap rounded-lg bg-accent px-4 text-sm font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">جست‌وجو</button>

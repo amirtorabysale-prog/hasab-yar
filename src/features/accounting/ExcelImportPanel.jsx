@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { api } from '../../lib/api.js';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 const IMPORT_KINDS = [
   { id: 'chart', label: 'کدینگ حساب‌ها', hint: 'ستون‌ها: کد، نام، سطح، کد والد، نوع' },
@@ -74,7 +74,7 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
     </form>
     {issues.length > 0 && <div className="mt-3 rounded-lg border border-expense/40 bg-expense/5 p-3"><p className="text-[13px] font-bold text-expense">{toPersianDigits(issues.length)} ایراد در فایل — هیچ ردیفی وارد نشد</p><ul className="mt-2 space-y-1 text-[12px] leading-6">{issues.slice(0, 12).map((item, index) => <li key={`${item.rowNumber}-${index}`}>ردیف <b className="numbers">{toPersianDigits(item.rowNumber ?? item.position ?? '—')}</b>: {item.message}</li>)}{issues.length > 12 && <li className="text-muted">و {toPersianDigits(issues.length - 12)} مورد دیگر…</li>}</ul></div>}
     {result && <div className="mt-3 rounded-lg border border-income/40 bg-income/5 p-3 text-[13px] leading-6">{result.entryId
-      ? <>سند افتتاحیه با <b className="numbers">{toPersianDigits(result.lineCount)}</b> ردیف ثبت شد؛ جمع هر طرف <b className="numbers">{formatAmount(result.debitTotal)}</b> تومان.{result.replacedEntryId && ' سند قبلی معکوس شد.'}</>
+      ? <>سند افتتاحیه با <b className="numbers">{toPersianDigits(result.lineCount)}</b> ردیف ثبت شد؛ جمع هر طرف <b className="numbers">{formatAmount(result.debitTotal)}</b> {unitLabel()}.{result.replacedEntryId && ' سند قبلی معکوس شد.'}</>
       : <><b className="numbers">{toPersianDigits(result.created)}</b> ردیف تازه و <b className="numbers">{toPersianDigits(result.updated)}</b> ردیف به‌روزشده.
         {typeof result.linked === 'number' && <> از این‌ها <b className="numbers">{toPersianDigits(result.linked)}</b> طرف حساب کد تفصیلی مقصد دارند.</>}
         {result.kept > 0 && <span className="text-muted"> کد مقصدِ <b className="numbers">{toPersianDigits(result.kept)}</b> طرف حساب دست‌نخورده ماند؛ از قبل ثبت شده بود و فایل کد مقصد صریح نداشت.</span>}</>}</div>}

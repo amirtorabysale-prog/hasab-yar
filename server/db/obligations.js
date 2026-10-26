@@ -9,6 +9,7 @@ import { insertTransactionRows, transactionRow } from './transactions.js';
 import { resolveAccountId } from './accounts.js';
 import { routeEvent } from '../../shared/confidenceEngine.js';
 import { ledgerSideBalances } from './counterpartyCard.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 /**
  * سندِ ایجادِ زندهٔ یک تعهد.
@@ -178,7 +179,7 @@ export function settleObligation(id, { occurredAt, account = 'cash', accountId, 
   const amount = requested == null || requested === '' ? remaining : cleanAmount(requested);
   if (amount <= 0) throw invalidInput('مبلغ تسویه باید بیشتر از صفر باشد.');
   if (amount > remaining) {
-    throw invalidInput(`مبلغ تسویه از ماندهٔ این تعهد بیشتر است؛ مانده ${remaining.toLocaleString('en-US')} تومان است.`);
+    throw invalidInput(`مبلغ تسویه از ماندهٔ این تعهد بیشتر است؛ مانده ${remaining.toLocaleString('en-US')} ${unitLabel()} است.`);
   }
   const payerName = String(paidBy?.name || '').trim().slice(0, 120);
   if (paidBy && !payerName) throw invalidInput('نام شریکی که از پول شخصی پرداخت کرده لازم است.');
@@ -428,7 +429,7 @@ export function settleLedgerBalance(contactId, { direction = 'payable', amount: 
   if (available <= 0) throw invalidInput(`در دفتر کل ماندهٔ ${what} بیرون از سندهای باز نیست.`);
   const amount = requested == null || requested === '' ? available : cleanAmount(requested);
   if (amount <= 0) throw invalidInput('مبلغ تسویه باید بیشتر از صفر باشد.');
-  if (amount > available) throw invalidInput(`مبلغ از ماندهٔ ${what} در دفتر کل بیشتر است؛ مانده ${available.toLocaleString('en-US')} تومان است.`);
+  if (amount > available) throw invalidInput(`مبلغ از ماندهٔ ${what} در دفتر کل بیشتر است؛ مانده ${available.toLocaleString('en-US')} ${unitLabel()} است.`);
   const at = occurredAt || new Date().toISOString();
   const reference = direction === 'payable' ? 'ماندهٔ حساب پرداختنی' : 'ماندهٔ حساب دریافتنی';
   const decisionFor = (event) => routeEvent(event, {

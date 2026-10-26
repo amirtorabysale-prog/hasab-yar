@@ -1,4 +1,4 @@
-import { formatAmount, toPersianDigits } from '../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../lib/format.js';
 
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
 const dayFormat = new Intl.DateTimeFormat('fa-IR-u-ca-persian', { timeZone: 'Asia/Tehran', year: 'numeric', month: 'long', day: 'numeric' });
@@ -33,7 +33,7 @@ export function RecognitionNote({ recognition, servicePeriod, decided = false })
     const first = schedule[0];
     const last = schedule[schedule.length - 1];
     return <p aria-label="دورهٔ پوشش و برنامهٔ شناسایی" className="mt-1 block rounded-md bg-accent/5 px-2 py-1 text-xs leading-5 text-ink">
-      پوشش <b>{coverageDate(recognition.periodStart)}</b> تا <b>{coverageDate(recognition.periodEnd)}</b> — <span className="numbers">{toPersianDigits(recognition.count || schedule.length)}</span> قسط ماهانهٔ <span className="numbers">{formatAmount(first.amount)}</span> تومان،
+      پوشش <b>{coverageDate(recognition.periodStart)}</b> تا <b>{coverageDate(recognition.periodEnd)}</b> — <span className="numbers">{toPersianDigits(recognition.count || schedule.length)}</span> قسط ماهانهٔ <span className="numbers">{formatAmount(first.amount)}</span> {unitLabel()}،
       از {periodKeyLabel(first.periodKey)} تا {periodKeyLabel(last.periodKey)}
     </p>;
   }

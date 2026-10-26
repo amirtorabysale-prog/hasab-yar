@@ -1,6 +1,7 @@
 import { reviewNature } from '../shared/reviewNature.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { vatRefundClaimable } from './accounting.js';
+import { unitLabel } from '../shared/amountUnit.js';
 
 export function ensureTaxRefundSchema(database) {
   database.exec(`CREATE TABLE IF NOT EXISTS accounting_review_tax_refunds (
@@ -56,7 +57,7 @@ export function taxRefundContext(database,text,amount,event={}) {
     // دارد: راهش ثبت «طلب استرداد» در صفحهٔ مالیات است، نه درآمد تازه.
     const claimable=candidates.length ? 0 : vatRefundClaimable(database).total;
     return {claim:null,candidates,question:question(candidates.length ? 'استرداد مربوط به کدام سند طلب مالیاتی است؟ شماره سال/سند را از پیشنهادهای زیر انتخاب یا وارد کن.'
-      : claimable>0 ? `سند طلب استرداد ثبت نشده، ولی دفتر ${claimable.toLocaleString('fa-IR')} تومان اعتبار یا اضافه‌پرداخت ارزش افزوده دارد. در صفحهٔ «مالیات» دکمهٔ «ثبت طلب استرداد» را با شمارهٔ اظهارنامه بزن، سپس شمارهٔ سال/سند همان طلب را اینجا وارد کن.`
+      : claimable>0 ? `سند طلب استرداد ثبت نشده، ولی دفتر ${claimable.toLocaleString('fa-IR')} ${unitLabel()} اعتبار یا اضافه‌پرداخت ارزش افزوده دارد. در صفحهٔ «مالیات» دکمهٔ «ثبت طلب استرداد» را با شمارهٔ اظهارنامه بزن، سپس شمارهٔ سال/سند همان طلب را اینجا وارد کن.`
         : 'سند طلب مالیاتی مرتبط پیدا نشد؛ سند واقعی طلب را ثبت یا نگاشت کن و شماره سال/سند آن را وارد کن.')};
   }
   const claim=matched[0];
@@ -73,7 +74,7 @@ export function taxRefundProposal(database,text,amount,event) {
   if(!context) return null;
   if(!context.claim) return {summary:'تطبیق استرداد با طلب مالیاتی',explanation:'استرداد مالیات درآمد تازه نیست و بدون سند طلب واقعی ثبت نمی‌شود.',missingFacts:[],questions:[context.question],taxRefundCandidates:context.candidates || [],lines:[]};
   const c=context.claim;
-  return {summary:'وصول طلب مالیاتی',explanation:`وصول ${amount} تومان بابت سند ${c.reference} — ${c.memo}؛ مانده پیش از وصول ${c.available} تومان. درآمد تازه شناسایی نمی‌شود.`,missingFacts:[],questions:[],lines:[{role:'cash',debit:amount,credit:0},{role:'tax-receivable',accountId:c.accountId,key:c.accountName,debit:0,credit:amount}]};
+  return {summary:'وصول طلب مالیاتی',explanation:`وصول ${amount} ${unitLabel()} بابت سند ${c.reference} — ${c.memo}؛ مانده پیش از وصول ${c.available} ${unitLabel()}. درآمد تازه شناسایی نمی‌شود.`,missingFacts:[],questions:[],lines:[{role:'cash',debit:amount,credit:0},{role:'tax-receivable',accountId:c.accountId,key:c.accountName,debit:0,credit:amount}]};
 }
 export function taxRefundValidation(database,text,amount,event,lines) {
   const context=taxRefundContext(database,text,amount,event);

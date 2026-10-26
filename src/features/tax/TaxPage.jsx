@@ -1,7 +1,7 @@
 import { ReceiptText, Sparkles } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 export function TaxPage({ access, notify }) {
   const [days, setDays] = useState(90);
@@ -40,16 +40,16 @@ export function TaxPage({ access, notify }) {
   const settleVat = async () => {
     const payable = Math.max(0, (ledger.outputTax || 0) - (ledger.inputTax || 0));
     const message = payable > 0
-      ? `مالیات فروشِ تسویه‌نشده ${formatAmount(ledger.outputTax || 0)} تومان است و اعتبار خرید ${formatAmount(ledger.inputTax || 0)} تومان. سند تسویه ثبت شود و ${formatAmount(payable)} تومان پرداخت شود؟`
-      : `مالیات فروشِ تسویه‌نشده ${formatAmount(ledger.outputTax || 0)} تومان با اعتبار خرید خنثی می‌شود و پرداختی ندارد. سند تسویه ثبت شود؟`;
+      ? `مالیات فروشِ تسویه‌نشده ${formatAmount(ledger.outputTax || 0)} ${unitLabel()} است و اعتبار خرید ${formatAmount(ledger.inputTax || 0)} ${unitLabel()}. سند تسویه ثبت شود و ${formatAmount(payable)} ${unitLabel()} پرداخت شود؟`
+      : `مالیات فروشِ تسویه‌نشده ${formatAmount(ledger.outputTax || 0)} ${unitLabel()} با اعتبار خرید خنثی می‌شود و پرداختی ندارد. سند تسویه ثبت شود؟`;
     if (!window.confirm(message)) return;
     setBusy(true);
     try {
       const result = await api.settleVatPeriod({});
       await load();
       notify(result.paid > 0
-        ? `تسویه ثبت شد؛ ${formatAmount(result.paid)} تومان پرداخت شد.`
-        : `تسویه ثبت شد؛ ${formatAmount(result.carriedForward)} تومان اعتبار به دورهٔ بعد منتقل شد.`);
+        ? `تسویه ثبت شد؛ ${formatAmount(result.paid)} ${unitLabel()} پرداخت شد.`
+        : `تسویه ثبت شد؛ ${formatAmount(result.carriedForward)} ${unitLabel()} اعتبار به دورهٔ بعد منتقل شد.`);
     } catch (error) { notify(error.message); }
     finally { setBusy(false); }
   };
@@ -61,7 +61,7 @@ export function TaxPage({ access, notify }) {
    */
   const claimRefund = async () => {
     const claimable = ledger.refundClaimable || 0;
-    const amountText = window.prompt(`مبلغ درخواست استرداد (حداکثر ${formatAmount(claimable)} تومان):`, String(claimable));
+    const amountText = window.prompt(`مبلغ درخواست استرداد (حداکثر ${formatAmount(claimable)} ${unitLabel()}):`, String(claimable));
     if (!amountText) return;
     const amount = Number(String(amountText).replace(/[۰-۹]/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)).replace(/[^\d]/g, ''));
     const reference = window.prompt('شمارهٔ اظهارنامه یا درخواست استرداد (وصول بعدی با همین شماره به این طلب وصل می‌شود):');
@@ -70,7 +70,7 @@ export function TaxPage({ access, notify }) {
     try {
       const { item } = await api.claimVatRefund({ amount, reference: reference.trim() });
       await load();
-      notify(`طلب استرداد ${formatAmount(item.amount)} تومان با شمارهٔ ${item.reference} ثبت شد؛ سند ${toPersianDigits(item.documentNumber)}.`);
+      notify(`طلب استرداد ${formatAmount(item.amount)} ${unitLabel()} با شمارهٔ ${item.reference} ثبت شد؛ سند ${toPersianDigits(item.documentNumber)}.`);
     } catch (error) { notify(error.message); }
     finally { setBusy(false); }
   };
@@ -87,8 +87,8 @@ export function TaxPage({ access, notify }) {
         <div>
           <h2 className="font-extrabold text-accent">ماندهٔ تسویه‌نشدهٔ ارزش افزوده</h2>
           <p className="mt-1 text-[12px] leading-6 text-muted">
-            این عدد از دفتر می‌آید، نه از بازهٔ گزارش پایین: مالیات فروش <b className="numbers text-ink">{formatAmount(ledger.outputTax || 0)}</b> تومان
-            و اعتبار خرید <b className="numbers text-ink">{formatAmount(ledger.inputTax || 0)}</b> تومان.
+            این عدد از دفتر می‌آید، نه از بازهٔ گزارش پایین: مالیات فروش <b className="numbers text-ink">{formatAmount(ledger.outputTax || 0)}</b> {unitLabel()}
+            و اعتبار خرید <b className="numbers text-ink">{formatAmount(ledger.inputTax || 0)}</b> {unitLabel()}.
             تسویه اعتبار را خنثی می‌کند و فقط خالص را می‌پردازد؛ اعتبار اضافی به دورهٔ بعد منتقل می‌شود.
           </p>
         </div>
@@ -100,12 +100,12 @@ export function TaxPage({ access, notify }) {
         </div>
       </div>
       {(ledger.refundClaimable || 0) > 0 && <p className="mt-2 text-[12px] leading-6 text-muted">
-        <b className="numbers text-ink">{formatAmount(ledger.refundClaimable)}</b> تومان اعتبار یا اضافه‌پرداخت قابل استرداد است.
+        <b className="numbers text-ink">{formatAmount(ledger.refundClaimable)}</b> {unitLabel()} اعتبار یا اضافه‌پرداخت قابل استرداد است.
         اگر استرداد درخواست شده، اینجا ثبتش کن تا وصولش در صف حسابدار به همین طلب وصل شود و درآمد تازه ساخته نشود.
       </p>}
     </section>
     <div className="mt-4 grid grid-cols-3 rounded-lg border border-line bg-surface p-1">{[[30, '۳۰ روز'], [90, '۹۰ روز'], [365, 'یک سال']].map(([value, label]) => <button key={value} onClick={() => setDays(value)} className={`tap rounded-md text-sm font-bold ${days === value ? 'bg-accent/10 text-accent' : 'text-muted hover:bg-paper hover:text-ink'}`}>{label}</button>)}</div>
-    <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات فروش</p><b className="numbers mt-2 block text-lg text-expense">{formatAmount(summary.outputTax || 0)}</b><span className="text-xs text-muted">تومان</span></div><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">اعتبار خرید</p><b className="numbers mt-2 block text-lg text-income">{formatAmount(summary.inputTax || 0)}</b><span className="text-xs text-muted">تومان</span></div><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">خالص برآوردی</p><b className={`numbers mt-2 block text-lg ${(summary.netTax || 0) > 0 ? 'text-expense' : 'text-income'}`}>{formatAmount(summary.netTax || 0)}</b><span className="text-xs text-muted">تومان</span></div><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات دستی قدیمی</p><b className="numbers mt-2 block text-lg">{formatAmount(summary.manualTax || 0)}</b><span className="text-xs text-muted">نیازمند بازبینی</span></div></div>
+    <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات فروش</p><b className="numbers mt-2 block text-lg text-expense">{formatAmount(summary.outputTax || 0)}</b><span className="text-xs text-muted">{unitLabel()}</span></div><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">اعتبار خرید</p><b className="numbers mt-2 block text-lg text-income">{formatAmount(summary.inputTax || 0)}</b><span className="text-xs text-muted">{unitLabel()}</span></div><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">خالص برآوردی</p><b className={`numbers mt-2 block text-lg ${(summary.netTax || 0) > 0 ? 'text-expense' : 'text-income'}`}>{formatAmount(summary.netTax || 0)}</b><span className="text-xs text-muted">{unitLabel()}</span></div><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs text-muted">مالیات دستی قدیمی</p><b className="numbers mt-2 block text-lg">{formatAmount(summary.manualTax || 0)}</b><span className="text-xs text-muted">نیازمند بازبینی</span></div></div>
     <section className="mt-5 rounded-xl border border-line bg-surface p-4"><h2 className="font-extrabold">تفکیک فروش</h2><div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">مشمول</span><b className="numbers mt-2 block text-sm">{formatAmount(summary.taxableSales || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">نرخ صفر</span><b className="numbers mt-2 block text-sm">{formatAmount(summary.zeroSales || 0)}</b></div><div className="rounded-lg bg-paper p-3"><span className="text-xs text-muted">معاف</span><b className="numbers mt-2 block text-sm">{formatAmount(summary.exemptSales || 0)}</b></div></div><p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs leading-6 text-muted">«نرخ صفر» و «معاف» از نظر گزارش یکسان نیستند؛ انتخاب نوع صحیح بر عهده کسب‌وکار و حسابدار است.</p></section>
     {canManage && <form onSubmit={save} className="mt-5 rounded-xl border border-line bg-surface p-4"><h2 className="font-extrabold">تعریف نرخ</h2><p className="mt-1 text-xs leading-6 text-muted">هیچ نرخ قانونی پیش‌فرضی داخل برنامه قرار نگرفته؛ نرخ معتبر خودت را وارد کن.</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="مثلاً نرخ عمومی" className="tap rounded-lg border border-line px-3" /><select value={draft.treatment} onChange={(event) => setDraft({ ...draft, treatment: event.target.value, rate: event.target.value === 'taxable' ? draft.rate : '0' })} className="tap rounded-lg border border-line bg-surface px-3"><option value="taxable">مشمول</option><option value="zero">نرخ صفر</option><option value="exempt">معاف</option></select><label className="flex items-center rounded-lg border border-line px-3 text-xs text-muted hover:bg-paper hover:text-ink">درصد<input required={draft.treatment === 'taxable'} disabled={draft.treatment !== 'taxable'} inputMode="decimal" value={draft.rate} onChange={(event) => setDraft({ ...draft, rate: event.target.value.replace(/[^0-9.]/g, '') })} className="tap numbers min-w-0 flex-1 bg-transparent text-left text-ink outline-none disabled:opacity-40" /></label></div><label className="mt-3 flex min-h-12 items-center gap-2 text-xs font-bold"><input type="checkbox" checked={draft.isDefault} onChange={(event) => setDraft({ ...draft, isDefault: event.target.checked })} />پیش‌فرض فاکتورهای تازه</label><button disabled={busy} className="tap mt-2 w-full rounded-lg bg-accent font-bold text-on-fill disabled:opacity-40 hover:bg-accent/90 active:bg-accent/80">ذخیره نرخ</button></form>}
     <section className="mt-6"><div className="flex items-center justify-between"><h2 className="font-extrabold">نرخ‌های تعریف‌شده</h2><span className="text-xs text-muted">{toPersianDigits(report.rates?.length || 0)} نرخ</span></div><div className="mt-2 divide-y divide-line border-y border-line">{report.rates?.map((rate) => <article key={rate.id} className="flex min-h-[68px] items-center gap-3 py-3"><div className={`h-2.5 w-2.5 rounded-full ${rate.active ? 'bg-income' : 'bg-muted'}`} /><div className="min-w-0 flex-1"><p className="font-bold">{rate.name}{rate.isDefault ? <span className="mr-2 rounded border border-accent px-1.5 py-0.5 text-xs text-accent">پیش‌فرض</span> : null}</p><p className="mt-1 text-xs text-muted">{treatmentLabels[rate.treatment]} · {toPersianDigits(rate.rate)}٪ · {rate.active ? 'فعال' : 'غیرفعال'}</p></div>{canManage && rate.id !== 'tax-none' && <button disabled={busy} onClick={() => toggle(rate)} className="tap rounded-lg border border-line px-3 text-xs font-bold text-muted hover:bg-paper hover:text-ink">{rate.active ? 'غیرفعال' : 'فعال'}</button>}</article>)}</div></section>

@@ -5,6 +5,7 @@
 
 import { SCHEDULE_ITEM_STATUS, coverageMonths, readCoverageLength } from '../../shared/recognitionSchedule.js';
 import { extractAmounts } from '../../shared/parser.js';
+import { tomanToLedger, unitLabel } from '../../shared/amountUnit.js';
 import { normalizePersian } from '../../shared/normalize.js';
 import { persianToISO, readJalaliExpression, readTypedDate, todayPersian } from '../../shared/persianDate.js';
 import { periodForDate, reverseJournalEntry } from '../accounting.js';
@@ -213,7 +214,8 @@ function pickContract(candidates, references) {
     if (numbers.length) signals.push(candidates.filter((item) => item.documentNumber != null && numbers.includes(Number(item.documentNumber))));
     const named = readJalaliExpression(normalized);
     if (named) signals.push(candidates.filter((item) => contractOnDate(item, named)));
-    const amounts = extractAmounts(normalized).spans.map((span) => span.amount).filter((value) => value >= 1000);
+    // مبلغ گفته‌شده به تومان است و مبلغ قرارداد به واحد دفتر.
+    const amounts = extractAmounts(normalized).spans.map((span) => span.amount).filter((value) => value >= 1000).map((value) => tomanToLedger(value));
     if (amounts.length) signals.push(candidates.filter((item) => amounts.includes(Number(item.amount))));
     const length = readCoverageLength(normalized);
     if (length) signals.push(candidates.filter((item) => coverageMonths(item.servicePeriodStart, item.servicePeriodEnd) === length.months));
@@ -272,7 +274,7 @@ export function reviewedContractReductions(database, eventId, event, lines, { co
     if (!candidates.length) {
       const available = reduction.kind === 'prepaid' ? ledgerBalance(database, reduction.accountId) : -ledgerBalance(database, reduction.accountId);
       if (available < reduction.amount) {
-        throw storeError(`ماندهٔ ${label} این حساب (${available.toLocaleString('fa-IR')} تومان) برای این استرداد کافی نیست و قرارداد زنده‌ای هم رویش نیست؛ سند مبنای قرارداد یا مانده را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+        throw storeError(`ماندهٔ ${label} این حساب (${available.toLocaleString('fa-IR')} ${unitLabel()}) برای این استرداد کافی نیست و قرارداد زنده‌ای هم رویش نیست؛ سند مبنای قرارداد یا مانده را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
       }
       continue;
     }
@@ -284,16 +286,16 @@ export function reviewedContractReductions(database, eventId, event, lines, { co
     }
     const amount = (value) => value.toLocaleString('fa-IR');
     if (said === false && reduction.amount > chosen.remaining) {
-      throw storeError(`استرداد (${amount(reduction.amount)} تومان) از بخش شناسایی‌نشدهٔ قرارداد (${amount(chosen.remaining)} تومان) بیشتر است؛ قراردادی که ادامه دارد بیش از این برنمی‌گرداند. مبلغ یا قرارداد را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+      throw storeError(`استرداد (${amount(reduction.amount)} ${unitLabel()}) از بخش شناسایی‌نشدهٔ قرارداد (${amount(chosen.remaining)} ${unitLabel()}) بیشتر است؛ قراردادی که ادامه دارد بیش از این برنمی‌گرداند. مبلغ یا قرارداد را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
     }
     const available = chosen.remaining + chosen.recognisedAfterEnd;
     if (reduction.amount > available) {
       // ماه‌هایی که پیش از روز استرداد شناسایی شده‌اند فقط وقتی برمی‌گردند که
       // قرارداد پیش از آن‌ها تمام شده باشد؛ آن تاریخ را حدس نمی‌زنیم.
       if (!statedEnd) {
-        throw contractQuestionError(`استرداد (${amount(reduction.amount)} تومان) از بخش شناسایی‌نشدهٔ قرارداد (${amount(chosen.remaining)} تومان) بیشتر است؛ اگر قرارداد پیش‌تر تمام شده و ماه‌های بعد از آن شناسایی شده‌اند، قرارداد از چه تاریخی تمام شد (فسخ یا تخلیه)؟`, 'contract.end-date', { candidates: [chosen] });
+        throw contractQuestionError(`استرداد (${amount(reduction.amount)} ${unitLabel()}) از بخش شناسایی‌نشدهٔ قرارداد (${amount(chosen.remaining)} ${unitLabel()}) بیشتر است؛ اگر قرارداد پیش‌تر تمام شده و ماه‌های بعد از آن شناسایی شده‌اند، قرارداد از چه تاریخی تمام شد (فسخ یا تخلیه)؟`, 'contract.end-date', { candidates: [chosen] });
       }
-      throw storeError(`استرداد (${amount(reduction.amount)} تومان) از بخش پوشش‌نیافتهٔ قرارداد از ${persianDay(statedEnd)} به بعد (${amount(available)} تومان) بیشتر است؛ مبلغ یا تاریخ پایان را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
+      throw storeError(`استرداد (${amount(reduction.amount)} ${unitLabel()}) از بخش پوشش‌نیافتهٔ قرارداد از ${persianDay(statedEnd)} به بعد (${amount(available)} ${unitLabel()}) بیشتر است؛ مبلغ یا تاریخ پایان را بررسی کن.`, 'REVIEW_DETAILS_REQUIRED', 409);
     }
     if (said === null && reduction.amount < chosen.remaining) {
       throw contractQuestionError('قرارداد با این استرداد تمام شد (فسخ، تخلیه) یا با مبلغ کمتر ادامه دارد؟', 'contract.ended', { candidates: [chosen] });

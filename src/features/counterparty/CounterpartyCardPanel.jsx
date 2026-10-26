@@ -2,7 +2,7 @@ import { ArrowRight, Search, TriangleAlert, Wallet } from 'lucide-react';
 import { JournalEntrySheet } from '../accounting/JournalEntrySheet.jsx';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { formatAmount, toPersianDigits } from '../../lib/format.js';
+import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 /**
  * تاریخ کوتاه، بدون نام روز هفته.
@@ -121,7 +121,7 @@ function UnexplainedNotice({ reconciliation }) {
       </p>
       <p className="mt-2 text-[13px] leading-7">
         {toPersianDigits(reconciliation.openCount)} سند باز به مبلغ{' '}
-        <b className={`numbers ${tone.className}`}>{formatAmount(gap)}</b> تومان {tone.label} برای این طرف حساب ثبت
+        <b className={`numbers ${tone.className}`}>{formatAmount(gap)}</b> {unitLabel()} {tone.label} برای این طرف حساب ثبت
         شده که در دفتر کل به حساب او نچسبیده، پس در گردش پایین دیده نمی‌شود.
       </p>
       <p className="mt-2 text-xs leading-6 text-muted">
@@ -218,7 +218,7 @@ function Card({ contact, onBack, notify }) {
           <p className="text-xs text-muted">مانده حساب</p>
           <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className={`numbers text-[28px] font-extrabold leading-none ${tone.className}`}>{formatAmount(Math.abs(card?.totals?.balance || 0))}</span>
-            <small className="text-[13px] text-muted">تومان</small>
+            <small className="text-[13px] text-muted">{unitLabel()}</small>
             <span className={`rounded-full border px-2 py-0.5 text-xs font-extrabold ${tone.className} ${card?.totals?.balance ? 'border-current' : 'border-line'}`}>{tone.label}</span>
           </p>
           <p className="mt-1 text-xs leading-6 text-muted">

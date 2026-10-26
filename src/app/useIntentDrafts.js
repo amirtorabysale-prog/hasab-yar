@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { capitalEntryPayload, invoiceDraftPayload } from '../../shared/voiceIntent.js';
-import { formatAmount } from '../lib/format.js';
+import { formatAmount, unitLabel } from '../lib/format.js';
 import { withCounterpartyConfirmation } from '../lib/counterpartyPrompt.js';
 
 export function useIntentDrafts({ load, notify }) {
@@ -65,7 +65,7 @@ export function useIntentDrafts({ load, notify }) {
         setIntentDraft(null);
         await load();
         notify(result.action === 'opened'
-          ? `تنخواهِ «${result.item.holderName}» با سقف ${formatAmount(result.item.ceiling)} تومان پرداخت شد؛ هزینه‌ای ثبت نشد.`
+          ? `تنخواهِ «${result.item.holderName}» با سقف ${formatAmount(result.item.ceiling)} ${unitLabel()} پرداخت شد؛ هزینه‌ای ثبت نشد.`
           : `تنخواهِ «${result.item.holderName}» شارژ شد؛ هزینه‌ای ثبت نشد.`);
         return;
       }

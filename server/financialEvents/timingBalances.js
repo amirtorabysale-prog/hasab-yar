@@ -12,6 +12,7 @@ import { DECISION_STATUS } from '../../shared/accountingDecision.js';
 import { storeError, ensureFinancialEventSchema, writeAudit, ledgerBalance } from './base.js';
 import { storeDecision, storeSchedule, scheduleForEvent } from './schedule.js';
 import { timingAccountKind } from './reviewTiming.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 // ---------------------------------------------------------------------------
 // ماندهٔ دفتر کلِ بی‌سند: پیش‌پرداخت یا درآمد انتقالی‌ای که برنامه ندارد
@@ -81,7 +82,7 @@ export function unscheduledTimingBalances(database, { accountId = null } = {}) {
       result.push({
         accountId: account.id, accountName: account.name, chartCode: account.chartCode || null, kind,
         balance: held, scheduled, residual, entries, category: null, wrongSign: true,
-        question: `ماندهٔ «${account.name}» ${(-held).toLocaleString('fa-IR')} تومان ${side} است؛ ${label} نباید ماندهٔ ${side} داشته باشد. استرداد، برگشت یا سند دستیِ بیرون از برنامه را بررسی و اصلاح کن.`,
+        question: `ماندهٔ «${account.name}» ${(-held).toLocaleString('fa-IR')} ${unitLabel()} ${side} است؛ ${label} نباید ماندهٔ ${side} داشته باشد. استرداد، برگشت یا سند دستیِ بیرون از برنامه را بررسی و اصلاح کن.`,
       });
       continue;
     }
@@ -111,8 +112,8 @@ export function unscheduledTimingBalances(database, { accountId = null } = {}) {
       accountId: account.id, accountName: account.name, chartCode: account.chartCode || null, kind,
       balance: held, scheduled, residual, entries, category: linkedCategory,
       question: kind === 'deferred'
-        ? `ماندهٔ ${residual.toLocaleString('fa-IR')} تومانی «${account.name}» برنامهٔ شناسایی ندارد؛ دورهٔ خدمتی که پولش پیشاپیش گرفته شد از کی تا کی است و درآمد کدام دسته است؟`
-        : `ماندهٔ ${residual.toLocaleString('fa-IR')} تومانی «${account.name}» برنامهٔ هزینه‌شدن ندارد؛ دورهٔ پوشش از کی تا کی است${linkedCategory ? '' : ' و هزینهٔ کدام دسته است'}؟ اگر پیش‌پرداخت خرید کالاست، آن را به حساب پیش‌پرداخت خرید تأمین‌کننده منتقل کن.`,
+        ? `ماندهٔ ${residual.toLocaleString('fa-IR')} ${unitLabel()}ی «${account.name}» برنامهٔ شناسایی ندارد؛ دورهٔ خدمتی که پولش پیشاپیش گرفته شد از کی تا کی است و درآمد کدام دسته است؟`
+        : `ماندهٔ ${residual.toLocaleString('fa-IR')} ${unitLabel()}ی «${account.name}» برنامهٔ هزینه‌شدن ندارد؛ دورهٔ پوشش از کی تا کی است${linkedCategory ? '' : ' و هزینهٔ کدام دسته است'}؟ اگر پیش‌پرداخت خرید کالاست، آن را به حساب پیش‌پرداخت خرید تأمین‌کننده منتقل کن.`,
     });
   }
   return result;
@@ -139,8 +140,8 @@ export function scheduleTimingBalance(database, accountId, {
     throw storeError(wrong ? wrong.question : 'این حساب ماندهٔ بی‌برنامه‌ای ندارد.', wrong ? 'TIMING_BALANCE_WRONG_SIGN' : 'TIMING_BALANCE_NOT_OPEN', 409);
   }
   const value = amount == null ? open.residual : Number(amount);
-  if (!Number.isSafeInteger(value) || value <= 0) throw storeError('مبلغ برنامه باید عدد صحیح مثبت به تومان باشد.', 'TIMING_BALANCE_INVALID', 400);
-  if (value > open.residual) throw storeError(`مبلغ برنامه از ماندهٔ بی‌برنامه (${open.residual.toLocaleString('fa-IR')} تومان) بیشتر است.`, 'TIMING_BALANCE_INVALID', 400);
+  if (!Number.isSafeInteger(value) || value <= 0) throw storeError(`مبلغ برنامه باید عدد صحیح مثبت به ${unitLabel()} باشد.`, 'TIMING_BALANCE_INVALID', 400);
+  if (value > open.residual) throw storeError(`مبلغ برنامه از ماندهٔ بی‌برنامه (${open.residual.toLocaleString('fa-IR')} ${unitLabel()}) بیشتر است.`, 'TIMING_BALANCE_INVALID', 400);
   const anchor = (entryId ? open.entries.find((entry) => entry.entryId === entryId) : open.entries.at(-1)) || null;
   if (entryId && !anchor) throw storeError('سند مبنای انتخاب‌شده این مانده را نساخته است.', 'TIMING_BALANCE_INVALID', 400);
   const occurredAt = anchor?.occurredAt || new Date().toISOString();

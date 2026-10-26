@@ -1,6 +1,18 @@
 import { createHash } from 'node:crypto';
 import { UNDERSTANDING_VERSION, understandingSchema, validateUnderstanding } from '../shared/eventUnderstanding.js';
 import { normalizePersian } from '../shared/normalize.js';
+import { currentAmountUnit, tomanToLedger } from '../shared/amountUnit.js';
+
+/**
+ * مدل و خواندن قطعیِ متن، مبلغ را به تومان می‌دهند (مردم «تومان» می‌گویند). دفتر ریالی
+ * همه را ده برابر می‌گیرد، همین‌جا و یک‌بار، تا نقشه و پیش‌نمایش با ماندهٔ دفتر
+ * در یک واحد مقایسه شوند. خروجی خام مدل که در کش می‌ماند دست نمی‌خورد.
+ */
+function understandingInLedgerUnit(result) {
+  if (!result?.ok || !result.understanding || currentAmountUnit() === 'toman') return result;
+  const amounts = (result.understanding.amounts || []).map((amount) => (Number.isSafeInteger(amount.value) ? { ...amount, value: tomanToLedger(amount.value) } : amount));
+  return { ...result, understanding: { ...result.understanding, amounts } };
+}
 
 /**
  * فراخوانی مدل برای «فهم رویداد» — فقط سمت سرور.
@@ -162,7 +174,7 @@ export async function understandText(database, { text, rereadAnswers = [], now =
   // بانک‌هایی که همین دفتر حسابشان را دارد: «به سامان واریز کردند» بانک است، نه شخص.
   let ledgerBanks = [];
   try { ledgerBanks = database.prepare("SELECT DISTINCT bank_id AS bankId FROM accounts WHERE kind='bank' AND active=1 AND bank_id IS NOT NULL").all().map((row) => row.bankId); } catch { /* دفتر بی‌حساب */ }
-  const validate = (output) => validateUnderstanding(output, { text, now, timeZone, ledgerBanks });
+  const validate = (output) => understandingInLedgerUnit(validateUnderstanding(output, { text, now, timeZone, ledgerBanks }));
   if (cached) {
     const result = validate(JSON.parse(cached.output));
     if (result.ok) return { ...result, raw: JSON.parse(cached.output), model: cached.model, cacheKey, cacheHit: true, usage: { inputTokens: 0, outputTokens: 0 }, latencyMs: 0 };

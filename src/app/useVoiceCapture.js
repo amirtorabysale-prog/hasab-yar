@@ -16,6 +16,7 @@ import { parseFinancialText, parseRecognitionCandidates } from '../../shared/par
 import { isCorrectionCommand } from '../../shared/correction.js';
 import { realtimeWorthTrying } from '../lib/voiceStatus.js';
 import { selectVoiceSnapshot } from '../lib/voiceArbitration.js';
+import { averagesInToman, parseResultInLedgerUnit } from '../../shared/amountUnit.js';
 
 export function useVoiceCapture({ data, online, notify, refreshVoiceSystemStatus, voiceSystemStatusRef, openCorrection, routeIntent, setFailure, setParseResult, setPendingAudioCount, activeOfflineScope }) {
   const [recordState, setRecordState] = useState('idle');
@@ -138,7 +139,7 @@ export function useVoiceCapture({ data, online, notify, refreshVoiceSystemStatus
     if (fastFinalizeDoneRef.current || !pendingAudioBlobRef.current) return false;
     const snapshot = speechSnapshotRef.current;
     const candidates = snapshot.candidates?.length ? snapshot.candidates : [{ transcript: snapshot.transcript, confidence: 0 }];
-    const result = parseRecognitionCandidates(candidates, { learnings: data.learnings, averages: data.averages });
+    const result = parseRecognitionCandidates(candidates, { learnings: data.learnings, averages: averagesInToman(data.averages) });
     const transcriptIsFinal = Boolean(snapshot.finalTranscript || snapshot.ended);
     const decision = decideVoiceRoute(result, { online, transcriptFinal: transcriptIsFinal });
     const canUseLocalReview = decision.route === 'local-review' && (transcriptIsFinal || deadlineReached);
@@ -146,8 +147,9 @@ export function useVoiceCapture({ data, online, notify, refreshVoiceSystemStatus
       fastFinalizeDoneRef.current = true;
       pendingAudioBlobRef.current = null;
       window.clearTimeout(finalizeTimerRef.current);
+      // کیفیت گفته روی خروجی خودِ پارسر (به تومان) سنجیده شد؛ آنچه نمایش و ثبت می‌شود به واحد دفتر است.
       const reviewedResult = {
-        ...result,
+        ...parseResultInLedgerUnit(result),
         engine: snapshot.source === 'openai-realtime' ? 'openai-realtime+deterministic-parser' : result.engine,
         qualityScore: decision.score,
         reviewReasons: decision.reasons,
@@ -197,7 +199,7 @@ export function useVoiceCapture({ data, online, notify, refreshVoiceSystemStatus
       firstTranscriptMsRef.current = Date.now() - startedAtRef.current;
     }
     setLiveTranscript(snapshot.transcript);
-    setLivePreview(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: data.averages, source: 'voice' }).transactions);
+    setLivePreview(parseResultInLedgerUnit(parseFinancialText(snapshot.transcript, { learnings: data.learnings, averages: averagesInToman(data.averages), source: 'voice' })).transactions);
     tryFinishFastResult(false);
   };
 

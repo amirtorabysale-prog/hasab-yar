@@ -5,6 +5,7 @@
 
 import { accountingError, ensureAccountingSchema, linkedLedgerAccount, operationalLedgerAccount, outputTaxLedgerAccount, inputTaxLedgerAccount, periodForDate } from './ledgerAccounts.js';
 import { insertJournal, assertAccountingPeriodOpen } from './journalCore.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 // ---------------------------------------------------------------------------
 // تسویهٔ دورهٔ مالیات بر ارزش افزوده
@@ -112,7 +113,7 @@ export function postVatRefundClaimJournal(database, { claimId, amount, occurredA
   if (ref.length < 2) throw accountingError('شمارهٔ اظهارنامه یا درخواست استرداد را بنویس؛ وصول بعدی با همین شماره به این طلب وصل می‌شود.', 'VAT_CLAIM_REFERENCE_REQUIRED');
   const claimable = vatRefundClaimable(database);
   if (value > claimable.total) {
-    throw accountingError(`مبلغ از ماندهٔ قابل استرداد دفتر بیشتر است؛ حداکثر ${claimable.total.toLocaleString('fa-IR')} تومان.`, 'VAT_CLAIM_EXCEEDS_BALANCE', 409);
+    throw accountingError(`مبلغ از ماندهٔ قابل استرداد دفتر بیشتر است؛ حداکثر ${claimable.total.toLocaleString('fa-IR')} ${unitLabel()}.`, 'VAT_CLAIM_EXCEEDS_BALANCE', 409);
   }
   const at = occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(at, timeZone));

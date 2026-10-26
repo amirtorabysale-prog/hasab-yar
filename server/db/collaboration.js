@@ -5,6 +5,7 @@ import { listObligations } from './obligations.js';
 import { monthlyPackageChecklist } from '../collaboration.js';
 import { normalizePersian } from '../../shared/parser.js';
 import { periodForDate } from '../accounting.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 function hydrateCollaborationRequest(row) {
   if (!row) return null;
@@ -160,7 +161,7 @@ export function monthlyAccountantPackage(month = '', now = new Date()) {
   };
   const payload = {
     format: 'hesab-yar-accountant-package', version: 1, generatedAt: now.toISOString(),
-    workspace: workspaceMeta, scope: range, basis: 'cash', unit: 'تومان', summary, checklist, sections,
+    workspace: workspaceMeta, scope: range, basis: 'cash', unit: unitLabel(), summary, checklist, sections,
     disclaimer: 'این بسته برای تحویل و کنترل حسابدار است؛ جایگزین دفاتر قانونی، اظهارنامه یا فایل انتقال نرم‌افزار حسابداری رسمی نیست.',
   };
   const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');

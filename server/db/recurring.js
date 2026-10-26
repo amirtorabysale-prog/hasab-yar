@@ -5,6 +5,7 @@ import { ensureFinancialEventSchema } from '../financialEventStore.js';
 import { persianMonthRange, todayPersian } from '../../shared/persianDate.js';
 import { bookedServiceFacts, isTimeBoundCategory } from '../../shared/documentReading.js';
 import { TREATMENTS } from '../../shared/factRequirements.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 /**
  * قاعدهٔ تکرار و خدمت دوره‌دار.
@@ -104,10 +105,10 @@ function coveringTransaction(rule, match, month) {
 function coveredQuestion(rule, periodKey, covering) {
   const side = rule.type === 'income' ? 'پیش‌دریافتِ' : 'پیش‌پرداختِ';
   if (covering.fromTransaction) {
-    return `ماه ${periodKey} را ${side} ثبت‌شده‌ای (ردیف ${Number(covering.amount).toLocaleString('fa-IR')} تومانی که دوره‌اش این ماه را می‌گیرد) پوشش می‌دهد؛ `
+    return `ماه ${periodKey} را ${side} ثبت‌شده‌ای (ردیف ${Number(covering.amount).toLocaleString('fa-IR')} ${unitLabel()}ی که دوره‌اش این ماه را می‌گیرد) پوشش می‌دهد؛ `
       + `ثبت دوره‌ای «${rule.title}» برای این ماه وارد نشد. اگر همان قرارداد است این ماه را رد کن یا قاعده را متوقف کن؛ اگر جداست، ثبتش کن.`;
   }
-  return `ماه ${periodKey} را ${side} ثبت‌شده‌ای (${Number(covering.amount).toLocaleString('fa-IR')} تومان در همین ماه) پوشش می‌دهد؛ `
+  return `ماه ${periodKey} را ${side} ثبت‌شده‌ای (${Number(covering.amount).toLocaleString('fa-IR')} ${unitLabel()} در همین ماه) پوشش می‌دهد؛ `
     + `ثبت دوره‌ای «${rule.title}» برای این ماه وارد نشد. اگر همان قرارداد است این ماه را رد کن یا قاعده را متوقف کن؛ اگر جداست، ثبتش کن.`;
 }
 

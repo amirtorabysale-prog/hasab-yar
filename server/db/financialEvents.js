@@ -26,6 +26,7 @@ import { vatGuardContext } from '../tax.js';
 import { checkConfirmationAnswer, confirmationAsk, confirmationHint } from '../confirmationAnswer.js';
 import { ensureReviewAiSchema, latestReviewProposal, proposeReview, proposalIsCurrent, recordReviewFeedback } from '../accountingReviewAi.js';
 import { recordAccountantLesson } from './aiLessons.js';
+import { unitLabel } from '../../shared/amountUnit.js';
 
 /**
  * آنچه حسابدار در صف تأیید کرد به یادگیری پارسر می‌رود (server/db/aiLessons.js): درسِ دسته همان
@@ -611,7 +612,7 @@ export function recordReviewPriorBasis(eventId,input={}) {
     if(!proposal || proposal.id!==input.proposalId || !proposalIsCurrent(proposal,row) || proposal.contextRevision!==proposalRevision(database,eventId)) throw Object.assign(new Error('پیشنهاد تغییر کرده؛ پیش از ثبت مبنا بازتحلیل کن.'),{status:409,code:'AI_PROPOSAL_STALE'});
     const event=reviewedEvent(database,row);
     const journal=postReviewPriorBasis(database,row,{...event,evidence:originalReviewTranscript(database,row)},proposal.lines,input,{actor:actor.userId,timeZone:currentTimeZone()});
-    addReviewMessage(database,eventId,'basis-confirmed',`مانده منتقل‌شده با تأیید صریح مدیر ثبت شد: ${input.amount} تومان؛ تاریخ ${input.occurredAt}؛ مرجع ${input.reference}؛ سند ${journal.fiscalYear}/${journal.documentNumber}. پرداخت/وصول هنوز ثبت نشده است.`,actor.userId);
+    addReviewMessage(database,eventId,'basis-confirmed',`مانده منتقل‌شده با تأیید صریح مدیر ثبت شد: ${input.amount} ${unitLabel()}؛ تاریخ ${input.occurredAt}؛ مرجع ${input.reference}؛ سند ${journal.fiscalYear}/${journal.documentNumber}. پرداخت/وصول هنوز ثبت نشده است.`,actor.userId);
     audit('create','review-prior-basis',journal.id,{eventId,amount:input.amount,reference:input.reference});
     database.exec('COMMIT');return {journal};
   } catch(error) {database.exec('ROLLBACK');throw error;}

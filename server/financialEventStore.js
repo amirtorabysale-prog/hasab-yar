@@ -15,6 +15,7 @@ import { storeError, ensureFinancialEventSchema, retireRecognitionSchedule, writ
 import { storeDecision, storeSchedule, blockedRecognitionReason, lockedScheduleItems, decisionForEvent } from './financialEvents/schedule.js';
 import { reviewedTimingCategory, reviewedTimingPlan, reconcileReviewedRecognition } from './financialEvents/reviewTiming.js';
 import { reviewedContractReductions, reduceContractSchedule, linkedRefunds, refundLabel, restoreContractSchedule } from './financialEvents/contracts.js';
+import { unitLabel } from '../shared/amountUnit.js';
 
 /**
  * دفتر رویدادهای مالی — یکتایی، ردیابی و صف بررسی.
@@ -135,7 +136,7 @@ export function recordFinancialEvent(database, event, {
   const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
   // همان پولی که پیش‌تر «ناشناس» نگه داشته شده، دریافت تازه نیست.
   const held = !reviewNature(event.utterance || event.evidence || '').unknownReceipt ? matchingUnidentifiedHolding(database, event) : null;
-  const heldReason = held ? `این واریز با وجه ناشناس ${held.reference} (${Number(held.remaining).toLocaleString('fa-IR')} تومان، همین حساب) می‌خواند. اگر همان پول است، آن وجه را از صف «وجوه ناشناس» تعیین تکلیف کن و این مورد را رد کن.` : '';
+  const heldReason = held ? `این واریز با وجه ناشناس ${held.reference} (${Number(held.remaining).toLocaleString('fa-IR')} ${unitLabel()}، همین حساب) می‌خواند. اگر همان پول است، آن وجه را از صف «وجوه ناشناس» تعیین تکلیف کن و این مورد را رد کن.` : '';
   const blocked = natureIssues.length>0 || Boolean(held) || guards?.verdict === GUARD_VERDICTS.BLOCK || event.kind === EVENT_KINDS.REVIEW_PLACEHOLDER;
   const routed = blocked
     ? { ...decision, route: ROUTES.ACCOUNTANT_REVIEW, guardBlocked: true, reasons: [...new Set([...(decision.reasons || []), ...natureIssues.map(q=>q.text), ...(heldReason ? [heldReason] : []), guards?.reason || (heldReason ? '' : 'این گفته هنوز نقشهٔ سند قطعی ندارد.')].filter(Boolean))] }
@@ -403,7 +404,7 @@ export function postReviewedComposite(database, eventId, { lines, reason, actor 
   if (explanation.length < 8) throw storeError('مبنای ثبت حسابدار را با حداقل هشت نویسه بنویس.', 'REVIEW_REASON_REQUIRED', 400);
   if (!Array.isArray(lines) || lines.length < 2 || lines.length > 12) throw storeError('سند بررسی‌شده باید بین ۲ تا ۱۲ سطر داشته باشد.', 'REVIEW_LINES_INVALID', 400);
   if (lines.some((line) => !Number.isSafeInteger(line?.debit) || !Number.isSafeInteger(line?.credit) || line.debit < 0 || line.credit < 0)) {
-    throw storeError('مبلغ هر سطر باید عدد صحیح نامنفی به تومان باشد.', 'REVIEW_LINES_INVALID', 400);
+    throw storeError(`مبلغ هر سطر باید عدد صحیح نامنفی به ${unitLabel()} باشد.`, 'REVIEW_LINES_INVALID', 400);
   }
   const counterpartyAccounts = new Set(['customer-receivable', 'vendor-payable', 'cheque-receivable', 'cheque-payable']);
   for (const line of lines) {

@@ -597,6 +597,9 @@ export const api = {
     return { fileName, bytes: blob.size };
   },
   settings: (payload) => request('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  // واحد مبلغ دفتر (تومان/ریال)؛ فقط در دفتر بی‌مبلغ عوض می‌شود.
+  ledgerAmountUnit: () => request('/api/settings/amount-unit'),
+  setLedgerAmountUnit: (amountUnit) => request('/api/settings/amount-unit', { method: 'PUT', body: JSON.stringify({ amountUnit }) }),
   backupStatus: () => request('/api/backups/status'),
   createServerSnapshot: () => request('/api/backups/snapshot', { method: 'POST', body: '{}' }),
   downloadBackup: async (passphrase) => {

@@ -13,6 +13,7 @@ import {
   ANALYTIC_KINDS, chartCodeIsValid, ensureChartSchema, normalizeChartCode, saveAnalyticAccount,
 } from './chartOfAccounts.js';
 import { canonicalCounterpartyName } from '../shared/counterpartyIdentity.js';
+import { convertAmount, currentAmountUnit, unitLabel } from '../shared/amountUnit.js';
 
 function importError(message, code = 'IMPORT_INVALID', status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -202,9 +203,10 @@ const OPENING_ALIASES = {
  * - جمع بدهکار و بستانکار باید دقیقاً برابر باشد؛ اختلاف با عدد گزارش می‌شود.
  * - واحد فایل (تومان یا ریال) باید صریح اعلام شود؛ حدس‌زدنش یعنی خطای ده‌برابری.
  */
-export function prepareOpeningBalanceRows(database, rows = [], { amountUnit = 'toman' } = {}) {
+export function prepareOpeningBalanceRows(database, rows = [], { amountUnit = 'toman', ledgerUnit = currentAmountUnit() } = {}) {
   ensureChartSchema(database);
-  const divisor = amountUnit === 'rial' ? 10 : 1;
+  // مبلغ فایل به واحد دفتر فقط دقیق تبدیل می‌شود؛ فایل ریالی در دفتر ریالی بی‌تبدیل است.
+  const fileUnit = amountUnit === 'rial' ? 'rial' : 'toman';
   const errors = [];
   const prepared = [];
   const seen = new Set();
@@ -224,10 +226,9 @@ export function prepareOpeningBalanceRows(database, rows = [], { amountUnit = 't
     if (debitRaw == null || creditRaw == null) { errors.push({ rowNumber: row.rowNumber, message: 'مبلغ بدهکار یا بستانکار عدد خوانا نیست.' }); continue; }
     if (debitRaw < 0 || creditRaw < 0) { errors.push({ rowNumber: row.rowNumber, message: 'مبلغ منفی در ماندهٔ افتتاحیه پذیرفته نیست؛ آن را به سمت مقابل ببر.' }); continue; }
     if (debitRaw && creditRaw) { errors.push({ rowNumber: row.rowNumber, message: `حساب ${code} هم بدهکار دارد و هم بستانکار؛ فقط یک سمت مجاز است.` }); continue; }
-    if (debitRaw % divisor || creditRaw % divisor) { errors.push({ rowNumber: row.rowNumber, message: `مبلغ ردیف به ${amountUnit === 'rial' ? 'ریال' : 'تومان'} گرد نمی‌شود؛ واحد فایل را کنترل کن.` }); continue; }
-
-    const debit = debitRaw / divisor;
-    const credit = creditRaw / divisor;
+    const debit = convertAmount(debitRaw, fileUnit, ledgerUnit);
+    const credit = convertAmount(creditRaw, fileUnit, ledgerUnit);
+    if (debit == null || credit == null) { errors.push({ rowNumber: row.rowNumber, message: `مبلغ ردیف ${unitLabel(fileUnit)} است و در دفتر ${unitLabel(ledgerUnit)}ی به عدد صحیح درنمی‌آید؛ واحد فایل را درست انتخاب کن یا دفتر ${unitLabel(fileUnit)}ی بساز.` }); continue; }
     if (!debit && !credit) continue; // ردیف با ماندهٔ صفر عمداً حذف می‌شود، نه خطا.
 
     let analyticId = null;
@@ -251,11 +252,11 @@ export function prepareOpeningBalanceRows(database, rows = [], { amountUnit = 't
   if (!prepared.length) throw importError('هیچ ماندهٔ غیرصفری در فایل نبود.', 'IMPORT_ROWS_EMPTY');
   if (debitTotal !== creditTotal) {
     throw Object.assign(
-      importError(`تراز افتتاحیه متوازن نیست؛ اختلاف ${Math.abs(debitTotal - creditTotal).toLocaleString('en-US')} تومان است.`, 'IMPORT_UNBALANCED', 409),
+      importError(`تراز افتتاحیه متوازن نیست؛ اختلاف ${Math.abs(debitTotal - creditTotal).toLocaleString('en-US')} ${unitLabel()} است.`, 'IMPORT_UNBALANCED', 409),
       { details: { debitTotal, creditTotal, difference: debitTotal - creditTotal } },
     );
   }
-  return { rows: prepared, debitTotal, creditTotal, amountUnit: amountUnit === 'rial' ? 'rial' : 'toman' };
+  return { rows: prepared, debitTotal, creditTotal, amountUnit: fileUnit, ledgerUnit };
 }
 
 /**
