@@ -64,3 +64,23 @@ test('مسیر برنامه: با کلید روشن، AI پیش از هر کار
   assert.match(today, /role="switch"/);
   assert.match(today, /همه را اول AI بفهمد/);
 });
+
+test('کلید فقط وقتی روشن نشان داده می‌شود که AI واقعاً اجرا شود؛ موتور ۲ خاموش یعنی خاموش', async () => {
+  const { aiForAllState } = await import('../src/lib/aiForAll.js');
+  const full = aiForAllState({ mode: 'active', scope: 'all', engineV2: true, available: true }, 'owner');
+  assert.deepEqual([full.on, full.ready, full.halfOn, full.canManage], [true, true, false, true]);
+  // دفتر آزمایشی سایت: دامنه «همه» ولی موتور ۲ جدا خاموش؛ کلید سبز بود و AI صدا زده نمی‌شد.
+  const half = aiForAllState({ mode: 'active', scope: 'all', engineV2: false, available: true }, 'owner');
+  assert.deepEqual([half.on, half.ready, half.halfOn], [false, false, true]);
+  // زدن کلیدِ خاموش‌نما همهٔ شرط‌ها را روشن می‌کند.
+  const repaired = inWorkspace(() => {
+    database.saveAutomationPolicy({ ...database.automationPolicy(), understandingMode: 'active', understandingScope: 'all', engineV2: false });
+    return database.setUnderstandingForAll(!half.on);
+  });
+  assert.deepEqual([repaired.understandingScope, repaired.engineV2], ['all', true]);
+  // نمونه‌های منفی: دامنهٔ مرکب، کلید سرویس نیست، ثبت‌کنندهٔ ساده.
+  assert.equal(aiForAllState({ mode: 'active', scope: 'composite', engineV2: true, available: true }).on, false);
+  const noKey = aiForAllState({ mode: 'active', scope: 'all', engineV2: true, available: false }, 'owner');
+  assert.deepEqual([noKey.on, noKey.ready], [true, false]);
+  assert.equal(aiForAllState({}, 'bookkeeper').canManage, false);
+});

@@ -339,7 +339,8 @@ function AiForAllToggle({ state, toggle }) {
   const blocked = !state.available ? 'کلید سرویس AI روی سرور تنظیم نشده است.'
     : !state.canManage ? 'فقط مالک یا مدیر دفتر می‌تواند این را تغییر دهد.'
       : '';
-  const note = state.on && !state.online ? 'آفلاین هستی؛ تا وصل شوی گفته‌ها از مسیر سریع بررسی می‌شوند.'
+  const note = state.halfOn ? 'موتور تصمیم ۲ در این دفتر خاموش است، پس گفته‌ها به AI نمی‌روند. کلید را بزن تا هر دو روشن شوند.'
+    : state.on && !state.online ? 'آفلاین هستی؛ تا وصل شوی گفته‌ها از مسیر سریع بررسی می‌شوند.'
     : state.on ? 'هر گفته اول با AI فهمیده می‌شود و بعد موتور قاعده سندش را می‌سازد. کمی کندتر و از سهمیهٔ AI.'
       : 'فقط گفته‌های مرکب به AI می‌روند؛ بقیه از مسیر سریع و رایگان.';
   return <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-surface/70 px-3 py-2">

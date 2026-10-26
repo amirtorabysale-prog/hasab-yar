@@ -30,6 +30,7 @@ import { useScreenNavigation } from './app/useScreenNavigation.js';
 import { useIntentDrafts } from './app/useIntentDrafts.js';
 import { useOfflineAudioSync } from './app/useOfflineAudioSync.js';
 import { useVoiceCapture } from './app/useVoiceCapture.js';
+import { aiForAllState } from './lib/aiForAll.js';
 
 /**
  * صفحه‌ای که پشت ناوبری است با اولین باز شدن خودش می‌آید، نه با اولین باز
@@ -286,15 +287,7 @@ export default function App() {
    * هیچ‌چیز خودکار ذخیره نمی‌شود؛ فقط کارت تأیید باز می‌شود.
    */
   // وضعیت کلید «همه را اول AI بفهمد» از سیاست دفتر، و آیا اجرا شدنی است.
-  const aiForAll = (() => {
-    const understanding = data.understanding || {};
-    const on = understanding.mode === 'active' && understanding.scope === 'all';
-    return {
-      on, available: Boolean(understanding.available), engineV2: Boolean(understanding.engineV2),
-      ready: on && Boolean(understanding.available) && Boolean(understanding.engineV2),
-      canManage: ['owner', 'manager'].includes(access.workspace?.role),
-    };
-  })();
+  const aiForAll = aiForAllState(data.understanding, access.workspace?.role);
   const toggleAiForAll = async () => {
     if (aiToggleBusy) return;
     setAiToggleBusy(true);
