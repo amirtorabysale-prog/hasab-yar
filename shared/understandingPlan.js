@@ -21,6 +21,7 @@
  * داده می‌شود.
  */
 import { CATEGORY_DEFINITIONS, classifyCategory } from './categoryRules.js';
+import { PRIOR_DOCUMENT } from './priorDocument.js';
 import { TIME_BOUND_SERVICE_CATEGORIES } from './economicFamily.js';
 import { incomeTwin } from './parser.js';
 import { detectBank } from './banks.js';
@@ -103,7 +104,6 @@ const CAPITAL_WORK = /بازسازی|نوسازی|بهسازی|ارتقا|افز
 /** فاکتورِ زده‌شده — نه پیش‌فاکتور. */
 const INVOICE_ISSUED = /(?<!پیش\s*)فاکتور(?:\s*فروش)?(?:ش)?[^.،؛!؟]{0,40}?(?:زدیم|زدم|صادر\s*(?:کردیم|کردم|شد|شده)|فرستادیم|رفته)(?![آ-ی])/;
 /** سندی که پیش‌تر آمده: «قبضی که اومده بود»، «بابت فاکتور قبلی»، «بدهیِ قبلی». */
-const PRIOR_DOCUMENT = /(?:قبض|فاکتور|صورت\s*حساب)[^.،؛!؟]{0,30}که\s*(?:اومده|آمده|رسیده|زده)\s*بود|(?:فاکتور|قبض|بدهی|طلب|خرید|فروش)\s*(?:ی\s*)?(?:قبلی|قبل)(?![آ-ی])|که\s*(?:قبلا|قبلاً)\s*(?:اومده|آمده|رسیده|ثبت\s*شده)/;
 /** برداشتِ اول‌شخص («برای خودم برداشتم») برداشتِ مالک است و پرسش ندارد. */
 const FIRST_PERSON_DRAWING = /(?:^|\s)(?:خودم|خودمون|خودمان|برداشتم|برداشتیم)(?=$|[\s.،؛!؟])/;
 const genericParty = (name) => GENERIC_PARTY.test(normalizePersian(name || '').replace(/[«»"]/g, '').trim());
@@ -765,10 +765,17 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       continue;
     }
     if (needsCounterparty && counterparty && !contactId && !(createContact && !isSettlement) && !answers[`counterparties.${counterparty.id}`]) {
+      const options = [...(resolved?.candidates || []).map((item) => ({ value: item.id, label: item.name })), ...(isSettlement ? [] : [{ value: 'new', label: `طرف حساب تازه: ${counterparty.name}` }])];
+      // تسویه فقط با طرف حسابِ موجود معنا دارد و «تازه» گزینه‌اش نیست. بی‌هیچ نامزدی، پرسشِ
+      // بی‌گزینه می‌ماند و جوابی نداشت («چک از شرکت نیکان بابت طلب قبلی»، آزمون زندهٔ ۴ آبان ۱۴۰۵).
+      if (!options.length) {
+        toAccountant(`«${counterparty.name}» در این دفتر طرف حسابی ندارد؛ ${flowSide === 'payable' ? 'بدهیِ' : 'طلبِ'} قبلی‌ای برای تسویه پیدا نشد و تسویهٔ بی‌سندِ مبنا ثبت نمی‌شود.`);
+        continue;
+      }
       question({
         id: `counterparties.${counterparty.id}`, kind: 'information', picker: 'contact',
         text: resolved?.status === 'similar' ? `«${counterparty.name}» همان «${resolved.candidates?.[0]?.name}» است؟` : `«${counterparty.name}» کدام طرف حساب است؟`,
-        options: [...(resolved?.candidates || []).map((item) => ({ value: item.id, label: item.name })), ...(isSettlement ? [] : [{ value: 'new', label: `طرف حساب تازه: ${counterparty.name}` }])],
+        options,
       });
       continue;
     }
@@ -1149,6 +1156,10 @@ function planPartnerPaid({ facts, said, amounts, retracted, resolution, answers,
   const resolved = resolution.counterparties?.[creditor.id];
   const picked = answers[`counterparties.${creditor.id}`]?.valueId;
   const contactId = picked && picked !== 'new' ? picked : resolved?.status === 'exact' ? resolved.contactId : null;
+  if (!contactId && !(resolved?.candidates || []).length) {
+    toAccountant(`«${creditor.name}» در این دفتر طرف حسابی ندارد؛ بدهیِ ثبت‌شده‌ای برای تسویه از پول شخصی پیدا نشد.`);
+    return;
+  }
   if (!contactId) {
     question({
       id: `counterparties.${creditor.id}`, kind: 'information', picker: 'contact',

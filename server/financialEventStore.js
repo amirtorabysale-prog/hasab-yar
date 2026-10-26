@@ -10,7 +10,7 @@ import { applyAnswer } from '../shared/questionAnswer.js';
 import { GUARD_VERDICTS, guardedPlan, isGuardPlan, runGuards } from '../shared/guards.js';
 import { eventFingerprint } from '../shared/eventFingerprint.js';
 import { postJournalEntry, reverseJournalEntry } from './accounting.js';
-import { resolveEventAnalytic, resolveEventRole } from './roleResolver.js';
+import { resolveEventAnalytic, resolveEventRole, withLedgerFacts } from './roleResolver.js';
 import { storeError, ensureFinancialEventSchema, retireRecognitionSchedule, writeAudit } from './financialEvents/base.js';
 import { storeDecision, storeSchedule, blockedRecognitionReason, lockedScheduleItems, decisionForEvent } from './financialEvents/schedule.js';
 import { reviewedTimingCategory, reviewedTimingPlan, reconcileReviewedRecognition } from './financialEvents/reviewTiming.js';
@@ -133,7 +133,7 @@ export function recordFinancialEvent(database, event, {
   // رویداد نتوانست» می‌خواند و سند را از مسیر قدیمی می‌زد. یعنی درست همان
   // موردی که نگهبان گفته بود نباید ثبت شود، بی‌صدا ثبت می‌شد.
   const plan = guards ? guardedPlan(event, accountingDecision, guards) : planJournal(event, accountingDecision);
-  const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
+  const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,withLedgerFacts(database,event));
   // همان پولی که پیش‌تر «ناشناس» نگه داشته شده، دریافت تازه نیست.
   const held = !reviewNature(event.utterance || event.evidence || '').unknownReceipt ? matchingUnidentifiedHolding(database, event) : null;
   const heldReason = held ? `این واریز با وجه ناشناس ${held.reference} (${Number(held.remaining).toLocaleString('fa-IR')} ${unitLabel()}، همین حساب) می‌خواند. اگر همان پول است، آن وجه را از صف «وجوه ناشناس» تعیین تکلیف کن و این مورد را رد کن.` : '';
@@ -204,7 +204,7 @@ export function recordFinancialEvent(database, event, {
  * برگشت، سند را پیدا کنند.
  */
 function postPlanned(database, { id, event, plan, actor, timeZone, journalSource, postJournal, treatment = null }) {
-  const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,event);
+  const natureIssues=reviewNatureViolations(event.utterance || event.evidence || '',plan.lines,withLedgerFacts(database,event));
   if(natureIssues.length) throw storeError(natureIssues.map(q=>q.text).join(' '),'REVIEW_NATURE_REQUIRED',409);
   // ثبت‌کنندهٔ تزریقیِ تراکنش فقط هزینه و درآمد می‌شناسد. برخوردی که نقشهٔ
   // خودش را دارد — پیش‌پرداخت، پیش‌دریافت — نباید در تأیید فوری یا ثبت خودکار

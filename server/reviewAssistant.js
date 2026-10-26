@@ -12,13 +12,15 @@ import { classifyFamily, FAMILY_UNKNOWN } from '../shared/economicFamily.js';
 import { reviewQuestions, reviewSavedAnswers } from '../shared/reviewQuestions.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { ensureFinancialEventSchema } from './financialEventStore.js';
-import { resolveEventAnalytic } from './roleResolver.js';
+import { resolveEventAnalytic, withLedgerFacts } from './roleResolver.js';
 
 import { prepareReviewResources } from './reviewResources.js';
 import { prepareReviewAccount, proposalIsStale } from './reviewAccountPreparation.js';
 import { extractContactName } from '../shared/counterpartySpeech.js';
 import { exactCounterpartyKey } from '../shared/counterpartyIdentity.js';
 import { detectBank } from '../shared/banks.js';
+import { VAT_FORMS, readVatMention } from '../shared/vatSpeech.js';
+import { unitLabel } from '../shared/amountUnit.js';
 import { splitDateRoles } from '../shared/voiceIntent.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { availableReviewedBalance } from './reviewCashBasis.js';
@@ -197,7 +199,7 @@ export function relevantDna(database, row) {
     const cashAccount=reviewedEvent(database,sourceRow).accountId;
     const safeCash=journalRoles.filter(l=>l.sourceKind==='operational-account').every(l=>cashAccount && cashAccount===l.sourceKey);
     const safeTax=!reviewNature(originalReviewTranscript(database,sourceRow)).vatRefund || Boolean(database.prepare("SELECT 1 FROM accounting_review_tax_refunds WHERE event_id=? AND refund_journal_id=?").get(r.event_id,r.journal_entry_id));
-    const safeNature=r.state==='rejected' || (safeTax && safeCash && journalRoles.length>0 && reviewNatureViolations(originalReviewTranscript(database,{id:r.event_id,payload:r.payload}),journalRoles,reviewedEvent(database,sourceRow)).length===0);
+    const safeNature=r.state==='rejected' || (safeTax && safeCash && journalRoles.length>0 && reviewNatureViolations(originalReviewTranscript(database,{id:r.event_id,payload:r.payload}),journalRoles,withLedgerFacts(database,reviewedEvent(database,sourceRow))).length===0);
     const sourceFamily=classifyFamily(factsFromEvent(source)).family;
     const compatible=family===FAMILY_UNKNOWN || sourceFamily===FAMILY_UNKNOWN || family===sourceFamily;
     return { id:r.id,eventId:r.event_id,state:r.state,summary:JSON.parse(r.proposal).summary,reason:r.feedback_reason,actor:r.reviewed_by,date:r.reviewed_at,journalEntryId:r.journal_entry_id,
@@ -242,12 +244,28 @@ export function prepareReviewProposal(database, row, proposal, { resolve = false
   const insurance=insuranceSettlementValidation(database,reviewEvidence(database,row),row.amount,initial,proposal.lines);
   const trade=tradeSettlementValidation(database,event,proposal.lines);
   const threshold=reviewCapitalizationThreshold(database);
-  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,{...initial,capitalizationThreshold:threshold}),...taxRefund.issues,...insurance.issues,...capitalizationIssues(threshold,proposal.lines,{durable:initial?.intendedUse==='long-term-use'})];
+  const natureIssues=[...trade.issues,...reviewNatureViolations(reviewEvidence(database,row),proposal.lines,withLedgerFacts(database,{...initial,counterpartyId:event.counterpartyId || initial?.counterpartyId,counterparty:event.counterparty || initial?.counterparty,capitalizationThreshold:threshold})),...taxRefund.issues,...insurance.issues,...capitalizationIssues(threshold,proposal.lines,{durable:initial?.intendedUse==='long-term-use'})];
   const blockers = [...(proposal.missingFacts || []),...(proposal.workflowBlockers || []),...natureIssues.map(q=>q.text)];
   const dr=proposal.lines.reduce((n,l)=>n+l.debit,0),cr=proposal.lines.reduce((n,l)=>n+l.credit,0);
   if(proposal.lines.length<2 || dr<=0 || dr!==cr || proposal.lines.some(l=>![l.debit,l.credit].every(n=>Number.isSafeInteger(n) && n>=0) || (l.debit>0)===(l.credit>0))) blockers.push('پیشنهاد هنوز سطرهای معتبر و متوازن برای ثبت ندارد.');
   const cashQuestion=proposal.lines.some(l=>l.role==='cash') && !event.accountId ? {id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'} : null;
   if(cashQuestion) blockers.push(cashQuestion.text);
+  // جهت پولِ گفته‌شده (ورود به صندوق یا بانک، یا خروج از آن) را پیشنهاد نمی‌تواند برعکس کند:
+  // «… پس داده شد و رفت تو صندوق» را مدل «بستانکار صندوق / بدهکار هزینه» پیشنهاد داد (آزمون زندهٔ ۴ آبان ۱۴۰۵).
+  const cashSides=proposal.lines.filter(l=>l.role==='cash');
+  if(initial?.cashDirection==='in' && cashSides.some(l=>l.credit>0) && !cashSides.some(l=>l.debit>0)) blockers.push('در گفته پول به صندوق یا بانک آمده، ولی این پیشنهاد آن را خروج نوشته است؛ جهت را اصلاح کن.');
+  // «۴۰ میلیون به‌علاوهٔ ۱۰ درصد ارزش افزوده»: مالیات از خود جمله درمی‌آید و جمع سند همان
+  // خالص به‌علاوهٔ مالیات است. پیشنهاد صف «موجودی ۴۴ + مالیات ۴ = پرداختنی ۴۸» داد — مالیات دو
+  // بار — و کنترل جمع خرید برای پروندهٔ مبلغ‌مرجع (amountReferenceOnly) خاموش بود (آزمون زنده، ۴ آبان ۱۴۰۵).
+  const statedVat=readVatMention(reviewEvidence(database,row));
+  if(statedVat.form===VAT_FORMS.EXCLUSIVE && statedVat.ratePercent>0 && Number.isSafeInteger(row.amount) && row.amount>0) {
+    const tax=Math.round(row.amount*statedVat.ratePercent/100);
+    const money=n=>Number(n).toLocaleString('fa-IR');
+    if(dr!==row.amount+tax) blockers.push(`طبق جمله، خالص ${money(row.amount)} و ارزش افزودهٔ ${statedVat.ratePercent}٪ یعنی ${money(tax)} ${unitLabel()} است و جمع سند ${money(row.amount+tax)}؛ جمع این پیشنهاد ${money(dr)} است.`);
+    const taxLines=proposal.lines.filter(l=>['vat-input','vat-output'].includes(l.role));
+    if(taxLines.length && taxLines.reduce((n,l)=>n+l.debit+l.credit,0)!==tax) blockers.push(`سطر ارزش افزوده باید ${money(tax)} ${unitLabel()} باشد.`);
+  }
+  if(initial?.cashDirection==='out' && cashSides.some(l=>l.debit>0) && !cashSides.some(l=>l.credit>0)) blockers.push('در گفته پول از صندوق یا بانک رفته، ولی این پیشنهاد آن را ورود نوشته است؛ جهت را اصلاح کن.');
   if(event.refundable===true && proposal.lines.some(l=>l.role==='prepaid-asset')) blockers.push('ودیعه قابل استرداد پیش‌پرداخت هزینه نیست؛ پیشنهاد باید با نقش ودیعه بازبینی شود.');
   if(/اصل\s*وام/.test(reviewEvidence(database,row)) && proposal.lines.some(l=>['income-category','payable'].includes(l.role))) blockers.push('اصل وام درآمد یا بدهی تجاری نیست؛ نقش اصل وام پرداختنی لازم است.');
   blockers.push(...resources.blockers);

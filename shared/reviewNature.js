@@ -3,6 +3,7 @@ import { conditionalWaiver, conditionalPaymentProposal } from './reviewSettlemen
 import { normalizePersian } from './normalize.js';
 import { insuranceNature } from './insuranceNature.js';
 import { moneyReturned, returnRecorded } from './refundSpeech.js';
+import { PRIOR_DOCUMENT } from './priorDocument.js';
 
 // Recognition and settlement are different events. These constraints do not
 // derive dates, counterparties, tax rates or evidence from model output.
@@ -36,7 +37,8 @@ export function reviewNature(text) {
   const refund=moneyReturned(t);
   const writtenOffRecovery=/طلب|مطالبات/.test(t) && /سوخت شده|حذف شده|حذف.*دفاتر|از دفاتر حذف/.test(t) && /دریافت|وصول|برگشت/.test(t);
   const principal=/اصل وام/.test(t);
-  const settlement=/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) && /پرداخت|واریز|وصول|دریافت/.test(t);
+  // «قبضی که اومده بود رو پرداخت کردیم» هم تسویهٔ سندِ ثبت‌شده است؛ همان الگوی مسیر فهم (`priorDocument.js`).
+  const settlement=(/تسویه|بدهی قبلی|طلب قبلی|بدهکار بودیم|خرید ماه قبل|فاکتور قبلی/.test(t) || PRIOR_DOCUMENT.test(t)) && /پرداخت|واریز|وصول|دریافت/.test(t);
   return {unknownReceipt,vatRefund,partner,capital,insuranceSettlement,prepaid,advance,deposit,intangible,leasehold,advanceRefund,refund,writtenOffRecovery,principal,settlement};
 }
 
@@ -60,7 +62,11 @@ export function reviewNatureViolations(text, lines=[], facts={}) {
   // سند هیچ سطر نقدی ندارد. کنترل‌های انتقال وجه شریک دربارهٔ پولی است که به
   // حساب شرکت آمده یا از آن رفته، و این‌جا چنین پولی نیست.
   const settledByPartner=(facts.kind==='obligation-settled-by-partner' || facts.fundedBy==='partner') && !lines.some(l=>l.role==='cash');
-  if(partnerRoles && !n.partner && !settledByPartner) add('nature.partner-identity','رابطه شریک در متن رویداد مشخص نیست؛ حساب جاری شریک جای حساب تجاری نیست.');
+  // شریکی که دفتر از قبل حساب جاری‌اش را دارد، یا حسابدار گفته «شریک است»، رابطه‌اش معلوم است؛
+  // «آقای سعیدی … برای خرج شخصی خودش برداشت» پس از ثبت قرضِ شریکیِ همان روزِ او بسته می‌ماند (آزمون زنده، ۴ آبان ۱۴۰۵).
+  const partnerAnswer=normalizePersian(facts.questionAnswers?.['nature.partner-identity']?.value || '');
+  const partnerKnown=facts.knownPartner===true || (/شریک|سهامدار/.test(partnerAnswer) && !/نیست|نبوده|نه /.test(partnerAnswer));
+  if(partnerRoles && !n.partner && !settledByPartner && !partnerKnown) add('nature.partner-identity','رابطه شریک در متن رویداد مشخص نیست؛ حساب جاری شریک جای حساب تجاری نیست.');
   if(n.partner && lines.length && !settledByPartner) {
     const expected=partnerTransferProposal(text,lines.find(l=>l.role==='cash')?.debit || lines.find(l=>l.role==='cash')?.credit || 1,facts);
     if(!partnerTreatment(text,facts)) add('nature.partner-transfer','نوع انتقال را مشخص کن: وجه در اختیار شرکت، افزایش سرمایه مصوب، بازپرداخت بدهی شرکت، برداشت شخصی یا بازپرداخت طلب شرکت؟');

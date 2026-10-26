@@ -560,13 +560,16 @@ export function commitUnderstandingCase(id, { now } = {}) {
  * جدولِ هزینه نمی‌گرفت (موتور ۵). دوره فقط وقتی کپی می‌شود که جمله یک مبلغ دارد؛
  * دورهٔ یک جملهٔ چندمبلغی صاحبِ روشنی ندارد و حدس زده نمی‌شود.
  */
-function placeholderFacts(understanding, transcript, now) {
+export function placeholderFacts(understanding, transcript, now) {
   const accepted = (understanding?.amounts || []).filter((amount) => amount.accepted && amount.status !== 'context' && Number.isSafeInteger(amount.value) && amount.value > 0);
   const groups = new Set(accepted.filter((amount) => !['unit-price', 'installment', 'prior-balance'].includes(amount.role)).map((amount) => amount.partOf || amount.id));
   const date = (roles) => (understanding?.dates || []).find((item) => item.accepted && roles.includes(item.role) && item.iso)?.iso || null;
   const occurredAt = date(['payment', 'occurrence']) || now;
   const incoming = (understanding?.movements || []).some((movement) => movement.direction === 'in')
     || ['sale', 'income', 'advance-received', 'loan-received', 'capital-in'].includes(understanding?.event?.kind);
+  // جهت پول فقط وقتی نگه داشته می‌شود که همهٔ جابه‌جایی‌های گفته یک‌جهت باشند.
+  const directions = new Set((understanding?.movements || []).map((movement) => movement.direction).filter((direction) => ['in', 'out'].includes(direction)));
+  const cashDirection = directions.size === 1 ? [...directions][0] : null;
   const counterparty = (understanding?.counterparties || []).find((item) => item.name && item.role !== 'bank')?.name || null;
   let servicePeriodStart = null;
   let servicePeriodEnd = null;
@@ -582,6 +585,7 @@ function placeholderFacts(understanding, transcript, now) {
   const category = classifyCategory(described, incoming ? 'income' : 'expense');
   return {
     occurredAt, servicePeriodStart, servicePeriodEnd, dueAt: date(['due']),
+    ...(cashDirection ? { cashDirection } : {}),
     ...(counterparty ? { counterparty } : {}),
     ...(category.matched ? { category: category.category } : {}),
   };

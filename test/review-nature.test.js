@@ -41,3 +41,42 @@ test('partner role cannot replace commercial accounts or reverse the actual inco
  const facts={questionAnswers:{'nature.partner-transfer':{value:'برداشت شخصی'}}};
  assert.ok(reviewNatureViolations('شریک وجه به حساب شرکت انتقال داد',[{role:'partner-receivable',debit:1,credit:0},{role:'cash',debit:0,credit:1}],facts).some(q=>q.id==='nature.partner-direction'));
 });
+
+// R035 روی سایت (۴ آبان ۱۴۰۵): فهم رویداد این جمله را «هزینهٔ تازه نیست» به صف داد، ولی پیشنهاد
+// AI صف «بدهکار قبوض / بستانکار ملت» بود و کنترل صف آن را نگرفت؛ پذیرفتنش هزینهٔ برق را دو بار
+// ثبت می‌کرد. خانواده: قبض، فاکتور خرید، صورت‌حساب، «قبلاً اومده»، و آینه‌اش وصولِ فاکتورِ زده‌شده.
+test('پرداختِ قبض یا فاکتوری که پیش‌تر آمده، در صف هم هزینه یا درآمد تازه نمی‌شود', () => {
+  const pays = [
+    'قبض برق مهر که اومده بود رو امروز از ملت پرداخت کردیم، ۴ میلیون.',
+    'فاکتور پخش گلستان که آمده بود رو امروز کارت به کارت پرداخت کردیم',
+    'صورت‌حساب تعمیرکار که رسیده بود رو نقد پرداخت کردیم',
+    'قبض گاز که قبلاً اومده رو امروز پرداخت کردیم',
+  ];
+  for (const text of pays) {
+    const issues = reviewNatureViolations(text, [{ role: 'expense-category', debit: 1, credit: 0 }, { role: 'cash', debit: 0, credit: 1 }]);
+    assert.ok(issues.some((issue) => issue.id === 'nature.prior-settlement'), text);
+    // تسویهٔ بدهیِ همان طرف حساب درست است و جلویش گرفته نمی‌شود.
+    assert.deepEqual(reviewNatureViolations(text, [{ role: 'payable', debit: 1, credit: 0 }, { role: 'cash', debit: 0, credit: 1 }]).filter((issue) => issue.id === 'nature.prior-settlement'), [], text);
+  }
+  const received = 'فاکتور فروشی که برای شرکت آلفا زده بودیم رو امروز به ملت واریز کردن';
+  assert.ok(reviewNatureViolations(received, [{ role: 'cash', debit: 1, credit: 0 }, { role: 'income-category', debit: 0, credit: 1 }]).some((issue) => issue.id === 'nature.prior-settlement'));
+});
+
+test('منفی: قبضِ امروز که همان امروز پرداخت شد، و قبضی که هنوز پرداخت نشده، تسویهٔ سند قبلی نیستند', () => {
+  for (const text of ['قبض برق رو امروز از ملت پرداخت کردیم ۴ میلیون', 'قبض برق مهر مغازه ۴ میلیون تومان اومده ولی قراره تا آبان پرداختش کنیم.', 'هزینه نظافت امروز پرداخت شد']) {
+    assert.deepEqual(reviewNatureViolations(text, [{ role: 'expense-category' }]).filter((issue) => issue.id === 'nature.prior-settlement'), [], text);
+  }
+});
+
+// آزمون زندهٔ ۴ آبان ۱۴۰۵: آقای سعیدی صبح همان روز «۵۰ میلیون گذاشت تو کار» و حساب جاری شریک
+// گرفت؛ «آقای سعیدی ۸ میلیون … برای خرج شخصی خودش برداشت» با پیشنهاد درستِ «جاری شریک» بسته
+// ماند چون واژهٔ «شریک» در خودِ این جمله نبود، و پرسشش گزینه‌ای نداشت.
+test('رابطهٔ شریک از دفتر یا جواب حسابدار هم معلوم است، نه فقط از واژهٔ «شریک» در جمله', () => {
+  const text = 'آقای سعیدی ۸ میلیون از حساب تجارت برای خرج شخصی خودش برداشت.';
+  const lines = [{ role: 'partner-receivable', debit: 8_000_000, credit: 0 }, { role: 'cash', debit: 0, credit: 8_000_000 }];
+  const identity = (facts) => reviewNatureViolations(text, lines, facts).some((issue) => issue.id === 'nature.partner-identity');
+  assert.equal(identity({}), true, 'بی‌سابقه و بی‌جواب: با حسابدار');
+  assert.equal(identity({ knownPartner: true }), false, 'حساب جاری شریک در دفتر هست');
+  assert.equal(identity({ questionAnswers: { 'nature.partner-identity': { value: 'شریک است' } } }), false);
+  assert.equal(identity({ questionAnswers: { 'nature.partner-identity': { value: 'شریک نیست، مالک است' } } }), true);
+});

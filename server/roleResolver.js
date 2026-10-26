@@ -86,6 +86,21 @@ function counterpartyRoleAccount(database, sourceKind, event, key, label, type) 
 // شناسهٔ خودِ او زیرحساب می‌گیرد، نه شناسهٔ طرف حساب رویداد.
 const partnerSide = (event, key) => (event.payerName && (key === undefined || key === event.payerName) ? { ...event, counterpartyId: event.payerId || null } : event);
 
+/**
+ * واقعیت‌هایی از دفتر که کنترل ماهیت (`shared/reviewNature.js`، بی‌دیتابیس) از متن نمی‌داند:
+ * شریکی که حساب جاری‌اش از قبل هست. هر جایی که آن کنترل صدا زده می‌شود همین را می‌دهد؛
+ * وگرنه یک مسیر شریک را می‌شناسد و مسیر دیگر همان سند را «رابطهٔ شریک نامشخص» می‌بندد.
+ */
+export function withLedgerFacts(database, facts = {}) {
+  let knownPartner = false;
+  try {
+    knownPartner = Boolean(facts?.counterpartyId || facts?.counterparty) && ['partner-payable', 'partner-receivable'].some((kind) => Boolean(database
+      .prepare('SELECT 1 FROM ledger_accounts WHERE source_kind=? AND source_key=? AND active=1')
+      .get(kind, counterpartyAccountKey(database, kind, facts.counterpartyId, facts.counterparty))));
+  } catch { knownPartner = false; }
+  return { ...(facts || {}), knownPartner };
+}
+
 export function resolveEventRole(database, role, key, event = {}) {
   switch (role) {
     case ROLES.CASH:

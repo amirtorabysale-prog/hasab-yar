@@ -944,3 +944,23 @@ test('شادو: مقایسه ساخته می‌شود و هیچ سند، ردی�
 });
 
 test.after(() => removeTempDatabase(databasePath));
+
+test('زنده (۴ آبان ۱۴۰۵): تسویه با طرف حسابی که در دفتر نیست پرسشِ بی‌گزینه نمی‌سازد؛ با دلیل به حسابدار می‌رود', () => {
+  // «از شرکت نیکان یه چک ۳۰ میلیونی … گرفتیم بابت طلب قبلی»: پرسش «کدام طرف حساب است؟» بی‌هیچ
+  // گزینه‌ای ساخته شد (تسویه «طرف حساب تازه» ندارد) و جواب کاربر هیچ‌جا ذخیره نمی‌شد.
+  const text = 'شرکت نیکان ۳۰ میلیون بابت طلب قبلی به ملت واریز کرد';
+  const output = {
+    ...blank(), event: { kind: 'settlement', description: '', status: 'done' },
+    amounts: [amount('a1', 30_000_000, '۳۰ میلیون')],
+    counterparties: [{ id: 'c1', name: 'شرکت نیکان', role: 'customer', evidence: 'شرکت نیکان' }],
+    movements: [movement('m1', 'a1', 'in', party('counterparty', 'شرکت نیکان'), party('bank', 'ملت'), '۳۰ میلیون بابت طلب قبلی به ملت واریز کرد')],
+  };
+  const endpoints = { 'm1.to': { status: 'resolved', accountId: 'mellat-1' } };
+  const missing = plan(output, text, { counterparties: { c1: { status: 'new', contactId: null, name: 'شرکت نیکان', candidates: [] } }, endpoints }).plan;
+  assert.ok(!missing.questions.some((item) => item.picker === 'contact' && !(item.options || []).length), 'پرسش بی‌گزینه نباید بماند');
+  assert.ok([...missing.reasons, ...missing.notes.map((note) => note.text)].some((reason) => /در این دفتر طرف حسابی ندارد/.test(reason)));
+  // منفی: با نامزدِ مشابه همان پرسش انتخاب می‌ماند.
+  const similar = plan(output, text, { counterparties: { c1: { status: 'similar', contactId: null, name: 'شرکت نیکان', candidates: [{ id: 'k-nikan', name: 'نیکان' }] } }, endpoints }).plan;
+  const asked = similar.questions.find((item) => item.picker === 'contact');
+  assert.deepEqual(asked?.options.map((option) => option.value), ['k-nikan']);
+});

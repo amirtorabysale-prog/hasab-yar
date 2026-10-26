@@ -17,6 +17,7 @@ import { ensureFinancialEventSchema, decisionForEvent } from './financialEventSt
 import { insuranceNature } from '../shared/insuranceNature.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { availableReviewedBalance } from './reviewCashBasis.js';
+import { withLedgerFacts } from './roleResolver.js';
 
 const roles = new Set([...Object.values(ROLES),'inventory-asset']);
 // Responses Structured Outputs constrains syntax; posting guards still decide
@@ -219,7 +220,7 @@ ${event.amountReferenceOnly ? `بزرگ‌ترین مبلغ گفته‌شده ${
   if (database.prepare('SELECT status FROM financial_events WHERE id=?').get(eventId)?.status !== 'pending' || requestFingerprint !== conversationFingerprint(database,eventId) || sourceHash(database.prepare('SELECT * FROM financial_events WHERE id=?').get(eventId)) !== sourceHash(row) || knowledgeMoved) throw fail('این رویداد پیش‌تر بررسی شده است.', 'EVENT_NOT_PENDING');
   proposal=bindReviewProposal(proposal,catalog,event);
   const threshold=reviewCapitalizationThreshold(database);
-  const natureIssues=[...reviewNatureViolations(fullUtterance,proposal.lines,{...event,capitalizationThreshold:threshold}),...capitalizationIssues(threshold,proposal.lines,{durable:event?.intendedUse==='long-term-use'})];
+  const natureIssues=[...reviewNatureViolations(fullUtterance,proposal.lines,withLedgerFacts(database,{...event,capitalizationThreshold:threshold})),...capitalizationIssues(threshold,proposal.lines,{durable:event?.intendedUse==='long-term-use'})];
   const cashQuestion=proposal.lines.some(l=>l.role==='cash') && !event.accountId ? [{id:'cash.account',text:'وجه از کدام بانک یا صندوق واقعی پرداخت یا دریافت شد؟',field:'accountId'}] : [];
   proposal.workflowBlockers=[...(proposal.workflowBlockers || []),...natureIssues.filter(q=>q.action).map(q=>q.text)];
   proposal.questions=withoutPolicyAnsweredQuestions(reviewQuestions({...proposal,questions:[...cashQuestion,...natureIssues.filter(q=>!q.action),...(proposal.questions || [])]}).filter(q=>(!proposal.lines.length || !isReviewAccountSetupQuestion(q)) && !isHeadingChoiceQuestion(q)),threshold,row.amount);

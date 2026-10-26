@@ -27,6 +27,7 @@ import { checkConfirmationAnswer, confirmationAsk, confirmationHint } from '../c
 import { ensureReviewAiSchema, latestReviewProposal, proposeReview, proposalIsCurrent, recordReviewFeedback } from '../accountingReviewAi.js';
 import { recordAccountantLesson } from './aiLessons.js';
 import { unitLabel } from '../../shared/amountUnit.js';
+import { withLedgerFacts } from '../roleResolver.js';
 
 /**
  * آنچه حسابدار در صف تأیید کرد به یادگیری پارسر می‌رود (server/db/aiLessons.js): درسِ دسته همان
@@ -197,7 +198,7 @@ export function recordReviewedComposite(eventId, { lines, reason, proposalId = '
     if(aiAccepted) {
       if(reviewNature(originalReviewTranscript(database,row)).vatRefund) throw Object.assign(new Error('استرداد مالیات را با دکمه اعمال پیشنهاد ثبت کن تا سند طلب و تخصیص وصول هم ثبت شوند.'),{code:'REVIEW_NATURE_REQUIRED',status:409});
       const actualRoles=(lines || []).map(line=>{const a=database.prepare('SELECT type,source_kind,source_key FROM ledger_accounts WHERE id=?').get(line.accountId);return {...line,role:a?.source_kind==='operational-account'?'cash':a?.type==='income'?'income-category':a?.type==='expense'?'expense-category':a?.source_kind==='system' && a?.source_key==='owner-capital'?'owner-capital':a?.source_kind};});
-      const issues=reviewNatureViolations(originalReviewTranscript(database,row),actualRoles,reviewedEvent(database,row));
+      const issues=reviewNatureViolations(originalReviewTranscript(database,row),actualRoles,withLedgerFacts(database,reviewedEvent(database,row)));
       if(issues.length) throw Object.assign(new Error(issues.map(q=>q.text).join(' ')),{code:'REVIEW_NATURE_REQUIRED',status:409});
     }
     if (!aiAccepted && String(reason || '').trim().length < 8) throw Object.assign(new Error('دلیل اصلاح پیشنهاد AI را بنویس.'), { code: 'AI_REASON_REQUIRED', status: 400 });

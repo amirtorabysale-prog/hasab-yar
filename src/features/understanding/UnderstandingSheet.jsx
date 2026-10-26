@@ -4,6 +4,7 @@ import { PersianDateInput, digitsOnly } from '../../components/common.jsx';
 import { formatAmount, persianDate, unitLabel } from '../../lib/format.js';
 import { RecognitionNote } from '../../components/RecognitionNote.jsx';
 import { useSheetA11y } from '../../components/sheetA11y.js';
+import { componentCategoryLabel } from '../../lib/understandingPreview.js';
 
 /**
  * برگهٔ پروندهٔ «فهم رویداد».
@@ -114,7 +115,7 @@ export function UnderstandingSheet({ draft, setDraft, close, notify, onPosted })
           <ul className="mt-2 space-y-2">
             {plan.components.map((component) => <li key={component.id} className="rounded-lg border border-income/40 bg-surface px-3 py-2 text-[13px]">
               <b>{component.label}</b>
-              {component.accountId && <span className="block text-xs text-muted">حساب: {accountName(component.accountId) || '—'}{component.category ? ` · ${component.category}` : ''}</span>}
+              {component.accountId && <span className="block text-xs text-muted">حساب: {accountName(component.accountId) || '—'}{componentCategoryLabel(component) ? ` · ${componentCategoryLabel(component)}` : ''}</span>}
               {component.preview?.lines?.length > 0 && <span className="mt-1 block text-xs text-muted">
                 {component.preview.lines.map((line, index) => <span key={index} className="ml-2 inline-block">{line.debit ? 'بدهکار' : 'بستانکار'} {LINE_ROLES[line.role] || line.role} <span className="numbers">{formatAmount(line.debit || line.credit)}</span></span>)}
               </span>}

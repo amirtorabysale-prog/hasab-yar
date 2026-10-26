@@ -136,6 +136,9 @@ export function normalizeFinancialEvent(raw = {}) {
     // طرف باید نقد شود، و چسباندنش بیرون از نرمال‌سازی یعنی رویدادی که از
     // دیتابیس خوانده می‌شود آن را ندارد.
     settlementDirection: ['receivable', 'payable'].includes(raw.settlementDirection) ? raw.settlementDirection : null,
+    // جهت پولِ گفته‌شده برای پرونده‌ای که به صف حسابدار رفته («رفت تو صندوق» = ورود). کنترل
+    // پیشنهاد صف با آن، سندی را که سطر صندوق یا بانکش جهت مخالف دارد نمی‌پذیرد.
+    cashDirection: ['in', 'out'].includes(raw.cashDirection) ? raw.cashDirection : null,
     // شریکی که از پول شخصی خودش تعهد شرکت را بست. طرف حساب اصلی (`counterparty`)
     // همان طلبکار یا بدهکار است؛ این نام و شناسه، زیرحسابِ جاری شریک را می‌سازد.
     payerName: kind === 'obligation-settled-by-partner' || FUNDERS.includes(raw.fundedBy) ? (cleanText(raw.payerName, 120) || null) : null,
