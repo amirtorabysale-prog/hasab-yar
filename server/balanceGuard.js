@@ -27,7 +27,12 @@ import { unitLabel } from '../shared/amountUnit.js';/**
  * فاکتور، چک، تسویه) ردیف تراکنش دارند و همان شمرده می‌شود. بی‌این فهرست، کارت
  * بانکِ واردشده از پارسیان گردش کامل را نشان می‌داد و ماندهٔ همان حساب صفر بود.
  */
-export const LEDGER_ONLY_SOURCES = Object.freeze(['account_transfer', 'manual-batch', 'adjustment', 'opening_import']);
+//
+// «financial-event» سند رویدادی است که ردیف تراکنش ندارد — مورد صف که حسابدار سندش را
+// دستی زد، یا رویدادی که مستقیم سند خورد. رویدادی که ردیف تراکنش دارد (`journal_source`)
+// منبعش «transaction» است، پس شمردن این‌ها چیزی را دو بار نمی‌شمارد. بی‌این، روی دفتر
+// آزمایشی سایت صندوق در فهرست ۳۲٫۵۵ میلیون کمتر از کارتش بود.
+export const LEDGER_ONLY_SOURCES = Object.freeze(['account_transfer', 'manual-batch', 'adjustment', 'opening_import', 'financial-event']);
 export const LEDGER_ONLY_SOURCES_SQL = LEDGER_ONLY_SOURCES.map((source) => `'${source}'`).join(',');
 
 const BALANCE_SQL = `SELECT accounts.id,accounts.name,COALESCE(accounts.allow_negative,0) AS allowNegative,
