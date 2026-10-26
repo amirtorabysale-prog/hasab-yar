@@ -170,6 +170,13 @@ export function ChartPage({ access, notify, initialTab = '', onTabChange }) {
     {!loading && !mapping?.chartInstalled && <div className="mt-5 rounded-xl border border-accent/40 bg-warn-bg px-4 py-4">
       <p className="font-bold text-accent">هنوز کدینگی برای این دفتر تعریف نشده است.</p>
       <p className="mt-1 text-[13px] leading-6 text-muted">یا کدینگ پیشنهادی حساب‌یار را نصب کن و بعد ویرایشش کن، یا فایل کدینگ خود دفتر را وارد کن. کدینگ پیشنهادی یک نقطهٔ شروع است، نه کدینگ رسمی.</p>
+      {/* ورود بکاپ پارسیان فقط در دفتر بی‌کدینگ ممکن است و خودش کدینگ را می‌سازد. نصب کدینگ
+          پیشنهادی پیش از آن، راه ورود بکاپ را برای همیشه در این دفتر می‌بست. */}
+      <p className="mt-2 rounded-lg border border-line bg-paper px-3 py-2 text-[13px] leading-6">
+        <b>بکاپ پارسیان داری؟</b> اول همان را از برگهٔ «بکاپ پارسیان» وارد کن؛ کدینگ، معین‌ها و تفصیلی‌ها را خودش می‌سازد.
+        نصب کدینگ پیشنهادی یا ورود فایل کدینگ پیش از آن، ورود بکاپ را در این دفتر می‌بندد.
+        {tab !== 'parsian' && <button type="button" onClick={() => { setTab('parsian'); onTabChange?.('parsian'); }} className="tap mr-2 rounded-lg border border-line bg-surface px-3 text-[12px] font-bold">رفتن به بکاپ پارسیان</button>}
+      </p>
       {canManage && <button onClick={() => run(() => api.installChartTemplate(), 'کدینگ پیشنهادی نصب شد.')} className="tap mt-3 rounded-lg bg-accent px-4 font-bold text-on-fill hover:bg-accent/90 active:bg-accent/80">نصب کدینگ پیشنهادی</button>}
     </div>}
 

@@ -4,7 +4,7 @@
 // احراز هویت، CSRF و مرز نقش و تجربه پیش از این‌ها در index.js اعمال می‌شود.
 
 import {
-  activeWorkspaceDatabase, applyChartSuggestions, chartOverview, dimensionReport, importChart, installChartTemplate, importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, attachCounterpartyAnalytics, clearChartMappings, mapLedgerAccount, mapLedgerAccountsInBulk, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry, saveAccountingTransferSettings,
+  activeWorkspaceDatabase, amountRecordsInLedger, applyChartSuggestions, chartOverview, dimensionReport, importChart, installChartTemplate, importAnalyticsFile, importChartFile, importOpeningBalanceFile, importTemplateWorkbook, attachCounterpartyAnalytics, clearChartMappings, mapLedgerAccount, mapLedgerAccountsInBulk, saveAnalytic, saveChartAccountEntry, saveCostCenterEntry, saveAccountingTransferSettings,
 } from '../db.js';
 import { commitParsianBackup, previewParsianBackup } from '../parsianImport.js';
 import { commitParsianPhaseB, previewParsianPhaseB } from '../parsianPhaseB.js';
@@ -58,9 +58,13 @@ export function registerChartRoutes(app) {
   app.post('/api/import/parsian-backup/preview', parsianBackupUpload.single('file'), (request, response, next) => {
     try {
       if (!request.file) return response.status(400).json({ code: 'IMPORT_FILE_MISSING', message: 'فایلی فرستاده نشد.' });
-      return response.json(previewParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname, {
+      const preview = previewParsianBackup(activeWorkspaceDatabase(), request.file.buffer, request.file.originalname, {
         amountUnit: request.body?.amountUnit, kolTypes: request.body?.kolTypes,
-      }));
+      });
+      // واحد دفتر فقط پیش از اولین مبلغ عوض می‌شود؛ رابط پیشنهاد «ریالی کن» را فقط وقتی
+      // نشان می‌دهد که واقعاً ممکن است.
+      if (preview.unitAdvice) preview.unitAdvice.canSwitch = Object.keys(amountRecordsInLedger()).length === 0;
+      return response.json(preview);
     } catch (error) { return next(error); }
   });
   app.post('/api/import/parsian-backup/commit', parsianBackupUpload.single('file'), (request, response, next) => {

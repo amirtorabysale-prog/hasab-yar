@@ -1,4 +1,5 @@
 import { buildWorkbook } from './spreadsheet.js';
+import { convertAmount, currentAmountUnit, unitLabel } from '../shared/amountUnit.js';
 import { DEFAULT_TRANSFER_COLUMNS, applyTransferTemplate } from './transferTemplates.js';
 import { createHash } from 'node:crypto';
 import { buildZipArchive } from './archive.js';
@@ -286,9 +287,14 @@ export function normalizeTransferFileFormat(value) {
  * دور می‌ریزد و خودش شماره می‌دهد؛ بدون این، سند پارسیان به سند حساب‌یار قابل
  * ردیابی نیست.
  */
-export function parsianDocumentsFromJournal({ journalRows = [], timeZone = 'Asia/Tehran', amountUnit = 'toman' } = {}) {
-  const multiplier = amountUnit === 'rial' ? 10 : 1;
+export function parsianDocumentsFromJournal({ journalRows = [], timeZone = 'Asia/Tehran', amountUnit = 'toman', ledgerUnit = currentAmountUnit() } = {}) {
   const errors = [];
+  // مبلغ ذخیره‌شده به واحد دفتر است؛ به واحد فایل فقط دقیق تبدیل می‌شود.
+  const toFileUnit = (value, position) => {
+    const converted = convertAmount(Number(value || 0), ledgerUnit, amountUnit);
+    if (converted == null) errors.push(`${position}: مبلغ ${Number(value).toLocaleString('fa-IR')} ${unitLabel(ledgerUnit)} به ${unitLabel(amountUnit)}ِ صحیح تبدیل نمی‌شود؛ واحد مبلغ فایل انتقال را ${unitLabel(ledgerUnit)} بگذار.`);
+    return converted ?? 0;
+  };
   const order = [];
   const byEntry = new Map();
 
@@ -326,8 +332,8 @@ export function parsianDocumentsFromJournal({ journalRows = [], timeZone = 'Asia
 
     byEntry.get(item.entryId).lines.push({
       kolCode, moeenCode, tafsiliCode,
-      debit: Number(item.debit || 0) * multiplier,
-      credit: Number(item.credit || 0) * multiplier,
+      debit: toFileUnit(item.debit, position),
+      credit: toFileUnit(item.credit, position),
       comment: String(item.lineDescription || item.memo || '').slice(0, 100),
     });
   });
@@ -434,8 +440,8 @@ export function buildAccountingTransferFile({ period, journalRows = [], settings
     ['مقصد', targetLabel || settings.targetSystem || ''],
     ['واحد مبلغ ستون‌های مبلغ', table.amountUnitLabel],
     ['تعداد ردیف', table.rows.length],
-    ['جمع بدهکار (تومان)', table.totals.debitToman],
-    ['جمع بستانکار (تومان)', table.totals.creditToman],
+    [`جمع بدهکار (${unitLabel(table.ledgerUnit)})`, table.totals.debitLedger],
+    [`جمع بستانکار (${unitLabel(table.ledgerUnit)})`, table.totals.creditLedger],
     [`جمع بدهکار (${table.amountUnitLabel})`, table.totals.debit],
     [`جمع بستانکار (${table.amountUnitLabel})`, table.totals.credit],
     ['قالب کنترل‌شده', settings.templateName || '—'],
@@ -450,7 +456,10 @@ export function buildAccountingTransferFile({ period, journalRows = [], settings
   };
 }
 
-export function buildAccountingTransferCsv({ period, journalRows = [], settings = {}, mappings = [], timeZone = 'Asia/Tehran' } = {}) {
+export function buildAccountingTransferCsv({ period, journalRows = [], settings = {}, mappings = [], timeZone = 'Asia/Tehran', ledgerUnit = currentAmountUnit() } = {}) {
+  // ستون تومان در دفتر ریالی فقط وقتی عدد صحیح است که مبلغ بر ۱۰ بخش‌پذیر باشد؛ وگرنه
+  // همان یک رقم اعشار نوشته می‌شود تا ستون ریال، که همیشه دقیق است، مرجع بماند.
+  const toman = (value) => convertAmount(Number(value || 0), ledgerUnit, 'toman') ?? Number((Number(value || 0) / 10).toFixed(1));
   const mappingByAccount = new Map(mappings.map((item) => [item.ledgerAccountId, item]));
   const lineNumbers = new Map();
   const headers = [
@@ -468,8 +477,8 @@ export function buildAccountingTransferCsv({ period, journalRows = [], settings 
       item.entryKind, item.sourceType, item.sourceId, item.memo, item.lineDescription || '', item.accountCode,
       item.accountName, item.chartCode || '', item.chartName || '',
       item.analyticCode || '', item.analyticName || '', item.costCenterCode || '', item.costCenterName || '',
-      Number(item.debit || 0), Number(item.credit || 0), Number(item.debit || 0) * 10,
-      Number(item.credit || 0) * 10, mapping.targetCode || '', mapping.targetName || '',
+      toman(item.debit), toman(item.credit), convertAmount(Number(item.debit || 0), ledgerUnit, 'rial'),
+      convertAmount(Number(item.credit || 0), ledgerUnit, 'rial'), mapping.targetCode || '', mapping.targetName || '',
     ];
   });
   const body = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');

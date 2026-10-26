@@ -42,6 +42,9 @@ export const CHART_ROLES = Object.freeze([
   'accumulated-depreciation', 'depreciation-expense',
   // تنخواه پولِ شرکت است که دست یک نفر است؛ نه صندوق اصلی است و نه بانک.
   'petty-cash',
+  // حساب انتظامی (و طرف آن) از بکاپ پارسیان: در ترازنامه و سود و زیان نیست و هیچ
+  // حساب روزمره‌ای به آن نگاشت نمی‌شود.
+  'memorandum',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({

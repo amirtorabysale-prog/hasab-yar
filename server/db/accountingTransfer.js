@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ACCOUNTING_TRANSFER_TARGETS, TRANSFER_FILE_FORMATS, accountingTransferReadiness, buildAccountingTransferFile, normalizeAccountingTransferTarget, normalizeTransferFileFormat } from '../accountingTransfer.js';
 import { DEFAULT_TRANSFER_COLUMNS, TRANSFER_FIELDS, amountUnitLabel, normalizeAmountUnit, normalizeTransferColumns } from '../transferTemplates.js';
-import { activeWorkspaceDatabase, audit, currentWorkspace, db, invalidInput, parseStoredJson, userIdentity } from './core.js';
+import { activeWorkspaceDatabase, audit, currentWorkspace, db, invalidInput, ledgerAmountUnit, parseStoredJson, userIdentity } from './core.js';
+import { convertAmount } from '../../shared/amountUnit.js';
 import { chartMappingOverview } from '../chartOfAccounts.js';
 import { monthlyAccountantPackage } from './collaboration.js';
 import { readParsianTemplate } from '../parsianAccessFile.js';
@@ -503,9 +504,9 @@ export function createAccountingTransferValidation(batchId, values = {}) {
   const note = String(values.note || '').trim().slice(0, 1600);
   if (softwareName.length < 2 || softwareVersion.length < 1 || testCompanyLabel.length < 2) throw invalidInput('نام نرم‌افزار، نسخه و برچسب شرکت آزمایشی را کامل وارد کن.');
   if (outcome === 'failed' && errorSummary.length < 5) throw invalidInput('برای آزمون ناموفق، خلاصهٔ خطا را کامل وارد کن.');
-  const multiplier = amountUnit === 'rial' ? 10 : 1;
-  const expectedDebitTotal = Number(batch.debitTotal) * multiplier;
-  const expectedCreditTotal = Number(batch.creditTotal) * multiplier;
+  // جمع بسته به واحد دفتر ذخیره شده؛ به واحدی که آزمون با آن گزارش شده دقیق تبدیل می‌شود.
+  const expectedDebitTotal = convertAmount(Number(batch.debitTotal), ledgerAmountUnit(), amountUnit);
+  const expectedCreditTotal = convertAmount(Number(batch.creditTotal), ledgerAmountUnit(), amountUnit);
   const exactMatch = importedRows === Number(batch.rowCount) && rejectedRows === 0
     && importedDebitTotal === expectedDebitTotal && importedCreditTotal === expectedCreditTotal;
   if (outcome === 'passed' && !exactMatch) throw Object.assign(new Error('آزمون موفق فقط وقتی ثبت می‌شود که تعداد ردیف، ردیف ردشده و جمع بدهکار/بستانکار دقیقاً با بسته برابر باشد.'), {

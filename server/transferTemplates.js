@@ -5,6 +5,8 @@
 // نرم‌افزار من این ستون‌ها را با این نام و این ترتیب می‌خواهد»، و حساب‌یار
 // دقیقاً همان را بسازد. این ماژول همان قرارداد است.
 
+import { convertAmount, currentAmountUnit } from '../shared/amountUnit.js';
+
 const AMOUNT_UNITS = Object.freeze({
   toman: Object.freeze({ id: 'toman', label: 'تومان', multiplier: 1 }),
   rial: Object.freeze({ id: 'rial', label: 'ریال', multiplier: 10 }),
@@ -133,22 +135,40 @@ export function parsianHCode({ kolCode = '', moeenCode = '', tafsiliCode = '' } 
   return `${segment(tafsiliCode) || '0'}-${moeen}-${kol}`;
 }
 
-function amountFor(field, row, unit) {
-  const toman = Number((field.startsWith('debit') ? row.debit : row.credit) || 0);
-  const multiplier = field === 'debit' || field === 'credit'
-    ? AMOUNT_UNITS[normalizeAmountUnit(unit)].multiplier
-    : AMOUNT_UNITS[FIELD_BY_ID.get(field).unit].multiplier;
-  return toman * multiplier;
+/**
+ * مبلغ ذخیره‌شده به واحد دفتر است (تومان یا ریال)؛ به واحد ستون فایل دقیق تبدیل
+ * می‌شود. دفتر ریالی که ۷٬۳۸۴ ریال دارد، ستون تومان ندارد: گرد کردن یعنی فایلی که
+ * با دفتر نمی‌خواند، پس به‌جایش می‌گوییم واحد فایل را ریال بگذار.
+ */
+function exactAmount(stored, ledgerUnit, target) {
+  const value = convertAmount(Number(stored || 0), ledgerUnit, target);
+  if (value == null) {
+    throw templateError(`مبلغ ${Number(stored).toLocaleString('fa-IR')} ${amountUnitLabel(ledgerUnit)} دفتر به ${amountUnitLabel(target)}ِ صحیح تبدیل نمی‌شود؛ واحد مبلغ فایل انتقال را ${amountUnitLabel(ledgerUnit)} بگذار.`, 'TRANSFER_AMOUNT_NOT_EXACT', 422);
+  }
+  return value;
+}
+
+function amountFor(field, row, unit, ledgerUnit, reviewLayout) {
+  const stored = Number((field.startsWith('debit') ? row.debit : row.credit) || 0);
+  const target = field === 'debit' || field === 'credit' ? normalizeAmountUnit(unit) : FIELD_BY_ID.get(field).unit;
+  // قالب بررسیِ دوواحدی (پیش‌فرض) ستون ریال دقیق را کنارش دارد؛ آنجا ستون تومانِ
+  // دفتر ریالی با یک رقم اعشار نوشته می‌شود. قالبی که فقط تومان می‌خواهد، گرد نمی‌شود.
+  if (reviewLayout && target === 'toman') {
+    return convertAmount(stored, ledgerUnit, 'toman') ?? Number((stored / 10).toFixed(1));
+  }
+  return exactAmount(stored, ledgerUnit, target);
 }
 
 /**
  * ردیف‌های دفتر کل را طبق قالب به جدول خروجی تبدیل می‌کند.
  * خروجی: { headers, rows, totals } — منطق خالص و بدون فایل.
  */
-export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amountUnit = 'toman', journalRows = [], period = '', mappings = [], persianDate = () => '' } = {}) {
+export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amountUnit = 'toman', journalRows = [], period = '', mappings = [], persianDate = () => '', ledgerUnit = currentAmountUnit() } = {}) {
   const mappingByAccount = new Map(mappings.map((item) => [item.ledgerAccountId, item]));
   const lineNumbers = new Map();
   const unit = normalizeAmountUnit(amountUnit);
+  const fixedUnits = new Set(columns.map(({ field }) => FIELD_BY_ID.get(field)).filter((spec) => spec?.kind === 'amount' && spec.unit).map((spec) => spec.unit));
+  const reviewLayout = fixedUnits.has('toman') && fixedUnits.has('rial');
 
   const rows = journalRows.map((item) => {
     const lineNumber = (lineNumbers.get(item.entryId) || 0) + 1;
@@ -171,7 +191,7 @@ export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amou
       targetCode: mapping.targetCode || '', targetName: mapping.targetName || '',
     };
     return columns.map(({ field }) => (
-      FIELD_BY_ID.get(field).kind === 'amount' ? amountFor(field, item, unit) : source[field] ?? ''
+      FIELD_BY_ID.get(field).kind === 'amount' ? amountFor(field, item, unit, ledgerUnit, reviewLayout) : source[field] ?? ''
     ));
   });
 
@@ -182,10 +202,13 @@ export function applyTransferTemplate({ columns = DEFAULT_TRANSFER_COLUMNS, amou
     rows,
     amountUnit: unit,
     amountUnitLabel: amountUnitLabel(unit),
+    ledgerUnit: normalizeAmountUnit(ledgerUnit),
     totals: {
-      debitToman: totals.debit, creditToman: totals.credit,
-      debit: totals.debit * AMOUNT_UNITS[unit].multiplier,
-      credit: totals.credit * AMOUNT_UNITS[unit].multiplier,
+      // جمع به واحد خود دفتر، و به تومان اگر دقیق تبدیل شود.
+      debitLedger: totals.debit, creditLedger: totals.credit,
+      debitToman: convertAmount(totals.debit, ledgerUnit, 'toman'), creditToman: convertAmount(totals.credit, ledgerUnit, 'toman'),
+      debit: exactAmount(totals.debit, ledgerUnit, unit),
+      credit: exactAmount(totals.credit, ledgerUnit, unit),
     },
   };
 }

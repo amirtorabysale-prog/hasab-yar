@@ -37,11 +37,33 @@ import {
 import { ledgerAccountForChart } from './ledgerImport.js';
 import { assertAccountingPeriodOpen, createJournalBatch, ensureParsianSourceSchema, nextLedgerCode, periodForDate } from './accounting.js';
 import { persianToISO } from '../shared/persianDate.js';
+import { AMOUNT_UNITS, convertAmount, normalizeAmountUnit, unitLabel } from '../shared/amountUnit.js';
 
 const JOURNAL_CHUNK = 200;
 const TYPE_LABELS = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
-const AMOUNT_UNITS = { rial: { label: 'ریال', divisor: 10 }, toman: { label: 'تومان', divisor: 1 } };
+// حساب انتظامی در ترازنامه و سود و زیان نیست. حساب‌یار نوع جدایی برایش ندارد؛ با نوعِ
+// طرفش (بدهکار → دارایی، بستانکار → بدهی) و نقش «memorandum» وارد می‌شود تا ماندهٔ
+// طبیعی‌اش درست بماند و هیچ نقش عملیاتی‌ای به آن نگاشت نشود.
+const MEMORANDUM = 'memorandum';
+const CHOICE_LABELS = { ...TYPE_LABELS, [MEMORANDUM]: 'انتظامی' };
 const JALALI = /^(\d{4})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
+
+/** واحد مبلغ دفتر مقصد؛ دفتر ریالی بکاپ ریالی را بی‌هیچ تبدیلی و دقیق می‌گیرد. */
+export function ledgerUnitOf(database) {
+  try { return normalizeAmountUnit(database.prepare("SELECT value FROM settings WHERE key='amountUnit'").get()?.value); }
+  catch { return 'toman'; }
+}
+
+/** کل انتظامی پارسیان: گروه ۹۱ و ۹۲ («حساب‌های انتظامی» و «طرف حساب‌های انتظامی»). */
+function isMemorandumKol(kol) {
+  const family = Math.floor(Number(kol.group) / 10);
+  return family === 9 || /انتظامي|انتظامی|انتضامي|انتضامی/.test(`${kol.groupName || ''} ${kol.name || ''}`);
+}
+
+/** طرف حساب انتظامی: «طرف حساب‌های انتظامی» (گروه ۹۲) بستانکار است، بقیه بدهکار. */
+function memorandumType(kol) {
+  return Number(kol.group) === 92 || /طرف/.test(`${kol.groupName || ''} ${kol.name || ''}`) ? 'liability' : 'asset';
+}
 
 // حساب تعیین‌شده در تنظیمات پارسیان ← نقش حساب‌یار، با نوعی که نقش لازم دارد.
 const DESIGNATED_ROLES = {
@@ -164,21 +186,17 @@ const JALALI_TO_ISO = (date) => {
   return match ? persianToISO(Number(match[1]), Number(match[2]), Number(match[3])) : null;
 };
 
-/** مبلغ فایل به تومانِ حساب‌یار؛ null یعنی عیناً قابل تبدیل نیست. */
-function toToman(value, divisor) {
-  if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
-  return value % divisor === 0 ? value / divisor : null;
-}
-
 /**
  * ساختن طرح ورود از بکاپ رمزگشایی‌شده. هیچ چیزِ این تابع به دیتابیس دست
  * ندارد؛ همان طرح در پیش‌نمایش نشان داده می‌شود و همان در ثبت اجرا می‌شود.
  *
+ * amountUnit: واحد مبلغ‌های فایل پارسیان. ledgerUnit: واحد دفتر مقصد. مبلغ فقط
+ * دقیق تبدیل می‌شود؛ ریالی که به تومانِ صحیح درنیاید گرد نمی‌شود و سندش می‌ماند.
  * kolTypes: نوعی که حسابدار برای کل‌های «نیازمند انتخاب» برگزیده، با کلید کد کل.
  */
-export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {}) {
+export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {}, ledgerUnit = 'toman' } = {}) {
   const unit = parsianAmountUnit(amountUnit);
-  const { divisor } = AMOUNT_UNITS[unit];
+  const targetUnit = normalizeAmountUnit(ledgerUnit);
   const warnings = [...parsed.warnings];
   const kolByCode = new Map();
   const chartRows = [];
@@ -191,16 +209,19 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
       return;
     }
     const resolved = parsianKolType(row);
-    const chosen = Object.hasOwn(TYPE_LABELS, kolTypes[row.code]) ? kolTypes[row.code] : null;
-    const type = resolved.type || chosen;
+    const chosen = Object.hasOwn(CHOICE_LABELS, kolTypes[row.code]) ? kolTypes[row.code] : null;
+    const memorandum = chosen === MEMORANDUM;
+    const type = resolved.type || (memorandum ? memorandumType(row) : chosen);
     if (!resolved.type) {
-      kolTypeChoices.push({ code: row.code, name: row.name, reason: resolved.reason, suggestion: kolAccountType(row.code), chosen });
+      // کل انتظامی با هیچ‌کدام از پنج نوع جور نیست؛ پیشنهادش «انتظامی» است، نه یک نوع ترازنامه‌ای.
+      const suggestion = isMemorandumKol(row) ? MEMORANDUM : kolAccountType(row.code);
+      kolTypeChoices.push({ code: row.code, name: row.name, reason: resolved.reason, suggestion, chosen, memorandumSide: isMemorandumKol(row) ? memorandumType(row) : null });
     }
-    kolByCode.set(row.code, { name: row.name, type });
+    kolByCode.set(row.code, { name: row.name, type, memorandum });
     chartRows.push({
       rowNumber: index + 1, code: String(row.code), name: row.name, level: 'general',
       type, typeSource: resolved.type ? 'parsian' : chosen ? 'accountant' : 'pending',
-      parentCode: '', levelCode: String(row.code),
+      parentCode: '', levelCode: String(row.code), ...(memorandum ? { role: MEMORANDUM } : {}),
     });
   });
 
@@ -226,6 +247,7 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
     chartRows.push({
       rowNumber: parsed.chart.kol.length + index + 1, code: composite, name: row.name,
       level: 'subsidiary', type: parent.type, parentCode: String(row.kol), levelCode: String(row.code),
+      ...(parent.memorandum ? { role: MEMORANDUM } : {}),
     });
   });
 
@@ -275,15 +297,21 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
 
     const lines = [];
     const lineIssues = [];
+    let unitIssues = 0;
     voucher.lines.forEach((line, index) => {
       if (!line.bed && !line.bes) { skippedZeroRows += 1; return; }
       const label = `ردیف ${index + 1}${line.comment ? ` «${line.comment.slice(0, 60)}»` : ''}`;
       if (line.bed < 0 || line.bes < 0) { lineIssues.push(`${label}: مبلغ منفی پذیرفته نیست.`); return; }
       if (line.bed > 0 && line.bes > 0) { lineIssues.push(`${label}: هم بدهکار دارد هم بستانکار.`); return; }
-      const debit = toToman(line.bed, divisor);
-      const credit = toToman(line.bes, divisor);
+      const amount = line.bed || line.bes;
+      if (!Number.isInteger(amount)) { lineIssues.push(`${label}: مبلغ ${amount.toLocaleString('en-US')} عدد صحیح نیست.`); return; }
+      const debit = convertAmount(line.bed, unit, targetUnit);
+      const credit = convertAmount(line.bes, unit, targetUnit);
       if (debit == null || credit == null) {
-        lineIssues.push(`${label}: مبلغ ${(line.bed || line.bes).toLocaleString('en-US')} ${unit === 'rial' ? 'به تومانِ صحیح تبدیل نمی‌شود؛ واحد فایل را کنترل کن' : 'عدد صحیح نیست'}.`);
+        // سند متوازن است؛ فقط مبلغ ریالی در دفتر تومانی جا نمی‌شود. راهش ریالی کردن
+        // دفتر است، نه عوض کردن واحد فایل (که همهٔ مبلغ‌ها را ده برابر می‌کند).
+        unitIssues += 1;
+        lineIssues.push(`${label}: ${amount.toLocaleString('fa-IR')} ${unitLabel(unit)} در دفتر ${unitLabel(targetUnit)}ی به عدد صحیح درنمی‌آید.`);
         return;
       }
       const composite = moeenIndex.get(`${line.kol}:${line.moeen}`);
@@ -306,6 +334,10 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
       lineCount: voucher.lines.length, validLineCount: lines.length, lines, lineIssues, issues,
       memo: `[بکاپ پارسیان] سند ${voucher.sanad} — ${voucher.date}${firstComment ? ` — ${firstComment.slice(0, 120)}` : ''}`,
       importable: Boolean(voucher.balanced && dateISO && lines.length >= 2 && !lineIssues.length && !issues.length),
+      // چرا وارد نمی‌شود: نامتوازن در خود پارسیان، فقط واحد، یا ایراد دیگر.
+      blockReason: !voucher.balanced ? 'unbalanced'
+        : unitIssues && unitIssues === lineIssues.length && !issues.length ? 'unit'
+          : (lineIssues.length || issues.length || lines.length < 2 || !dateISO) ? 'invalid' : null,
     });
   }
 
@@ -317,23 +349,26 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
   const dates = importable.map((voucher) => voucher.date).sort();
   const pendingKolTypes = kolTypeChoices.filter((choice) => !choice.chosen);
   return {
-    amountUnit: unit, chartRows, analyticSpecs, vouchers, warnings, kolTypeChoices, pendingKolTypes, designatedRoles,
+    amountUnit: unit, ledgerUnit: targetUnit, chartRows, analyticSpecs, vouchers, warnings, kolTypeChoices, pendingKolTypes, designatedRoles,
     summary: {
       amountUnit: unit,
+      ledgerUnit: targetUnit,
       kolCount: parsed.chart.kol.length,
       moeenCount: parsed.chart.moeen.length,
       tafsiliCount: parsed.chart.tafsili.length,
       chartRowsCount: chartRows.length,
       voucherCount: vouchers.length,
       importableCount: importable.length,
-      unbalancedCount: vouchers.filter((voucher) => !voucher.balanced).length,
+      unbalancedCount: vouchers.filter((voucher) => voucher.blockReason === 'unbalanced').length,
+      unitBlockedCount: vouchers.filter((voucher) => voucher.blockReason === 'unit').length,
+      invalidCount: vouchers.filter((voucher) => voucher.blockReason === 'invalid').length,
       pendingKolTypeCount: pendingKolTypes.length,
       fileRowCount: parsed.documents.rows.length,
       lineCount: importable.reduce((sum, voucher) => sum + voucher.lines.length, 0),
-      // جمع‌ها به واحد خود فایل؛ جمع ثبت‌شدنی به تومان جداست.
+      // جمع‌ها به واحد خود فایل؛ جمع ثبت‌شدنی به واحد دفتر جداست.
       bedTotal: importable.reduce((sum, voucher) => sum + voucher.bedTotal, 0),
       besTotal: importable.reduce((sum, voucher) => sum + voucher.besTotal, 0),
-      tomanTotal: importable.reduce((sum, voucher) => sum + voucher.debitTotal, 0),
+      ledgerTotal: importable.reduce((sum, voucher) => sum + voucher.debitTotal, 0),
       sanadMin: vouchers.length ? Math.min(...vouchers.map((voucher) => voucher.sanad)) : null,
       sanadMax: vouchers.length ? Math.max(...vouchers.map((voucher) => voucher.sanad)) : null,
       dateMin: dates[0] || null,
@@ -345,7 +380,7 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {} } = {
 function voucherPreview(voucher) {
   return {
     sanad: voucher.sanad, date: voucher.date, dateISO: voucher.dateISO,
-    balanced: voucher.balanced, importable: voucher.importable,
+    balanced: voucher.balanced, importable: voucher.importable, blockReason: voucher.blockReason,
     bedTotal: voucher.bedTotal, besTotal: voucher.besTotal,
     lineCount: voucher.lineCount, validLineCount: voucher.validLineCount,
     issues: voucher.issues, lineIssues: voucher.lineIssues, memo: voucher.memo,
@@ -362,26 +397,38 @@ function parseKolTypes(value) {
 /** پیش‌نمایش کامل: بدون هیچ نوشتنی در دفتر. */
 export function previewParsianBackup(database, buffer, fileName, { amountUnit, kolTypes } = {}) {
   const unit = parsianAmountUnit(amountUnit);
+  const ledgerUnit = ledgerUnitOf(database);
   const parsed = parseParsianBackup(buffer, { fileName });
-  const plan = buildParsianImportPlan(parsed, { amountUnit: unit, kolTypes: parseKolTypes(kolTypes) });
+  const plan = buildParsianImportPlan(parsed, { amountUnit: unit, kolTypes: parseKolTypes(kolTypes), ledgerUnit });
   const raw = rawLedgerStatus(database);
+  const typeLabel = (row) => (row.role === MEMORANDUM ? `انتظامی (${row.type === 'asset' ? 'بدهکار' : 'بستانکار'})` : TYPE_LABELS[row.type] || 'نیازمند انتخاب');
   return {
     meta: parsed.meta,
     rawLedger: raw,
     summary: plan.summary,
+    ledgerUnit,
+    // فایل ریالی در دفتر تومانی: ریالی که به تومانِ صحیح درنیاید سندش را نگه می‌دارد.
+    // راه درست ریالی کردن دفتر است؛ رابط آن را پیشنهاد می‌دهد.
+    unitAdvice: unit !== ledgerUnit ? {
+      fileUnit: unit, ledgerUnit, fileUnitLabel: unitLabel(unit), ledgerUnitLabel: unitLabel(ledgerUnit),
+      blockedVouchers: plan.summary.unitBlockedCount,
+    } : null,
     warnings: plan.warnings,
     designatedRoles: plan.designatedRoles,
     kolTypeChoices: plan.kolTypeChoices.map((choice) => ({
-      ...choice, suggestionLabel: choice.suggestion ? TYPE_LABELS[choice.suggestion] : '',
+      ...choice,
+      suggestionLabel: choice.suggestion === MEMORANDUM
+        ? `انتظامی (${choice.memorandumSide === 'liability' ? 'بستانکار' : 'بدهکار'})`
+        : choice.suggestion ? TYPE_LABELS[choice.suggestion] : '',
     })),
     chart: {
       kol: plan.chartRows.filter((row) => row.level === 'general').map((row) => ({
         code: row.code, name: row.name, type: row.type, typeSource: row.typeSource,
-        typeLabel: TYPE_LABELS[row.type] || 'نیازمند انتخاب',
+        typeLabel: typeLabel(row),
       })),
       moeen: plan.chartRows.filter((row) => row.level === 'subsidiary').map((row) => ({
         code: row.code, kolCode: row.parentCode, moeenCode: row.levelCode,
-        name: row.name, typeLabel: TYPE_LABELS[row.type] || 'نیازمند انتخاب',
+        name: row.name, typeLabel: typeLabel(row),
       })),
       tafsili: plan.analyticSpecs.map((spec) => ({
         kol: spec.kol, moeen: spec.moeen, code: spec.code, name: spec.name,
@@ -422,7 +469,8 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     });
   }
   const parsed = parseParsianBackup(buffer, { fileName });
-  const plan = buildParsianImportPlan(parsed, { amountUnit: unit, kolTypes: parseKolTypes(kolTypes) });
+  const ledgerUnit = ledgerUnitOf(database);
+  const plan = buildParsianImportPlan(parsed, { amountUnit: unit, kolTypes: parseKolTypes(kolTypes), ledgerUnit });
   if (plan.pendingKolTypes.length) {
     throw parsianImportError(
       `نوع ${plan.pendingKolTypes.length} حساب کل از پارسیان روشن نیست؛ پیش از ورود نوعشان را انتخاب کن: ${plan.pendingKolTypes.map((choice) => `${choice.code} ${choice.name}`).join('، ')}`,
@@ -449,7 +497,7 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
         randomUUID(), parsed.meta.fileName, parsed.meta.sha256, status,
         plan.summary.kolCount, plan.summary.moeenCount, plan.summary.tafsiliCount,
         voucherCount, plan.summary.lineCount, plan.summary.voucherCount - importable.length,
-        plan.summary.tomanTotal, plan.summary.tomanTotal,
+        plan.summary.ledgerTotal, plan.summary.ledgerTotal,
         plan.summary.sanadMin, plan.summary.sanadMax, plan.summary.dateMin, plan.summary.dateMax,
         createdBy, String(note || '').slice(0, 400),
       );
@@ -521,7 +569,7 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     );
   }
 
-  logImport('complete', `ورود کامل: ${created.entries} سند پیش‌نویس، واحد فایل ${AMOUNT_UNITS[unit].label}.`, created.entries);
+  logImport('complete', `ورود کامل: ${created.entries} سند پیش‌نویس، واحد فایل ${unitLabel(unit)}، واحد دفتر ${unitLabel(ledgerUnit)}.`, created.entries);
   const skipped = plan.vouchers.filter((voucher) => !voucher.importable).map(voucherPreview);
   return {
     chart: chartResult,
@@ -529,8 +577,9 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     ledgerAccounts: ledgerIdByComposite.size,
     mappedOperational,
     designatedRoles: plan.designatedRoles,
-    journals: { entries: created.entries, documentNumbers: created.documentNumbers, total: created.total, unit: 'IRT' },
+    journals: { entries: created.entries, documentNumbers: created.documentNumbers, total: created.total, unit: ledgerUnit },
     amountUnit: unit,
+    ledgerUnit,
     skippedVouchers: skipped,
     summary: plan.summary,
   };

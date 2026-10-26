@@ -233,10 +233,23 @@ test('واحد ریال: مبلغ بر ۱۰ تقسیم می‌شود و مبلغ
   assert.equal(rial.vouchers.find((item) => item.sanad === 12).lines[0].debit, 117260000);
   const fee = rial.vouchers.find((item) => item.sanad === 20);
   assert.ok(!fee.importable);
-  assert.ok(fee.lineIssues.some((issue) => issue.includes('تومانِ صحیح')));
+  // سند متوازن است؛ فقط واحد جلویش را گرفته، نه «نامتوازن/نامعتبر».
+  assert.equal(fee.blockReason, 'unit');
+  assert.equal(rial.summary.unitBlockedCount, 1);
+  assert.ok(fee.lineIssues.some((issue) => issue.includes('در دفتر تومانی به عدد صحیح درنمی‌آید')));
+  assert.ok(!fee.lineIssues.some((issue) => issue.includes('واحد فایل را کنترل کن')));
   const toman = buildParsianImportPlan(parsed, { amountUnit: 'toman' });
   assert.ok(toman.vouchers.find((item) => item.sanad === 20).importable);
   assert.equal(toman.vouchers.find((item) => item.sanad === 12).lines[0].debit, 1172600000);
+  // همان فایل ریالی در دفتر ریالی بی‌هیچ تبدیل و دقیق وارد می‌شود.
+  const rialLedger = buildParsianImportPlan(parsed, { amountUnit: 'rial', ledgerUnit: 'rial' });
+  assert.ok(rialLedger.vouchers.find((item) => item.sanad === 20).importable);
+  assert.equal(rialLedger.vouchers.find((item) => item.sanad === 20).lines[0].debit, 7384);
+  assert.equal(rialLedger.vouchers.find((item) => item.sanad === 12).lines[0].debit, 1172600000);
+  assert.equal(rialLedger.summary.unitBlockedCount, 0);
+  // فایل تومانی در دفتر ریالی ده برابر و باز هم دقیق.
+  const tomanFileRialLedger = buildParsianImportPlan(parsed, { amountUnit: 'toman', ledgerUnit: 'rial' });
+  assert.equal(tomanFileRialLedger.vouchers.find((item) => item.sanad === 20).lines[0].debit, 73840);
 });
 
 test('پیش‌نمایش در دفتر خام چیزی نمی‌نویسد و کل‌های مبهم را با پیشنهاد نشان می‌دهد', () => {
