@@ -11,24 +11,26 @@ import {
 } from '../accounting.js';
 import {
   accountLedgerReport, agingReport, balanceSheetReport, cashFlowReport, costCenterReport, equityChangesReport, incomeStatementReport,
-  journalBookReport, ledgerControlsReport, personsReport, reportSheets, trialBalanceReport,
+  journalBookReport, ledgerControlsReport, ledgerYears, personsReport, reportSheets, trialBalanceReport,
 } from '../accounting/reports.js';
+import { approveImportedEntries, importedEntriesOverview } from '../db.js';
+import { requireRank } from './http.js';
 import { buildWorkbook } from '../spreadsheet.js';
 
 // گزارش‌های حسابداری: هر نام یک تابعِ خالص روی دفتر فعال است. پارامترها همان رشته‌های
 // پرس‌وجو هستند؛ اعتبارسنجی تاریخ و سطح درون خودِ گزارش است.
 const REPORTS = Object.freeze({
-  trial: (db, query, timeZone) => trialBalanceReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', includeZero: query.includeZero === '1', timeZone }),
-  ledger: (db, query, timeZone) => accountLedgerReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', key: query.key, analyticId: query.analyticId, timeZone }),
-  journal: (db, query, timeZone) => journalBookReport(db, { from: query.from, to: query.to, timeZone }),
-  'income-statement': (db, query, timeZone) => incomeStatementReport(db, { from: query.from, to: query.to, compare: query.compare === '1', timeZone }),
-  'balance-sheet': (db, query, timeZone) => balanceSheetReport(db, { to: query.to, compare: query.compare === '1', timeZone }),
-  'cash-flow': (db, query, timeZone) => cashFlowReport(db, { from: query.from, to: query.to, timeZone }),
-  'equity-changes': (db, query, timeZone) => equityChangesReport(db, { from: query.from, to: query.to, timeZone }),
-  persons: (db, query, timeZone) => personsReport(db, { to: query.to, timeZone }),
-  aging: (db, _query, timeZone) => agingReport(db, { timeZone }),
-  'cost-centers': (db, query, timeZone) => costCenterReport(db, { from: query.from, to: query.to, timeZone }),
-  controls: (db, query, timeZone) => ledgerControlsReport(db, { to: query.to, timeZone }),
+  trial: (db, query, timeZone) => trialBalanceReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', includeZero: query.includeZero === '1', includeDrafts: query.drafts === '1', timeZone }),
+  ledger: (db, query, timeZone) => accountLedgerReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', key: query.key, analyticId: query.analyticId, includeDrafts: query.drafts === '1', timeZone }),
+  journal: (db, query, timeZone) => journalBookReport(db, { from: query.from, to: query.to, includeDrafts: query.drafts === '1', timeZone }),
+  'income-statement': (db, query, timeZone) => incomeStatementReport(db, { from: query.from, to: query.to, compare: query.compare === '1', includeDrafts: query.drafts === '1', timeZone }),
+  'balance-sheet': (db, query, timeZone) => balanceSheetReport(db, { to: query.to, compare: query.compare === '1', includeDrafts: query.drafts === '1', timeZone }),
+  'cash-flow': (db, query, timeZone) => cashFlowReport(db, { from: query.from, to: query.to, includeDrafts: query.drafts === '1', timeZone }),
+  'equity-changes': (db, query, timeZone) => equityChangesReport(db, { from: query.from, to: query.to, includeDrafts: query.drafts === '1', timeZone }),
+  persons: (db, query, timeZone) => personsReport(db, { to: query.to, includeDrafts: query.drafts === '1', timeZone }),
+  aging: (db, query, timeZone) => agingReport(db, { includeDrafts: query.drafts === '1', timeZone }),
+  'cost-centers': (db, query, timeZone) => costCenterReport(db, { from: query.from, to: query.to, includeDrafts: query.drafts === '1', timeZone }),
+  controls: (db, query, timeZone) => ledgerControlsReport(db, { to: query.to, includeDrafts: query.drafts === '1', timeZone }),
 });
 const REPORT_TITLES = Object.freeze({
   trial: 'تراز آزمایشی', ledger: 'دفتر حساب', journal: 'دفتر روزنامه', 'income-statement': 'صورت سود و زیان', 'balance-sheet': 'ترازنامه',
@@ -41,6 +43,18 @@ export function registerAccountingRoutes(app) {
     try { return response.json(trialBalance(activeWorkspaceDatabase(), request.query.through)); }
     catch (error) { return next(error); }
   });
+  app.get('/api/accounting/reports/years', (_request, response, next) => {
+    try { return response.json(ledgerYears(activeWorkspaceDatabase(), { timeZone: getSettings().timezone || 'Asia/Tehran' })); }
+    catch (error) { return next(error); }
+  });
+  // ورودهای بکاپ پارسیان و تأیید یک‌جای سندهای سالمشان؛ کنترل‌کننده (مدیر به بالا).
+  app.get('/api/accounting/imports', (_request, response, next) => {
+    try { return response.json(importedEntriesOverview()); } catch (error) { return next(error); }
+  });
+  app.post('/api/accounting/imports/:sha/approve', (request, response, next) => {
+    if (!requireRank(request, response, 'manager')) return undefined;
+    try { return response.json(approveImportedEntries({ fileSha256: request.params.sha })); } catch (error) { return next(error); }
+  });
   app.get('/api/accounting/reports/:kind', (request, response, next) => {
     const build = REPORTS[request.params.kind];
     if (!build) return response.status(404).json({ code: 'REPORT_UNKNOWN', message: 'این گزارش وجود ندارد.' });
@@ -52,7 +66,8 @@ export function registerAccountingRoutes(app) {
     if (!build) return response.status(404).json({ code: 'REPORT_UNKNOWN', message: 'این گزارش وجود ندارد.' });
     try {
       const report = build(activeWorkspaceDatabase(), request.query, getSettings().timezone || 'Asia/Tehran');
-      const title = REPORT_TITLES[request.params.kind];
+      // گزارشِ با پیش‌نویس‌ها در نام فایل و شیت هم «غیرقطعی» است.
+      const title = `${report.provisional ? 'غیرقطعی - ' : ''}${REPORT_TITLES[request.params.kind]}`;
       const workbook = buildWorkbook(reportSheets(report, { columns: Number(request.query.columns) || 4, title }));
       response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-${request.params.kind}.xlsx"; filename*=UTF-8''${encodeURIComponent(title)}.xlsx`);

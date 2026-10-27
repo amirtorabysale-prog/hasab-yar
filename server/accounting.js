@@ -11,7 +11,7 @@ export {
 export {
   repairOperationalChartMapping, ensureTransferEntriesSchema, recordTransferBatchEntries,
   ensureParsianSourceSchema, exportedBatchOf, assertAccountingPeriodOpen, postJournalEntry,
-  reverseJournalEntry,
+  reverseJournalEntry, validateLines,
 } from './accounting/journalCore.js';
 export {
   syncTransactionJournal, postCapitalJournal, transactionJournalIsPlain, reverseTransactionJournal,

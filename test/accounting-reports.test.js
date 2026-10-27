@@ -273,3 +273,81 @@ test('دسترسی: «گزارش‌های حسابداری» زیر «گزارش
   const reportsGroup = visibleMenu(screensFor({ role: 'owner', experience: 'professional' })).find((group) => group.id === 'reports');
   assert.deepEqual(reportsGroup.items.map((item) => item.screen), ['report', 'accounting-reports']);
 });
+
+// ---------------------------------------------------------------------------
+// دفتری که از بکاپ پر شده (دفتر «آزمون بکاپ ریالی»، ۵ آبان ۱۴۰۵): همهٔ سندها پیش‌نویس و از ۱۴۰۳
+// ---------------------------------------------------------------------------
+
+/** همان شکلِ ورود بکاپ: سند انبوه پیش‌نویس، ثبت‌شده در `parsian_imported_entries`. */
+function importLike(db, byRole, sha, documents) {
+  const created = accounting.createJournalBatch(db, documents.map(([date, amount]) => ({
+    occurredAt: date, memo: '[بکاپ پارسیان] سند', lines: [{ accountId: byRole('bank'), debit: amount, credit: 0 }, { accountId: byRole('sales'), debit: 0, credit: amount }],
+  })), { createdBy: owner.id, timeZone: TZ });
+  accounting.ensureParsianSourceSchema(db);
+  created.entryIds.forEach((id, index) => db.prepare('INSERT INTO parsian_imported_entries (entry_id,sanad,file_sha256) VALUES (?,?,?)').run(id, index + 1, sha));
+  return created;
+}
+
+test('گزینهٔ «با پیش‌نویس‌ها»: پیش‌فرض خاموش؛ روشنش همه را می‌شمارد و گزارش را «غیرقطعی» علامت می‌زند', async () => {
+  await ledger('reports-drafts', ({ db, byRole }) => {
+    importLike(db, byRole, 'sha-drafts', [[day(1403, 7, 12), 10_000_000], [day(1403, 12, 30), 5_000_000]]);
+    const range = { from: day(1403, 1, 1), to: day(1403, 12, 30), timeZone: TZ };
+    const plain = reports.incomeStatementReport(db, range);
+    assert.equal(plain.totals.revenue, 0);
+    assert.equal(plain.provisional, undefined);
+    const withDrafts = reports.incomeStatementReport(db, { ...range, includeDrafts: true });
+    assert.deepEqual([withDrafts.totals.revenue, withDrafts.provisional, withDrafts.draftEntries], [15_000_000, true, 2]);
+    // همهٔ گزارش‌ها همین گزینه را دارند و قانون‌هایشان با پیش‌نویس‌ها هم برقرار است.
+    const sheet = reports.balanceSheetReport(db, { to: range.to, timeZone: TZ, includeDrafts: true });
+    assert.deepEqual([sheet.totals.difference, sheet.totals.currentYear, sheet.provisional], [0, 15_000_000, true]);
+    assert.equal(reports.trialBalanceReport(db, { ...range, includeDrafts: true }).totals.periodDebit, 15_000_000);
+    assert.equal(reports.cashFlowReport(db, { ...range, includeDrafts: true }).net, 15_000_000);
+    // کنترل‌ها همیشه از وضعیت واقعی می‌گویند.
+    assert.equal(reports.ledgerControlsReport(db, { to: range.to, timeZone: TZ }).pending[0].count, 2);
+    const [sheetRows] = reports.reportSheets(withDrafts);
+    assert.ok(sheetRows.rows.length > 1);
+  });
+});
+
+test('سال‌های دفتر: ۱۴۰۳ از بکاپ با تعداد قطعی و غیرقطعی', async () => {
+  await ledger('reports-years', ({ db, byRole, post }) => {
+    importLike(db, byRole, 'sha-years', [[day(1403, 7, 12), 1_000_000], [day(1403, 8, 1), 2_000_000]]);
+    post(day(1405, 2, 1), [{ accountId: byRole('cash'), debit: 1_000, credit: 0 }, { accountId: byRole('sales'), debit: 0, credit: 1_000 }]);
+    const { years } = reports.ledgerYears(db, { timeZone: TZ });
+    assert.deepEqual(years.map((item) => [item.year, item.approved, item.drafts]), [[1405, 1, 0], [1403, 0, 2]]);
+  });
+});
+
+test('تأیید یک‌جای سندهای بکاپ: از همان گردش تأیید؛ دورهٔ بسته و کنترل‌کنندهٔ دیگر رعایت می‌شوند', async () => {
+  const workspace = database.createWorkspace(owner.id, { name: 'reports-bulk', profileType: 'business' });
+  await database.runInWorkspace(workspace.id, { role: 'owner', userId: owner.id }, () => {
+    database.installChartTemplate();
+    const db = database.activeWorkspaceDatabase();
+    const byRole = (role) => db.prepare('SELECT la.id FROM ledger_accounts la JOIN chart_accounts ca ON ca.id=la.chart_account_id WHERE ca.role=? ORDER BY la.code LIMIT 1').get(role).id;
+    importLike(db, byRole, 'sha-bulk', [[day(1403, 7, 12), 10_000_000], [day(1403, 8, 2), 4_000_000], [day(1403, 9, 3), 6_000_000]]);
+    // دورهٔ آذر ۱۴۰۳ بسته است: سندش پیش‌نویس می‌ماند و دلیلش برمی‌گردد.
+    accounting.lockAccountingPeriod(db, '1403-09', owner.id);
+    const overview = database.importedEntriesOverview();
+    assert.deepEqual(overview.imports.map((item) => [item.fileSha256, item.total, item.pending]), [['sha-bulk', 3, 3]]);
+    const result = database.approveImportedEntries({ fileSha256: 'sha-bulk' });
+    assert.deepEqual([result.approved, result.skipped.length, result.selfApproved], [2, 1, 2]);
+    assert.match(result.skipped[0].reason, /بسته/);
+    const states = db.prepare("SELECT je.approval_state AS state,COUNT(*) AS n FROM parsian_imported_entries pie JOIN journal_entries je ON je.id=pie.entry_id GROUP BY je.approval_state ORDER BY state").all().map((row) => [row.state, row.n]);
+    assert.deepEqual(states, [['approved', 2], ['draft', 1]]);
+    assert.equal(reports.incomeStatementReport(db, { from: day(1403, 1, 1), to: day(1403, 12, 30), timeZone: TZ }).totals.revenue, 14_000_000);
+    // دوباره: کاری نمی‌ماند جز همان سند دورهٔ بسته.
+    assert.deepEqual(database.approveImportedEntries({ fileSha256: 'sha-bulk' }).approved, 0);
+  });
+  // دفتری که کنترل‌کنندهٔ دیگری دارد: واردکننده سند خودش را تأیید نمی‌کند.
+  const shared = database.createWorkspace(owner.id, { name: 'reports-bulk-checker', profileType: 'business' });
+  database.addWorkspaceMember(shared.id, { username: 'second-checker', displayName: 'کنترل‌کننده', role: 'manager', temporaryPassword: 'checker-strong-password-5511' });
+  await database.runInWorkspace(shared.id, { role: 'owner', userId: owner.id }, () => {
+    database.installChartTemplate();
+    const db = database.activeWorkspaceDatabase();
+    const byRole = (role) => db.prepare('SELECT la.id FROM ledger_accounts la JOIN chart_accounts ca ON ca.id=la.chart_account_id WHERE ca.role=? ORDER BY la.code LIMIT 1').get(role).id;
+    importLike(db, byRole, 'sha-shared', [[day(1403, 7, 12), 1_000_000]]);
+    const result = database.approveImportedEntries({ fileSha256: 'sha-shared' });
+    assert.deepEqual([result.approved, result.skipped.length], [0, 1]);
+    assert.equal(db.prepare("SELECT approval_state AS state FROM journal_entries").get().state, 'draft');
+  });
+});

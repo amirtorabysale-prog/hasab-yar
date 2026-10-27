@@ -57,10 +57,20 @@ function presetRange(id) {
   if (id === 'month') return { from: iso(today.year, today.month, 1), to };
   if (id === 'quarter') return { from: iso(today.year, Math.floor((today.month - 1) / 3) * 3 + 1, 1), to };
   if (id === 'year') return { from: iso(today.year, 1, 1), to };
-  if (id === 'last-year') return { from: iso(today.year - 1, 1, 1), to: iso(today.year - 1, 12, 29) };
+  // `y:1403` یک سالِ کامل است و `all` کل دفتر. دفتری که از بکاپ پر شده سال‌های گذشته را
+  // دارد؛ «سال جاری» آن‌جا خالی بود (دفتر «آزمون بکاپ ریالی»، ۵ آبان ۱۴۰۵).
+  if (id === 'all') return { from: '', to };
+  const year = id === 'last-year' ? today.year - 1 : Number(String(id).match(/^y:(\d{4})$/)?.[1]);
+  if (year) return { from: iso(year, 1, 1), to: year === today.year ? to : iso(year, 12, 30) || iso(year, 12, 29) };
   return null;
 }
-const PRESETS = Object.freeze([['month', 'ماه جاری'], ['quarter', 'فصل جاری'], ['year', 'سال جاری'], ['last-year', 'سال قبل'], ['custom', 'دلخواه']]);
+/** سال‌های شمسیِ یک بازهٔ آماده، برای شمردن پیش‌نویس‌هایی که در گزارش نیامده‌اند؛ null یعنی همه. */
+function presetYears(id, currentYear) {
+  if (id === 'all') return null;
+  if (['month', 'quarter', 'year'].includes(id)) return [currentYear];
+  const year = Number(String(id).match(/^y:(\d{4})$/)?.[1]);
+  return year ? [year] : [];
+}
 
 function Segmented({ label, options, value, onChange }) {
   return <div role="radiogroup" aria-label={label} className="report-segment inline-flex max-w-full overflow-x-auto rounded-xl border border-line bg-surface p-1 [scrollbar-width:none]">
@@ -74,17 +84,17 @@ function Skeleton() {
 }
 
 /** کارت حساب در برگهٔ کناری؛ از همان بازهٔ گزارش. */
-function LedgerSheet({ target, range, close, onOpenEntry }) {
+function LedgerSheet({ target, range, drafts, close, onOpenEntry }) {
   const sheetRef = useSheetA11y(close);
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
     setReport(null); setError('');
-    api.accountingReport('ledger', { level: target.level, key: target.key, from: range.from, to: range.to })
+    api.accountingReport('ledger', { level: target.level, key: target.key, from: range.from, to: range.to, drafts })
       .then((result) => { if (active) setReport(result); }).catch((cause) => { if (active) setError(cause.message); });
     return () => { active = false; };
-  }, [target.level, target.key, range.from, range.to]);
+  }, [target.level, target.key, range.from, range.to, drafts]);
   return <div ref={sheetRef} className="fixed inset-0 z-[70] flex items-end justify-center bg-scrim/40 backdrop-blur-[2px] sm:items-center" onClick={close}>
     <section role="dialog" aria-modal="true" aria-label={`کارت ${target.title}`} onClick={(event) => event.stopPropagation()}
       className="sheet-in max-h-[88vh] w-full max-w-[860px] overflow-y-auto rounded-t-2xl bg-paper p-4 pb-[calc(env(safe-area-inset-bottom)+20px)] shadow-2xl sm:rounded-2xl">
@@ -99,11 +109,18 @@ function LedgerSheet({ target, range, close, onOpenEntry }) {
   </div>;
 }
 
-export function AccountingReportsPage({ notify }) {
+export function AccountingReportsPage({ access, notify }) {
   const saved = useMemo(recall, []);
+  const role = access?.workspace?.role || 'viewer';
+  const canApprove = ['owner', 'manager'].includes(role);
   const [reportId, setReportId] = useState(REPORTS[saved.reportId] ? saved.reportId : 'trial');
-  const [preset, setPreset] = useState(saved.preset && saved.preset !== 'custom' ? saved.preset : 'year');
-  const [range, setRange] = useState(() => presetRange(saved.preset && saved.preset !== 'custom' ? saved.preset : 'year'));
+  // بازه تا رسیدن فهرست سال‌های دفتر انتخاب نمی‌شود؛ پیش‌فرضش آخرین سالِ دارای سند است.
+  const [preset, setPreset] = useState(null);
+  const [range, setRange] = useState(null);
+  const [yearsInfo, setYearsInfo] = useState(null);
+  const [imports, setImports] = useState([]);
+  const [drafts, setDrafts] = useState(false);
+  const [approving, setApproving] = useState(null);
   const [level, setLevel] = useState(saved.level || 'subsidiary');
   const [columns, setColumns] = useState(saved.columns || 4);
   const [compare, setCompare] = useState(false);
@@ -118,28 +135,49 @@ export function AccountingReportsPage({ notify }) {
 
   const meta = REPORTS[reportId];
   const group = GROUPS.find((item) => item.id === meta.group);
-  useEffect(() => { remember({ reportId, preset, level, columns }); }, [reportId, preset, level, columns]);
+  useEffect(() => { if (preset) remember({ reportId, preset, level, columns }); }, [reportId, preset, level, columns]);
+
+  const loadYears = useCallback(() => Promise.all([api.accountingReportYears(), api.accountingImports().catch(() => ({ imports: [] }))])
+    .then(([years, imported]) => { setYearsInfo(years); setImports(imported.imports || []); return years; }), []);
+  useEffect(() => {
+    loadYears().then((years) => {
+      const has = (year) => years.years.some((item) => item.year === year);
+      const latest = years.years[0]?.year;
+      const wanted = saved.preset && saved.preset !== 'custom' ? saved.preset : null;
+      // بازهٔ ذخیره‌شده فقط اگر در این دفتر سند دارد؛ وگرنه آخرین سالِ دارای سند.
+      const fits = wanted && (wanted === 'all' || (['month', 'quarter', 'year'].includes(wanted) ? has(years.currentYear) : has(Number(wanted.slice(2)))));
+      const choice = fits ? wanted : has(years.currentYear) || !latest ? 'year' : `y:${latest}`;
+      setPreset(choice); setRange(presetRange(choice));
+    }).catch(() => { setPreset('year'); setRange(presetRange('year')); });
+  }, [loadYears, saved.preset]);
+  const presets = useMemo(() => {
+    const current = yearsInfo?.currentYear;
+    const years = [...new Set([current, ...(yearsInfo?.years || []).map((item) => item.year)].filter(Boolean))].sort((a, b) => b - a);
+    return [['month', 'ماه جاری'], ['quarter', 'فصل جاری'], ...years.map((year) => [year === current ? 'year' : `y:${year}`, `سال ${toPersianDigits(year)}`]), ['all', 'کل دفتر'], ['custom', 'دلخواه']];
+  }, [yearsInfo]);
 
   const params = useMemo(() => {
-    if (meta.today) return {};
-    const base = meta.pointInTime ? { to: range.to } : { from: range.from, to: range.to };
+    if (!range) return null;
+    const flag = drafts ? { drafts: true } : {};
+    if (meta.today) return flag;
+    const base = { ...(meta.pointInTime ? { to: range.to } : { from: range.from, to: range.to }), ...flag };
     if (reportId === 'trial') return { ...base, level };
     if (reportId === 'ledger') return ledgerTarget ? { ...base, level: ledgerTarget.level, key: ledgerTarget.key } : null;
     if (meta.comparable) return { ...base, compare };
     return base;
-  }, [meta, range.from, range.to, reportId, level, compare, ledgerTarget]);
+  }, [meta, range, reportId, level, compare, ledgerTarget, drafts]);
 
   // فهرست حساب‌های دفتر کل و معین، از ترازِ همان سطح.
   useEffect(() => {
-    if (reportId !== 'ledger') return undefined;
+    if (reportId !== 'ledger' || !range) return undefined;
     let active = true;
-    api.accountingReport('trial', { level: ledgerLevel, to: range.to }).then((result) => {
+    api.accountingReport('trial', { level: ledgerLevel, to: range.to, drafts }).then((result) => {
       if (!active) return;
       setLedgerOptions(result.rows);
       setLedgerTarget((current) => (current && current.level === ledgerLevel && result.rows.some((row) => row.key === current.key) ? current : result.rows[0] ? { level: ledgerLevel, key: result.rows[0].key, title: result.rows[0].name } : null));
     }).catch(() => { if (active) setLedgerOptions([]); });
     return () => { active = false; };
-  }, [reportId, ledgerLevel, range.to]);
+  }, [reportId, ledgerLevel, range, drafts]);
 
   const load = useCallback(() => {
     if (!params) { setState({ loading: false, report: null, error: '' }); return; }
@@ -161,6 +199,25 @@ export function AccountingReportsPage({ notify }) {
   };
   // پاسخِ گزارشِ قبلی تا رسیدن پاسخ تازه نشان داده نمی‌شود؛ نوعِ هر پاسخ همان شناسهٔ گزارش است.
   const report = state.report?.kind === reportId ? state.report : null;
+  const ledgerRange = range || { from: '', to: '' };
+  // پیش‌نویس‌هایی که در سال‌های این بازه هستند ولی در گزارش نیامده‌اند.
+  const hiddenDrafts = useMemo(() => {
+    if (drafts || !yearsInfo || !preset) return 0;
+    const years = presetYears(preset, yearsInfo.currentYear);
+    return yearsInfo.years.filter((item) => !years || years.includes(item.year)).reduce((sum, item) => sum + item.drafts, 0);
+  }, [drafts, yearsInfo, preset]);
+  const pendingImports = imports.filter((item) => item.pending > 0);
+  const approveImport = async (item) => {
+    setApproving({ sha: item.fileSha256, busy: true });
+    try {
+      const result = await api.approveAccountingImport(item.fileSha256);
+      const rest = result.skipped.length ? `؛ ${toPersianDigits(result.skipped.length)} سند پیش‌نویس ماند (${result.skipped[0].reason})` : '.';
+      notify?.(`${toPersianDigits(result.approved)} سند بکاپ تأیید شد${rest}`);
+      setApproving(null);
+      await loadYears();
+      load();
+    } catch (error) { notify?.(error.message); setApproving({ sha: item.fileSha256, busy: false }); }
+  };
   const rangeText = meta.today ? 'امروز' : meta.pointInTime ? `تا ${dayLabel(report?.range?.toDay || '')}` : `${report?.range?.fromDay ? dayLabel(report.range.fromDay) : 'از ابتدا'} تا ${dayLabel(report?.range?.toDay || '')}`;
 
   const view = (() => {
@@ -204,13 +261,15 @@ export function AccountingReportsPage({ notify }) {
 
     <section className="report-toolbar report-print-hide mt-3 rounded-2xl border border-line bg-surface p-3">
       <div className="flex flex-wrap items-center gap-2">
-        {!meta.today && <Segmented label="بازهٔ گزارش" options={PRESETS} value={preset} onChange={choosePreset} />}
+        {!meta.today && <Segmented label="بازهٔ گزارش" options={presets} value={preset} onChange={choosePreset} />}
         {meta.today && <span className="rounded-lg bg-subtle px-3 py-2 text-xs font-bold text-muted">وضعیت امروز</span>}
+        <label className={`inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-2 text-[13px] font-bold ${drafts ? 'text-warn' : 'text-muted hover:text-ink'}`}>
+          <input type="checkbox" checked={drafts} onChange={(event) => setDrafts(event.target.checked)} className="h-4 w-4 accent-[rgb(var(--c-warn))]" />با پیش‌نویس‌ها</label>
         <span className="flex-1" />
         <button type="button" onClick={exportExcel} disabled={!report || exporting} className="tap inline-flex items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-bold hover:bg-subtle disabled:opacity-50"><Download size={15} aria-hidden="true" />{exporting ? 'در حال ساخت…' : 'اکسل'}</button>
         <button type="button" onClick={() => window.print()} disabled={!report} className="tap inline-flex items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-bold hover:bg-subtle disabled:opacity-50"><Printer size={15} aria-hidden="true" />چاپ</button>
       </div>
-      {preset === 'custom' && !meta.today && <div className="rq-step mt-3 grid gap-2 sm:max-w-md sm:grid-cols-2">
+      {preset === 'custom' && !meta.today && range && <div className="rq-step mt-3 grid gap-2 sm:max-w-md sm:grid-cols-2">
         {!meta.pointInTime && <label className="text-xs font-bold text-muted">از تاریخ<PersianDateInput value={range.from} onChange={(from) => setRange((current) => ({ ...current, from }))} className="mt-1" /></label>}
         <label className="text-xs font-bold text-muted">{meta.pointInTime ? 'در تاریخ' : 'تا تاریخ'}<PersianDateInput value={range.to} onChange={(to) => setRange((current) => ({ ...current, to }))} className="mt-1" /></label>
       </div>}
@@ -230,11 +289,29 @@ export function AccountingReportsPage({ notify }) {
       </div>}
     </section>
 
+    {report?.provisional && <div role="status" className="rq-step mt-4 flex items-start gap-3 rounded-xl border border-warn/40 bg-warn-bg px-4 py-3 text-[13px] leading-6">
+      <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-warn" aria-hidden="true" />
+      <p><b className="text-warn">غیرقطعی:</b> این گزارش {toPersianDigits(report.draftEntries)} سند تأییدنشده (پیش‌نویس، منتظر کنترل یا برگشتی) را هم شمرده است. برای دفاتر رسمی و تحویل، اول سندها را تأیید کن.</p>
+    </div>}
+    {!drafts && (hiddenDrafts > 0 || pendingImports.length > 0) && <div className="report-print-hide rq-step mt-4 rounded-xl border border-line bg-surface px-4 py-3">
+      {hiddenDrafts > 0 && <p className="text-[13px] leading-6">در این بازه <b>{toPersianDigits(hiddenDrafts)} سند تأییدنشده</b> هست که در گزارش نیامده؛ گزارش‌ها فقط سند تأییدشده را می‌شمارند.
+        <button type="button" onClick={() => setDrafts(true)} className="mr-2 font-bold text-accent underline-offset-4 hover:underline">نمایش غیرقطعی با پیش‌نویس‌ها</button></p>}
+      {pendingImports.map((item) => <div key={item.fileSha256} className={`flex flex-wrap items-center gap-2 text-[13px] ${hiddenDrafts > 0 ? 'mt-2 border-t border-line pt-2' : ''}`}>
+        <span className="min-w-0 flex-1">بکاپ پارسیان{item.fileName ? ` «${item.fileName}»` : ''}: {toPersianDigits(item.pending)} از {toPersianDigits(item.total)} سند هنوز تأیید نشده.</span>
+        {!canApprove ? <span className="text-xs text-muted">تأیید با مدیر یا مالک دفتر است.</span>
+          : approving?.sha === item.fileSha256 ? <span className="rq-step flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">هر سند دوباره سنجیده و با نام تو تأیید می‌شود؛ سندِ دورهٔ بسته یا ناسالم پیش‌نویس می‌ماند.</span>
+            <button type="button" disabled={approving.busy} onClick={() => approveImport(item)} className="tap rounded-lg bg-accent px-3 text-[13px] font-bold text-on-fill disabled:opacity-60">{approving.busy ? 'در حال تأیید…' : `تأیید ${toPersianDigits(item.pending)} سند`}</button>
+            <button type="button" disabled={approving.busy} onClick={() => setApproving(null)} className="tap rounded-lg px-3 text-[13px] font-bold text-muted hover:text-ink">انصراف</button></span>
+          : <button type="button" onClick={() => setApproving({ sha: item.fileSha256, busy: false })} className="tap rounded-lg border border-accent/50 px-3 text-[13px] font-bold text-accent hover:bg-accent/[.06]">تأیید یک‌جا</button>}
+      </div>)}
+    </div>}
+
     <section className="report-sheet mt-5" aria-live="polite" aria-busy={state.loading}>
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div><h2 className="text-[17px] font-extrabold">{meta.label}{reportId === 'trial' && <span className="mr-2 text-sm font-bold text-muted">{toPersianDigits(columns)} ستونی · سطح {LEVELS.find(([id]) => id === level)?.[1]}</span>}
           {reportId === 'ledger' && ledgerTarget && <span className="mr-2 text-sm font-bold text-muted">{toPersianDigits(report?.title || ledgerTarget.title)}</span>}</h2>
-          <p className="mt-0.5 text-xs text-muted">{rangeText} · مبالغ به {unitLabel()} · فقط اسناد تأییدشده</p></div>
+          <p className="mt-0.5 text-xs text-muted">{rangeText} · مبالغ به {unitLabel()} · {report?.provisional ? 'با اسناد تأییدنشده (غیرقطعی)' : 'فقط اسناد تأییدشده'}</p></div>
       </div>
       {state.error ? <p className="mt-4 rounded-lg bg-warn-bg px-3 py-3 text-sm text-warn">{state.error}</p>
         : state.loading && !report ? <Skeleton />
@@ -242,7 +319,7 @@ export function AccountingReportsPage({ notify }) {
             : <div key={`${reportId}-${JSON.stringify(params)}-${columns}`} className={`rq-step ${state.loading ? 'opacity-60 transition-opacity' : ''}`}>{view}</div>}
     </section>
 
-    {drill && <LedgerSheet target={drill} range={meta.pointInTime || meta.today ? { from: '', to: range.to } : range} close={() => setDrill(null)} onOpenEntry={setEntry} />}
+    {drill && <LedgerSheet target={drill} drafts={drafts} range={meta.pointInTime || meta.today ? { from: '', to: ledgerRange.to } : ledgerRange} close={() => setDrill(null)} onOpenEntry={setEntry} />}
     {entry && <JournalEntrySheet line={entry} close={() => setEntry(null)} />}
   </main>;
 }

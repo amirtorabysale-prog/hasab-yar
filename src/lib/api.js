@@ -525,6 +525,9 @@ export const api = {
   financialDna: (months = 6) => request(`/api/financial-dna?months=${months}`),
   // گزارش‌های حسابداری: ترازها، صورت‌های مالی، دفاتر، اشخاص، مرکز هزینه و کنترل‌ها.
   accountingReport: (kind, params = {}) => request(`/api/accounting/reports/${encodeURIComponent(kind)}?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null && value !== false).map(([key, value]) => [key, value === true ? '1' : String(value)]))}`),
+  accountingReportYears: () => request('/api/accounting/reports/years'),
+  accountingImports: () => request('/api/accounting/imports'),
+  approveAccountingImport: (sha) => request(`/api/accounting/imports/${encodeURIComponent(sha)}/approve`, { method: 'POST', body: '{}' }),
   downloadAccountingReport: async (kind, params = {}, fileName = 'report.xlsx') => {
     const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null && value !== false).map(([key, value]) => [key, value === true ? '1' : String(value)]));
     const response = await reachServer(`/api/accounting/reports/${encodeURIComponent(kind)}/export?${query}`, { credentials: 'same-origin', headers: protectedHeaders(false) });

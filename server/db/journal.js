@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { activeWorkspaceDatabase, audit, controlDb, currentTimeZone, currentWorkspace, parseStoredJson } from './core.js';
-import { createJournalBatch, ensureAccountingSchema, journalWorklist, listJournal, setJournalApproval } from '../accounting.js';
+import { createJournalBatch, ensureAccountingSchema, journalWorklist, listJournal, setJournalApproval, validateLines } from '../accounting.js';
 import { listWorkspaceMembers } from './workspaces.js';
 import { normalizeTemplateLines } from '../journalWorkflow.js';
 import { roleAllows } from '../access.js';
@@ -116,4 +116,73 @@ export function deleteJournalTemplate(id) {
   const result = database.prepare('DELETE FROM journal_templates WHERE id=?').run(String(id || ''));
   if (result.changes) audit('delete', 'journal_template', id, {});
   return Boolean(result.changes);
+}
+
+const importedTableExists = (db) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='parsian_imported_entries'").get());
+
+/** هر ورود بکاپ پارسیان با تعداد سندهای قطعی و غیرقطعی‌اش. */
+export function importedEntriesOverview() {
+  const db = activeWorkspaceDatabase();
+  if (!importedTableExists(db)) return { imports: [] };
+  const hasLog = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='parsian_import_log'").get());
+  const imports = db.prepare(`SELECT pie.file_sha256 AS fileSha256,COUNT(*) AS total,
+      SUM(CASE WHEN je.approval_state='approved' THEN 1 ELSE 0 END) AS approved,
+      MIN(je.occurred_at) AS firstAt,MAX(je.occurred_at) AS lastAt
+    FROM parsian_imported_entries pie JOIN journal_entries je ON je.id=pie.entry_id
+    GROUP BY pie.file_sha256 ORDER BY MAX(je.created_at) DESC`).all().map((row) => ({
+    ...row, total: Number(row.total), approved: Number(row.approved), pending: Number(row.total) - Number(row.approved),
+    fileName: hasLog ? db.prepare("SELECT file_name AS name FROM parsian_import_log WHERE file_sha256=? AND status='imported' ORDER BY imported_at DESC LIMIT 1").get(row.fileSha256)?.name || '' : '',
+  }));
+  return { imports };
+}
+
+/**
+ * تأیید یک‌جای سندهای یک ورود بکاپ پارسیان.
+ *
+ * این سندها در خود پارسیان قطعی بوده‌اند و بازبینیِ یکی‌یکیِ ۱۵۲ سند کار تکراری است
+ * (دفتر «آزمون بکاپ ریالی»، ۵ آبان ۱۴۰۵). میان‌بُری در کار نیست: هر سند از همان
+ * `setJournalApproval` می‌گذرد — ارسال، بعد تأیید — با همان قاعدهٔ خودتأییدی و دورهٔ باز،
+ * و پیش از آن دوباره متوازن‌بودن و حساب‌هایش سنجیده می‌شود. سندی که نگذرد پیش‌نویس
+ * می‌ماند و دلیلش برمی‌گردد؛ هر سند جدا (SAVEPOINT)، تا خطای یکی بقیه را نگه ندارد و
+ * نیمه‌تأییدی هم نماند.
+ */
+export function approveImportedEntries({ fileSha256 } = {}) {
+  const db = activeWorkspaceDatabase();
+  const sha = String(fileSha256 || '').trim();
+  if (!sha) throw Object.assign(new Error('ورود بکاپ مشخص نیست.'), { code: 'IMPORT_REQUIRED', status: 400 });
+  if (!importedTableExists(db)) return { approved: 0, skipped: [] };
+  const workspace = currentWorkspace();
+  const availability = workspaceCheckerAvailability(workspace?.id || 'primary', workspace?.userId || null);
+  const options = { userId: workspace?.userId || null, timeZone: currentTimeZone(), allowSelfApproval: availability.soloChecker };
+  const entries = db.prepare(`SELECT je.id,je.approval_state AS state,je.document_number AS documentNumber,pie.sanad
+    FROM parsian_imported_entries pie JOIN journal_entries je ON je.id=pie.entry_id
+    WHERE pie.file_sha256=? AND je.approval_state<>'approved' ORDER BY je.occurred_at,je.document_number`).all(sha);
+  const lineQuery = db.prepare('SELECT account_id AS accountId,debit,credit,description,analytic_id AS analyticId,cost_center_id AS costCenterId FROM journal_lines WHERE entry_id=?');
+  let approved = 0;
+  let selfApproved = 0;
+  const skipped = [];
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const entry of entries) {
+      db.exec('SAVEPOINT bulk_entry');
+      try {
+        validateLines(db, lineQuery.all(entry.id));
+        if (entry.state !== 'submitted') setJournalApproval(db, entry.id, 'submitted', options);
+        const result = setJournalApproval(db, entry.id, 'approved', options);
+        if (result.selfApproved) selfApproved += 1;
+        approved += 1;
+        db.exec('RELEASE bulk_entry');
+      } catch (error) {
+        db.exec('ROLLBACK TO bulk_entry');
+        db.exec('RELEASE bulk_entry');
+        skipped.push({ entryId: entry.id, documentNumber: entry.documentNumber, sanad: entry.sanad, reason: error.message });
+      }
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  audit('bulk-approval', 'parsian_import', sha, {
+    approved, skipped: skipped.length, selfApproved: selfApproved || undefined,
+    selfApprovalGround: selfApproved ? 'دفتر کنترل‌کنندهٔ دیگری ندارد' : undefined,
+  });
+  return { approved, skipped, selfApproved };
 }
