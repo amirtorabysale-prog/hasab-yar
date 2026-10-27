@@ -3,6 +3,7 @@ import { ROLES, planJournal, applyFunding } from './accountingRules.js';
 import { SETTLEMENT_MATCH, matchOpenDocument } from './settlementMatch.js';
 import { EVENT_KINDS } from './financialEvent.js';
 import { VAT_FORMS, readVatMention, splitInclusive } from './vatSpeech.js';
+import { extractAmounts } from './parser.js';
 
 /**
  * نگهبان‌ها — ایست بازرسی پیش از ورود به دفتر.
@@ -147,8 +148,10 @@ function settlementFirstGuard(event, facts, { openDocuments }) {
  */
 const VAT_SPLIT_KINDS = new Set([EVENT_KINDS.CASH_EXPENSE, EVENT_KINDS.CASH_INCOME, EVENT_KINDS.FIXED_ASSET_PURCHASE]);
 const SETTLING_KINDS = new Set([EVENT_KINDS.OBLIGATION_SETTLED, EVENT_KINDS.INVOICE_PAYMENT]);
+// بدهی و طلبِ باز: سمتِ خرید یا فروش، بی‌جابه‌جاییِ پول.
+const UNPAID_SIDE = Object.freeze({ [EVENT_KINDS.PAYABLE_OPENED]: 'out', [EVENT_KINDS.RECEIVABLE_OPENED]: 'in' });
 
-const percentOf = (bps) => `${Number(bps) / 100} درصد`;
+const percentOf = (bps) => `${(Number(bps) / 100).toLocaleString('fa-IR')} درصد`;
 
 /**
  * نرخی که این رویداد با آن تفکیک می‌شود، یا دلیل اینکه نمی‌شود.
@@ -222,20 +225,32 @@ function vatSplitGuard(event, facts, { decision, vat, sentence, rewrittenBy }) {
     });
   }
 
+  const unpaid = UNPAID_SIDE[event.kind] || null;
   if (mention.form === VAT_FORMS.EXCLUSIVE) {
-    // فاکتورِ پرداخت‌نشده پولی جابه‌جا نکرده؛ «پولی که واقعاً جابه‌جا شد» سؤالِ بی‌جواب بود
-    // («فاکتور خرید … به‌علاوهٔ ۱۰ درصد ارزش افزوده، پولش هنوز ندادیم» — آزمون صف، ۲۹ مهر ۱۴۰۵).
-    const unpaid = [EVENT_KINDS.PAYABLE_OPENED, EVENT_KINDS.RECEIVABLE_OPENED].includes(event.kind);
-    return check(name, GUARD_VERDICTS.BLOCK, unpaid
-      ? 'مبلغ بدون ارزش افزوده گفته شده؛ جمع فاکتور با ارزش افزوده چقدر است؟'
-      : 'مبلغ بدون ارزش افزوده گفته شده؛ پولی که واقعاً جابه‌جا شد چقدر بود؟', noted);
-  }
-  if (mention.form === VAT_FORMS.BARE) {
+    // فاکتورِ پرداخت‌نشده با نرخِ گفته‌شده: `transactionEventDecision` مبلغ رویداد را
+    // همان جمع فاکتور کرده (`exclusiveVatTotal`)؛ از اینجا مثل «با ارزش افزوده» تفکیک
+    // می‌شود. بی‌نرخ، جمع از جمله درنمی‌آید و پرسیده می‌شود (آزمون زندهٔ ۴ آبان ۱۴۰۵).
+    //
+    // فقط وقتی خالصِ این مبلغ همان عددِ گفته‌شده است. رویدادی که از راه دیگری با
+    // خودِ ۴۰ ساخته شده، اینجا ۳۶٫۴ + ۳٫۶ تفکیک می‌شد. ریال: عدد گفته به تومان است.
+    const net = mention.ratePercent > 0 ? splitInclusive(event.amount, Math.round(mention.ratePercent * 100))?.net : null;
+    const grossed = Boolean(unpaid && net) && extractAmounts(sentence || facts.evidence || '').spans
+      .some((span) => span.amount === net || span.amount * 10 === net);
+    if (!grossed) {
+      // فاکتورِ پرداخت‌نشده پولی جابه‌جا نکرده؛ «پولی که واقعاً جابه‌جا شد» سؤالِ بی‌جواب بود
+      // («فاکتور خرید … به‌علاوهٔ ۱۰ درصد ارزش افزوده، پولش هنوز ندادیم» — آزمون صف، ۲۹ مهر ۱۴۰۵).
+      return check(name, GUARD_VERDICTS.BLOCK, unpaid
+        ? 'مبلغ بدون ارزش افزوده گفته شده؛ جمع فاکتور با ارزش افزوده چقدر است؟'
+        : 'مبلغ بدون ارزش افزوده گفته شده؛ پولی که واقعاً جابه‌جا شد چقدر بود؟', noted);
+    }
+  } else if (mention.form === VAT_FORMS.BARE) {
     return check(name, GUARD_VERDICTS.BLOCK, 'ارزش افزوده گفته شده ولی معلوم نیست داخل این مبلغ است یا جدا از آن.', noted);
   }
 
-  // از اینجا: مالیات داخل مبلغ است.
-  if (!VAT_SPLIT_KINDS.has(event.kind) || !['in', 'out'].includes(direction)) {
+  // از اینجا: مالیات داخل مبلغ است. بدهی و طلبِ باز پولی جابه‌جا نکرده‌اند و
+  // سمتِ خرید یا فروش را از نوعِ خودشان دارند.
+  const side = unpaid || direction;
+  if (!(VAT_SPLIT_KINDS.has(event.kind) || unpaid) || !['in', 'out'].includes(side)) {
     return check(name, GUARD_VERDICTS.BLOCK, 'تفکیک ارزش افزوده برای این نوع سند هنوز قاعده ندارد.', noted);
   }
   if (!vat) return check(name, GUARD_VERDICTS.BLOCK, 'نرخ‌های ارزش افزودهٔ دفتر بررسی نشد؛ تفکیک بدون آن ممکن نیست.', noted);
@@ -243,7 +258,7 @@ function vatSplitGuard(event, facts, { decision, vat, sentence, rewrittenBy }) {
   const registered = Array.isArray(vat.ratesBps) && vat.ratesBps.length > 0;
   // دفتری که مشمول نیست اعتبار خرید ندارد: مالیاتی که پرداخته جزو بهای همان
   // خرید است. جدا کردنش، دارایی‌ای می‌ساخت که هیچ‌وقت قابل استفاده نیست.
-  if (!registered && direction === 'out') {
+  if (!registered && side === 'out') {
     return check(name, GUARD_VERDICTS.PASS, 'این دفتر مشمول ارزش افزوده نیست؛ مالیات خرید جزو بهای خرید می‌ماند.', noted);
   }
   const rate = vatRateFor(mention, vat);
@@ -255,11 +270,13 @@ function vatSplitGuard(event, facts, { decision, vat, sentence, rewrittenBy }) {
   // یک‌ساله با ارزش افزوده، خالصش پیش‌پرداخت است نه هزینه، و خرید دارایی ثابت
   // خالصش بهای دارایی.
   const base = planJournal(event, decision);
-  const counterLine = base.lines.find((line) => line.role !== ROLES.CASH);
+  // سمتِ پول: صندوق و بانک، یا در بدهی و طلبِ باز، خودِ پرداختنی و دریافتنی.
+  const moneySide = unpaid ? (side === 'out' ? ROLES.PAYABLE : ROLES.RECEIVABLE) : ROLES.CASH;
+  const counterLine = base.lines.find((line) => line.role !== moneySide);
   if (base.lines.length !== 2 || !counterLine) {
     return check(name, GUARD_VERDICTS.BLOCK, 'سند این رویداد شکل ساده ندارد و تفکیک خودکار ممکن نیست.', noted);
   }
-  const selling = direction === 'in';
+  const selling = side === 'in';
   const lines = base.lines.map((line) => (line === counterLine
     ? { ...line, debit: line.debit ? split.net : 0, credit: line.credit ? split.net : 0 }
     : { ...line }));

@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { canonicalCounterpartyName } from '../../shared/counterpartyIdentity.js';
 import { ANALYTIC_KINDS, TOPIC_SOURCE_KIND, normalizeTopicLabel, topicLabelKey, chartError, normalizeChartCode, chartCodeIsValid, cleanName, ensureChartSchema } from './base.js';
+import { topicParts } from '../../shared/topicParts.js';
 
 export function topicAnalytic(database, label) {
   const clean = normalizeTopicLabel(label);
@@ -19,6 +20,20 @@ export function topicAnalytic(database, label) {
       .find((row) => topicLabelKey(row.sourceKey) === key);
   if (existing) return database.prepare('SELECT * FROM analytic_accounts WHERE id=?').get(existing.id);
   return saveAnalyticAccount(database, { name: clean, kind: 'custom', sourceKind: TOPIC_SOURCE_KIND, sourceKey: key });
+}
+
+/**
+ * مرکز هزینهٔ محلِ برچسب: «قهوهٔ دفتر» → مرکز هزینهٔ «دفتر».
+ *
+ * فقط وقتی حسابدار مرکز هزینه‌ای با همین نام تعریف کرده باشد؛ مرکز هزینه این‌جا
+ * ساخته یا حدس زده نمی‌شود. بی‌آن، محل فقط در شرح سند می‌ماند.
+ */
+export function costCenterForTopic(database, label) {
+  const { place } = topicParts(label);
+  if (!place) return null;
+  ensureChartSchema(database);
+  const key = topicLabelKey(place);
+  return database.prepare('SELECT id,name FROM cost_centers WHERE active=1').all().find((row) => topicLabelKey(row.name) === key)?.id || null;
 }
 
 // ---------------------------------------------------------------------------

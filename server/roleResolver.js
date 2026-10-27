@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLES } from '../shared/accountingRules.js';
 import {
-  analyticForContact, listChartAccounts, mapLedgerAccountToChart, meaningfulTopicLabel, suggestChartAccount, topicAnalytic,
+  analyticForContact, costCenterForTopic, listChartAccounts, mapLedgerAccountToChart, meaningfulTopicLabel, suggestChartAccount, topicAnalytic,
 } from './chartOfAccounts.js';
 import { counterpartyAnalyticForKey } from './chartOfAccounts.js';
 import { counterpartyAccountKey, inputTaxLedgerAccount, outputTaxLedgerAccount } from './accounting.js';
@@ -220,6 +220,11 @@ const COUNTERPARTY_ROLES = new Set([
 ]);
 
 const CATEGORY_ROLES = new Set([ROLES.EXPENSE_CATEGORY, ROLES.INCOME_CATEGORY]);
+
+/** مرکز هزینهٔ سطرِ دسته، از محلِ برچسب موضوع («قهوهٔ دفتر») — فقط اگر تعریف شده باشد. */
+export function resolveEventCostCenter(database, role, event = {}) {
+  return CATEGORY_ROLES.has(role) && event.topicLabel ? costCenterForTopic(database, event.topicLabel) : null;
+}
 
 export function resolveEventAnalytic(database, role, event = {}, key = '') {
   // برچسب موضوعی فقط روی سطر دسته می‌نشیند؛ رویداد بدون برچسب، رفتار قبلی دارد.

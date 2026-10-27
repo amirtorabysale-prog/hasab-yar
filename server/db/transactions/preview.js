@@ -3,7 +3,7 @@
 // از server/db/transactions.js جدا شد؛ بدنهٔ اعلان‌ها دست نخورده است. بیرون از پوشهٔ
 // transactions همه از همان server/db/transactions.js می‌خوانند.
 
-import { runGuards, GUARD_VERDICTS } from '../../../shared/guards.js';
+import { runGuards, guardedPlan, GUARD_VERDICTS } from '../../../shared/guards.js';
 import { accountForBank, resolveAccountId } from '../accounts.js';
 import { currentTimeZone, db, invalidInput } from '../core.js';
 import { assertAccountingPeriodOpen, periodForDate } from '../../accounting.js';
@@ -13,7 +13,6 @@ import { openDocumentsFor } from '../counterpartyCard.js';
 import { transactionEventDecision } from '../../transactionEvent.js';
 import { vatGuardContext } from '../../tax.js';
 import { readExplicitNonCash, readMixedSettlement, MIXED_SETTLEMENT_REASON } from '../../../shared/eventNature.js';
-import { planJournal } from '../../../shared/accountingRules.js';
 import { factsFromEvent } from '../../../shared/eventFacts.js';
 import { ROUTES } from '../../../shared/confidenceEngine.js';
 import { recognitionPreview, servicePeriodPreview } from '../../../shared/recognitionPreview.js';
@@ -21,8 +20,10 @@ import { settlementFor } from './rows.js';
 import { correctionNature, nonCashInstrument } from './sentenceChecks.js';
 
 /** Read-only advisory preflight. Posting always recomputes against current state. */
-function safePlanLines(event, decision) {
-  try { return planJournal(event, decision).lines || []; } catch { return []; }
+// همان نقشه‌ای که ثبت می‌شود: نگهبانی که ماهیت را تصحیح کرد («۴۰ + ۴ ارزش افزوده»)
+// سطرهای خودش را دارد و برگهٔ تأیید نباید سند دیگری نشان دهد.
+function safePlanLines(event, decision, guards) {
+  try { return guardedPlan(event, decision, guards).lines || []; } catch { return []; }
 }
 
 export function previewTransactions({ transcript = '', transactions } = {}) {
@@ -62,7 +63,7 @@ export function previewTransactions({ transcript = '', transactions } = {}) {
       question: decision?.question || null, eventKind: draft.event.kind,
       decisionStatus: decision?.decisionStatus || null, accountId, contactId: contact?.id || null,
       // سطرهای پیشنهادی فقط برای نمایش؛ ثبت واقعی همان مسیر همیشگی است.
-      lines: decision?.decisionStatus === 'decided' ? safePlanLines(draft.event, decision) : [],
+      lines: decision?.decisionStatus === 'decided' ? safePlanLines(draft.event, decision, guards) : [],
       treatment: decision?.treatment || null, family: decision?.family || null,
       // دوره و برنامهٔ ماهانه‌ای که ثبت خواهد ساخت؛ برگهٔ تأیید بدون آن فقط سطر اول را نشان می‌داد.
       recognition: recognitionPreview(draft.event, decision), servicePeriod: servicePeriodPreview(draft.event),

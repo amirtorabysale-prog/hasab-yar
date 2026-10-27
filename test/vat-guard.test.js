@@ -168,7 +168,7 @@ test('دفتر غیرمشمول نمی‌تواند با ارزش افزوده �
 test('نرخی که در دفتر تعریف نشده، سند نمی‌سازد', () => {
   const { result } = guard(sale('۱۰۹ میلیون فروختم با ۹ درصد ارزش افزوده'), { vat: REGISTERED });
   assert.equal(result.verdict, GUARD_VERDICTS.BLOCK);
-  assert.ok(result.reason.includes('9 درصد'), result.reason);
+  assert.ok(result.reason.includes('۹ درصد'), result.reason);
 });
 
 test('چند نرخ مشمول بی‌پیش‌فرض، حدس زده نمی‌شود', () => {

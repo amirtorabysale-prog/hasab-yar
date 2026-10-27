@@ -7,6 +7,7 @@ import { factsFromEvent } from './eventFacts.js';
 import { FACT_LABELS } from './factRequirements.js';
 import { purchasePurposeFromSpeech } from './purchasePurpose.js';
 import { judgmentReason, lenderFromSpeech, paymentPurposeFromSpeech, receiptPurposeFromSpeech, saysRefundable } from './moneyPurpose.js';
+import { unpaidVatTotal } from './unpaidVatTotal.js';
 
 /**
  * پل میان ردیف تراکنش و لایهٔ رویداد مالی.
@@ -120,10 +121,15 @@ export function transactionEventDecision(item = {}, { transcript = '', sentence 
   const paymentPurpose = item.type === 'expense' ? (item.paymentPurpose || (structured ? null : paymentPurposeFromSpeech(said))) : null;
   // وام‌دهنده همان بانکی است که جمله نام برده؛ نامِ حدسی دیگر جایش را نمی‌گیرد.
   const lender = receiptPurpose === 'loan' && !structured ? lenderFromSpeech(said) : null;
+  // فاکتورِ پرداخت‌نشده با «به‌علاوهٔ ۱۰ درصد ارزش افزوده»: بدهی یا طلب، جمعِ
+  // فاکتور است و همین‌جا — تنها سازندهٔ رویداد برای پیش‌نمایش، فهم و مسیر بی‌AI —
+  // ساخته می‌شود. نگهبان ارزش افزوده همین جمع را به خالص و مالیات جدا می‌کند.
+  // پولی که جابه‌جا شده جمع نمی‌شود: آنجا مبلغ واقعی را فقط ثبت‌کننده می‌داند.
+  const vatOnTop = kind === UNPAID_KIND[item.type] ? unpaidVatTotal(said, item.amount) : null;
   const event = normalizeFinancialEvent({
     kind,
     ...(settlementDirection ? { settlementDirection, reference: item.contactName || '' } : {}),
-    amount: item.amount,
+    amount: vatOnTop ? vatOnTop.gross : item.amount,
     occurredAt: item.occurredAt,
     category: item.category,
     // برچسب موضوعی (طرح ترکیبی): «بابت چه بود؟» — از فهم رویداد یا ثبت‌کننده.

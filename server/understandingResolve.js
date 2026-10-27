@@ -5,6 +5,8 @@ import { db } from './db/core.js';
 import { detectBank } from '../shared/banks.js';
 import { canonicalCounterpartyName } from '../shared/counterpartyIdentity.js';
 import { pickPettyCashAccount } from '../shared/pettyCashSpeech.js';
+import { topicParts } from '../shared/topicParts.js';
+import { topicLabelKey } from './chartOfAccounts.js';
 
 /**
  * نامی که مدل گفته → شناسهٔ واقعیِ همین دفتر.
@@ -43,7 +45,29 @@ export function resolveUnderstanding(understanding) {
   return {
     counterparties, endpoints,
     accounts: accounts.map((account) => ({ id: account.id, name: account.name, kind: account.kind })),
+    topicHistory: topicHistory(understanding.subject?.what),
   };
+}
+
+/**
+ * همان قلم در همین دفتر قبلاً با چه دسته‌ای ثبت شد؟
+ *
+ * «آب معدنی دفتر»، «آب معدنی برای دفتر» و «دو کارتن آب معدنی» در یک روز سه دستهٔ
+ * مختلف گرفتند، چون هر بار از نو تصمیم گرفته می‌شد (آزمون زندهٔ ۴ آبان ۱۴۰۵). حسابدار
+ * یک قلم را یک بار طبقه‌بندی می‌کند و بعد همان را تکرار می‌کند. فقط ثبت‌های قطعی
+ * (نه منتظرِ حسابدار) و فقط دو ثبتِ آخر: اگر هم‌دسته‌اند، `agreed` همان دسته است.
+ */
+function topicHistory(label) {
+  const { item } = topicParts(label);
+  if (!item) return null;
+  const key = topicLabelKey(item);
+  const recent = db.prepare(`SELECT type,category,topic_label AS topicLabel FROM transactions
+    WHERE status!='deleted' AND journal_deferred=0 AND topic_label!='' ORDER BY created_at DESC,rowid DESC LIMIT 500`).all()
+    .filter((row) => topicLabelKey(topicParts(row.topicLabel).item) === key).slice(0, 2)
+    .map((row) => ({ type: row.type, category: row.category }));
+  if (!recent.length) return null;
+  const agreed = recent.length === 2 && recent[0].type === recent[1].type && recent[0].category === recent[1].category ? recent[0] : null;
+  return { item, recent, agreed };
 }
 
 function resolveEndpoint(endpoint, accounts) {

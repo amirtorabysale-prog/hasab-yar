@@ -32,6 +32,6 @@ export {
   ensurePettyCashChartRole, installDefaultChartTemplate, saveChartAccount,
 } from './chartOfAccounts/chartStore.js';
 export {
-  topicAnalytic, saveAnalyticAccount, counterpartyAnalyticForKey, analyticForContact,
+  topicAnalytic, costCenterForTopic, saveAnalyticAccount, counterpartyAnalyticForKey, analyticForContact,
   listAnalyticAccounts, saveCostCenter, listCostCenters, resolveLineDimensions, dimensionBalance,
 } from './chartOfAccounts/dimensions.js';

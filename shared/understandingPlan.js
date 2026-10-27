@@ -32,6 +32,7 @@ import { readServicePeriod } from './periodSpeech.js';
 import { mentionsPropertyDeposit, paymentPurposeFromSpeech, receiptPurposeFromSpeech, saysRefundable } from './moneyPurpose.js';
 import { evidenceKey } from './eventUnderstanding.js';
 import { unitLabel } from './amountUnit.js';
+import { unpaidVatTotal } from './unpaidVatTotal.js';
 
 const SUBJECT_USE_TO_INTENT = Object.freeze({
   resale: 'resale', production: 'production', 'long-term': 'long-term-use', internal: 'current-consumption',
@@ -641,6 +642,14 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   const byId = new Map(amounts.map((amount) => [amount.id, amount]));
   const movementOf = (id) => facts.movements.find((movement) => movement.amountRef === id) || null;
   const priorBalance = amounts.find((amount) => amount.role === 'prior-balance');
+  // مبلغِ پذیرفته‌شده‌ای که این مالیات جزئش است، اگر پولش جابه‌جا نشده و نرخ در جمله گفته شده.
+  const unpaidInvoiceBase = (tax) => {
+    const base = tax.partOf ? byId.get(tax.partOf) : null;
+    if (!base?.accepted || retracted.has(base.id)) return null;
+    const flow = movementOf(base.id)?.direction;
+    const unpaid = base.role === 'credit-part' || flow === 'none';
+    return unpaid && unpaidVatTotal(said, base.value) ? base : null;
+  };
 
   // پول شخصی دو شکل دارد: بستن طلب یا بدهیِ موجود (کارت تسویه)، یا هزینه و خریدی
   // که همان مسیر عادی را می‌رود و فقط منبع پولش جاری شریک یا پرداختنیِ کارمند است.
@@ -650,6 +659,13 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
   for (const amount of partnerPaid && !funder ? [] : amounts) {
     const label = amount.evidence || amount.role;
     if (retracted.has(amount.id)) { notes.push({ amountRef: amount.id, kind: 'retracted', text: `«${label}» در همان گفته اصلاح شد و کنار گذاشته شد.` }); continue; }
+    // «۱۰ درصد ارزش افزوده»ِ روی فاکتورِ پرداخت‌نشده جزءِ همان بدهی یا طلب است: جمعش را
+    // سازندهٔ رویداد از نرخِ گفته‌شده می‌سازد و نگهبان مالیاتش را جدا می‌کند. مدل آن را
+    // «آینده» نوشت و یادداشت «هنوز انجام نشده» می‌گرفت (آزمون زندهٔ ۴ آبان ۱۴۰۵).
+    if (amount.role === 'tax' && unpaidInvoiceBase(amount)) {
+      notes.push({ amountRef: amount.id, kind: 'vat', text: `«${label}» روی همین فاکتور است؛ جمع فاکتور با آن ثبت و ارزش افزوده جدا می‌شود.` });
+      continue;
+    }
     if (amount.status === 'context') {
       if (amount.role === 'prior-balance' && amount.accepted) notes.push({ amountRef: amount.id, kind: 'context', text: `${money(amount.value)} ${unitLabel()} بدهی یا طلبِ قبلی است؛ دوباره ثبت نمی‌شود.` });
       continue;
@@ -943,7 +959,11 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «اجاره مهر دفتر»: مدل موضوع را «دفتر» (دارایی) و دسته را «اجاره» گفت؛ موضوع مفعولِ خدمت
     // است، نه چیزی که خریده شد (محک دسته، دور سوم). «قبوض» و «حقوق» این‌طور نیستند: کالا قبض نیست.
     const serviceOnObject = subjectHere && SERVICE_ON_OBJECT_CATEGORIES.has(facts.subject.category);
-    const fits = (name) => categoryFits(name, !subjectHere ? null : serviceOnObject ? 'service' : facts.subject.kind, type);
+    // «آب معدنی دفتر»: مدل کاربرد را «مصرف داخلی» و دسته را «مواد و کالا» گفت؛ کالای
+    // فروش، مصرف داخلی نیست و هزینهٔ دفتر روی حساب موجودی کالا می‌نشست (آزمون زندهٔ ۴ آبان ۱۴۰۵).
+    const internalUse = subjectHere && facts.subject.use === 'internal';
+    const fits = (name) => !(internalUse && name === 'مواد و کالا')
+      && categoryFits(name, !subjectHere ? null : serviceOnObject ? 'service' : facts.subject.kind, type);
     // «سایر …»ِ مدل یعنی «دستهٔ خاصی ندیدم»؛ جای دستهٔ مشخصِ فهرست واژه را نمی‌گیرد.
     const modelCategory = !subjectHere ? null
       : fits(facts.subject.category) && !GENERIC_CATEGORIES.has(facts.subject.category) ? facts.subject.category
@@ -969,6 +989,13 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
     // «مستاجر اجارهٔ شش ماه آینده رو ریخت»: موضوعِ هزینه‌ایِ دریافتی دوقلوی درآمدی دارد
     // (اجاره ← درآمد اجاره)؛ بی آن درآمد اجاره در «سایر درآمدها» می‌نشست (همان قاعدهٔ پارسر).
     if (!category && type === 'income') category = incomeTwin(scope.alone ? said : `${scope.own} ${clause}`)?.category || null;
+    // همان قلم، همان دسته: دو ثبتِ آخرِ همین قلم در همین دفتر یک دسته گفته‌اند، پس همان
+    // (`topicHistory`). ناهمخوان‌اند: حدسی نیست؛ یادداشت می‌گوید و دسته همان می‌ماند.
+    const history = subjectHere && !replacedBroken && !capitalWork ? resolution.topicHistory : null;
+    if (history?.agreed && history.agreed.type === type && fits(history.agreed.category)) category = history.agreed.category;
+    else if (history?.recent.length === 2 && !history.agreed) {
+      notes.push({ amountRef: amount.id, kind: 'warning', text: `«${history.item}» در این دفتر با دسته‌های «${history.recent[0].category}» و «${history.recent[1].category}» ثبت شده؛ یکی کردنش با حسابدار است.` });
+    }
     const described = classifyCategory(describe, type).category;
     // «آقای کاظمی ۱۲ میلیون نسیه از ما جنس برد»: دستهٔ مدل («مواد و کالا») دستهٔ خرید است و با
     // پولِ آمده جور نیست؛ فروشِ کالا «فروش» است، نه «سایر درآمدها» (آزمون ۱۰۰ سناریو، R032).
@@ -1073,14 +1100,17 @@ export function buildUnderstandingPlan(understanding, { resolution = {}, answers
       ...(funder && type === 'expense' && movement.direction !== 'none' ? { fundedBy: funder } : {}),
     };
     const verb = movement.direction === 'none' ? (type === 'income' ? 'طلب' : 'بدهی') : type === 'income' ? 'دریافت' : 'پرداخت';
+    // بدهی و طلبِ باز با «به‌علاوهٔ ۱۰ درصد»: همان جمعی که سازندهٔ رویداد می‌سازد. مبلغِ
+    // ردیف خالص می‌ماند و جمع فقط یک‌جا — `transactionEventDecision` — ساخته می‌شود.
+    const vatOnTop = movement.direction === 'none' ? unpaidVatTotal(item.rawText, amount.value) : null;
     components.push({
       id: amount.id, amountRef: amount.id, kind: movement.direction === 'none' ? 'obligation' : 'cash',
-      amount: amount.value, item, text: scope.alone ? null : scope.own,
+      amount: vatOnTop ? vatOnTop.gross : amount.value, item, text: scope.alone ? null : scope.own,
       // طولِ گفته‌شده بی‌آغاز: آغاز پرسیده می‌شود و پایان از همین طول ساخته می‌شود.
       durationMonths: durationMonths || null,
       // پیش‌دریافتِ اجاره یا خدمتِ دوره‌دار بی‌دوره هرگز درآمد نمی‌شود؛ دوره پرسیده می‌شود.
       timeBound: timeBoundIncome && movement.direction !== 'none',
-      label: `${verb} ${money(amount.value)} ${unitLabel()}${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}`,
+      label: `${verb} ${money(vatOnTop ? vatOnTop.gross : amount.value)} ${unitLabel()}${counterparty ? ` ${type === 'income' ? 'از' : 'به'} ${counterparty.name}` : ''}${vatOnTop ? ` (${money(vatOnTop.net)} + ${money(vatOnTop.tax)} ارزش افزوده)` : ''}`,
     });
   }
 

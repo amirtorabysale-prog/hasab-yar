@@ -1,0 +1,41 @@
+{
+  "source": "دفتر آزمایشی سایت، آزمون زندهٔ ۴ آبان ۱۴۰۵؛ خروجی خام مدل از GET /api/understanding/cases (فیلد modelOutput)",
+  "now": "2026-10-26T13:13:00.000Z",
+  "cases": [
+    {
+      "id": "vat-on-top-unpaid",
+      "transcript": "فاکتور خرید از شرکت پخش گلستان زدیم ۴۰ میلیون تومان به‌علاوهٔ ۱۰ درصد ارزش افزوده، پولش هنوز ندادیم.",
+      "modelOutput": {
+        "event": { "kind": "purchase", "description": "فاکتور خرید از شرکت پخش گلستان زدیم و پولش هنوز پرداخت نشده", "status": "future" },
+        "amounts": [
+          { "id": "a1", "value": 40000000, "currency": "toman", "role": "total", "status": "future", "partOf": null, "basis": "explicit", "computedFrom": { "op": null, "of": [] }, "evidence": "۴۰ میلیون تومان" },
+          { "id": "a2", "value": null, "currency": null, "role": "tax", "status": "future", "partOf": "a1", "basis": "explicit", "computedFrom": { "op": null, "of": [] }, "evidence": "۱۰ درصد ارزش افزوده" }
+        ],
+        "nonAmountNumbers": [{ "value": "10", "role": "percentage", "evidence": "۱۰ درصد" }],
+        "dates": [],
+        "counterparties": [{ "id": "c1", "name": "شرکت پخش گلستان", "role": "supplier", "evidence": "از شرکت پخش گلستان" }],
+        "movements": [{ "id": "m1", "amountRef": "a1", "direction": "out", "from": { "kind": "us", "name": null }, "to": { "kind": "counterparty", "name": "شرکت پخش گلستان" }, "evidence": "خرید از شرکت پخش گلستان زدیم ۴۰ میلیون تومان" }],
+        "subject": { "what": "خرید کالا از شرکت پخش گلستان", "kind": "goods", "use": "resale", "category": "مواد و کالا", "delivered": "unknown", "usefulLifeMonths": null, "evidence": "خرید از شرکت پخش گلستان" },
+        "conditions": [{ "kind": "negation", "text": "پولش هنوز ندادیم", "affects": ["a1", "a2"], "evidence": "پولش هنوز ندادیم" }],
+        "ambiguities": []
+      }
+    },
+    {
+      "id": "goods-taken-from-our-bank",
+      "transcript": "قهوهٔ دفتر رو ۴۲۰ هزار تومان از ملت گرفتیم",
+      "modelOutput": {
+        "event": { "kind": "expense", "description": "قهوهٔ دفتر", "status": "done" },
+        "amounts": [
+          { "id": "a1", "value": 420000, "currency": "toman", "role": "paid-now", "status": "done", "partOf": null, "basis": "explicit", "computedFrom": { "op": null, "of": [] }, "evidence": "۴۲۰ هزار تومان" }
+        ],
+        "nonAmountNumbers": [],
+        "dates": [],
+        "counterparties": [{ "id": "c1", "name": "ملت", "role": "bank", "evidence": "ملت" }],
+        "movements": [{ "id": "m1", "amountRef": "a1", "direction": "in", "from": { "kind": "bank", "name": "ملت" }, "to": { "kind": "us", "name": null }, "evidence": "از ملت گرفتیم" }],
+        "subject": { "what": "قهوهٔ دفتر", "kind": "goods", "use": "internal", "category": "خوراک", "delivered": "unknown", "usefulLifeMonths": null, "evidence": "قهوهٔ دفتر" },
+        "conditions": [],
+        "ambiguities": []
+      }
+    }
+  ]
+}

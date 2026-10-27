@@ -137,6 +137,26 @@ export function withoutVatQualifiers(input) {
  * شکلی که جدول نرخ‌های مالیاتی ذخیره می‌کند. مالیات از **تفاضل** درمی‌آید،
  * نه از ضرب جداگانه: جمع دو سطر باید دقیقاً همان پولی باشد که جابه‌جا شده.
  */
+/**
+ * جمعِ فاکتوری که مبلغش بدون ارزش افزوده و نرخش صریح گفته شده.
+ *
+ * «فاکتور خرید … ۴۰ میلیون تومان به‌علاوهٔ ۱۰ درصد ارزش افزوده، پولش هنوز
+ * ندادیم»: جمع ۴۴ از خودِ جمله درمی‌آید و پرسیدنش سؤالی بود که جمله جواب داده
+ * بود (آزمون زندهٔ ۴ آبان ۱۴۰۵). فقط با نرخِ گفته‌شده؛ نرخ پیش‌فرض دفتر این‌جا
+ * حدس زده نمی‌شود. مقیاس مهم نیست: درصد در تومان و ریال یکی است.
+ *
+ * برمی‌گرداند { net, tax, gross, rateBps } یا null.
+ */
+export function exclusiveVatTotal(text, base) {
+  const mention = readVatMention(text);
+  if (mention.form !== VAT_FORMS.EXCLUSIVE || !(mention.ratePercent > 0)) return null;
+  const net = Math.round(Number(base));
+  if (!Number.isSafeInteger(net) || net <= 0) return null;
+  const rateBps = Math.round(mention.ratePercent * 100);
+  const tax = Math.round(net * rateBps / 10_000);
+  return tax > 0 ? { net, tax, gross: net + tax, rateBps } : null;
+}
+
 export function splitInclusive(gross, rateBps) {
   const amount = Math.round(Number(gross));
   const bps = Math.round(Number(rateBps));

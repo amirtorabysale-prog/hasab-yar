@@ -10,7 +10,7 @@ import { applyAnswer } from '../shared/questionAnswer.js';
 import { GUARD_VERDICTS, guardedPlan, isGuardPlan, runGuards } from '../shared/guards.js';
 import { eventFingerprint } from '../shared/eventFingerprint.js';
 import { postJournalEntry, reverseJournalEntry } from './accounting.js';
-import { resolveEventAnalytic, resolveEventRole, withLedgerFacts } from './roleResolver.js';
+import { resolveEventAnalytic, resolveEventCostCenter, resolveEventRole, withLedgerFacts } from './roleResolver.js';
 import { storeError, ensureFinancialEventSchema, retireRecognitionSchedule, writeAudit } from './financialEvents/base.js';
 import { storeDecision, storeSchedule, blockedRecognitionReason, lockedScheduleItems, decisionForEvent } from './financialEvents/schedule.js';
 import { reviewedTimingCategory, reviewedTimingPlan, reconcileReviewedRecognition } from './financialEvents/reviewTiming.js';
@@ -226,6 +226,7 @@ function postEventJournal(database, eventId, event, plan, { actor = null, timeZo
     // تفصیلی همان‌جا به سطر می‌چسبد، چون فقط اینجا می‌دانیم این سطر مال کدام
     // نقش است. بدون آن، طرف حساب در فایل انتقال گم می‌شود.
     analyticId: resolveEventAnalytic(database, line.role, event, line.key),
+    costCenterId: resolveEventCostCenter(database, line.role, event),
     debit: line.debit,
     credit: line.credit,
     description: plan.memoHint || null,

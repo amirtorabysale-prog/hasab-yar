@@ -33,6 +33,7 @@ import { readUnpaidSignal } from './accrualSpeech.js';
 import { mentionsPersonalMoney } from './partnerPaidSpeech.js';
 import { readServicePeriod } from './periodSpeech.js';
 import { CATEGORY_DEFINITIONS } from './categoryRules.js';
+import { purchasePurposeFromSpeech } from './purchasePurpose.js';
 
 export const UNDERSTANDING_VERSION = 'event-understanding/v1';
 
@@ -135,6 +136,8 @@ const KIND_CUES = Object.freeze({
 const RETRACT = /[،,]?\s*(?:نه\s*[،,]?\s*ببخشید|نه|ببخشید|منظورم)\s*[،,]?\s*/g;
 const SPLIT_PART_ROLES = new Set(['cash-part', 'credit-part', 'paid-now', 'received-now', 'part', 'future-payment']);
 const ACCOUNT_SIDES = new Set(['bank', 'cash', 'petty-cash']);
+// رویدادهایی که بهایشان از حساب ما می‌رود.
+const SPEND_EVENTS = Object.freeze(['expense', 'purchase', 'asset-purchase']);
 const POSTING_DATE_ROLES = new Set(['payment', 'occurrence', 'coverage-start', 'coverage-end']);
 /** نشانهٔ پرداختِ بخشی از مانده؛ بدون هیچ‌کدام، «بدهی‌اش را واریز کرد» یعنی همهٔ مانده. */
 const PARTIAL_PAYMENT = /بخشی|قسمتی|مقداری|نصف|نیمی|کمی|یه\s*کم|بعضی|بقیه|باقی|مابقی|علی[\s\u200c]*الحساب|درصد|قسط|بیعانه/;
@@ -173,6 +176,8 @@ const DONE_CLAUSE = /(?:^|\s)(?:کردیم|کردم|کرد|کردند|کردن|�
 const THEIR_DEPOSIT = /(?:واریز|پرداخت)\s*(?:کرد|کردند|کردن)(?=$|[\s.،؛!؟])|(?:^|\s)(?:ریخت|ریختند|ریختن|زد|زدند|زدن|داد|دادند|دادن)(?=$|[\s.،؛!؟])/;
 /** «نقد»، «نقدی»، «صندوق» — حسابِ نقدِ دفتر، وقتی بانکی نام برده نشده. */
 const CASH_WORD = /(?<![آ-ی])(?:نقد|نقدی|نقدا|صندوق)(?![آ-ی])/;
+// نشانهٔ کالای فروش در خودِ جمله: «جنس»، «کالا»، «برای فروش». «بار» نه: «یه بار دیگه».
+const RESALE_WORDS = /(?<![آ-ی])(?:جنس|اجناس|کالا|کالاها|فروش|بفروشیم|بفروشیمش)(?![آ-ی])/;
 const OUR_PAYMENT = /(?:^|\s)(?:کردیم|دادیم|ریختیم|زدیم|کردم|دادم|ریختم|زدم|پرداختیم)(?=$|[\s.،؛!؟])/;
 /** نفیِ پرداخت — نه نفیِ ماهیت. «ودیعه هزینه نیست» پرداخت را نفی نمی‌کند. */
 const PAYMENT_NEGATION = /(?:پرداخت|واریز|تسویه|دریافت)\s*ن(?:کرده|کردیم|کردم|کرد|کردند|شده|شد)|(?:^|\s)ن(?:دادیم|دادم|داده|دادن|دادند|گرفتیم|گرفتم|گرفته|گرفتن|ریختیم|ریخته|زدیم|زده)|هنوز[^.،؛]{0,25}(?:پول|پرداخت|واریز|نداد|نگرفت)|پولی\s*(?:هم\s*)?ن/;
@@ -1013,6 +1018,20 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
       violations.push(`movements.${movement.id}:out-by-verb`);
     }
   }
+  // «قهوهٔ دفتر رو ۴۲۰ هزار تومان از ملت گرفتیم»: در خرید و هزینه، «از <حسابِ خودمان>
+  // گرفتیم» یعنی بهایش از همان حساب رفت. مدل خودش گفت «هزینه، کالا، مصرف داخلی» ولی پول
+  // را «از ملت به ما» نوشت، و برگه می‌پرسید «این پول بابت چه بود؟» با گزینه‌های فروش و وام
+  // (آزمون زندهٔ ۴ آبان ۱۴۰۵). مسیر بی‌AI همین جمله را پرداخت می‌خواند. وام بیرون است:
+  // آنجا بانک واقعاً پول داده.
+  const ourSide = (side) => ACCOUNT_SIDES.has(side?.kind) || isBank(side?.name) || /صندوق|تنخواه/.test(side?.name || '');
+  if (SPEND_EVENTS.includes(eventKind) && !loanEvent) {
+    for (const movement of movements.filter((item) => item.direction === 'in' && ourSide(item.from) && !isParty(item.to))) {
+      if (byId.get(movement.amountRef)?.role === 'received-now') continue;
+      const account = movement.from.kind === 'bank' || isBank(movement.from.name) ? 'bank' : /تنخواه/.test(movement.from.name || '') ? 'petty-cash' : 'cash';
+      Object.assign(movement, { direction: 'out', from: { kind: account, name: movement.from.name }, to: { kind: 'unknown', name: null } });
+      violations.push(`movements.${movement.id}:spend-from-our-account`);
+    }
+  }
   // طرف حسابی که مدل فقط در جابه‌جایی نام برد، در فهرست نام‌ها هم هست؛ بدونش تنها
   // نامِ فهرست جای او می‌نشست و دو معاملهٔ جدا قاطی می‌شد (آزمون بازبین، مهر ۱۴۰۵).
   for (const movement of movements) {
@@ -1105,6 +1124,14 @@ export function validateUnderstanding(raw, { text = '', now = new Date(), timeZo
     violations.push('subject:claims-without-evidence');
     subject.use = 'unknown';
     subject.usefulLifeMonths = null;
+  }
+  // «دو کارتن آب معدنی ۲۴۰ هزار تومان از ملت خریدیم»: مدل «برای فروش» نوشت و آب معدنی
+  // موجودی کالا شد؛ همان آب در دو جملهٔ دیگر هزینهٔ دفتر بود (آزمون زندهٔ ۴ آبان ۱۴۰۵).
+  // شاهدِ موضوع فقط می‌گوید چه خریده شد، نه برای چه. فروش مجدد ادعایی است که جمله باید
+  // بگوید («برای فروش»، «جنس»، «کالا»)؛ بی‌آن کاربرد پرسیده می‌شود، نه حدس زده.
+  if (subject.use === 'resale' && purchasePurposeFromSpeech(spoken) !== 'resale' && !RESALE_WORDS.test(spoken)) {
+    violations.push('subject:resale-without-evidence');
+    subject.use = 'unknown';
   }
 
   const conditions = raw.conditions.slice(0, 8).map((item) => ({

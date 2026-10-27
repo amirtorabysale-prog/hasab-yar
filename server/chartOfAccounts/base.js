@@ -4,6 +4,7 @@
 // chartOfAccounts همه از همان server/chartOfAccounts.js می‌خوانند.
 
 import { normalizePersian } from '../../shared/normalize.js';
+import { topicParts } from '../../shared/topicParts.js';
 
 export const CHART_LEVELS = Object.freeze({
   group: Object.freeze({ id: 'group', label: 'گروه', order: 1 }),
@@ -85,9 +86,17 @@ export function topicLabelKey(value) {
  * برچسبی که چیزی به دسته اضافه می‌کند. «اجاره» روی دستهٔ «اجاره» تفصیلی تازه‌ای
  * نمی‌سازد؛ فقط دسته را تکرار می‌کرد و فهرست تفصیلی‌های پارسیان را پر.
  */
+//
+// برچسب فقط «چه چیزی» است (`topicParts`): «قهوه»، «قهوهٔ دفتر» و «قهوه برای دفتر» یک
+// تفصیلی‌اند. وقتی خودِ قلم همان دسته است («اجارهٔ دفتر» روی دستهٔ «اجاره»)، محل تنها
+// چیزی است که برچسب اضافه می‌کند و می‌ماند؛ وگرنه اجارهٔ دفتر و مغازه یکی می‌شدند.
 export function meaningfulTopicLabel(label, category = '') {
   const clean = normalizeTopicLabel(label);
-  return clean && topicLabelKey(clean) !== topicLabelKey(category) ? clean : '';
+  if (!clean) return '';
+  const { item, place } = topicParts(clean);
+  // چیزی جدا نشد: املای خودِ برچسب می‌ماند («اجارهٔ دفتر»).
+  if (topicLabelKey(item) !== topicLabelKey(category)) return topicLabelKey(item) === topicLabelKey(clean) ? clean : normalizeTopicLabel(item);
+  return place && topicLabelKey(clean) !== topicLabelKey(category) ? clean : '';
 }
 
 export function chartError(message, code = 'CHART_INVALID', status = 400) {

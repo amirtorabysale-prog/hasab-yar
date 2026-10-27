@@ -3,7 +3,7 @@
 // از server/accounting.js جدا شد؛ بدنهٔ اعلان‌ها دست نخورده است. بیرون از پوشهٔ
 // accounting همه از همان server/accounting.js می‌خوانند.
 
-import { analyticForContact, meaningfulTopicLabel, topicAnalytic } from '../chartOfAccounts.js';
+import { analyticForContact, costCenterForTopic, meaningfulTopicLabel, topicAnalytic } from '../chartOfAccounts.js';
 import { accountingError, ensureAccountingSchema, linkedLedgerAccount, operationalLedgerAccount, categoryLedgerAccount, counterpartyLedgerAccount, inventoryLedgerAccount, cogsLedgerAccount, outputTaxLedgerAccount, inputTaxLedgerAccount, periodForDate } from './ledgerAccounts.js';
 import { nextRevision, reversedLine, insertJournal, assertAccountingPeriodOpen } from './journalCore.js';
 
@@ -34,9 +34,12 @@ export function syncTransactionJournal(database, transaction, { createdBy = null
   const topicLabel = meaningfulTopicLabel(transaction.topicLabel || transaction.topic_label, transaction.category);
   const topicAnalyticId = !counterparty && topicLabel ? topicAnalytic(database, topicLabel).id : null;
   const analyticId = settlement ? analyticForContact(database, settlement.contactId, settlement.contactName)?.id || null : topicAnalyticId;
+  // محلِ برچسب («دفتر») مرکز هزینهٔ سطرِ دسته است، اگر حسابدار تعریفش کرده باشد.
+  const label = transaction.topicLabel || transaction.topic_label;
+  const costCenterId = !counterparty && label ? costCenterForTopic(database, label) : null;
   const lines = transaction.type === 'income'
-    ? [{ accountId: cash, debit: amount }, { accountId: category, credit: amount, analyticId }]
-    : [{ accountId: category, debit: amount, analyticId }, { accountId: cash, credit: amount }];
+    ? [{ accountId: cash, debit: amount }, { accountId: category, credit: amount, analyticId, costCenterId }]
+    : [{ accountId: category, debit: amount, analyticId, costCenterId }, { accountId: cash, credit: amount }];
   return insertJournal(database, {
     sourceType: 'transaction', sourceId: transaction.id,
     revision: nextRevision(database, 'transaction', transaction.id), entryKind: 'normal',

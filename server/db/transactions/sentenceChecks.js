@@ -137,9 +137,11 @@ export function openNonCashStatement(item, transcript, sentence) {
   if (!draft?.accountingDecision) return null;
   const id = randomUUID();
   const title = String(contactName || item.category || (direction === 'receivable' ? 'طلب' : 'بدهی')).slice(0, 120);
+  // مبلغ تعهد همان مبلغ رویداد است: «۴۰ میلیون به‌علاوهٔ ۱۰ درصد» بدهیِ ۴۴ است، نه ۴۰.
+  const owed = draft.event.amount;
   db.prepare(`INSERT INTO obligations (id,contact_id,title,amount,direction,due_at,occurred_at,status,note) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(id, contactId || null, title, amount, direction, item.dueAt || null, occurredAt, 'open', said.slice(0, 500));
-  audit('create', 'obligation', id, { amount, direction, title, fromStatement: true });
+    .run(id, contactId || null, title, owed, direction, item.dueAt || null, occurredAt, 'open', said.slice(0, 500));
+  audit('create', 'obligation', id, { amount: owed, direction, title, fromStatement: true });
   let result = recordFinancialEvent(db, draft.event, {
     sourceEventId: `obligation:${id}`, decision: draft.decision,
     actor: currentWorkspace()?.userId || null, transcript, rawInput: said,
