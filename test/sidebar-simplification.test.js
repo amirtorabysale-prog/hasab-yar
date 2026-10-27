@@ -19,9 +19,11 @@ import { serverSource } from './helpers/serverSource.js';
 const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const leaves = MENU.flatMap((group) => group.items.map((item) => ({ group, item })));
 
-test('گروه‌های منو تک‌مقصدها‌ند؛ فقط میز کار دو مقصد جدا دارد', () => {
+// «گزارش‌ها» به خواست مالک محصول (۵ آبان ۱۴۰۵) زیرمجموعهٔ «گزارش‌های حسابداری» دارد.
+test('گروه‌های منو تک‌مقصدها‌ند؛ فقط میز کار و گزارش‌ها دو مقصد جدا دارند', () => {
   for (const group of MENU) {
     if (group.id === 'desk') { assert.ok(group.items.length > 1, 'میز کار دو صفحه دارد'); continue; }
+    if (group.id === 'reports') { assert.deepEqual(group.items.map((item) => item.screen), ['report', 'accounting-reports']); continue; }
     assert.equal(group.items.length, 1, `${group.label}: فقط یک مقصد`);
   }
 });

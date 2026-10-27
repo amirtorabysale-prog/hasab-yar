@@ -9,12 +9,55 @@ import {
 import {
   accountingPeriods, createAdjustingJournal, listLedgerAccounts, lockAccountingPeriod, periodForDate, reopenAccountingPeriod, trialBalance,
 } from '../accounting.js';
+import {
+  accountLedgerReport, agingReport, balanceSheetReport, cashFlowReport, costCenterReport, equityChangesReport, incomeStatementReport,
+  journalBookReport, ledgerControlsReport, personsReport, reportSheets, trialBalanceReport,
+} from '../accounting/reports.js';
+import { buildWorkbook } from '../spreadsheet.js';
+
+// گزارش‌های حسابداری: هر نام یک تابعِ خالص روی دفتر فعال است. پارامترها همان رشته‌های
+// پرس‌وجو هستند؛ اعتبارسنجی تاریخ و سطح درون خودِ گزارش است.
+const REPORTS = Object.freeze({
+  trial: (db, query, timeZone) => trialBalanceReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', includeZero: query.includeZero === '1', timeZone }),
+  ledger: (db, query, timeZone) => accountLedgerReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', key: query.key, analyticId: query.analyticId, timeZone }),
+  journal: (db, query, timeZone) => journalBookReport(db, { from: query.from, to: query.to, timeZone }),
+  'income-statement': (db, query, timeZone) => incomeStatementReport(db, { from: query.from, to: query.to, compare: query.compare === '1', timeZone }),
+  'balance-sheet': (db, query, timeZone) => balanceSheetReport(db, { to: query.to, compare: query.compare === '1', timeZone }),
+  'cash-flow': (db, query, timeZone) => cashFlowReport(db, { from: query.from, to: query.to, timeZone }),
+  'equity-changes': (db, query, timeZone) => equityChangesReport(db, { from: query.from, to: query.to, timeZone }),
+  persons: (db, query, timeZone) => personsReport(db, { to: query.to, timeZone }),
+  aging: (db, _query, timeZone) => agingReport(db, { timeZone }),
+  'cost-centers': (db, query, timeZone) => costCenterReport(db, { from: query.from, to: query.to, timeZone }),
+  controls: (db, query, timeZone) => ledgerControlsReport(db, { to: query.to, timeZone }),
+});
+const REPORT_TITLES = Object.freeze({
+  trial: 'تراز آزمایشی', ledger: 'دفتر حساب', journal: 'دفتر روزنامه', 'income-statement': 'صورت سود و زیان', 'balance-sheet': 'ترازنامه',
+  'cash-flow': 'جریان وجوه نقد', 'equity-changes': 'تغییرات حقوق مالکانه', persons: 'مانده اشخاص', aging: 'گزارش سنی', 'cost-centers': 'مراکز هزینه', controls: 'کنترل‌های دفتر',
+});
 
 export function registerAccountingRoutes(app) {
   app.get('/api/accounting/accounts', (_request, response) => response.json({ items: listLedgerAccounts(activeWorkspaceDatabase()) }));
   app.get('/api/accounting/trial-balance', (request, response, next) => {
     try { return response.json(trialBalance(activeWorkspaceDatabase(), request.query.through)); }
     catch (error) { return next(error); }
+  });
+  app.get('/api/accounting/reports/:kind', (request, response, next) => {
+    const build = REPORTS[request.params.kind];
+    if (!build) return response.status(404).json({ code: 'REPORT_UNKNOWN', message: 'این گزارش وجود ندارد.' });
+    try { return response.json(build(activeWorkspaceDatabase(), request.query, getSettings().timezone || 'Asia/Tehran')); }
+    catch (error) { return next(error); }
+  });
+  app.get('/api/accounting/reports/:kind/export', (request, response, next) => {
+    const build = REPORTS[request.params.kind];
+    if (!build) return response.status(404).json({ code: 'REPORT_UNKNOWN', message: 'این گزارش وجود ندارد.' });
+    try {
+      const report = build(activeWorkspaceDatabase(), request.query, getSettings().timezone || 'Asia/Tehran');
+      const title = REPORT_TITLES[request.params.kind];
+      const workbook = buildWorkbook(reportSheets(report, { columns: Number(request.query.columns) || 4, title }));
+      response.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      response.setHeader('Content-Disposition', `attachment; filename="hesab-yar-${request.params.kind}.xlsx"; filename*=UTF-8''${encodeURIComponent(title)}.xlsx`);
+      return response.send(workbook);
+    } catch (error) { return next(error); }
   });
   app.get('/api/accounting/journal', (request, response) => response.json(journalOverview(request.query)));
   app.post('/api/accounting/journal', (request, response, next) => {

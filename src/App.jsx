@@ -64,6 +64,7 @@ const LedgerPage = namedLazy(() => import('./features/ledger/LedgerPage.jsx'), '
 const LogoutPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'LogoutPanel');
 const PasswordPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'PasswordPanel');
 const ReportPage = namedLazy(() => import('./features/reports/ReportPage.jsx'), 'ReportPage');
+const AccountingReportsPage = namedLazy(() => import('./features/reports/AccountingReportsPage.jsx'), 'AccountingReportsPage');
 const ReviewQueuePage = namedLazy(() => import('./features/review/ReviewQueuePage.jsx'), 'ReviewQueuePage');
 const SessionsPanel = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SessionsPanel');
 const SettingsPage = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SettingsPage');
@@ -611,6 +612,7 @@ export default function App() {
           )}
           {screen === 'ledger' && <LedgerPage profileType={data.settings.profileType} categories={data.categories} accounts={data.accounts} contacts={data.contacts} notify={notify} refresh={load} initialTab={LEDGER_SECTIONS[section] || 'transactions'} cardSection={CARD_SECTIONS[section] || ''} onTabChange={(id) => { setSection(id); writeRoute('ledger', id); }} navigate={navigate} />}
           {screen === 'report' && <ReportPage profileType={data.settings.profileType} navigate={navigate} notify={notify} />}
+          {screen === 'accounting-reports' && <AccountingReportsPage notify={notify} />}
           {screen === 'review' && <ReviewQueuePage notify={notify} access={access} navigate={navigate} refresh={load} />}
           {screen === 'accounting' && data.settings.profileType === 'business' && <AccountingPage access={access} notify={notify} initialSection={section} onSectionChange={(id) => { setSection(id); writeRoute('accounting', id); }} />}
           {screen === 'tax' && data.settings.profileType === 'business' && <TaxPage access={access} notify={notify} />}

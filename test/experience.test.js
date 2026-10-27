@@ -147,6 +147,7 @@ test('هر صفحهٔ حرفه‌ای، مسیر سروری بسته‌ای دا
     firm: '/firm/portfolio',
     review: '/financial-events/review-queue',
     accounting: '/accounting/journal',
+    'accounting-reports': '/accounting/reports/trial',
     chart: '/chart/accounts',
     tax: '/tax/rates',
     collaboration: '/collaboration/requests',

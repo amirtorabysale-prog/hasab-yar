@@ -457,3 +457,36 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
   :is(.menu-group, .menu-leaf, button, a[href]):hover .dna-menu .dna-rung { animation: dna-turn 1.4s linear infinite; animation-delay: calc(var(--i) * var(--step, -0.8s)); }
   :is(.menu-group, .menu-leaf, button, a[href]):hover .dna-menu .dna-bar-front { animation: dna-depth 1.4s linear infinite; animation-delay: calc(var(--i) * var(--step, -0.8s)); }
 }
+
+/* ── گزارش‌های حسابداری ──────────────────────────────────────────────────────
+   همان زبان حرکتیِ صف حسابدار: گزارشِ تازه ۱۸۰ms محو و ۶px بالا می‌آید (rq-step)،
+   بارگذاری با همان اسکلتِ درخشان، برگهٔ کارت حساب با sheet-in. فهرست کنترل‌ها پله‌پله
+   (۴۰ms) و نوارهای مرکز هزینه از صفر رشد می‌کنند. فقط opacity و transform. */
+.report-table { scrollbar-width: thin; }
+.report-table:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 2px; }
+.report-table thead th { box-shadow: inset 0 -1px 0 rgb(var(--c-line)); }
+.report-row { transition: background-color .14s var(--ease-out); }
+.report-row:hover { background: rgb(var(--c-subtle)); }
+.report-drill { border-radius: 6px; }
+.report-drill:hover { color: rgb(var(--c-accent)); }
+.report-drill:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 2px; }
+.report-details > summary::-webkit-details-marker { display: none; }
+.report-details[open] > ul { animation: rq-step-in .18s var(--ease-out); }
+.report-pick:focus-visible, .report-segment button:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 2px; }
+@keyframes report-grow { from { transform: scaleX(0); } }
+.report-bar { transform-origin: right; animation: report-grow .42s var(--ease-out); }
+.report-stagger { animation: rq-step-in .2s var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 40ms); }
+@media (prefers-reduced-motion: reduce) {
+  .report-row { transition: none; }
+  .report-bar, .report-stagger, .report-details[open] > ul { animation: none; }
+}
+/* چاپ: فقط خودِ گزارش، بی‌منو و ابزار؛ جدول کامل و بی‌اسکرول. */
+@media print {
+  .report-print-hide, header.app-header, nav, aside { display: none !important; }
+  .accounting-reports { max-width: none; padding: 0; }
+  .report-table { overflow: visible !important; border: 0; }
+  .report-table table { min-width: 0 !important; font-size: 10.5px; }
+  .report-table thead { position: static !important; }
+  .report-details > ul { display: block; }
+  .rq-step { animation: none !important; }
+}

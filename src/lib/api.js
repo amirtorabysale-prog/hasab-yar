@@ -523,6 +523,24 @@ export const api = {
   pilotPortfolio: () => request('/api/pilot/portfolio'),
   operationsOverview: () => request('/api/operations/overview'),
   financialDna: (months = 6) => request(`/api/financial-dna?months=${months}`),
+  // گزارش‌های حسابداری: ترازها، صورت‌های مالی، دفاتر، اشخاص، مرکز هزینه و کنترل‌ها.
+  accountingReport: (kind, params = {}) => request(`/api/accounting/reports/${encodeURIComponent(kind)}?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null && value !== false).map(([key, value]) => [key, value === true ? '1' : String(value)]))}`),
+  downloadAccountingReport: async (kind, params = {}, fileName = 'report.xlsx') => {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null && value !== false).map(([key, value]) => [key, value === true ? '1' : String(value)]));
+    const response = await reachServer(`/api/accounting/reports/${encodeURIComponent(kind)}/export?${query}`, { credentials: 'same-origin', headers: protectedHeaders(false) });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw Object.assign(new Error(body.message || 'ساخت فایل اکسل گزارش انجام نشد.'), { status: response.status, code: body.code });
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { fileName, bytes: blob.size };
+  },
   downloadMonthlyAccountantPackage: async (month = '') => {
     const path = `/api/collaboration/monthly-package/download${month ? `?month=${encodeURIComponent(month)}` : ''}`;
     const response = await reachServer(path, { credentials: 'same-origin', headers: protectedHeaders(false) });

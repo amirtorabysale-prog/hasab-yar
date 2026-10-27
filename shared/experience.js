@@ -97,6 +97,11 @@ export const SCREENS = Object.freeze([
     id: 'accounting', label: 'حسابداری', icon: 'book',
     experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant',
   }),
+  // ترازها، صورت‌های مالی و دفاتر؛ زیرمجموعهٔ «گزارش‌ها» در منو، همان مرزِ حسابداری.
+  Object.freeze({
+    id: 'accounting-reports', label: 'گزارش‌های حسابداری', icon: 'chart',
+    experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'accountant',
+  }),
   Object.freeze({
     id: 'chart', label: 'کدینگ حساب‌ها', icon: 'landmark',
     experiences: [EXPERIENCES.PROFESSIONAL], minimumRole: 'manager',
@@ -138,7 +143,7 @@ function rankAllows(role, minimum) {
  * مالیات ندارد.
  */
 export function screensFor({ role = 'viewer', experience = EXPERIENCES.SIMPLE, profileType = 'business' } = {}) {
-  const businessOnly = new Set(['accounting', 'chart', 'tax', 'collaboration', 'dna', 'petty-cash']);
+  const businessOnly = new Set(['accounting', 'accounting-reports', 'chart', 'tax', 'collaboration', 'dna', 'petty-cash']);
   return SCREENS.filter((screen) => {
     // صفحهٔ پنهان از ناوبری و از دروازهٔ سرور بیرون است، ولی تعریفش می‌ماند.
     if (screen.hidden) return false;
