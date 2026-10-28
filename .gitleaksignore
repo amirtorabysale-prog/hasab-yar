@@ -1,3 +1,6 @@
 # رمز موقتِ ساختگیِ یک آزمون (عضو حسابدار در دفتر آزمایشی)، نه راز واقعی؛ در
 # کامیت بعدی با رمز تصادفی جایگزین شد.
 e1e65ade42271e17d631067c1569c2f9bf8f91ba:test/approval-family.test.js:generic-api-key:88
+# رمز ساختگی ادمین آزمون سند پایان دورهٔ انبار، نه راز واقعی؛ در کامیت بعدی با الگوی کم‌آنتروپی بقیهٔ آزمون‌ها جایگزین شد.
+a0f23030bc457becbc6106aadd38a7b6c1679ede:test/inventory-close.test.js:generic-api-key:20
+a0f23030bc457becbc6106aadd38a7b6c1679ede:test/inventory-close.test.js:generic-api-key:23
