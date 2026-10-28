@@ -7,7 +7,7 @@ import {
   activeWorkspaceDatabase, getSettings, fixedAssetOverview, saveFixedAsset, postDepreciation, reviewAssistantForJournal, runRecognition, timingContracts, seeRecognitionNotice, unscheduledBalances, unscheduledBalancesForEntry, createJournalDocuments, deleteJournalTemplate, journalOverview, journalWorklistOverview, listJournalTemplates, saveJournalTemplate, submitJournalApproval, recordAudit, cancelApprovalRequest, createApprovalRequest, decideApprovalRequest, listApprovalRequests,
 } from '../db.js';
 import {
-  accountingPeriods, closeFiscalYear, createAdjustingJournal, fiscalYearClosings, listLedgerAccounts, lockAccountingPeriod, periodForDate, previewYearClose, reopenAccountingPeriod, reopenFiscalYear, trialBalance,
+  accountingPeriods, closeFiscalYear, createAdjustingJournal, fiscalYearClosings, listLedgerAccounts, lockAccountingPeriod, periodForDate, previewYearClose, reopenAccountingPeriod, reopenFiscalYear, setFiscalYearStartMonth, trialBalance,
 } from '../accounting.js';
 import {
   accountLedgerReport, agingReport, balanceSheetReport, cashFlowReport, costCenterReport, equityChangesReport, incomeStatementReport,
@@ -139,6 +139,14 @@ export function registerAccountingRoutes(app) {
   // بستن سال مالی: پیش‌نمایش برای همه، بستن و بازگشایی فقط مالک (مثل قفل دوره).
   app.get('/api/accounting/year-close', (_request, response, next) => {
     try { return response.json({ items: fiscalYearClosings(activeWorkspaceDatabase()) }); } catch (error) { return next(error); }
+  });
+  // ماه شروع سال مالی؛ فقط مالک و فقط پیش از بستن اولین سال، قفل دوره یا تحویل به پارسیان.
+  app.post('/api/accounting/fiscal-year', (request, response, next) => {
+    try {
+      const result = setFiscalYearStartMonth(activeWorkspaceDatabase(), request.body?.startMonth, { timeZone: getSettings().timezone || 'Asia/Tehran' });
+      if (result.changed) recordAudit('update', 'settings', 'fiscalYearStartMonth', { from: result.previous, to: result.startMonth, renumbered: result.renumbered });
+      return response.json(result);
+    } catch (error) { return next(error); }
   });
   app.get('/api/accounting/year-close/:year', (request, response, next) => {
     try { return response.json(previewYearClose(activeWorkspaceDatabase(), request.params.year, { timeZone: getSettings().timezone || 'Asia/Tehran', retainedChartAccountId: String(request.query.retained || '') })); }

@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureRetainedEarningsTemplate, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount } from '../chartOfAccounts.js';
 import { ensureJournalWorkflowSchema } from '../journalWorkflow.js';
+import { fiscalYearOfKey, normalizeFiscalStartMonth } from '../../shared/fiscalYear.js';
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
 
@@ -97,9 +98,15 @@ export function ensureAccountingSchema(database) {
   ensureJournalWorkflowSchema(database);
 }
 
-// سال مالی از سال شمسی تاریخ وقوع سند گرفته می‌شود.
-export function fiscalYearForDate(occurredAt, timeZone = 'Asia/Tehran') {
-  return periodForDate(occurredAt, timeZone).split('-')[0];
+/** ماه شروع سال مالی این دفتر (shared/fiscalYear.js)؛ دفتر بی‌تنظیم از فروردین. */
+export function fiscalStartMonth(database) {
+  try { return normalizeFiscalStartMonth(database.prepare("SELECT value FROM settings WHERE key='fiscalYearStartMonth'").get()?.value); }
+  catch { return 1; }
+}
+
+// سال مالیِ تاریخ وقوع سند: سالی که سال مالی در آن تمام می‌شود.
+export function fiscalYearForDate(occurredAt, timeZone = 'Asia/Tehran', startMonth = 1) {
+  return String(fiscalYearOfKey(periodForDate(occurredAt, timeZone), startMonth));
 }
 
 export function nextCode(database, type) {

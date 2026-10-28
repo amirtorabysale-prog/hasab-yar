@@ -5,6 +5,7 @@ import { useSheetA11y } from '../../components/sheetA11y.js';
 import { api } from '../../lib/api.js';
 import { toPersianDigits, unitLabel } from '../../lib/format.js';
 import { persianToISO, todayPersian } from '../../../shared/persianDate.js';
+import { fiscalYearLabel, fiscalYearMonths, fiscalYearOf } from '../../../shared/fiscalYear.js';
 import { JournalEntrySheet } from '../accounting/JournalEntrySheet.jsx';
 import {
   AgingView, BalanceSheetView, CashFlowView, ControlsView, CostCenterView, Empty, EquityChangesView, IncomeStatementView,
@@ -49,19 +50,25 @@ const STORAGE_KEY = 'hesabyar.accounting-reports';
 const remember = (value) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* حافظهٔ مرورگر در دسترس نیست. */ } };
 const recall = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; } catch { return {}; } };
 
-/** بازه‌های آماده به تقویم شمسی؛ «سال مالی» فعلاً همان سال شمسی است. */
-function presetRange(id) {
+/** بازه‌های آماده به تقویم شمسی؛ «سال» یعنی سال مالی دفتر با ماه شروع خودش. */
+function presetRange(id, startMonth = 1) {
   const today = todayPersian();
   const iso = (year, month, day) => persianToISO(year, month, day);
   const to = iso(today.year, today.month, today.day);
+  const currentFiscal = fiscalYearOf(today.year, today.month, startMonth);
   if (id === 'month') return { from: iso(today.year, today.month, 1), to };
   if (id === 'quarter') return { from: iso(today.year, Math.floor((today.month - 1) / 3) * 3 + 1, 1), to };
-  if (id === 'year') return { from: iso(today.year, 1, 1), to };
+  if (id === 'year') { const { first } = fiscalYearMonths(currentFiscal, startMonth); return { from: iso(first.year, first.month, 1), to }; }
   // `y:1403` یک سالِ کامل است و `all` کل دفتر. دفتری که از بکاپ پر شده سال‌های گذشته را
   // دارد؛ «سال جاری» آن‌جا خالی بود (دفتر «آزمون بکاپ ریالی»، ۵ آبان ۱۴۰۵).
   if (id === 'all') return { from: '', to };
-  const year = id === 'last-year' ? today.year - 1 : Number(String(id).match(/^y:(\d{4})$/)?.[1]);
-  if (year) return { from: iso(year, 1, 1), to: year === today.year ? to : iso(year, 12, 30) || iso(year, 12, 29) };
+  const year = id === 'last-year' ? currentFiscal - 1 : Number(String(id).match(/^y:(\d{4})$/)?.[1]);
+  if (year) {
+    const { first, last } = fiscalYearMonths(year, startMonth);
+    // روز آخر ماه آخر: ۳۱، ۳۰ یا ۲۹ (اسفند غیرکبیسه).
+    const end = iso(last.year, last.month, 31) || iso(last.year, last.month, 30) || iso(last.year, last.month, 29);
+    return { from: iso(first.year, first.month, 1), to: year === currentFiscal ? to : end };
+  }
   return null;
 }
 /** سال‌های شمسیِ یک بازهٔ آماده، برای شمردن پیش‌نویس‌هایی که در گزارش نیامده‌اند؛ null یعنی همه. */
@@ -147,13 +154,13 @@ export function AccountingReportsPage({ access, notify }) {
       // بازهٔ ذخیره‌شده فقط اگر در این دفتر سند دارد؛ وگرنه آخرین سالِ دارای سند.
       const fits = wanted && (wanted === 'all' || (['month', 'quarter', 'year'].includes(wanted) ? has(years.currentYear) : has(Number(wanted.slice(2)))));
       const choice = fits ? wanted : has(years.currentYear) || !latest ? 'year' : `y:${latest}`;
-      setPreset(choice); setRange(presetRange(choice));
+      setPreset(choice); setRange(presetRange(choice, years.startMonth));
     }).catch(() => { setPreset('year'); setRange(presetRange('year')); });
   }, [loadYears, saved.preset]);
   const presets = useMemo(() => {
     const current = yearsInfo?.currentYear;
     const years = [...new Set([current, ...(yearsInfo?.years || []).map((item) => item.year)].filter(Boolean))].sort((a, b) => b - a);
-    return [['month', 'ماه جاری'], ['quarter', 'فصل جاری'], ...years.map((year) => [year === current ? 'year' : `y:${year}`, `سال ${toPersianDigits(year)}`]), ['all', 'کل دفتر'], ['custom', 'دلخواه']];
+    return [['month', 'ماه جاری'], ['quarter', 'فصل جاری'], ...years.map((year) => [year === current ? 'year' : `y:${year}`, `سال ${toPersianDigits(fiscalYearLabel(year, yearsInfo?.startMonth))}`]), ['all', 'کل دفتر'], ['custom', 'دلخواه']];
   }, [yearsInfo]);
 
   const params = useMemo(() => {
@@ -189,7 +196,7 @@ export function AccountingReportsPage({ access, notify }) {
   }, [reportId, params]);
   useEffect(() => { load(); }, [load]);
 
-  const choosePreset = (id) => { setPreset(id); if (id !== 'custom') setRange(presetRange(id)); };
+  const choosePreset = (id) => { setPreset(id); if (id !== 'custom') setRange(presetRange(id, yearsInfo?.startMonth)); };
   const exportExcel = async () => {
     if (!params) return;
     setExporting(true);

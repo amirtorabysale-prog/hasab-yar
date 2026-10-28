@@ -6,7 +6,7 @@
 export {
   ensureAccountingSchema, fiscalYearForDate, categoryLedgerAccount, counterpartyAccountKey,
   counterpartyLedgerAccount, inventoryLedgerAccount, outputTaxLedgerAccount, inputTaxLedgerAccount,
-  periodForDate,
+  periodForDate, fiscalStartMonth,
 } from './accounting/ledgerAccounts.js';
 export {
   repairOperationalChartMapping, ensureTransferEntriesSchema, recordTransferBatchEntries,
@@ -43,5 +43,5 @@ export {
   accountingPeriods, lockAccountingPeriod, reopenAccountingPeriod,
 } from './accounting/periods.js';
 export {
-  fiscalYearBounds, yearCloseRoles, previewYearClose, closeFiscalYear, reopenFiscalYear, fiscalYearClosings,
+  fiscalYearBounds, yearCloseRoles, previewYearClose, closeFiscalYear, reopenFiscalYear, fiscalYearClosings, setFiscalYearStartMonth,
 } from './accounting/yearClose.js';

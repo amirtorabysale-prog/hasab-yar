@@ -20,7 +20,9 @@
 import { randomUUID } from 'node:crypto';
 import { persianMonthRange } from '../../shared/persianDate.js';
 import { mapLedgerAccountToChart } from '../chartOfAccounts.js';
-import { accountingError, ensureAccountingSchema, linkedLedgerAccount } from './ledgerAccounts.js';
+import { fiscalYearLabel, fiscalYearMonths, fiscalYearOfKey } from '../../shared/fiscalYear.js';
+import { accountingError, ensureAccountingSchema, fiscalStartMonth, fiscalYearForDate, linkedLedgerAccount } from './ledgerAccounts.js';
+import { backfillDocumentNumbers } from '../journalWorkflow.js';
 import { ensureParsianSourceSchema, insertJournal, nextRevision, reversedLine } from './journalCore.js';
 import { trialBalance } from './journalBook.js';
 import { unpostedRecognitionThrough } from './periods.js';
@@ -51,24 +53,26 @@ function dayKeyFormatter(timeZone) {
 }
 
 /**
- * مرز سال مالی. سال مالی فعلاً همان سال شمسی است (`fiscalYearForDate`)؛ سال دلخواه فقط
- * همین تابع را عوض می‌کند.
+ * مرز سال مالی، با ماه شروع دلخواه دفتر (shared/fiscalYear.js). سال مالی ۱۴۰۴ با شروع از
+ * مهر، از ۱ مهر ۱۴۰۳ تا ۳۱ شهریور ۱۴۰۴ است.
  *
  * سند موقت دو ثانیه و اختتامیه یک ثانیه پیش از نیمه‌شبِ اول فروردین سال بعد (به وقت دفتر)
  * زده می‌شوند تا بعد از هر سند روز آخر بنشینند؛ افتتاحیه درست در همان نیمه‌شب.
  */
-export function fiscalYearBounds(year, timeZone = 'Asia/Tehran') {
-  const start = persianMonthRange(year, 1, timeZone);
-  const next = persianMonthRange(year + 1, 1, timeZone);
+export function fiscalYearBounds(year, timeZone = 'Asia/Tehran', startMonth = 1) {
+  const months = fiscalYearMonths(year, startMonth);
+  const following = fiscalYearMonths(year + 1, startMonth).first;
+  const start = persianMonthRange(months.first.year, months.first.month, timeZone);
+  const next = persianMonthRange(following.year, following.month, timeZone);
   if (!start || !next) throw accountingError('مرز سال مالی ساخته نشد.', 'FISCAL_YEAR_INVALID');
   const nextStart = Date.parse(next.from);
   const toDay = dayKeyFormatter(timeZone);
   const temporaryAt = new Date(nextStart - 2000).toISOString();
   return {
-    year, from: start.from, toExclusive: next.from,
+    year, startMonth: months.first.month, label: fiscalYearLabel(year, startMonth), from: start.from, toExclusive: next.from,
     temporaryAt, closingAt: new Date(nextStart - 1000).toISOString(), openingAt: next.from,
-    firstDay: `${year}-01-01`, lastDay: toDay(temporaryAt), nextFirstDay: `${year + 1}-01-01`,
-    periods: Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`),
+    firstDay: `${months.periods[0]}-01`, lastDay: toDay(temporaryAt), nextFirstDay: `${following.year}-${String(following.month).padStart(2, '0')}-01`,
+    periods: months.periods, nextPeriod: `${following.year}-${String(following.month).padStart(2, '0')}`,
   };
 }
 
@@ -252,7 +256,8 @@ function deferredTransactions(database, bounds) {
 }
 
 function planYearClose(database, year, { timeZone = 'Asia/Tehran', retainedChartAccountId = '' } = {}) {
-  const bounds = fiscalYearBounds(year, timeZone);
+  const startMonth = fiscalStartMonth(database);
+  const bounds = fiscalYearBounds(year, timeZone, startMonth);
   const book = readBook(database, timeZone);
   const blockers = [];
   const block = (code, message, extra = {}) => blockers.push({ code, message, ...extra });
@@ -273,13 +278,13 @@ function planYearClose(database, year, { timeZone = 'Asia/Tehran', retainedChart
   const closedYears = new Set(database.prepare("SELECT year FROM fiscal_year_closings WHERE status='closed'").all().map((row) => Number(row.year)));
   const openEarlier = [...new Set([...book.entries.values()]
     .filter((entry) => entry.state === 'approved' && entry.day < bounds.firstDay && entry.entryKind !== 'opening' && !book.roles.has(entry.id))
-    .map((entry) => Number(entry.day.slice(0, 4))))].filter((item) => !closedYears.has(item)).sort();
+    .map((entry) => fiscalYearOfKey(entry.day, startMonth)))].filter((item) => !closedYears.has(item)).sort();
   if (openEarlier.length) block('FISCAL_YEAR_PREVIOUS_OPEN', `سال ${openEarlier.join('، ')} هنوز بسته نشده است. سال‌ها به ترتیب بسته می‌شوند.`, { years: openEarlier });
 
   if (!trialBalance(database).balanced) block('TRIAL_BALANCE_UNBALANCED', 'دفتر کل نامتوازن است و سال قابل بستن نیست.');
   const recognition = unpostedRecognitionThrough(database, bounds.periods.at(-1), timeZone);
   if (recognition.length) block('RECOGNITION_DUE_BEFORE_CLOSE', `${recognition.length} قلم شناسایی پیش‌پرداخت یا درآمد انتقالی تا پایان سال ${year} هنوز سند نخورده؛ پیش از بستن، شناسایی ماهانه را اجرا کن یا تکلیفش را در صف حسابدار روشن کن.`, { count: recognition.length });
-  const nextPeriod = `${year + 1}-01`;
+  const { nextPeriod } = bounds;
   if (database.prepare("SELECT 1 FROM accounting_periods WHERE period=? AND status='locked'").get(nextPeriod)) {
     block('NEXT_PERIOD_LOCKED', `دورهٔ ${nextPeriod} بسته است و سند افتتاحیه در آن ثبت نمی‌شود.`);
   }
@@ -309,13 +314,13 @@ function planYearClose(database, year, { timeZone = 'Asia/Tehran', retainedChart
   const reminders = [];
   if (profit > 0) reminders.push('ذخیرهٔ مالیات عملکرد و اندوختهٔ قانونی خودکار ثبت نمی‌شوند؛ اگر لازم‌اند، پیش از بستن با سند تعدیلی ثبتشان کن.');
   if (imported.closing) reminders.push(`سند ${imported.closing.documentNumber ?? '—'} بکاپ پارسیان اختتامیهٔ همین سال است و جای سند اختتامیهٔ حساب‌یار را می‌گیرد.`);
-  const nextYearEntries = [...book.entries.values()].filter((entry) => entry.day >= bounds.nextFirstDay && entry.day.startsWith(String(year + 1))).length;
+  const nextYearEntries = [...book.entries.values()].filter((entry) => entry.day >= bounds.nextFirstDay && fiscalYearOfKey(entry.day, startMonth) === year + 1).length;
   if (nextYearEntries && !imported.closing) reminders.push(`سال ${year + 1} از قبل ${nextYearEntries} سند دارد؛ شمارهٔ سند افتتاحیه بعد از آن‌ها می‌آید، نه شمارهٔ ۱.`);
 
   return {
     bounds, book, blockers, imported, profit, retained, temporaryLines, closingLines, before,
     summary: {
-      year, from: bounds.firstDay, to: bounds.lastDay, ready: blockers.length === 0, blockers, reminders,
+      year, label: bounds.label, startMonth, from: bounds.firstDay, to: bounds.lastDay, ready: blockers.length === 0, blockers, reminders,
       closed, entries: { total: inYear.length, unapproved: unapproved.length },
       profit,
       temporary: { lines: temporaryLines.length, accounts: new Set(temporaryLines.map((line) => line.accountId)).size },
@@ -439,9 +444,9 @@ export function reopenFiscalYear(database, yearValue, { userId = null, reason = 
     if (!closed) throw accountingError(`سال ${year} بسته نیست.`, 'FISCAL_YEAR_NOT_CLOSED', 404);
     const later = database.prepare("SELECT year FROM fiscal_year_closings WHERE status='closed' AND CAST(year AS INTEGER)>? ORDER BY year").all(year).map((row) => row.year);
     if (later.length) throw accountingError(`سال ${later.join('، ')} بعد از این سال بسته شده است؛ اول آن را بازگشایی کن.`, 'LATER_YEAR_CLOSED', 409);
-    const bounds = fiscalYearBounds(year, timeZone);
-    if (database.prepare("SELECT 1 FROM accounting_periods WHERE period=? AND status='locked'").get(`${year + 1}-01`)) {
-      throw accountingError(`دورهٔ ${year + 1}-01 بسته است و معکوس سند افتتاحیه در آن ثبت نمی‌شود.`, 'NEXT_PERIOD_LOCKED', 409);
+    const bounds = fiscalYearBounds(year, timeZone, fiscalStartMonth(database));
+    if (database.prepare("SELECT 1 FROM accounting_periods WHERE period=? AND status='locked'").get(bounds.nextPeriod)) {
+      throw accountingError(`دورهٔ ${bounds.nextPeriod} بسته است و معکوس سند افتتاحیه در آن ثبت نمی‌شود.`, 'NEXT_PERIOD_LOCKED', 409);
     }
     database.prepare(`UPDATE accounting_periods SET status='open',reopened_by=?,reopened_at=CURRENT_TIMESTAMP,reopen_reason=?
       WHERE period IN (${bounds.periods.map(() => '?').join(',')}) AND status='locked'`).run(userId, cleanReason, ...bounds.periods);
@@ -475,4 +480,39 @@ export function fiscalYearClosings(database) {
   ensureAccountingSchema(database);
   return database.prepare(`SELECT id,year,status,profit,closed_by AS closedBy,closed_at AS closedAt,reopened_by AS reopenedBy,
     reopened_at AS reopenedAt,reopen_reason AS reopenReason FROM fiscal_year_closings ORDER BY closed_at DESC,year DESC`).all();
+}
+
+// ---------------------------------------------------------------------------
+// ماه شروع سال مالی
+// ---------------------------------------------------------------------------
+
+/**
+ * ماه شروع سال مالی دفتر را عوض می‌کند و سال مالی و شمارهٔ همهٔ سندها را از نو می‌سازد.
+ *
+ * شمارهٔ سند در هر سال مالی از ۱ است؛ با جابه‌جا شدن مرز سال، دنباله باید از نو ساخته شود.
+ * پس تغییر فقط وقتی ممکن است که هیچ شماره‌ای بیرون از دفتر «ثبت» نشده باشد: هیچ سالی بسته
+ * نیست، هیچ دوره‌ای قفل نیست و هیچ بسته‌ای به پارسیان تحویل نشده. وگرنه سند ۱۲ دورهٔ بسته
+ * یا فایل تحویل‌شده بی‌صدا سند دیگری می‌شد.
+ */
+export function setFiscalYearStartMonth(database, value, { timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  const month = Number(value);
+  if (!Number.isInteger(month) || month < 1 || month > 12) throw accountingError('ماه شروع سال مالی باید عددی از ۱ (فروردین) تا ۱۲ (اسفند) باشد.', 'FISCAL_START_INVALID');
+  const previous = fiscalStartMonth(database);
+  if (previous === month) return { startMonth: month, changed: false, renumbered: 0 };
+  const closed = database.prepare("SELECT year FROM fiscal_year_closings WHERE status='closed' ORDER BY year").all().map((row) => row.year);
+  if (closed.length) throw accountingError(`سال ${closed.join('، ')} بسته شده است؛ ماه شروع سال مالی فقط پیش از بستن اولین سال عوض می‌شود. اول سال‌ها را بازگشایی کن.`, 'FISCAL_START_LOCKED', 409);
+  const locked = database.prepare("SELECT period FROM accounting_periods WHERE status='locked' ORDER BY period").all().map((row) => row.period);
+  if (locked.length) throw accountingError(`دوره‌های ${locked.slice(0, 6).join('، ')} قفل‌اند؛ تغییر سال مالی شمارهٔ سندهای آن‌ها را عوض می‌کرد. اول دوره‌ها را باز کن.`, 'FISCAL_START_LOCKED', 409);
+  let delivered = 0;
+  try { delivered = Number(database.prepare("SELECT COUNT(*) AS n FROM accounting_transfer_batches WHERE status IN ('delivered','accepted')").get().n) || 0; } catch { delivered = 0; }
+  if (delivered) throw accountingError(`${delivered} بستهٔ انتقال به پارسیان تحویل شده و شمارهٔ سندهایش آن‌جا ثبت است؛ ماه شروع سال مالی دیگر عوض نمی‌شود.`, 'FISCAL_START_LOCKED', 409);
+  return inTransaction(database, () => {
+    database.prepare("INSERT INTO settings (key,value) VALUES ('fiscalYearStartMonth',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(month));
+    // شماره‌ها اول خالی می‌شوند تا شاخص یکتای (سال، شماره) وسط کار به هم نخورد؛ بعد به
+    // ترتیب تاریخ وقوع و زمان ثبت، همان قاعدهٔ شماره‌گذاری اسناد قدیمی، پر می‌شوند.
+    const total = database.prepare('UPDATE journal_entries SET document_number=NULL').run().changes;
+    backfillDocumentNumbers(database, (occurredAt) => fiscalYearForDate(occurredAt, timeZone, month));
+    return { startMonth: month, previous, changed: true, renumbered: total };
+  });
 }

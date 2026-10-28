@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { counterpartyAnalyticForKey, ensureChartSchema } from '../chartOfAccounts.js';
 import { backfillDocumentNumbers } from '../journalWorkflow.js';
-import { accountingError, ensureAccountingSchema, fiscalYearForDate, nextCode, operationalLedgerAccount, periodForDate } from './ledgerAccounts.js';
+import { accountingError, ensureAccountingSchema, fiscalStartMonth, fiscalYearForDate, nextCode, operationalLedgerAccount, periodForDate } from './ledgerAccounts.js';
 import { nextRevision, reversedLine, insertJournal, assertAccountingPeriodOpen } from './journalCore.js';
 import { syncTransactionJournal } from './documents.js';
 
@@ -119,7 +119,8 @@ export function migrateAccountingLedger(database, { createdBy = null } = {}) {
     if (!exists) syncTransactionJournal(database, transaction, { createdBy });
   }
   // اسناد پیش از فاز ۳ شماره ندارند؛ به ترتیب تاریخ وقوع شماره می‌گیرند.
-  const numbered = backfillDocumentNumbers(database, (occurredAt) => fiscalYearForDate(occurredAt));
+  const startMonth = fiscalStartMonth(database);
+  const numbered = backfillDocumentNumbers(database, (occurredAt) => fiscalYearForDate(occurredAt, 'Asia/Tehran', startMonth));
   return { accounts: accounts.length, transactions: transactions.length, numbered: numbered.numbered };
 }
 

@@ -10,7 +10,8 @@
 // هیچ گزارشی عددی را «درست» نمی‌کند: اگر ترازنامه نخواند، اختلاف صریح نشان داده می‌شود.
 
 import { migrateAccountingLedger } from './ledgerSetup.js';
-import { accountingError } from './ledgerAccounts.js';
+import { accountingError, fiscalStartMonth } from './ledgerAccounts.js';
+import { fiscalYearLabel, fiscalYearOfKey, fiscalYearStartKey } from '../../shared/fiscalYear.js';
 import { persianToISO } from '../../shared/persianDate.js';
 
 const CASH_ROLES = new Set(['cash', 'bank', 'petty-cash']);
@@ -57,7 +58,6 @@ function readRange({ from = '', to = '' } = {}, toDay) {
   return { fromDay, toDay: toDayKey };
 }
 
-const yearStartOf = (dayKey) => `${dayKey.slice(0, 4)}-01-01`;
 
 const DAY = 86_400_000;
 /** لحظه‌ای ثابت درون یک روز شمسی؛ فاصلهٔ دو روز با آن عدد صحیحِ روز است. */
@@ -115,7 +115,7 @@ function readLedger(database, timeZone, { includeDrafts = false, beforeClose = f
   const costCenters = new Map(database.prepare('SELECT id,code,name FROM cost_centers').all().map((row) => [row.id, row]));
   // روزِ هر سند تأییدنشده؛ گزارش فقط آن‌هایی را می‌شمارد که تا پایان بازه‌اش اثر دارند.
   const drafts = includeDrafts ? database.prepare("SELECT occurred_at AS occurredAt FROM journal_entries WHERE approval_state<>'approved'").all().map((row) => toDay(row.occurredAt)) : [];
-  return { toDay, timeZone, chart, accounts, lines, journalLines, analytics, costCenters, includeDrafts, drafts };
+  return { toDay, timeZone, chart, accounts, lines, journalLines, analytics, costCenters, includeDrafts, drafts, startMonth: fiscalStartMonth(database) };
 }
 
 /** گزارشی که پیش‌نویس‌ها را هم شمرده، غیرقطعی است و باید همین را بگوید. */
@@ -372,7 +372,8 @@ function balanceSheetFor(ledger, asOf) {
   // می‌شود (پایین)، پس بستن سال هیچ عددی از ترازنامه را عوض نمی‌کند و سودِ روز آخر سال صفر
   // نمی‌شود. حساب انباشته فقط ثبت‌های دیگرش (تقسیم سود، اندوخته) را نشان می‌دهد.
   const nets = netByAccount(ledger, (line) => through(line, asOf) && !line.temporary);
-  const yearStart = yearStartOf(asOf);
+  // «سال جاری» یعنی سال مالی دفتر، نه سال شمسی.
+  const yearStart = fiscalYearStartKey(asOf, ledger.startMonth);
   const section = (type) => {
     const entries = new Map();
     for (const [accountId, net] of nets) {
@@ -769,13 +770,16 @@ export function reportSheets(report, { columns = 4, title = '' } = {}) {
 export function ledgerYears(database, { timeZone = 'Asia/Tehran' } = {}) {
   migrateAccountingLedger(database);
   const toDay = dayKeyFormatter(timeZone);
+  const startMonth = fiscalStartMonth(database);
   const years = new Map();
   for (const row of database.prepare('SELECT occurred_at AS occurredAt,approval_state AS state FROM journal_entries').all()) {
-    const year = toDay(row.occurredAt).slice(0, 4);
-    if (!year) continue;
-    if (!years.has(year)) years.set(year, { year: Number(year), approved: 0, drafts: 0 });
+    const key = toDay(row.occurredAt);
+    if (!key) continue;
+    // سال مالی دفتر، نه سال شمسی: با شروع از مهر، سند آبان ۱۴۰۳ مال سال مالی ۱۴۰۴ است.
+    const year = fiscalYearOfKey(key, startMonth);
+    if (!years.has(year)) years.set(year, { year, label: fiscalYearLabel(year, startMonth), approved: 0, drafts: 0 });
     years.get(year)[row.state === 'approved' ? 'approved' : 'drafts'] += 1;
   }
   const list = [...years.values()].sort((a, b) => b.year - a.year);
-  return { years: list, currentYear: Number(toDay(new Date().toISOString()).slice(0, 4)) };
+  return { years: list, currentYear: fiscalYearOfKey(toDay(new Date().toISOString()), startMonth), startMonth };
 }

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { approvalRequiredError, currentApproval, recordOverdraftApproval } from '../balanceGuard.js';
 import { listChartAccounts, mapLedgerAccountToChart, resolveLineDimensions } from '../chartOfAccounts.js';
 import { nextDocumentNumber, normalizeApprovalState } from '../journalWorkflow.js';
-import { accountingError, ensureAccountingSchema, fiscalYearForDate, isPettyCashAccount, periodForDate } from './ledgerAccounts.js';
+import { accountingError, ensureAccountingSchema, fiscalStartMonth, fiscalYearForDate, isPettyCashAccount, periodForDate } from './ledgerAccounts.js';
 
 export function validateLines(database, lines, { maxLines = 1000, allowInactive = false } = {}) {
   // سقف بالا عمداً بزرگ است: سند حقوق یک آرتیکل به‌ازای هر نفر دارد تا
@@ -205,7 +205,7 @@ export function insertJournal(database, rawValues) {
   const validated = validateLines(database, values.lines, { maxLines: values.maxLines, allowInactive: values.allowInactive });
   const id = randomUUID();
   // شماره در همان لحظهٔ درج و در همان تراکنش گرفته می‌شود تا دنبالهٔ سال مالی گپ نگیرد.
-  const fiscalYear = fiscalYearForDate(values.occurredAt, values.timeZone || 'Asia/Tehran');
+  const fiscalYear = fiscalYearForDate(values.occurredAt, values.timeZone || 'Asia/Tehran', fiscalStartMonth(database));
   const documentNumber = nextDocumentNumber(database, fiscalYear);
   // سند خودکار سیستم «کنترل‌شده» است؛ فقط ثبت دستی و انبوه وارد گردش تأیید می‌شوند.
   const approvalState = normalizeApprovalState(values.approvalState || 'approved');

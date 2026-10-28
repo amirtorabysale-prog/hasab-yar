@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
+import { PERSIAN_MONTH_NAMES, fiscalYearLabel } from '../../../shared/fiscalYear.js';
 
 const SOURCE_LABEL = { hesabyar: 'ساخته می‌شود', parsian: 'از بکاپ پارسیان' };
 
@@ -10,19 +11,20 @@ const SOURCE_LABEL = { hesabyar: 'ساخته می‌شود', parsian: 'از بک
  */
 export default function YearClosePanel({ isOwner, notify, refresh }) {
   const [years, setYears] = useState([]);
+  const [startMonth, setStartMonth] = useState(1);
   const [year, setYear] = useState('');
   const [retained, setRetained] = useState('');
   const [plan, setPlan] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    api.accountingReportYears().then((result) => {
-      const list = (result.years || []).map((item) => item.year);
-      setYears(list);
-      // پیش‌فرض: قدیمی‌ترین سالی که هنوز بسته نشده؛ همان که اول باید بسته شود.
-      setYear((current) => current || String(list.at(-1) || result.currentYear || ''));
-    }).catch((error) => notify(error.message));
-  }, [notify]);
+  const loadYears = useCallback(() => api.accountingReportYears().then((result) => {
+    const list = (result.years || []).map((item) => item.year);
+    setYears(list);
+    setStartMonth(result.startMonth || 1);
+    // پیش‌فرض: قدیمی‌ترین سالی که دفتر دارد؛ سال‌ها به ترتیب بسته می‌شوند.
+    setYear((current) => (current && list.includes(Number(current)) ? current : String(list.at(-1) || result.currentYear || '')));
+  }).catch((error) => notify(error.message)), [notify]);
+  useEffect(() => { loadYears(); }, [loadYears]);
 
   const load = useCallback(async () => {
     if (!year) return;
@@ -31,7 +33,7 @@ export default function YearClosePanel({ isOwner, notify, refresh }) {
   useEffect(() => { load(); }, [load]);
 
   const close = async () => {
-    if (!window.confirm(`سال ${toPersianDigits(year)} بسته شود؟ سند بستن حساب‌های موقت، اختتامیه و افتتاحیهٔ سال بعد ثبت و دوازده دورهٔ سال قفل می‌شود.`)) return;
+    if (!window.confirm(`سال مالی ${toPersianDigits(fiscalYearLabel(year, startMonth))} بسته شود؟ سند بستن حساب‌های موقت، اختتامیه و افتتاحیهٔ سال بعد ثبت و دوازده دورهٔ سال قفل می‌شود.`)) return;
     setBusy(true);
     try {
       const result = await api.closeFiscalYear(year, retained);
@@ -49,6 +51,19 @@ export default function YearClosePanel({ isOwner, notify, refresh }) {
     setBusy(false);
   };
 
+  const changeStart = async (value) => {
+    const month = Number(value);
+    if (!window.confirm(`سال مالی از ${PERSIAN_MONTH_NAMES[month - 1]} شروع شود؟ سال مالی و شمارهٔ همهٔ سندهای دفتر از نو ساخته می‌شود.`)) return;
+    setBusy(true);
+    try {
+      const result = await api.setFiscalYearStart(month);
+      notify(result.changed ? `سال مالی از ${PERSIAN_MONTH_NAMES[month - 1]} شروع می‌شود؛ ${toPersianDigits(result.renumbered)} سند دوباره شماره خورد.` : 'تغییری لازم نبود.');
+      setYear('');
+      await Promise.all([loadYears(), refresh()]);
+    } catch (error) { notify(error.message); }
+    setBusy(false);
+  };
+
   const closed = Boolean(plan?.closed);
   const needsRetained = plan?.blockers?.some((item) => item.code === 'RETAINED_ACCOUNT_REQUIRED') || Boolean(retained);
   const blockers = (plan?.blockers || []).filter((item) => item.code !== 'FISCAL_YEAR_ALREADY_CLOSED');
@@ -61,10 +76,17 @@ export default function YearClosePanel({ isOwner, notify, refresh }) {
       </div>
       <label className="text-xs text-muted">سال
         <select value={year} onChange={(event) => { setYear(event.target.value); setRetained(''); }} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-sm text-ink">
-          {years.map((item) => <option key={item} value={item}>{toPersianDigits(item)}</option>)}
+          {years.map((item) => <option key={item} value={item}>{toPersianDigits(fiscalYearLabel(item, startMonth))}</option>)}
         </select>
       </label>
     </div>
+
+    <label className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">شروع سال مالی
+      <select value={startMonth} disabled={!isOwner || busy} onChange={(event) => changeStart(event.target.value)} className="tap rounded-lg border border-line bg-paper px-2 text-sm text-ink disabled:opacity-60">
+        {PERSIAN_MONTH_NAMES.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
+      </select>
+      {plan ? <span>{toPersianDigits(plan.from.replace(/-/g, '/'))} تا {toPersianDigits(plan.to.replace(/-/g, '/'))}</span> : null}
+    </label>
 
     {plan ? <>
       <dl className="mt-4 grid gap-2 text-[13px] sm:grid-cols-3">

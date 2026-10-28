@@ -321,6 +321,7 @@ export const api = {
   lockAccountingPeriod: (period) => request(`/api/accounting/periods/${encodeURIComponent(period)}/lock`, { method: 'POST', body: '{}' }),
   reopenAccountingPeriod: (period, reason) => request(`/api/accounting/periods/${encodeURIComponent(period)}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) }),
   yearClosings: () => request('/api/accounting/year-close'),
+  setFiscalYearStart: (startMonth) => request('/api/accounting/fiscal-year', { method: 'POST', body: JSON.stringify({ startMonth }) }),
   previewYearClose: (year, retained = '') => request(`/api/accounting/year-close/${encodeURIComponent(year)}${retained ? `?retained=${encodeURIComponent(retained)}` : ''}`),
   closeFiscalYear: (year, retainedChartAccountId = '') => request(`/api/accounting/year-close/${encodeURIComponent(year)}/close`, { method: 'POST', body: JSON.stringify({ retainedChartAccountId }) }),
   reopenFiscalYear: (year, reason) => request(`/api/accounting/year-close/${encodeURIComponent(year)}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) }),
