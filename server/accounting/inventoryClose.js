@@ -165,9 +165,13 @@ function planInventoryClose(database, yearValue, { timeZone = 'Asia/Tehran', tar
   const purchaseLines = balances(database, purchaseIds, { before: bounds.toExclusive, from: bounds.from, excludeEntryId: exclude });
   const returnLines = balances(database, returnIds, { before: bounds.toExclusive, from: bounds.from, excludeEntryId: exclude });
   // کالا به کالا: کالایی که تا پایان سال به صفر رسیده ارزش صفر دارد، نه ته‌ماندهٔ گرد کردن گردش‌ها.
-  const ending = database.prepare(`SELECT SUM(m.quantity) AS quantity,SUM(m.value_delta) AS value FROM stock_movements m JOIN products p ON p.id=m.product_id
-    WHERE p.track_inventory=1 AND m.occurred_at<? GROUP BY m.product_id`).all(bounds.toExclusive)
-    .reduce((total, row) => total + (Math.abs(Number(row.quantity)) < 0.000001 ? 0 : Number(row.value)), 0);
+  // کالایی که بعد از پایان سال گردشی ندارد، همان ارزش ثبت‌شدهٔ خودش را می‌گیرد (دفترهایی که پیش از
+  // گرد کردن تجمعی وارد شدند ته‌ماندهٔ گرد کردن در جمع گردش‌ها دارند).
+  const ending = database.prepare(`SELECT SUM(m.quantity) AS quantity,SUM(m.value_delta) AS value,p.inventory_value AS current,
+      (SELECT COUNT(*) FROM stock_movements later WHERE later.product_id=p.id AND later.occurred_at>=?) AS later
+    FROM stock_movements m JOIN products p ON p.id=m.product_id
+    WHERE p.track_inventory=1 AND m.occurred_at<? GROUP BY m.product_id`).all(bounds.toExclusive, bounds.toExclusive)
+    .reduce((total, row) => total + (Math.abs(Number(row.quantity)) < 0.000001 ? 0 : Number(row.later ? row.value : row.current)), 0);
   const sum = (lines) => lines.reduce((total, line) => total + line.net, 0);
   const openingValue = sum(opening);
   const purchasesValue = sum(purchaseLines);
