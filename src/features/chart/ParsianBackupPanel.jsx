@@ -208,16 +208,20 @@ function extrasSentence(extras) {
 function ImportFilled({ result }) {
   const phaseB = result.phaseB || {};
   const extras = result.extras || {};
+  const cheques = result.cheques || {};
+  const stock = result.stock || {};
   const rows = [
     !phaseB.error && phaseB.accounts && ['صندوق و بانک', `${toPersianDigits(phaseB.accounts.bound + phaseB.accounts.ledgerCreated)} حساب پولی با ماندهٔ همان اسناد${phaseB.petty ? ` و ${toPersianDigits(phaseB.petty)} تنخواه` : ''}`, 'تنظیمات ← صندوق و بانک، و کارت هر حساب'],
     !phaseB.error && phaseB.contacts && ['اشخاص و طرف حساب‌ها', `${toPersianDigits(phaseB.contacts.created + phaseB.contacts.reused)} شخص، ${toPersianDigits(phaseB.contacts.enriched || 0)} با تلفن و کد اقتصادی؛ طلب و بدهی هر کدام از دفتر کل`, 'دفتر مالی ← اشخاص و کارت طرف حساب'],
-    extras.products && ['کالا', `${toPersianDigits(extras.products.created)} کالا با واحد و قیمت فروش (اگر در پارسیان بود)؛ موجودی تعدادی را با شمارش بگذار`, 'دفتر مالی ← انبار'],
+    extras.products && ['کالا', `${toPersianDigits(extras.products.created)} کالا با واحد و قیمت فروش (اگر در پارسیان بود)`, 'دفتر مالی ← انبار'],
+    stock.products > 0 && ['موجودی کالا', `${toPersianDigits(stock.products)} کالا با تعداد و بهای میانگین موزون از گردش فاکتورها (${toPersianDigits(stock.movements)} گردش، بی‌سند)`, 'دفتر مالی ← انبار'],
+    cheques.imported > 0 && ['چک‌ها', `${toPersianDigits(cheques.imported)} چک با وضعیت و تاریخچه، وصل به سند ثبت و تسویهٔ خودشان${cheques.review ? `؛ ${toPersianDigits(cheques.review)} چک نیازمند تعیین تکلیف` : ''}`, 'دفتر مالی ← اشخاص ← دفتر چک'],
     extras.invoices && ['فاکتورها', `${toPersianDigits(extras.invoices.byKind?.sales || 0)} فروش و ${toPersianDigits(extras.invoices.byKind?.purchase || 0)} خرید، بایگانی فقط‌خواندنی با سند پارسیانِ هر کدام`, 'دفتر مالی ← فاکتورها'],
     extras.company && ['مشخصات شرکت', 'کد اقتصادی، شناسهٔ ملی و نشانی', 'تنظیمات ← عمومی'],
     ['DNA مالی', 'از همین اسناد، در بازهٔ خود بکاپ: مشتریان و تأمین‌کنندگان اصلی، کالاهای اصلی، ستون فقرات هزینه و روند', 'منوی DNA مالی'],
   ].filter(Boolean);
-  const problems = [phaseB.error, typeof phaseB.skipped === 'string' ? phaseB.skipped : '', extras.error,
-    ...(Array.isArray(phaseB.skipped) ? phaseB.skipped : []), ...(extras.warnings || [])].filter(Boolean);
+  const problems = [phaseB.error, typeof phaseB.skipped === 'string' ? phaseB.skipped : '', extras.error, cheques.error, stock.error,
+    ...(Array.isArray(phaseB.skipped) ? phaseB.skipped : []), ...(extras.warnings || []), ...(cheques.warnings || []), ...(stock.warnings || [])].filter(Boolean);
   return <div className="rounded-lg border border-line bg-paper p-3">
     <p className="text-[13px] font-bold">بخش‌هایی که از همین بکاپ پر شدند</p>
     <ul className="mt-2 space-y-2 text-[12px] leading-6">

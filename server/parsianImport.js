@@ -40,6 +40,7 @@ import { persianToISO } from '../shared/persianDate.js';
 import { AMOUNT_UNITS, convertAmount, normalizeAmountUnit, unitLabel } from '../shared/amountUnit.js';
 import { importParsianExtras, parsianExtrasSummary } from './parsianExtras.js';
 import { importParsianCheques } from './parsianCheques.js';
+import { importParsianStock } from './parsianStock.js';
 
 const JOURNAL_CHUNK = 200;
 const TYPE_LABELS = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
@@ -606,6 +607,13 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
   } catch (error) {
     cheques = { error: `اسناد وارد شدند، ولی چک‌ها نیامدند: ${error.message}` };
   }
+  // موجودی کالا از گردش فاکتورها، پس از ساخت کالاها؛ بی‌سند.
+  let stock;
+  try {
+    stock = extras?.error ? { error: 'کالاها نیامدند؛ موجودی هم ساخته نشد.' } : importParsianStock(database, parsed, { fileUnit: unit, ledgerUnit });
+  } catch (error) {
+    stock = { error: `اسناد و کالاها وارد شدند، ولی موجودی کالا ساخته نشد: ${error.message}` };
+  }
   const skipped = plan.vouchers.filter((voucher) => !voucher.importable).map(voucherPreview);
   return {
     chart: chartResult,
@@ -620,5 +628,6 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     summary: plan.summary,
     extras,
     cheques,
+    stock,
   };
 }
