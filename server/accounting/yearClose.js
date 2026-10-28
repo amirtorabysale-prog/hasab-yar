@@ -108,7 +108,7 @@ function readBook(database, timeZone) {
     FROM journal_entries je`).all()) {
     entries.set(row.id, { ...row, day: toDay(row.occurredAt), imported: Boolean(row.imported), lines: [] });
   }
-  for (const line of database.prepare(`SELECT entry_id AS entryId,account_id AS accountId,analytic_id AS analyticId,
+  for (const line of database.prepare(`SELECT id,entry_id AS entryId,account_id AS accountId,analytic_id AS analyticId,
       cost_center_id AS costCenterId,debit,credit FROM journal_lines ORDER BY rowid`).all()) {
     entries.get(line.entryId)?.lines.push({ ...line, debit: Number(line.debit) || 0, credit: Number(line.credit) || 0 });
   }
@@ -153,8 +153,8 @@ function netsOf(entry) {
  * پارسیان سال را خودش می‌بندد و این سندها با بکاپ می‌آیند. تشخیص ساختاری و دقیق است، نه
  * از روی شرح: اختتامیه سندِ روز آخر سال است که بعد از آن ماندهٔ همهٔ حساب‌ها صفر است؛
  * افتتاحیه سندِ روز اول سال بعد است که خالصِ هر حسابش دقیقاً قرینهٔ همان اختتامیه است؛
- * بستن موقت سندِ روز آخر است که فقط درآمد، هزینه و حقوق مالکانه دارد و بعد از آن ماندهٔ
- * همهٔ درآمدها و هزینه‌ها صفر است. سندی که این شرط‌ها را دقیق ندارد، سند عادی می‌ماند.
+ * سندی که این شرط‌ها را دقیق ندارد، سند عادی می‌ماند. بستن موقتِ پارسیان جداست و در سطح
+ * آرتیکل تشخیص داده می‌شود (`registerImportedTemporaryLines`).
  */
 function detectImportedYearClose(book, bounds) {
   const registered = (entry) => book.roles.has(entry.id);
@@ -170,22 +170,105 @@ function detectImportedYearClose(book, bounds) {
     for (const [accountId, value] of netsOf(candidate)) balances.set(accountId, (balances.get(accountId) || 0) + value);
     if (allZero(balances, (account) => !account?.memorandum)) { closing = candidate; break; }
   }
-  let temporary = null;
-  for (const candidate of lastDayCandidates) {
-    if (candidate === closing) continue;
-    const touched = [...netsOf(candidate).keys()].map((id) => book.accounts.get(id));
-    if (!touched.some(isTemporaryAccount) || !touched.every((account) => isTemporaryAccount(account) || account?.type === 'equity')) continue;
-    const balances = balancesThrough(book, bounds.lastDay, { exclude: new Set([candidate.id, ...(closing ? [closing.id] : [])]), byAccount: true });
-    for (const [accountId, value] of netsOf(candidate)) balances.set(accountId, (balances.get(accountId) || 0) + value);
-    if (allZero(balances, isTemporaryAccount)) { temporary = candidate; break; }
-  }
   let opening = null;
   if (closing) {
     const expected = new Map([...netsOf(closing)].map(([accountId, value]) => [accountId, -value]));
     opening = [...book.entries.values()].find((entry) => entry.imported && !registered(entry) && entry.day === bounds.nextFirstDay
       && sameNets(netsOf(entry), expected)) || null;
   }
-  return { temporary, closing, opening };
+  return { closing, opening };
+}
+
+// ---------------------------------------------------------------------------
+// بستن موقتِ پارسیان، در سطح آرتیکل
+// ---------------------------------------------------------------------------
+
+// بیش از این آرتیکلِ نامزد، جست‌وجوی ترکیب سنگین می‌شود؛ چنین سندی برچسب نمی‌خورد.
+const MAX_CLOSING_CANDIDATES = 20;
+
+/**
+ * آرتیکل‌هایی از یک سند بکاپ که سود را از درآمد و هزینه به حقوق صاحبان سهام می‌برند.
+ *
+ * پارسیان بستن حساب‌های موقت را همیشه در یک سند جدا نمی‌زند. در بکاپ واقعی (۱۴۰۳) هزینه‌ها
+ * در یک سند ۲۹ اسفند بسته شدند و فروش در سند ۳۰ اسفند، کنار محاسبهٔ بهای تمام‌شدهٔ ادواری
+ * (خرید ← موجودی ← بهای تمام‌شده). برچسب کل سند یا سود را صفر می‌کرد یا بهای تمام‌شده را
+ * از سود و زیان بیرون می‌انداخت؛ پس برچسب روی آرتیکل است.
+ *
+ * نامزد بستن: آرتیکل درآمدِ بدهکار و هزینهٔ بستانکار (رو به صفر). بستن، ترکیبی از نامزدهاست
+ * که خالصش دقیقاً قرینهٔ خالص آرتیکل‌های حقوق صاحبان سهام همان سند باشد. اگر هیچ ترکیبی یا
+ * بیش از یک ترکیب بخواند، حدس زده نمی‌شود و سند عادی می‌ماند.
+ */
+function temporaryClosingLines(book, entry) {
+  const equity = entry.lines.filter((line) => { const account = book.accounts.get(line.accountId); return account?.type === 'equity' && !account.memorandum; });
+  const candidates = entry.lines.filter((line) => {
+    const account = book.accounts.get(line.accountId);
+    return isTemporaryAccount(account) && (account.type === 'income' ? line.debit > 0 : line.credit > 0);
+  });
+  if (!equity.length || !candidates.length || candidates.length > MAX_CLOSING_CANDIDATES) return null;
+  const target = -equity.reduce((sum, line) => sum + line.debit - line.credit, 0);
+  if (!target) return null;
+  const values = candidates.map((line) => line.debit - line.credit);
+  let match = null;
+  for (let mask = 1; mask < 2 ** candidates.length; mask += 1) {
+    let total = 0;
+    for (let index = 0; index < candidates.length; index += 1) if (mask & (2 ** index)) total += values[index];
+    if (total !== target) continue;
+    if (match !== null) return null;
+    match = mask;
+  }
+  if (match === null) return null;
+  return [...candidates.filter((_, index) => match & (2 ** index)), ...equity];
+}
+
+function ensureYearCloseLines(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS year_close_lines (
+      line_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, year TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'temporary' CHECK(role IN ('temporary')), origin TEXT NOT NULL DEFAULT 'parsian');
+    CREATE INDEX IF NOT EXISTS idx_year_close_lines_entry ON year_close_lines(entry_id);
+    CREATE TABLE IF NOT EXISTS year_close_scanned (entry_id TEXT PRIMARY KEY)`);
+}
+
+/**
+ * آرتیکل‌های بستن موقتِ همهٔ سندهای بکاپ را برچسب می‌زند؛ هر سند یک بار بررسی می‌شود.
+ *
+ * برچسب پیش از هر گزارش زده می‌شود، نه فقط هنگام بستن سال: سود و زیانِ سالی که پارسیان
+ * بسته، بدون آن صفر نشان داده می‌شد. برچسب هیچ عددی از دفتر را عوض نمی‌کند؛ فقط می‌گوید این
+ * آرتیکل سود را جابه‌جا کرده، نه ساخته. فقط ماه آخر سال مالی بررسی می‌شود.
+ */
+export function registerImportedTemporaryLines(database, { timeZone = 'Asia/Tehran' } = {}) {
+  ensureAccountingSchema(database);
+  ensureParsianSourceSchema(database);
+  ensureYearCloseLines(database);
+  const pending = Number(database.prepare(`SELECT COUNT(*) AS n FROM parsian_imported_entries p
+    WHERE NOT EXISTS (SELECT 1 FROM year_close_scanned s WHERE s.entry_id=p.entry_id)`).get().n);
+  if (!pending) return { scanned: 0, registered: 0 };
+  const startMonth = fiscalStartMonth(database);
+  const book = readBook(database, timeZone);
+  const scanned = new Set(database.prepare('SELECT entry_id AS id FROM year_close_scanned').all().map((row) => row.id));
+  const markScanned = database.prepare('INSERT OR IGNORE INTO year_close_scanned (entry_id) VALUES (?)');
+  const register = database.prepare("INSERT OR IGNORE INTO year_close_lines (line_id,entry_id,year,role,origin) VALUES (?,?,?,'temporary','parsian')");
+  let registered = 0;
+  let count = 0;
+  for (const entry of book.entries.values()) {
+    if (!entry.imported || scanned.has(entry.id)) continue;
+    count += 1;
+    markScanned.run(entry.id);
+    if (book.roles.has(entry.id) || !entry.day) continue;
+    const year = fiscalYearOfKey(entry.day, startMonth);
+    if (entry.day.slice(0, 7) !== fiscalYearMonths(year, startMonth).periods[11]) continue;
+    const lines = temporaryClosingLines(book, entry);
+    if (!lines) continue;
+    for (const line of lines) register.run(line.id, entry.id, String(year));
+    registered += 1;
+  }
+  return { scanned: count, registered };
+}
+
+/** سندهای بکاپی که در یک سال مالی آرتیکل بستن موقت دارند. */
+function importedTemporaryEntries(database, year) {
+  ensureYearCloseLines(database);
+  return database.prepare(`SELECT DISTINCT y.entry_id AS id,j.document_number AS documentNumber FROM year_close_lines y
+    JOIN journal_entries j ON j.id=y.entry_id WHERE y.year=? ORDER BY j.document_number`).all(String(year)).map((row) => ({ ...row }));
 }
 
 function sameNets(a, b) {
@@ -258,6 +341,7 @@ function deferredTransactions(database, bounds) {
 function planYearClose(database, year, { timeZone = 'Asia/Tehran', retainedChartAccountId = '' } = {}) {
   const startMonth = fiscalStartMonth(database);
   const bounds = fiscalYearBounds(year, timeZone, startMonth);
+  registerImportedTemporaryLines(database, { timeZone });
   const book = readBook(database, timeZone);
   const blockers = [];
   const block = (code, message, extra = {}) => blockers.push({ code, message, ...extra });
@@ -311,7 +395,9 @@ function planYearClose(database, year, { timeZone = 'Asia/Tehran', retainedChart
   const permanentLineCount = closingLines.length;
   if (permanentLineCount > MAX_CLOSING_LINES) block('CLOSING_TOO_LARGE', `سند اختتامیه ${permanentLineCount} آرتیکل دارد که از سقف ${MAX_CLOSING_LINES} بیشتر است.`);
 
+  const importedTemporary = importedTemporaryEntries(database, year);
   const reminders = [];
+  if (importedTemporary.length) reminders.push(`بستن حساب‌های موقت در سند ${importedTemporary.map((entry) => entry.documentNumber ?? '—').join('، ')} بکاپ پارسیان انجام شده و در سود و زیان شمرده نمی‌شود.`);
   if (profit > 0) reminders.push('ذخیرهٔ مالیات عملکرد و اندوختهٔ قانونی خودکار ثبت نمی‌شوند؛ اگر لازم‌اند، پیش از بستن با سند تعدیلی ثبتشان کن.');
   if (imported.closing) reminders.push(`سند ${imported.closing.documentNumber ?? '—'} بکاپ پارسیان اختتامیهٔ همین سال است و جای سند اختتامیهٔ حساب‌یار را می‌گیرد.`);
   const nextYearEntries = [...book.entries.values()].filter((entry) => entry.day >= bounds.nextFirstDay && fiscalYearOfKey(entry.day, startMonth) === year + 1).length;
@@ -327,9 +413,12 @@ function planYearClose(database, year, { timeZone = 'Asia/Tehran', retainedChart
       permanent: { lines: permanentLineCount },
       retained: retained.chart ? { id: retained.chart.id, code: retained.chart.code, name: retained.chart.name } : null,
       retainedCandidates: retained.candidates,
-      imported: Object.fromEntries(Object.entries(imported).map(([role, entry]) => [role, entry ? { id: entry.id, documentNumber: entry.documentNumber, day: entry.day } : null])),
+      imported: {
+        ...Object.fromEntries(Object.entries(imported).map(([role, entry]) => [role, entry ? { id: entry.id, documentNumber: entry.documentNumber, day: entry.day } : null])),
+        temporary: importedTemporary,
+      },
       documents: [
-        { role: 'temporary', label: ROLE_LABELS.temporary, day: bounds.lastDay, lines: temporaryLines.length ? temporaryLines.length + (profit ? 1 : 0) : 0, source: imported.temporary ? 'parsian' : 'hesabyar' },
+        { role: 'temporary', label: ROLE_LABELS.temporary, day: bounds.lastDay, lines: temporaryLines.length ? temporaryLines.length + (profit ? 1 : 0) : 0, source: importedTemporary.length && !temporaryLines.length ? 'parsian' : 'hesabyar' },
         { role: 'closing', label: ROLE_LABELS.closing, day: bounds.lastDay, lines: imported.closing ? netsOf(imported.closing).size : permanentLineCount, source: imported.closing ? 'parsian' : 'hesabyar' },
         { role: 'opening', label: ROLE_LABELS.opening, day: bounds.nextFirstDay, lines: imported.closing ? (imported.opening ? netsOf(imported.opening).size : 0) : permanentLineCount, source: imported.closing ? 'parsian' : 'hesabyar' },
       ],
@@ -512,6 +601,9 @@ export function setFiscalYearStartMonth(database, value, { timeZone = 'Asia/Tehr
     // شماره‌ها اول خالی می‌شوند تا شاخص یکتای (سال، شماره) وسط کار به هم نخورد؛ بعد به
     // ترتیب تاریخ وقوع و زمان ثبت، همان قاعدهٔ شماره‌گذاری اسناد قدیمی، پر می‌شوند.
     const total = database.prepare('UPDATE journal_entries SET document_number=NULL').run().changes;
+    // «ماه آخر سال» عوض شد؛ بستن موقتِ بکاپ پارسیان از نو بررسی می‌شود.
+    ensureYearCloseLines(database);
+    database.exec('DELETE FROM year_close_lines; DELETE FROM year_close_scanned;');
     backfillDocumentNumbers(database, (occurredAt) => fiscalYearForDate(occurredAt, timeZone, month));
     return { startMonth: month, previous, changed: true, renumbered: total };
   });

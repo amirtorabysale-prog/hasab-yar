@@ -42,11 +42,13 @@ function ledgerDaySummary(start, endExclusive) {
   // سندهای بستن سال سود نمی‌سازند؛ بی‌این، روز آخر سال سود را صفر یا قرینه نشان می‌داد.
   const yearClose = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='year_close_entries'").get()
     ? 'AND NOT EXISTS (SELECT 1 FROM year_close_entries y WHERE y.entry_id=j.id)' : '';
+  const closingLines = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='year_close_lines'").get()
+    ? 'AND NOT EXISTS (SELECT 1 FROM year_close_lines y WHERE y.line_id=l.id)' : '';
   const row = db.prepare(`SELECT
       COALESCE(SUM(CASE WHEN a.type='income' THEN l.credit-l.debit ELSE 0 END),0) AS income,
       COALESCE(SUM(CASE WHEN a.type='expense' THEN l.debit-l.credit ELSE 0 END),0) AS expense
     FROM journal_lines l JOIN journal_entries j ON j.id=l.entry_id JOIN ledger_accounts a ON a.id=l.account_id
-    WHERE j.approval_state='approved' AND j.occurred_at>=? AND j.occurred_at<? ${yearClose}`).get(start, endExclusive);
+    WHERE j.approval_state='approved' AND j.occurred_at>=? AND j.occurred_at<? ${yearClose} ${closingLines}`).get(start, endExclusive);
   return { income: Number(row.income), expense: Number(row.expense), profit: Number(row.income) - Number(row.expense) };
 }
 

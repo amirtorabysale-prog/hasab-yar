@@ -12,6 +12,7 @@
 import { migrateAccountingLedger } from './ledgerSetup.js';
 import { accountingError, fiscalStartMonth } from './ledgerAccounts.js';
 import { fiscalYearLabel, fiscalYearOfKey, fiscalYearStartKey } from '../../shared/fiscalYear.js';
+import { registerImportedTemporaryLines } from './yearClose.js';
 import { persianToISO } from '../../shared/persianDate.js';
 
 const CASH_ROLES = new Set(['cash', 'bank', 'petty-cash']);
@@ -79,6 +80,8 @@ const shiftDay = (dayKey, days, toDay, timeZone) => toDay(new Date(dayInstant(da
  */
 function readLedger(database, timeZone, { includeDrafts = false, beforeClose = false } = {}) {
   migrateAccountingLedger(database);
+  // آرتیکل‌های بستن موقتِ بکاپ پارسیان پیش از خواندن برچسب می‌خورند (هر سند یک بار).
+  registerImportedTemporaryLines(database, { timeZone });
   const toDay = dayKeyFormatter(timeZone);
   const chart = new Map(database.prepare('SELECT id,code,name,level,parent_id AS parentId,type,role FROM chart_accounts').all().map((row) => [row.id, row]));
   const chainOf = (id) => {
@@ -101,12 +104,13 @@ function readLedger(database, timeZone, { includeDrafts = false, beforeClose = f
   const journalLines = database.prepare(`SELECT jl.id,jl.account_id AS accountId,jl.debit,jl.credit,jl.description,
       jl.analytic_id AS analyticId,jl.cost_center_id AS costCenterId,
       je.id AS entryId,je.occurred_at AS occurredAt,je.document_number AS documentNumber,je.memo,je.entry_kind AS entryKind,
-      yc.role AS yearCloseRole
+      yc.role AS yearCloseRole,ycl.role AS lineRole
     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
     LEFT JOIN year_close_entries yc ON yc.entry_id=je.id
+    LEFT JOIN year_close_lines ycl ON ycl.line_id=jl.id
     ${includeDrafts ? '' : "WHERE je.approval_state='approved'"}
     ORDER BY je.occurred_at,COALESCE(je.document_number,0),je.id,jl.rowid`).all()
-    .map((line) => ({ ...line, debit: Number(line.debit) || 0, credit: Number(line.credit) || 0, day: toDay(line.occurredAt), temporary: line.yearCloseRole === 'temporary' }));
+    .map((line) => ({ ...line, debit: Number(line.debit) || 0, credit: Number(line.credit) || 0, day: toDay(line.occurredAt), temporary: line.yearCloseRole === 'temporary' || line.lineRole === 'temporary' }));
   // اختتامیه و افتتاحیه از مرز سال به بعد هم را خنثی می‌کنند؛ در هیچ مانده‌ای نیستند تا
   // ترازنامهٔ روز آخر سال صفر نشود و ماندهٔ سال بعد دو بار شمرده نشود. دفتر روزنامه نشانشان
   // می‌دهد. «قبل از بستن» سند بستن حساب‌های موقت را هم کنار می‌گذارد.

@@ -43,5 +43,5 @@ export {
   accountingPeriods, lockAccountingPeriod, reopenAccountingPeriod,
 } from './accounting/periods.js';
 export {
-  fiscalYearBounds, yearCloseRoles, previewYearClose, closeFiscalYear, reopenFiscalYear, fiscalYearClosings, setFiscalYearStartMonth,
+  fiscalYearBounds, yearCloseRoles, previewYearClose, closeFiscalYear, reopenFiscalYear, fiscalYearClosings, setFiscalYearStartMonth, registerImportedTemporaryLines,
 } from './accounting/yearClose.js';

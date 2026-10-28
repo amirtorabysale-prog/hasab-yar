@@ -320,12 +320,14 @@ test('اختتامیه و افتتاحیهٔ پارسیان از بکاپ: تش�
 
     const plan = preview(db, 1403);
     assert.deepEqual(plan.blockers, []);
-    assert.deepEqual([plan.imported.temporary?.id, plan.imported.closing?.id, plan.imported.opening?.id], [ids[4], ids[5], ids[6]]);
+    assert.deepEqual([plan.imported.temporary.map((entry) => entry.id), plan.imported.closing?.id, plan.imported.opening?.id], [[ids[4]], ids[5], ids[6]]);
     assert.ok(plan.reminders.some((text) => /اختتامیهٔ همین سال/.test(text)));
     const result = close(db, 1403);
     assert.deepEqual(result.documents, {}, 'هیچ سند تازه‌ای لازم نبود');
     assert.deepEqual(db.prepare('SELECT entry_id AS id,role,origin FROM year_close_entries ORDER BY role').all().map((row) => ({ ...row })), [
-      { id: ids[5], role: 'closing', origin: 'parsian' }, { id: ids[6], role: 'opening', origin: 'parsian' }, { id: ids[4], role: 'temporary', origin: 'parsian' }]);
+      { id: ids[5], role: 'closing', origin: 'parsian' }, { id: ids[6], role: 'opening', origin: 'parsian' }]);
+    // بستن موقت در سطح آرتیکل: هر سه آرتیکل سند ۵.
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM year_close_lines WHERE entry_id=?').get(ids[4]).n, 3);
 
     const sheet = reports.balanceSheetReport(db, { to: day(1403, 12, 30), timeZone: TZ });
     assert.deepEqual([sheet.totals.assets, sheet.totals.difference, sheet.totals.currentYear], [120, 0, 20]);
@@ -337,7 +339,9 @@ test('اختتامیه و افتتاحیهٔ پارسیان از بکاپ: تش�
 
     // بازگشایی: سند پارسیان حذف یا معکوس نمی‌شود، فقط از نقش بیرون می‌آید.
     const reopened = accounting.reopenFiscalYear(db, 1403, { userId: owner.id, reason: 'بررسی دوبارهٔ بکاپ پارسیان', timeZone: TZ });
-    assert.deepEqual([reopened.reversals.length, reopened.releasedImported], [0, 3]);
+    assert.deepEqual([reopened.reversals.length, reopened.releasedImported], [0, 2]);
+    // برچسب بستن موقت به بستن سال بسته نیست و می‌ماند: سود ۱۴۰۳ همان ۲۰ است.
+    assert.equal(reports.incomeStatementReport(db, { from: day(1403, 1, 1), to: day(1403, 12, 30), timeZone: TZ }).totals.netProfit, 20);
   });
 });
 
@@ -351,7 +355,7 @@ test('سندی که فقط شبیه اختتامیه است اختتامیه ش�
       [day(1403, 12, 30), [{ accountId: capital, debit: 100, credit: 0 }, { accountId: bank, debit: 0, credit: 100 }], 'اختتامیه'],
     ]);
     const plan = preview(db, 1403);
-    assert.deepEqual([plan.imported.closing, plan.imported.temporary, plan.imported.opening], [null, null, null]);
+    assert.deepEqual([plan.imported.closing, plan.imported.temporary, plan.imported.opening], [null, [], null]);
     const result = close(db, 1403);
     assert.deepEqual(Object.keys(result.documents).sort(), ['closing', 'opening', 'temporary']);
   });
@@ -451,3 +455,70 @@ for (const seed of [7, 61, 409]) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// بستن موقتِ پارسیان در چند سند و قاطی بهای تمام‌شدهٔ ادواری — شکل بکاپ واقعی ۱۴۰۳
+// (دفتر «آزمون بکاپ ریالی»، ۷ آبان ۱۴۰۵: سود و زیان ۱۴۰۳ روی سایت صفر بود). عددها ساختگی‌اند.
+// ---------------------------------------------------------------------------
+
+test('بستن موقتِ پارسیان در دو سند، یکی قاطی بهای تمام‌شده: فقط آرتیکل‌های بستن از سود و زیان بیرون می‌روند', async () => {
+  await ledger('yc-parsian-split-close', ({ db, byRole }) => {
+    const [bank, inventory, capital, retained, sales, cogs, opex, otherIncome] = ['bank', 'inventory', 'owner-capital', 'retained-earnings', 'sales', 'cogs', 'operating-expense', 'other-income'].map(byRole);
+    const purchases = accounting.categoryLedgerAccount(db, 'expense', 'خرید');
+    const ids = importLike(db, [
+      [day(1403, 1, 1), [{ accountId: bank, debit: 1000, credit: 0 }, { accountId: capital, debit: 0, credit: 1000 }]],
+      [day(1403, 3, 1), [{ accountId: purchases, debit: 600, credit: 0 }, { accountId: bank, debit: 0, credit: 600 }]],
+      [day(1403, 6, 1), [{ accountId: bank, debit: 900, credit: 0 }, { accountId: sales, debit: 0, credit: 900 }]],
+      [day(1403, 9, 1), [{ accountId: opex, debit: 100, credit: 0 }, { accountId: bank, debit: 0, credit: 100 }]],
+      // میانهٔ سال، درآمد به حقوق صاحبان سهام: ماه آخر نیست، بستن نیست.
+      [day(1403, 6, 15), [{ accountId: sales, debit: 10, credit: 0 }, { accountId: capital, debit: 0, credit: 10 }]],
+      // ۲۹ اسفند، «بستن حساب موقت»: هزینه‌ها.
+      [day(1403, 12, 29), [{ accountId: retained, debit: 100, credit: 0 }, { accountId: opex, debit: 0, credit: 100 }], 'بستن حساب موقت'],
+      // ۳۰ اسفند، «بهای تمام‌شده»: خرید ← موجودی و بهای تمام‌شده، و همان‌جا فروش و بهای تمام‌شده به انباشته.
+      [day(1403, 12, 30), [
+        { accountId: purchases, debit: 0, credit: 600 }, { accountId: inventory, debit: 200, credit: 0 }, { accountId: cogs, debit: 400, credit: 0 },
+        { accountId: sales, debit: 900, credit: 0 }, { accountId: cogs, debit: 0, credit: 400 },
+        { accountId: retained, debit: 0, credit: 900 }, { accountId: retained, debit: 400, credit: 0 },
+      ], 'بهای تمام شده'],
+      // ماه آخر ولی دو ترکیب می‌خوانند (فروش یا سایر درآمد): حدس نه، سند عادی می‌ماند.
+      [day(1403, 12, 20), [{ accountId: sales, debit: 7, credit: 0 }, { accountId: otherIncome, debit: 7, credit: 0 }, { accountId: capital, debit: 0, credit: 7 }, { accountId: bank, debit: 0, credit: 7 }]],
+    ]);
+    const range = { from: day(1403, 1, 1), to: day(1403, 12, 30), timeZone: TZ };
+    // بی‌بستن سال: سود و زیان درست است، نه صفر.
+    const income = reports.incomeStatementReport(db, range).totals;
+    assert.deepEqual([income.revenue, income.costOfSales, income.otherIncome], [900 - 10 - 7, 400, -7]);
+    const tagged = db.prepare('SELECT entry_id AS id,COUNT(*) AS n FROM year_close_lines GROUP BY entry_id').all().map((row) => [row.id, row.n]);
+    assert.deepEqual(new Map(tagged), new Map([[ids[5], 2], [ids[6], 4]]), 'سند ۶ دو آرتیکل، سند ۷ فقط فروش، بهای تمام‌شدهٔ بستانکار و دو آرتیکل انباشته');
+    // بهای تمام‌شده و خریدِ محاسبهٔ ادواری در سود و زیان مانده‌اند: خرید خالص صفر، هزینهٔ عملیاتی ۱۰۰.
+    assert.equal(income.expenses, 100);
+    assert.equal(income.netProfit, 900 - 10 - 7 - 400 - 100 - 7);
+    const sheet = reports.balanceSheetReport(db, { to: range.to, timeZone: TZ });
+    assert.deepEqual([sheet.totals.difference, sheet.totals.currentYear], [0, income.netProfit]);
+    const centers = reports.costCenterReport(db, range);
+    assert.equal(centers.totals.net, income.netProfit);
+
+    // بستن سال: سود موقت صفر (پارسیان بسته)، یادآوری سندها، و سود و زیان همان.
+    const plan = preview(db, 1403);
+    assert.deepEqual(plan.imported.temporary.map((entry) => entry.id), [ids[5], ids[6]]);
+    assert.ok(plan.reminders.some((text) => /بستن حساب‌های موقت در سند/.test(text)), plan.reminders.join());
+    close(db, 1403);
+    assert.equal(reports.incomeStatementReport(db, range).totals.netProfit, income.netProfit);
+    assert.equal(reports.balanceSheetReport(db, { to: day(1404, 1, 10), timeZone: TZ }).totals.difference, 0);
+  });
+});
+
+test('سال مالی دیگر: بستن پارسیان در اسفند وقتی سال مالی تا شهریور است، بستن نیست؛ برگشت به فروردین دوباره برچسب می‌زند', async () => {
+  await ledger('yc-parsian-rescan', ({ db, byRole }) => {
+    const [bank, retained, sales] = ['bank', 'retained-earnings', 'sales'].map(byRole);
+    importLike(db, [
+      [day(1403, 5, 1), [{ accountId: bank, debit: 50, credit: 0 }, { accountId: sales, debit: 0, credit: 50 }]],
+      [day(1403, 12, 30), [{ accountId: sales, debit: 50, credit: 0 }, { accountId: retained, debit: 0, credit: 50 }]],
+    ]);
+    const revenue = () => reports.incomeStatementReport(db, { from: day(1403, 1, 1), to: day(1403, 12, 30), timeZone: TZ }).totals.revenue;
+    assert.equal(revenue(), 50);
+    accounting.setFiscalYearStartMonth(db, 7, { timeZone: TZ });
+    assert.equal(revenue(), 0, 'اسفند ماه آخر سال مالی نیست؛ سند عادی است');
+    accounting.setFiscalYearStartMonth(db, 1, { timeZone: TZ });
+    assert.equal(revenue(), 50);
+  });
+});
