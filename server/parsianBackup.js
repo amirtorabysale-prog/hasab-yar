@@ -34,8 +34,9 @@ const JALALI_DATE = /^(\d{4})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])$/;
 // ستون اجباری که در بکاپ نباشد یعنی این فایل از نسخه‌ای است که نمی‌شناسیم.
 const TABLES = {
   tbl_Kol: { required: ['Code', 'CName'], optional: ['GroupCode', 'iType'] },
-  tbl_Moeen: { required: ['KolCode', 'Code', 'CName'], optional: [] },
-  tbl_Tafsili: { required: ['KolCode', 'MoeenCode', 'Code', 'CName'], optional: [] },
+  // FirstRemain: ماندهٔ اولِ ثبت‌شده در خود کدینگ، بیرون از اسناد. وارد نمی‌شود؛ غیرصفرش هشدار است.
+  tbl_Moeen: { required: ['KolCode', 'Code', 'CName'], optional: ['FirstRemain'] },
+  tbl_Tafsili: { required: ['KolCode', 'MoeenCode', 'Code', 'CName'], optional: ['FirstRemain'] },
   tbl_ACCGroup: { required: ['Code', 'CName'], optional: [], missingTableAllowed: true },
   tbl_Document: {
     required: ['ID', 'Sanad_Num', 'SanadDate', 'KolCode', 'MoeenCode', 'TafsiliCode', 'Bed', 'Bes'],
@@ -65,6 +66,8 @@ const EXTRA_TABLES = {
     optional: ['ID', 'ExpDate', 'Giv_Date', 'Acc_K', 'Acc_M', 'Acc_T', 'Bank_K', 'Bank_M', 'Bank_T', 'Sanad_Num', 'IsActive'],
     missingTableAllowed: true,
   },
+  // فرمول تولید: مقدار هر جزء برای NumTolid واحد کالای اصلی.
+  tbl_SubGoods: { required: ['MainGoodsCode', 'SubGoodsCode', 'Number'], optional: ['Price', 'NumTolid'], missingTableAllowed: true },
   tbl_Goods: { required: ['Code', 'CName'], optional: ['GroupCode', 'UnitName_1', 'Price_1', 'VATPercent', 'Barcode'], missingTableAllowed: true },
   tbl_GoodsGroup: { required: ['Code', 'CName'], optional: ['IsService'], missingTableAllowed: true },
   tbl_Telephone: {
@@ -74,7 +77,9 @@ const EXTRA_TABLES = {
   tbl_FactorKind: { required: ['Code', 'CName'], optional: [], missingTableAllowed: true },
   tbl_Factor: {
     required: ['ID', 'Factor_Num', 'Factor_Date', 'TitleCode'],
-    optional: ['Sanad_Num', 'GoodsCode', 'Tedad', 'Price', 'Discont', 'GoodsComment', 'FactorComment', 'SarResid_Date'],
+    // ConsumFkCode در فاکتور تولید شمارهٔ فاکتور مصرف همان تولید است و Number در فاکتور مصرف
+    // شمارهٔ فاکتور تولید (هر دو در بکاپ اتیه سازان اثبات شد).
+    optional: ['Sanad_Num', 'GoodsCode', 'Tedad', 'Price', 'Discont', 'GoodsComment', 'FactorComment', 'SarResid_Date', 'ConsumFkCode', 'Number'],
     missingTableAllowed: true,
   },
   tbl_CoSpec: { required: [], optional: ['ECOcode', 'PostalCode', 'Code', 'Address', 'Tel', 'Estate', 'City'], missingTableAllowed: true },
@@ -438,7 +443,47 @@ function parseLocatedBackup(buffer, fileName) {
   if (!parsed.documents.rows.length) warnings.push('هیچ ردیف سندی در بکاپ نیست؛ فقط کدینگ وارد می‌شود.');
   parsed.documents.vouchers = buildVouchers(parsed.documents.rows);
   parsed.extras = readExtras(context, warnings);
+  // ماندهٔ اول در کدینگ: پارسیان می‌تواند ماندهٔ اول را بیرون از اسناد نگه دارد. حدس نمی‌زنیم
+  // که در ترازها شمرده می‌شود یا نه؛ فقط صریح گفته می‌شود که وارد نشد.
+  const firstRemain = [...tables.tbl_Moeen.rows, ...tables.tbl_Tafsili.rows].filter((row) => Number(row.FirstRemain));
+  parsed.stats.firstRemain = firstRemain.length;
+  if (firstRemain.length) {
+    warnings.push(`برای ${firstRemain.length} معین یا تفصیلی در کدینگ پارسیان «ماندهٔ اول» (FirstRemain) ثبت شده که در اسناد نیست و وارد نمی‌شود؛ اگر پارسیان آن را در تراز می‌شمارد، با سند افتتاحیه بیاورش.`);
+  }
+  parsed.stats.unreadTables = unreadTables(context);
+  const recycled = parsed.stats.unreadTables.filter((table) => /^tbl_RecycleBin/i.test(table.name));
+  if (recycled.length) {
+    warnings.push(`در سطل بازیافت پارسیان ${recycled.map((table) => `${table.rows} ردیف ${/Factor/i.test(table.name) ? 'فاکتور' : 'سند'} حذف‌شده`).join(' و ')} هست؛ جزو دفتر نیستند و وارد نمی‌شوند.`);
+  }
+  const other = parsed.stats.unreadTables.filter((table) => !/^tbl_RecycleBin/i.test(table.name));
+  if (other.length) {
+    warnings.push(`${other.length} جدول دیگر پارسیان داده دارد و حساب‌یار هنوز نمی‌خواندش: ${other.slice(0, 12).map((table) => `${table.name} (${table.rows})`).join('، ')}${other.length > 12 ? '، …' : ''}.`);
+  }
   return parsed;
+}
+
+// جدول‌هایی که خوانده می‌شوند یا عمداً نه (راز، تنظیمات نمایش، جدول‌های کمکی بی‌اثر در دفتر).
+const READ_TABLES = new Set([...Object.keys(TABLES), ...Object.keys(EXTRA_TABLES)].map((name) => name.toLowerCase()));
+const NEVER_LISTED = /^(sys|dt)|^tbl_(User|LC|Company|NEWMovadianInfo|SMSSetting)$/i;
+// جدول‌های کمکی بی‌اثر در دفتر (فهرست شهرها، فال حافظ، راهنما، نقش‌ها، گزارش کاربر، تنظیم چاپ
+// و گزارش، واحد و انبار، شرح آماده، هشدار چک) — در بکاپ اتیه سازان دیده شدند و فهرست نمی‌شوند.
+const HELPER_TABLES = new Set(['zone', 'history', 'hafez', 'keyhelp', 'roles', 'userrole', 'store_user_role', 'store_user_log', 'store_users',
+  'factnum', 'factorprint', 'printsarhesab', 'accreportcode', 'accreportheader', 'wreport', 'rec_setting', 'naghdi_acc_setting', 'naghdi_cc_m',
+  'fc_dc_inuse', 'telfieldname', 'propname', 'unit', 'storehouse', 'comment', 'topcheck', 'checkalarm', 'wcontractfield'].map((name) => `tbl_${name}`));
+
+/** جدول‌های کاربری پُری که خوانده نمی‌شوند، با شمار ردیف زنده؛ محتوایشان خوانده نمی‌شود. */
+function unreadTables(context) {
+  const result = [];
+  for (const [name, objectId] of context.catalog.objects) {
+    if (READ_TABLES.has(name.toLowerCase()) || HELPER_TABLES.has(name.toLowerCase()) || NEVER_LISTED.test(name) || !/^tbl_/i.test(name)) continue;
+    let rows = 0;
+    for (const page of context.pagesByObject.get(objectId) || []) {
+      if (!context.allocated(pageHeader(page).pageId)) continue;
+      rows += liveRecords(page, { brokenRecords: 0, skippedRecords: 0 }).length;
+    }
+    if (rows) result.push({ name, rows });
+  }
+  return result.sort((first, second) => second.rows - first.rows);
 }
 
 /**
@@ -476,11 +521,14 @@ function readExtras(context, warnings) {
     if (!byFactor.has(key)) {
       byFactor.set(key, {
         title: row.TitleCode, titleName: kinds.get(row.TitleCode) || '', number: row.Factor_Num, date: row.Factor_Date || '',
-        sanad: row.Sanad_Num || 0, comment: row.FactorComment || '', dueDate: row.SarResid_Date || '', lines: [],
+        sanad: row.Sanad_Num || 0, comment: row.FactorComment || '', dueDate: row.SarResid_Date || '', lines: [], linkedNumber: 0,
       });
     }
     const invoice = byFactor.get(key);
     if (!invoice.sanad && row.Sanad_Num) invoice.sanad = row.Sanad_Num;
+    // تولید ← مصرفش، مصرف ← تولیدش.
+    const linked = row.TitleCode === 12 ? row.ConsumFkCode : row.TitleCode === 13 ? Number(row.Number) : 0;
+    if (!invoice.linkedNumber && linked > 0) invoice.linkedNumber = linked;
     invoice.lines.push({ id: row.ID, goodsCode: row.GoodsCode ?? null, quantity: Number(row.Tedad) || 0, unitPrice: Number(row.Price) || 0,
       discount: Number(row.Discont) || 0, comment: row.GoodsComment || '' });
   }
@@ -500,8 +548,12 @@ function readExtras(context, warnings) {
     registeredDate: row.ExpDate || '', settledDate: row.Giv_Date || '', sanad: row.Sanad_Num || 0,
     accKol: row.Acc_K || 0, accMoeen: row.Acc_M || 0, accTaf: row.Acc_T || 0,
   })).sort((first, second) => first.id - second.id);
+  const formulas = tables.tbl_SubGoods.filter((row) => row.MainGoodsCode != null && row.SubGoodsCode != null).map((row) => ({
+    product: row.MainGoodsCode, component: row.SubGoodsCode, quantity: Number(row.Number) || 0,
+    perUnits: Number(row.NumTolid) || 1, price: Number(row.Price) || 0,
+  }));
   return {
-    goods, cards, cheques, chequeHistory,
+    goods, cards, cheques, chequeHistory, formulas,
     invoices: [...byFactor.values()].sort((first, second) => first.title - second.title || first.number - second.number),
     company: company ? {
       economicCode: company.ECOcode || '', nationalId: company.Code || '', postalCode: company.PostalCode || '',

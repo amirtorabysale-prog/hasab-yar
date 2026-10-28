@@ -4,7 +4,7 @@
 // احراز هویت، CSRF و مرز نقش و تجربه پیش از این‌ها در index.js اعمال می‌شود.
 
 import {
-  adjustStock, beginProviderUsage, createInvoice, deleteContact, deleteInvoice, deleteObligation, deleteReceipt, deleteRecurringRule, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, inventoryOverview, counterpartyCard, issueInvoice, listContacts, listInvoices, listObligations, listProducts, listReceipts, listRecurringRules, markInvoicePaid, receiptCandidates, receiptImage, recordInvoicePayment, saveContact, saveObligation, saveRecurringRule, settleObligation, settlePayableBalanceByPartner, settleLedgerBalance, confirmReceipt, saveProduct, saveReceipt, typicalAmounts, updateReceipt,
+  adjustStock, beginProviderUsage, createInvoice, deleteContact, deleteInvoice, deleteObligation, deleteReceipt, deleteRecurringRule, finishProviderUsage, getCategories, getInvoice, getLearnings, getReceipt, inventoryOverview, listProductionRuns, parsianProductionArchive, productionPlan, recordProduction, counterpartyCard, issueInvoice, listContacts, listInvoices, listObligations, listProducts, listReceipts, listRecurringRules, markInvoicePaid, receiptCandidates, receiptImage, recordInvoicePayment, saveContact, saveObligation, saveRecurringRule, settleObligation, settlePayableBalanceByPartner, settleLedgerBalance, confirmReceipt, saveProduct, saveReceipt, typicalAmounts, updateReceipt,
   activeWorkspaceDatabase,
 } from '../db.js';
 import { parseFinancialText } from '../parser.js';
@@ -110,6 +110,10 @@ export function registerLedgerRoutes(app) {
   app.delete('/api/receipts/:id', (request, response) => response.status(deleteReceipt(request.params.id) ? 204 : 404).end());
   app.get('/api/products', (_request, response) => response.json({ items: listProducts() }));
   app.get('/api/inventory/overview', (_request, response) => response.json(inventoryOverview()));
+  // تولید: پیشنهاد اجزا از فرمول، ثبت، تاریخچه؛ و فرمول و تاریخچهٔ تولیدِ پارسیان فقط‌خواندنی.
+  app.get('/api/production', (_request, response, next) => { try { response.json({ runs: listProductionRuns(), parsian: parsianProductionArchive() }); } catch (error) { next(error); } });
+  app.get('/api/production/plan', (request, response, next) => { try { response.json(productionPlan({ productId: request.query.productId, quantity: request.query.quantity })); } catch (error) { next(error); } });
+  app.post('/api/production', (request, response, next) => { try { response.status(201).json({ item: recordProduction(request.body || {}) }); } catch (error) { next(error); } });
   app.post('/api/products', (request, response, next) => { try { response.status(201).json({ item: saveProduct(request.body) }); } catch (error) { next(error); } });
   app.put('/api/products/:id', (request, response, next) => { try { response.json({ item: saveProduct({ ...request.body, id: request.params.id }) }); } catch (error) { next(error); } });
   app.post('/api/products/:id/stock', (request, response, next) => { try { const item = adjustStock(request.params.id, request.body); return item ? response.json({ item }) : response.status(404).json({ message: 'کالا پیدا نشد.' }); } catch (error) { return next(error); } });

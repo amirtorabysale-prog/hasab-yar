@@ -392,7 +392,8 @@ test('از راه HTTP: واحد و نوع‌ها از فرم به پیش‌نم
   });
   try {
     const base = `http://127.0.0.1:${port}`;
-    for (let index = 0; index < 60; index += 1) {
+    // تا ۳۰ ثانیه: زیر بار کامل آزمون‌ها (و CI) بالا آمدن سرور گاهی از ۶ ثانیه بیشتر طول می‌کشد.
+    for (let index = 0; index < 300; index += 1) {
       if (await fetch(`${base}/api/health`).then((response) => response.ok).catch(() => false)) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

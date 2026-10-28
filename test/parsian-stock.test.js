@@ -42,14 +42,14 @@ function stockTables() {
     { ID: 2, Sanad_Num: 1, SanadDate: '1403/01/01', KolCode: 31, MoeenCode: 1, TafsiliCode: 0, Comment: 'افتتاحيه', Bed: 0, Bes: 1_000_000 },
   ];
   let id = 1;
-  const line = (title, number, date, goods, quantity, price, discount = 0) => ({
-    ID: id++, Factor_Num: number, Factor_Date: date, TitleCode: title, Sanad_Num: 0, GoodsCode: goods, Tedad: quantity, Price: price, Discont: discount,
+  const line = (title, number, date, goods, quantity, price, discount = 0, link = {}) => ({
+    ID: id++, Factor_Num: number, Factor_Date: date, TitleCode: title, Sanad_Num: 0, GoodsCode: goods, Tedad: quantity, Price: price, Discont: discount, ...link,
   });
   const factor = [
     line(5, 1, '1403/01/01', RAW, 100, 10_000),                 // اول دوره: ۱۰۰ × ۱۰٬۰۰۰
     line(2, 1, '1403/02/01', RAW, 100, 12_000, 200_000),        // خرید با تخفیف: ۱٬۲۰۰٬۰۰۰ − ۲۰۰٬۰۰۰
-    line(13, 1, '1403/03/01', RAW, 50, 99_999),                 // مصرف: به میانگین (۱۰٬۰۰۰)، نه قیمت فاکتور
-    line(12, 1, '1403/03/01', PRODUCT, 10, 60_000),             // تولید: به قیمت پارسیان
+    line(13, 1, '1403/03/01', RAW, 50, 99_999, 0, { Number: 1 }),       // مصرف: به میانگین (۱۰٬۰۰۰)، نه قیمت فاکتور
+    line(12, 1, '1403/03/01', PRODUCT, 10, 60_000, 0, { ConsumFkCode: 1 }), // تولید: به قیمت پارسیان
     line(1, 1, '1403/04/01', PRODUCT, 4, 150_000),              // فروش: به میانگین (۶۰٬۰۰۰)
     line(4, 1, '1403/04/10', PRODUCT, 1, 150_000),              // برگشت از فروش: به میانگین
     line(2, 2, '1403/05/01', RESOLD, 10, 30_000),
@@ -72,6 +72,8 @@ function stockTables() {
     tbl_FactorKind: [[1, 'فاکتور فروش'], [2, 'فاکتور خريد'], [3, 'برگشت از خريد'], [4, 'برگشت ازفروش'], [5, 'موجودي اول دوره'],
       [9, 'امانات دريافتني'], [12, 'فاکتور توليد'], [13, 'فاکتور مصرف'], [263, 'صورت حساب ها ابطالي']].map(([Code, CName]) => ({ Code, CName, HaveDocument: false })),
     tbl_Factor: factor,
+    // فرمول: ۵ کیلو گرانول برای هر قطعه.
+    tbl_SubGoods: [{ MainGoodsCode: PRODUCT, SubGoodsCode: RAW, Number: 5, Price: 10_000, NumTolid: 1 }],
     tbl_AccSetting: [{ ID: 2, Cash_K: 0, Cash_M: 0, Cash_T: 0, Sell_K: 0, Sell_M: 0, Sell_T: 0, Wage_K: 0, Wage_M: 0, Wage_T: 0, Asset_K: 0, Asset_M: 0, Asset_T: 0 }],
     tbl_VATSetting: [{ ID: 6, VATSale_K: 0, VATSale_M: 0, VATSale_T: 0, VATBuy_K: 0, VATBuy_M: 0, VATBuy_T: 0 }],
   };
@@ -119,5 +121,34 @@ test('ورود موجودی در دفتر تومانی: بی‌سند، ماند
     const again = importParsianStock(active, parsed(), { fileUnit: 'rial', ledgerUnit: result.ledgerUnit });
     assert.equal(again.existing, true);
     assert.equal(active.prepare("SELECT COUNT(*) AS n FROM stock_movements WHERE source_type='parsian_invoice'").get().n, movements);
+
+    // فرمول و تاریخچهٔ تولید، فقط‌خواندنی: تولید ۱ با مصرف ۱، فاصلهٔ ارزش گفته می‌شود.
+    assert.deepEqual([result.extras.formulas.products, result.extras.formulas.lines], [1, 1]);
+    const archive = database.parsianProductionArchive();
+    assert.deepEqual(archive.formulas.map((formula) => [formula.productName, formula.components[0].name, formula.components[0].perUnit]), [['قطعهٔ نمونه', 'گرانول نمونه', 5]]);
+    const [run] = archive.runs;
+    assert.equal(run.consumption.number, 1);
+    assert.deepEqual([run.outputValue, run.inputValue], [600_000 / ratio, Math.round(50 * 99_999 / ratio)]);
+    assert.equal(run.gap, run.outputValue - run.inputValue);
+    // پیشنهاد تولید در حساب‌یار از همین فرمول.
+    const plan = database.productionPlan({ productId: active.prepare("SELECT id FROM products WHERE name='قطعهٔ نمونه'").get().id, quantity: 2 });
+    assert.deepEqual(plan.components.map((item) => [item.name, item.quantity]), [['گرانول نمونه', 10]]);
   });
+});
+
+test('پیش‌نمایش بکاپ: ماندهٔ اول کدینگ، سطل بازیافت و جدول مالیِ خوانده‌نشده صریح گفته می‌شوند؛ جدول کمکی و راز نه', () => {
+  const tables = stockTables();
+  tables.tbl_Moeen = tables.tbl_Moeen.map((row) => (row.KolCode === 12 ? { ...row, FirstRemain: 5_000_000 } : row));
+  tables.tbl_RecycleBinDoc = [{ ID: 1, Sanad_Num: 9, Bed: 100 }, { ID: 2, Sanad_Num: 9, Bed: 0 }];
+  tables.tbl_Ghest = [{ ID: 1, Money: 300 }];
+  tables.tbl_Hafez = [{ ID: 1, Text: 'غزل' }];
+  tables.tbl_NEWMovadianInfo = [{ ID: 1, PrivateKey: 'never-listed', Token: 'never-listed' }];
+  const result = parseParsianBackup(buildParsianBackup(tables), { fileName: 'warnings.bak' });
+  const text = result.warnings.join('\n');
+  assert.match(text, /برای 1 معین یا تفصیلی.*ماندهٔ اول/);
+  assert.match(text, /سطل بازیافت پارسیان 2 ردیف سند حذف‌شده/);
+  assert.match(text, /tbl_Ghest \(1\)/);
+  assert.doesNotMatch(text, /tbl_Hafez|NEWMovadianInfo|never-listed/);
+  // بی‌ماندهٔ اول، بی‌هشدار.
+  assert.doesNotMatch(parseParsianBackup(buildParsianBackup(stockTables()), { fileName: 'clean.bak' }).warnings.join('\n'), /ماندهٔ اول|سطل بازیافت/);
 });

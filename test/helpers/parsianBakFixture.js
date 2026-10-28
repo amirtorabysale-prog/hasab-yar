@@ -14,7 +14,7 @@ const SIZES = { tinyint: 1, smallint: 2, int: 4, float: 8, decimal: 9, bit: 1 };
 export const PARSIAN_TABLES = {
   tbl_ACCGroup: [['Code', 'smallint'], ['CName', 'nvarchar']],
   tbl_Kol: [['Code', 'smallint'], ['CName', 'nvarchar'], ['GroupCode', 'smallint'], ['iType', 'tinyint']],
-  tbl_Moeen: [['KolCode', 'smallint'], ['Code', 'smallint'], ['CName', 'nvarchar']],
+  tbl_Moeen: [['KolCode', 'smallint'], ['Code', 'smallint'], ['CName', 'nvarchar'], ['FirstRemain', 'float']],
   tbl_Tafsili: [['KolCode', 'smallint'], ['MoeenCode', 'smallint'], ['Code', 'int'], ['CName', 'nvarchar']],
   tbl_Document: [
     ['ID', 'int'], ['Sanad_Num', 'int'], ['SanadDate', 'nvarchar'], ['KolCode', 'smallint'], ['MoeenCode', 'smallint'],
@@ -29,8 +29,9 @@ export const PARSIAN_TABLES = {
   tbl_Telephone: [['ID', 'int'], ['KolCode', 'smallint'], ['MoeenCode', 'smallint'], ['TafsiliCode', 'int'], ['CName', 'nvarchar'], ['Tel', 'nvarchar'],
     ['Mobile', 'nvarchar'], ['Address', 'nvarchar'], ['CodeEco', 'nvarchar'], ['CodeNat', 'nvarchar'], ['CodePost', 'nvarchar']],
   tbl_FactorKind: [['Code', 'smallint'], ['CName', 'nvarchar'], ['HaveDocument', 'bit']],
-  tbl_Factor: [['ID', 'int'], ['Factor_Num', 'int'], ['Factor_Date', 'nvarchar'], ['TitleCode', 'smallint'], ['Sanad_Num', 'int'], ['GoodsCode', 'float'],
-    ['Tedad', 'decimal'], ['Price', 'float'], ['Discont', 'float'], ['GoodsComment', 'nvarchar'], ['FactorComment', 'nvarchar']],
+  tbl_Factor: [['ID', 'int'], ['Factor_Num', 'int'], ['Factor_Date', 'nvarchar'], ['TitleCode', 'smallint'], ['Number', 'decimal'], ['Sanad_Num', 'int'], ['GoodsCode', 'float'],
+    ['Tedad', 'decimal'], ['Price', 'float'], ['Discont', 'float'], ['GoodsComment', 'nvarchar'], ['FactorComment', 'nvarchar'], ['ConsumFkCode', 'int']],
+  tbl_SubGoods: [['MainGoodsCode', 'float'], ['SubGoodsCode', 'float'], ['Number', 'decimal'], ['Price', 'float'], ['NumTolid', 'decimal']],
   // چک، با همان نوع و ترتیب ستون‌های بکاپ اتیه سازان (۴ بیت در یک بایت مشترک).
   tbl_Check: [['ID', 'int'], ['Chk_Num', 'int'], ['Sanad_Num', 'int'], ['Sanad_Num_VosolPas', 'int'], ['ExpDate', 'nvarchar'], ['RecDate', 'nvarchar'],
     ['Giv_Date', 'nvarchar'], ['Money', 'float'], ['Bank_K', 'smallint'], ['Bank_M', 'smallint'], ['Bank_T', 'int'], ['Acc_K', 'smallint'], ['Acc_M', 'smallint'],
@@ -38,6 +39,10 @@ export const PARSIAN_TABLES = {
     ['Vos_Pas', 'smallint'], ['IsActive', 'bit'], ['Tick', 'bit'], ['Lashe', 'bit'], ['IsREG', 'bit'], ['Sayad', 'nvarchar']],
   tbl_RecycleCheck: [['ID', 'int'], ['CHK_ID', 'int'], ['ExpDate', 'nvarchar'], ['Giv_Date', 'nvarchar'], ['Acc_K', 'smallint'], ['Acc_M', 'smallint'],
     ['Acc_T', 'int'], ['Sanad_Num', 'int'], ['Vos_Pas', 'smallint'], ['IsActive', 'bit']],
+  // سطل بازیافت، یک جدول مالیِ خوانده‌نشده و یک جدول کمکی: هشدار پیش‌نمایش.
+  tbl_RecycleBinDoc: [['ID', 'int'], ['Sanad_Num', 'int'], ['Bed', 'float']],
+  tbl_Ghest: [['ID', 'int'], ['Money', 'float']],
+  tbl_Hafez: [['ID', 'int'], ['Text', 'nvarchar']],
   tbl_CoSpec: [['ID', 'int'], ['ECOcode', 'nvarchar'], ['PostalCode', 'nvarchar'], ['Code', 'nvarchar'], ['Address', 'nvarchar'], ['Tel', 'nvarchar'], ['Estate', 'nvarchar'], ['City', 'nvarchar']],
   // رازی که خواننده هرگز نباید بخواند (کلید سامانهٔ مؤدیان در بکاپ واقعی همین‌جاست).
   tbl_NEWMovadianInfo: [['ID', 'int'], ['PrivateKey', 'nvarchar'], ['Token', 'nvarchar']],

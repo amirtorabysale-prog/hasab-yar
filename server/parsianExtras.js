@@ -31,10 +31,10 @@ const dateToISO = (date) => {
 };
 
 // نوع فاکتور پارسیان (tbl_FactorKind.Code) به نوع بایگانی.
-const INVOICE_KINDS = { 1: 'sales', 2: 'purchase', 3: 'purchase-return', 4: 'sales-return', 5: 'opening-stock' };
+const INVOICE_KINDS = { 1: 'sales', 2: 'purchase', 3: 'purchase-return', 4: 'sales-return', 5: 'opening-stock', 12: 'production', 13: 'consumption' };
 export const INVOICE_KIND_LABELS = Object.freeze({
   sales: 'فاکتور فروش', purchase: 'فاکتور خرید', 'purchase-return': 'برگشت از خرید', 'sales-return': 'برگشت از فروش',
-  'opening-stock': 'موجودی اول دوره', other: 'سایر',
+  'opening-stock': 'موجودی اول دوره', production: 'فاکتور تولید', consumption: 'فاکتور مصرف', other: 'سایر',
 });
 // طرف حسابِ فروش در سمت بدهکار سند فاکتور است و طرف خرید در سمت بستانکار.
 const PARTY_SIDE = { sales: 'bed', 'purchase-return': 'bed', purchase: 'bes', 'sales-return': 'bes' };
@@ -56,7 +56,15 @@ export function ensureParsianExtrasSchema(database) {
       UNIQUE(file_sha256, title, number)
     );
     CREATE INDEX IF NOT EXISTS idx_parsian_invoice_archive_kind ON parsian_invoice_archive(kind, occurred_at);
+    CREATE TABLE IF NOT EXISTS parsian_production_formulas (
+      file_sha256 TEXT NOT NULL, product_code REAL NOT NULL, product_name TEXT NOT NULL DEFAULT '', component_code REAL NOT NULL,
+      component_name TEXT NOT NULL DEFAULT '', unit TEXT NOT NULL DEFAULT '', quantity REAL NOT NULL, per_units REAL NOT NULL DEFAULT 1,
+      unit_price INTEGER, PRIMARY KEY (file_sha256, product_code, component_code)
+    );
   `);
+  // تولید ← شمارهٔ فاکتور مصرفش، مصرف ← شمارهٔ فاکتور تولیدش.
+  const columns = new Set(database.prepare('PRAGMA table_info(parsian_invoice_archive)').all().map((column) => column.name));
+  if (!columns.has('linked_number')) database.exec('ALTER TABLE parsian_invoice_archive ADD COLUMN linked_number INTEGER NOT NULL DEFAULT 0');
 }
 
 /** شمارش اطلاعات پایهٔ بکاپ برای پیش‌نمایش؛ هیچ چیزی نمی‌نویسد. */
@@ -92,6 +100,8 @@ export function importParsianExtras(database, parsed, {
   const result = { products: { created: 0, existing: 0, withoutPrice: 0 }, cards: { stored: 0, unlinked: 0 },
     invoices: { archived: 0, existing: 0, inexact: 0, byKind: {} }, company: false, warnings: [] };
   const toLedger = (amount) => convertAmount(Math.round(Number(amount) || 0), fileUnit, ledgerUnit);
+  // بهای واحد فرمول فقط نمایشی است؛ اگر به عدد صحیح درنیاید گرد می‌شود.
+  const ledgerRatio = (convertAmount(1_000_000, fileUnit, ledgerUnit) ?? 0) / 1_000_000;
   const goodsByCode = new Map((extras.goods || []).map((item) => [item.code, item]));
 
   database.exec('BEGIN IMMEDIATE');
@@ -135,7 +145,7 @@ export function importParsianExtras(database, parsed, {
     }
     const analyticName = database.prepare('SELECT name FROM analytic_accounts WHERE id=?');
     const archive = database.prepare(`INSERT INTO parsian_invoice_archive (id,file_sha256,title,title_name,kind,number,jalali_date,occurred_at,sanad,entry_id,
-      analytic_id,counterparty_name,subtotal,gross,amounts_exact,lines,note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      analytic_id,counterparty_name,subtotal,gross,amounts_exact,lines,note,linked_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(file_sha256,title,number) DO NOTHING`);
     for (const invoice of extras.invoices || []) {
       const kind = INVOICE_KINDS[invoice.title] || 'other';
@@ -160,7 +170,8 @@ export function importParsianExtras(database, parsed, {
       if (!exact) result.invoices.inexact += 1;
       const saved = archive.run(randomUUID(), sha, invoice.title, clean(invoice.titleName, 60) || INVOICE_KIND_LABELS[kind], kind, invoice.number,
         clean(invoice.date, 10), dateToISO(invoice.date), invoice.sanad || 0, entryBySanad.get(invoice.sanad) || null, analyticId,
-        analyticId ? clean(analyticName.get(analyticId)?.name, 120) : '', subtotal, gross, exact ? 1 : 0, JSON.stringify(lines), clean(invoice.comment, 300));
+        analyticId ? clean(analyticName.get(analyticId)?.name, 120) : '', subtotal, gross, exact ? 1 : 0, JSON.stringify(lines), clean(invoice.comment, 300),
+        invoice.linkedNumber || 0);
       if (saved.changes) {
         result.invoices.archived += 1;
         result.invoices.byKind[kind] = (result.invoices.byKind[kind] || 0) + 1;
@@ -169,6 +180,20 @@ export function importParsianExtras(database, parsed, {
     if (result.invoices.inexact) {
       result.warnings.push(`مبلغ ${result.invoices.inexact} فاکتور در دفتر ${unitLabel(ledgerUnit)}ی دقیق درنمی‌آمد؛ آن مبلغ‌ها خالی ماندند و سند پارسیانِ همان فاکتور مرجع است.`);
     }
+
+    // --- فرمول تولید (فقط‌خواندنی) ---
+    const formula = database.prepare(`INSERT OR IGNORE INTO parsian_production_formulas
+      (file_sha256,product_code,product_name,component_code,component_name,unit,quantity,per_units,unit_price) VALUES (?,?,?,?,?,?,?,?,?)`);
+    result.formulas = { products: new Set(), lines: 0 };
+    for (const row of extras.formulas || []) {
+      const product = goodsByCode.get(row.product);
+      const component = goodsByCode.get(row.component);
+      const saved = formula.run(sha, row.product, clean(product?.name || `کالای ${row.product}`, 120), row.component,
+        clean(component?.name || `کالای ${row.component}`, 120), clean(component?.unit, 30), row.quantity, row.perUnits || 1,
+        row.price > 0 ? toLedger(row.price) ?? Math.round(row.price * ledgerRatio) : null);
+      if (saved.changes) { result.formulas.lines += 1; result.formulas.products.add(row.product); }
+    }
+    result.formulas.products = result.formulas.products.size;
 
     // --- مشخصات شرکت، فقط اگر هنوز نگذاشته‌اند ---
     const company = extras.company;
@@ -249,4 +274,43 @@ export function archivedSalesByProduct(database) {
     }
     return [...sales].map(([product, amount]) => ({ product, amount }));
   } catch { return []; }
+}
+
+/**
+ * فرمول و تاریخچهٔ تولید پارسیان، فقط‌خواندنی: فرمول هر محصول (اجزا برای هر واحد) و هر
+ * فاکتور تولید با فاکتور مصرفِ همان تولید. ارزش تولید همان قیمتی است که پارسیان گذاشته؛
+ * ارزش مصرف جمع ردیف‌های مصرف. فاصلهٔ این دو گفته می‌شود، نه پوشانده.
+ */
+export function parsianProductionArchive(database, { limit = 200 } = {}) {
+  ensureParsianExtrasSchema(database);
+  const formulaRows = database.prepare(`SELECT product_code AS productCode,product_name AS productName,component_code AS componentCode,
+      component_name AS componentName,unit,quantity,per_units AS perUnits,unit_price AS unitPrice
+    FROM parsian_production_formulas ORDER BY product_name,component_name`).all();
+  const formulas = new Map();
+  for (const row of formulaRows) {
+    if (!formulas.has(row.productCode)) formulas.set(row.productCode, { productCode: row.productCode, productName: row.productName, components: [], unitCost: 0, priced: true });
+    const formula = formulas.get(row.productCode);
+    const perUnit = row.quantity / (row.perUnits || 1);
+    formula.components.push({ code: row.componentCode, name: row.componentName, unit: row.unit, perUnit, unitPrice: row.unitPrice });
+    if (row.unitPrice == null) formula.priced = false;
+    else formula.unitCost += perUnit * row.unitPrice;
+  }
+  const parse = (row) => ({ ...row, lines: JSON.parse(row.lines || '[]') });
+  const consumption = new Map(database.prepare(`SELECT file_sha256 AS sha,number,jalali_date AS jalaliDate,lines FROM parsian_invoice_archive WHERE kind='consumption'`)
+    .all().map((row) => [`${row.sha}:${row.number}`, parse(row)]));
+  const runs = database.prepare(`SELECT file_sha256 AS sha,number,jalali_date AS jalaliDate,occurred_at AS occurredAt,linked_number AS linkedNumber,lines,note
+    FROM parsian_invoice_archive WHERE kind='production' ORDER BY occurred_at DESC,number DESC LIMIT ?`).all(limit).map((row) => {
+    const run = parse(row);
+    const used = consumption.get(`${row.sha}:${row.linkedNumber}`) || null;
+    const outputValue = run.lines.reduce((sum, line) => sum + (line.total || 0), 0);
+    const inputValue = used ? used.lines.reduce((sum, line) => sum + (line.total || 0), 0) : null;
+    return {
+      number: run.number, jalaliDate: run.jalaliDate, occurredAt: run.occurredAt, note: run.note,
+      outputs: run.lines.map((line) => ({ title: line.title, unit: line.unit, quantity: line.quantity, total: line.total })),
+      consumption: used ? { number: used.number, jalaliDate: used.jalaliDate, lines: used.lines.map((line) => ({ title: line.title, unit: line.unit, quantity: line.quantity, total: line.total })) } : null,
+      outputValue, inputValue, gap: inputValue == null ? null : outputValue - inputValue,
+    };
+  });
+  const totals = database.prepare(`SELECT kind,COUNT(*) AS count FROM parsian_invoice_archive WHERE kind IN ('production','consumption') GROUP BY kind`).all();
+  return { formulas: [...formulas.values()], runs, totals: Object.fromEntries(totals.map((row) => [row.kind, row.count])) };
 }

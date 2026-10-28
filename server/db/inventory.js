@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { audit, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { inventoryOverview as inventoryOverviewCore, recordInventoryMovement } from '../inventory.js';
+import { listProductionRuns as listProductionRunsCore, productionPlan as productionPlanCore, recordProduction as recordProductionCore } from '../production.js';
+import { parsianProductionArchive as parsianProductionArchiveCore } from '../parsianExtras.js';
 
 export function listProducts() {
   return inventoryOverviewCore(db).products;
@@ -50,4 +52,23 @@ export function adjustStock(id, values = {}) {
 
 export function inventoryOverview() {
   return inventoryOverviewCore(db);
+}
+
+export function productionPlan(values = {}) {
+  return productionPlanCore(db, values);
+}
+
+export function recordProduction(values = {}) {
+  const run = recordProductionCore(db, values, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
+  audit('create', 'production_run', run.id, { productId: run.productId, quantity: run.quantity, value: run.value });
+  return run;
+}
+
+export function listProductionRuns() {
+  return listProductionRunsCore(db);
+}
+
+/** فرمول و تاریخچهٔ تولیدِ بکاپ پارسیان، فقط‌خواندنی. */
+export function parsianProductionArchive() {
+  return parsianProductionArchiveCore(db);
 }

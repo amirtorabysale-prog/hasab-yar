@@ -48,7 +48,7 @@ export function recordInventoryMovement(database, productId, values = {}, { crea
   if (!Number.isFinite(quantity) || quantity === 0 || Math.abs(quantity) > 1_000_000_000) throw inventoryError('تعداد گردش موجودی معتبر نیست.');
   const occurredAt = values.occurredAt || new Date().toISOString();
   assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
-  const movementType = ['opening', 'purchase', 'sale', 'adjustment', 'reversal'].includes(values.movementType) ? values.movementType : 'adjustment';
+  const movementType = ['opening', 'purchase', 'sale', 'adjustment', 'reversal', 'production', 'consumption'].includes(values.movementType) ? values.movementType : 'adjustment';
   const newStock = Number(product.stock) + quantity;
   // کالا هم مثل صندوق: خروج بیش از موجودی فقط با تأیید حسابدار (مثلاً فروشی که
   // خریدش هنوز ثبت نشده). ورود روی کالایی که از قبل منفی است سد نمی‌شود.
