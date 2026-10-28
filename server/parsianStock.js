@@ -74,13 +74,15 @@ export function parsianStockLedger(parsed) {
     const average = product.quantity > EPSILON ? product.value / product.quantity : product.movements.findLast?.((move) => move.unitCost > 0)?.unitCost || 0;
     const priced = Math.max(0, line.quantity * line.unitPrice - (kind.type === 'purchase' ? line.discount || 0 : 0));
     const value = kind.cost === 'price' ? priced : line.quantity * average;
+    const before = product.value;
     product.quantity += kind.direction * line.quantity;
     product.value += kind.direction * value;
     if (product.quantity < -EPSILON) product.wentNegative = true;
     if (Math.abs(product.quantity) < EPSILON) { product.quantity = 0; product.value = 0; }
     product.movements.push({
       kind: kind.type, label: kind.label, title: invoice.title, number: invoice.number, date: invoice.date, lineId: line.id,
-      quantity: kind.direction * line.quantity, value: kind.direction * value, unitCost: line.quantity ? value / line.quantity : 0,
+      // ارزش گردش = تغییر واقعی ماندهٔ کالا؛ وقتی کالا به صفر می‌رسد ته‌ماندهٔ گرد کردن هم با همین گردش می‌رود.
+      quantity: kind.direction * line.quantity, value: product.value - before, balance: product.value, unitCost: line.quantity ? value / line.quantity : 0,
     });
   }
   return { products, excluded };
@@ -120,11 +122,15 @@ export function importParsianStock(database, parsed, { fileUnit, ledgerUnit, inv
       if (!row.track) continue;
       // پایان منفی یعنی گردشی جا افتاده؛ تعداد حدسی نمی‌گذاریم.
       if (product.quantity < -EPSILON) { result.negative.push({ name: goods.name, quantity: product.quantity }); continue; }
+      // گرد کردن تجمعی: جمع ارزش گردش‌های هر کالا دقیقاً همان ارزش پایانی کالاست، نه جمع گردهای جدا.
+      let ledgerBalance = 0;
       for (const move of product.movements) {
+        const delta = toLedger(move.balance) - ledgerBalance;
+        ledgerBalance += delta;
         const changes = insert.run(randomUUID(), row.id, move.quantity, `${move.label} — فاکتور ${move.number} پارسیان (${move.date})`,
-          move.kind, toLedger(Math.abs(move.unitCost)), toLedger(move.value), `${prefix}${move.title}:${move.number}:${move.lineId}`, toISO(move.date)).changes;
+          move.kind, toLedger(Math.abs(move.unitCost)), delta, `${prefix}${move.title}:${move.number}:${move.lineId}`, toISO(move.date)).changes;
         result.movements += changes;
-        result.byKind[move.kind] = (result.byKind[move.kind] || 0) + toLedger(move.value);
+        result.byKind[move.kind] = (result.byKind[move.kind] || 0) + delta;
       }
       const value = Math.max(0, toLedger(product.value));
       update.run(product.quantity, value, product.quantity > EPSILON ? Math.round(value / product.quantity) : 0,

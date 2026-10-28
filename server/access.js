@@ -48,6 +48,8 @@ export function minimumRoleForRequest(method, path) {
   // بستن و بازگشایی سال مالی دوازده دوره را قفل یا باز می‌کند و سه سند می‌زند.
   if (normalizedPath.startsWith('/accounting/year-close/')) return 'owner';
   if (normalizedPath === '/accounting/fiscal-year') return 'owner';
+  // پیشنهاد سند پایان دورهٔ انبار: سند منتظر کنترل می‌سازد، مثل الگوی سند.
+  if (normalizedPath.startsWith('/accounting/inventory-close/')) return 'manager';
   // کنترل و تأیید سند کار حسابدار ارشد است، نه کمک‌حسابداری که ثبت می‌زند.
   if (/^\/accounting\/journal\/[^/]+\/approval$/.test(normalizedPath)) return 'manager';
   if (normalizedPath.startsWith('/accounting/templates')) return 'manager';

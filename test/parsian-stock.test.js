@@ -116,6 +116,8 @@ test('ورود موجودی در دفتر تومانی: بی‌سند، ماند
     assert.ok(result.stock.warnings.some((text) => /ادواری/.test(text)));
     // تولید ۶۰۰٬۰۰۰ در برابر مصرف ۵۰۰٬۰۰۰: فاصله گفته می‌شود.
     assert.ok(result.stock.warnings.some((text) => /ارزش تولید/.test(text)));
+    // جمع ارزش گردش‌های هر کالا دقیقاً همان ارزش کالاست (گرد کردن تجمعی).
+    for (const row of active.prepare('SELECT p.inventory_value AS value,(SELECT COALESCE(SUM(value_delta),0) FROM stock_movements m WHERE m.product_id=p.id) AS moved FROM products p').all()) assert.equal(row.moved, row.value);
     const movements = active.prepare("SELECT COUNT(*) AS n FROM stock_movements WHERE source_type='parsian_invoice'").get().n;
     assert.equal(movements, 8);
     const again = importParsianStock(active, parsed(), { fileUnit: 'rial', ledgerUnit: result.ledgerUnit });

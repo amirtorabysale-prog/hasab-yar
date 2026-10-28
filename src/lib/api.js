@@ -324,6 +324,8 @@ export const api = {
   setFiscalYearStart: (startMonth) => request('/api/accounting/fiscal-year', { method: 'POST', body: JSON.stringify({ startMonth }) }),
   previewYearClose: (year, retained = '') => request(`/api/accounting/year-close/${encodeURIComponent(year)}${retained ? `?retained=${encodeURIComponent(retained)}` : ''}`),
   closeFiscalYear: (year, retainedChartAccountId = '') => request(`/api/accounting/year-close/${encodeURIComponent(year)}/close`, { method: 'POST', body: JSON.stringify({ retainedChartAccountId }) }),
+  previewInventoryClose: (year, target = '') => request(`/api/accounting/inventory-close/${encodeURIComponent(year)}${target ? `?target=${encodeURIComponent(target)}` : ''}`),
+  proposeInventoryClose: (year, targetLedgerAccountId = '') => request(`/api/accounting/inventory-close/${encodeURIComponent(year)}`, { method: 'POST', body: JSON.stringify({ targetLedgerAccountId }) }),
   reopenFiscalYear: (year, reason) => request(`/api/accounting/year-close/${encodeURIComponent(year)}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) }),
   taxRates: () => request('/api/tax/rates'),
   saveTaxRate: (payload) => request(payload.id ? `/api/tax/rates/${payload.id}` : '/api/tax/rates', { method: payload.id ? 'PUT' : 'POST', body: JSON.stringify(payload) }),

@@ -14,6 +14,7 @@ import {
   journalBookReport, ledgerControlsReport, ledgerYears, personsReport, reportSheets, trialBalanceReport,
 } from '../accounting/reports.js';
 import { approveImportedEntries, importedEntriesOverview } from '../db.js';
+import { previewInventoryClose, proposeInventoryClose } from '../accounting/inventoryClose.js';
 import { requireRank } from './http.js';
 import { buildWorkbook } from '../spreadsheet.js';
 
@@ -159,6 +160,18 @@ export function registerAccountingRoutes(app) {
       const result = closeFiscalYear(activeWorkspaceDatabase(), request.params.year, { userId: request.user.id, timeZone: getSettings().timezone || 'Asia/Tehran', retainedChartAccountId: String(request.body?.retainedChartAccountId || '') });
       recordAudit('close', 'fiscal_year', String(request.params.year), { profit: result.profit, documents: result.documents, imported: result.imported });
       return response.json(result);
+    } catch (error) { return next(error); }
+  });
+  // سند پایان دورهٔ انبار (روش ادواری پارسیان): پیش‌نمایش برای همه، ساخت پیشنهاد «منتظر کنترل» برای مدیر.
+  app.get('/api/accounting/inventory-close/:year', (request, response, next) => {
+    try { return response.json(previewInventoryClose(activeWorkspaceDatabase(), request.params.year, { timeZone: getSettings().timezone || 'Asia/Tehran', targetLedgerAccountId: String(request.query.target || '') })); }
+    catch (error) { return next(error); }
+  });
+  app.post('/api/accounting/inventory-close/:year', (request, response, next) => {
+    try {
+      const result = proposeInventoryClose(activeWorkspaceDatabase(), request.params.year, { userId: request.user.id, timeZone: getSettings().timezone || 'Asia/Tehran', targetLedgerAccountId: String(request.body?.targetLedgerAccountId || '') });
+      recordAudit(result.rebuilt ? 'update' : 'create', 'inventory_close', String(request.params.year), { entryId: result.entryId, amounts: result.amounts });
+      return response.status(result.rebuilt ? 200 : 201).json(result);
     } catch (error) { return next(error); }
   });
   app.post('/api/accounting/year-close/:year/reopen', (request, response, next) => {

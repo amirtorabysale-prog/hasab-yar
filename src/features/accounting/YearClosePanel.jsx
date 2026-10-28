@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 import { PERSIAN_MONTH_NAMES, fiscalYearLabel } from '../../../shared/fiscalYear.js';
+import InventoryClosePanel from './InventoryClosePanel.jsx';
 
 const SOURCE_LABEL = { hesabyar: 'ساخته می‌شود', parsian: 'از بکاپ پارسیان' };
 
@@ -101,6 +102,8 @@ export default function YearClosePanel({ isOwner, notify, refresh }) {
           <span className="text-xs text-muted">{toPersianDigits(doc.day.replace(/-/g, '/'))} · <span className="numbers">{toPersianDigits(doc.lines)}</span> آرتیکل · {SOURCE_LABEL[doc.source]}</span>
         </li>)}
       </ul>}
+
+      {!closed ? <InventoryClosePanel year={year} label={fiscalYearLabel(year, startMonth)} notify={notify} onChange={async () => { await load(); await refresh(); }} /> : null}
 
       {needsRetained && !closed ? <label className="mt-3 block text-xs text-muted">معین «سود (زیان) انباشته»
         <select value={retained} onChange={(event) => setRetained(event.target.value)} className="tap mt-1 w-full rounded-lg border border-line bg-paper px-2 text-sm text-ink">

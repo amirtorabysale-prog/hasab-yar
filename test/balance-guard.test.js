@@ -118,3 +118,17 @@ test('تأیید فقط با نقش مجاز و دلیل نوشته‌شده پ�
   assert.deepEqual(readOverdraftApproval(encodeURIComponent('اضافه‌برداشت مصوب'), { role: 'accountant', userId: 'u' }),
     { reason: 'اضافه‌برداشت مصوب', role: 'accountant', userId: 'u' });
 });
+
+// خانوادهٔ «سررسید ماهانه نزدیک نیمه‌شب UTC»: سررسیدی که ساعت‌های اول بامداد تهران است در
+// UTC روز قبل می‌افتد. پیشروی از آن باید یک ماه بعد برسد، نه همان روزِ همین ماه (قسط دوبار).
+test('سررسید ماهانهٔ بعدی از یک سررسید: دست‌کم یک ماه بعد، هر ساعتی که سررسید داشته باشد', async () => {
+  const { nextMonthlyDate } = await import(`../server/db/recurring.js?next=${process.pid}`);
+  // ۲۷ام، ساعت ۰۱:۰۰ تهران = ۲۶ام ۲۱:۳۰ UTC.
+  assert.equal(nextMonthlyDate(27, new Date('2026-10-26T21:30:00.000Z'), { afterOccurrence: true }), '2026-11-27T09:00:00.000Z');
+  assert.equal(nextMonthlyDate(27, new Date('2026-10-27T09:00:00.000Z'), { afterOccurrence: true }), '2026-11-27T09:00:00.000Z');
+  // روز ۳۱ در ماه کوتاه و برگشت به ماه بلند.
+  assert.equal(nextMonthlyDate(31, new Date('2026-01-31T09:00:00.000Z'), { afterOccurrence: true }), '2026-02-28T09:00:00.000Z');
+  assert.equal(nextMonthlyDate(31, new Date('2026-02-28T09:00:00.000Z'), { afterOccurrence: true }), '2026-03-31T09:00:00.000Z');
+  // نخستین سررسید از «اکنون» همان رفتار قبلی: نزدیک‌ترین روز آینده.
+  assert.equal(nextMonthlyDate(27, new Date('2026-10-26T21:30:00.000Z')), '2026-10-27T09:00:00.000Z');
+});

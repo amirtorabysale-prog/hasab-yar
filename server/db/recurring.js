@@ -112,11 +112,19 @@ function coveredQuestion(rule, periodKey, covering) {
     + `ثبت دوره‌ای «${rule.title}» برای این ماه وارد نشد. اگر همان قرارداد است این ماه را رد کن یا قاعده را متوقف کن؛ اگر جداست، ثبتش کن.`;
 }
 
-function nextMonthlyDate(day, from = new Date()) {
+// کوتاه‌ترین فاصلهٔ دو سررسید ماهانه ۲۸ روز است؛ هر نامزد نزدیک‌تر از این، همان سررسید است.
+const MIN_MONTHLY_GAP_MS = 20 * 86_400_000;
+
+/**
+ * سررسید ماهانهٔ بعدی. با `afterOccurrence`، `from` خودش یک سررسید است و بعدی دست‌کم یک ماه
+ * بعد است: سررسیدی که در ساعت‌های اول بامداد تهران است در UTC روز قبل می‌افتد و «همان روزِ
+ * همین ماه» دوباره نامزد می‌شد؛ قسط دو بار ثبت می‌شد.
+ */
+export function nextMonthlyDate(day, from = new Date(), { afterOccurrence = false } = {}) {
   const next = new Date(from);
   next.setUTCHours(9, 0, 0, 0);
   next.setUTCDate(Math.min(day, new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate()));
-  if (next <= from) {
+  if (next <= from || (afterOccurrence && next - from < MIN_MONTHLY_GAP_MS)) {
     next.setUTCMonth(next.getUTCMonth() + 1, 1);
     next.setUTCDate(Math.min(day, new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate()));
   }
@@ -172,7 +180,7 @@ export function materializeRecurringRules(now = new Date()) {
           rawText: item.title, note: 'ثبت خودکار دوره‌ای', source: 'text', occurredAt: nextDue, ...ownMonth,
         }] });
         if (!existed) created += 1;
-        nextDue = nextMonthlyDate(item.day_of_month, new Date(nextDue));
+        nextDue = nextMonthlyDate(item.day_of_month, new Date(nextDue), { afterOccurrence: true });
       }
       // سؤال تازه می‌ماند؛ اجازهٔ «ثبتش کن» با ثبت همان ماه مصرف شده است.
       db.prepare('UPDATE recurring_rules SET next_due_at=?,hold=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
@@ -206,7 +214,7 @@ export function resolveRecurringHold(id, action) {
   if (!hold?.reason) throw Object.assign(invalidInput('این ثبت تکرارشونده منتظر جوابی نیست.'), { status: 409, code: 'RECURRING_NOT_HELD' });
   if (action === 'skip') {
     db.prepare('UPDATE recurring_rules SET next_due_at=?,hold=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-      .run(nextMonthlyDate(rule.day_of_month, new Date(hold.dueAt || rule.next_due_at)), rule.id);
+      .run(nextMonthlyDate(rule.day_of_month, new Date(hold.dueAt || rule.next_due_at), { afterOccurrence: true }), rule.id);
   } else if (action === 'post') {
     db.prepare('UPDATE recurring_rules SET hold=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(JSON.stringify({ allowPeriodKey: hold.periodKey }), rule.id);
   } else if (action === 'pause') {
