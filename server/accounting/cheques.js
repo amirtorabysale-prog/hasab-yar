@@ -47,6 +47,9 @@ export function chequeLedgerAccounts(database, counterparty = null) {
  *
  * برگشت: طلب از بین نرفته، فقط ابزارش باطل شده — مبلغ از اسناد دریافتنی به
  * حساب دریافتنیِ همان شخص برمی‌گردد و او دوباره بدهکار می‌شود.
+ *
+ * واگذاری (فقط چک دریافتی): چک مشتری به تأمین‌کننده داده می‌شود. پولی از حساب
+ * شرکت جابه‌جا نمی‌شود؛ بدهی ما به گیرنده کم می‌شود و اسناد دریافتنی بسته می‌شود.
  */
 export function postChequeJournal(database, values, { createdBy = null, timeZone = 'Asia/Tehran' } = {}) {
   ensureAccountingSchema(database);
@@ -86,6 +89,11 @@ export function postChequeJournal(database, values, { createdBy = null, timeZone
     lines = receivable
       ? [{ accountId: cash, debit: amount }, { accountId: noteAccount, credit: amount, analyticId }]
       : [{ accountId: noteAccount, debit: amount, analyticId }, { accountId: cash, credit: amount }];
+  } else if (stage === 'transfer') {
+    if (!receivable) throw accountingError('فقط چک دریافتی واگذار می‌شود.', 'CHEQUE_TRANSFER_PAYABLE');
+    const endorsee = values.endorsee || {};
+    if (!endorsee.accountId) throw accountingError('حساب گیرندهٔ چک معلوم نیست.', 'CHEQUE_ENDORSEE_MISSING');
+    lines = [{ accountId: endorsee.accountId, debit: amount, analyticId: endorsee.analyticId || null }, { accountId: noteAccount, credit: amount, analyticId }];
   } else {
     const party_ = partyAccount();
     lines = receivable

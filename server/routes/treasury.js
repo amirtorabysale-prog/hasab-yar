@@ -4,7 +4,7 @@
 // احراز هویت، CSRF و مرز نقش و تجربه پیش از این‌ها در index.js اعمال می‌شود.
 
 import {
-  closeBankReconciliation, closeDay, createTransactionFromStatementLine, getReconciliationImport, moneyAccountCard, listAccounts, listDailyClosings, previewDayClosing, importBankStatement, ignoreReconciliationLine, listReconciliationImports, matchReconciliationLine, recordCapitalEntry, bounceCheque, cancelCheque, chequeSummary, clearCheque, listCheques, recordCheque, transferWithFee, closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling, saveAccount,
+  closeBankReconciliation, closeDay, createTransactionFromStatementLine, getReconciliationImport, moneyAccountCard, listAccounts, listDailyClosings, previewDayClosing, importBankStatement, ignoreReconciliationLine, listReconciliationImports, matchReconciliationLine, recordCapitalEntry, bounceCheque, cancelCheque, chequeCalendar, chequeHistory, chequeSummary, clearCheque, depositCheque, resolveReviewCheque, transferCheque, withdrawChequeDeposit, listCheques, recordCheque, transferWithFee, closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling, saveAccount,
 } from '../db.js';
 import { statementUpload } from './http.js';
 
@@ -49,6 +49,18 @@ export function registerTreasuryRoutes(app) {
   app.post('/api/cheques/:id/bounce', (request, response, next) => {
     try { return response.json({ item: bounceCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
   });
+  app.get('/api/cheques/calendar', (request, response, next) => {
+    try { return response.json(chequeCalendar({ days: request.query?.days })); } catch (error) { return next(error); }
+  });
+  app.get('/api/cheques/:id/history', (request, response, next) => {
+    try { return response.json({ items: chequeHistory(request.params.id) }); } catch (error) { return next(error); }
+  });
+  // نزد بانک، پس‌گرفتن از بانک، واگذاری و تعیین تکلیف چک «نیازمند بررسی».
+  for (const [path, action] of [['deposit', depositCheque], ['withdraw', withdrawChequeDeposit], ['transfer', transferCheque], ['resolve', resolveReviewCheque]]) {
+    app.post(`/api/cheques/:id/${path}`, (request, response, next) => {
+      try { return response.json({ item: action(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+    });
+  }
   app.post('/api/cheques/:id/cancel', (request, response, next) => {
     try { return response.json({ item: cancelCheque(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
   });

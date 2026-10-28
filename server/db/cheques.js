@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { analyticForContact, counterpartyAnalyticForKey } from '../chartOfAccounts.js';
-import { chequeLedgerAccounts, postChequeJournal, reverseJournalEntry } from '../accounting.js';
+import { chequeLedgerAccounts, counterpartyLedgerAccount, postChequeJournal, reverseJournalEntry } from '../accounting.js';
 import { activeWorkspaceDatabase, audit, cleanAmount, currentTimeZone, currentWorkspace, db, invalidInput } from './core.js';
 import { contactIdForName } from './contacts.js';
 import { resolveAccountId } from './accounts.js';
@@ -27,7 +27,13 @@ export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
   // چک دریافتی که به تأمین‌کننده داده شد (پشت‌نویسی)؛ و چک واردشده‌ای که وضعیتش معلوم نیست.
   transferred: 'واگذارشده', review: 'نیازمند بررسی',
+  // چک دریافتی که برای وصول به بانک سپرده شد: هنوز پول نیست و سندی هم نمی‌خورد؛ فقط
+  // جای چک عوض شده و وصولش به همان بانک می‌نشیند.
+  deposited: 'نزد بانک',
 });
+
+/** وضعیت‌هایی که چک هنوز باز است: سررسید دارد و وصول یا برگشتش در پیش است. */
+const LIVE_STATUSES = Object.freeze(['open', 'deposited']);
 
 const STATUS_CHECK = `CHECK(status IN (${Object.keys(CHEQUE_STATUSES).map((status) => `'${status}'`).join(',')}))`;
 
@@ -36,6 +42,9 @@ const STATUS_CHECK = `CHECK(status IN (${Object.keys(CHEQUE_STATUSES).map((statu
 const LATER_COLUMNS = [
   ['source', "TEXT NOT NULL DEFAULT ''"], ['source_key', "TEXT NOT NULL DEFAULT ''"], ['sayad', "TEXT NOT NULL DEFAULT ''"],
   ['note_account_id', 'TEXT'], ['party_chart_id', 'TEXT'], ['transferred_to', "TEXT NOT NULL DEFAULT ''"], ['review_reason', "TEXT NOT NULL DEFAULT ''"],
+  // بانکِ چک: حساب پولی که چک دریافتی به آن سپرده شد، یا معین و تفصیلی بانکی که چک
+  // پرداختیِ پارسیان از آن کشیده شده (حساب پولی‌اش را فاز ب بعداً می‌سازد).
+  ['bank_account_id', 'TEXT'], ['bank_chart_id', 'TEXT'], ['bank_analytic_id', 'TEXT'],
 ];
 
 /**
@@ -44,7 +53,7 @@ const LATER_COLUMNS = [
  */
 function widenChequeStatuses(database) {
   const sql = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='cheques'").get()?.sql || '';
-  if (!sql || sql.includes("'transferred'")) return;
+  if (!sql || sql.includes("'deposited'")) return;
   const columns = database.prepare('PRAGMA table_info(cheques)').all().map((column) => column.name).join(',');
   // SAVEPOINT، نه BEGIN: این تابع گاهی درون تراکنش فراخواننده صدا زده می‌شود.
   database.exec('SAVEPOINT widen_cheque_statuses');
@@ -90,7 +99,24 @@ export function ensureChequeSchema(database) {
   for (const [name, type] of LATER_COLUMNS) if (!present.has(name)) database.exec(`ALTER TABLE cheques ADD COLUMN ${name} ${type}`);
   widenChequeStatuses(database);
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_cheques_source ON cheques(source,source_key) WHERE source<>''");
+  // تاریخچهٔ هر چک: هر تغییر وضعیت یک ردیف، با سندش اگر سندی خورده.
+  database.exec(`CREATE TABLE IF NOT EXISTS cheque_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cheque_id TEXT NOT NULL,
+      at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      entry_id TEXT,
+      note TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_cheque_events_cheque ON cheque_events(cheque_id,at,id);`);
   return database;
+}
+
+export function logChequeEvent(database, chequeId, { at, status, entryId = null, note = '', source = '' }) {
+  database.prepare('INSERT INTO cheque_events (cheque_id,at,status,entry_id,note,source) VALUES (?,?,?,?,?,?)')
+    .run(chequeId, at || new Date().toISOString(), status, entryId || null, String(note || '').slice(0, 300), source);
 }
 
 const database = () => ensureChequeSchema(activeWorkspaceDatabase());
@@ -99,7 +125,8 @@ const COLUMNS = `id,direction,contact_id AS contactId,counterparty_name AS count
   due_at AS dueAt,occurred_at AS occurredAt,serial,bank_name AS bankName,status,against,
   obligation_id AS obligationId,analytic_id AS analyticId,note,journal_entry_id AS journalEntryId,
   settled_entry_id AS settledEntryId,settled_at AS settledAt,created_at AS createdAt,
-  source,sayad,note_account_id AS noteAccountId,party_chart_id AS partyChartId,transferred_to AS transferredTo,review_reason AS reviewReason`;
+  source,sayad,note_account_id AS noteAccountId,party_chart_id AS partyChartId,transferred_to AS transferredTo,review_reason AS reviewReason,
+  bank_account_id AS bankAccountId,bank_chart_id AS bankChartId,bank_analytic_id AS bankAnalyticId`;
 
 const hydrate = (row) => (row ? { ...row, statusLabel: CHEQUE_STATUSES[row.status] || row.status } : null);
 
@@ -110,7 +137,9 @@ export function listCheques({ status = 'open', direction = '' } = {}) {
   if (Object.hasOwn(CHEQUE_STATUSES, status)) { where.push('status=?'); args.push(status); }
   if (['receivable', 'payable'].includes(direction)) { where.push('direction=?'); args.push(direction); }
   return db_.prepare(`SELECT ${COLUMNS} FROM cheques ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-    ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,due_at,created_at DESC`).all(...args).map(hydrate);
+    ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END,due_at,created_at DESC`).all(...args).map(hydrate)
+    // بانکی که وصول یا پاس بی‌انتخاب به آن می‌نشیند؛ فرم وصول همان را پیش‌فرض می‌گیرد.
+    .map((row) => (LIVE_STATUSES.includes(row.status) ? { ...row, defaultAccountId: chequeBankAccount(db_, row) } : row));
 }
 
 /**
@@ -251,6 +280,7 @@ function insertChequeRow(db_, id, { values, direction, amount, occurredAt, conta
     .run(id, direction, contactId, counterpartyName, amount, values.dueAt || null, occurredAt,
       String(values.serial || '').trim().slice(0, 40), String(values.bankName || '').trim().slice(0, 60),
       against, values.obligationId || null, analyticId, String(values.note || '').slice(0, 300), journalEntryId);
+  logChequeEvent(db_, id, { at: occurredAt, status: 'open', entryId: journalEntryId, note: direction === 'receivable' ? 'دریافت چک' : 'صدور چک' });
 }
 
 /** رویداد مالیِ خودِ چک، با واقعیت‌هایی که از یادداشتش خوانده شد. */
@@ -317,12 +347,16 @@ function recordEngineCheque(db_, party, { event, decision, routing }) {
     // ثبتِ حسابدار می‌سازد، نه این‌جا — وگرنه یک چک دو ردیف می‌گرفت.
     if (result.route === ROUTES.ACCOUNTANT_REVIEW && result.status !== 'posted') {
       db_.prepare('DELETE FROM cheques WHERE id=?').run(id);
+      db_.prepare('DELETE FROM cheque_events WHERE cheque_id=?').run(id);
       db_.prepare('UPDATE financial_events SET journal_source=NULL WHERE id=?').run(result.id);
       db_.exec('COMMIT');
       const reason = result.guards?.find?.((check) => check.verdict === 'block')?.reason || routing.reasons[0] || 'این چک قضاوت حسابدار لازم دارد.';
       return { ...result, queuedForAccountant: true, queuedReason: reason };
     }
-    if (result.journalEntryId) db_.prepare('UPDATE cheques SET journal_entry_id=? WHERE id=?').run(result.journalEntryId, id);
+    if (result.journalEntryId) {
+      db_.prepare('UPDATE cheques SET journal_entry_id=? WHERE id=?').run(result.journalEntryId, id);
+      db_.prepare('UPDATE cheque_events SET entry_id=? WHERE cheque_id=? AND entry_id IS NULL').run(result.journalEntryId, id);
+    }
     db_.exec('COMMIT');
   } catch (error) { db_.exec('ROLLBACK'); throw error; }
   audit('create', 'cheque', id, { direction, amount, against, counterpartyName, eventId: result.id, treatment: decision.treatment });
@@ -348,10 +382,10 @@ function importedChequeAccounts(db_, cheque) {
   return { noteAccountId: cheque.noteAccountId || undefined, partyAccountId: party || undefined };
 }
 
-function openCheque(db_, id) {
+function openCheque(db_, id, allowed = LIVE_STATUSES) {
   const row = db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(String(id || ''));
   if (!row) throw invalidInput('چک پیدا نشد.');
-  if (row.status !== 'open') throw Object.assign(new Error(`این چک از قبل «${CHEQUE_STATUSES[row.status]}» است.`), { code: 'CHEQUE_NOT_OPEN', status: 409 });
+  if (!allowed.includes(row.status)) throw Object.assign(new Error(`این چک از قبل «${CHEQUE_STATUSES[row.status]}» است.`), { code: 'CHEQUE_NOT_OPEN', status: 409 });
   const recorded = findEventBySource(db_, `cheque:${row.id}`);
   // سند ثبتِ چک برگشته یا رد شده: اسناد پرداختنی/دریافتنی‌ای نمانده که وصول یا
   // برگشت ببندد. چک ابطال می‌شود، نه وصول (که بانک را بی‌پشتوانه کم می‌کرد).
@@ -380,25 +414,216 @@ function openCheque(db_, id) {
  * وصول، آن حق را به موجودی بانک تبدیل می‌کند و نه درآمدی می‌سازد و نه
  * هزینه‌ای — درآمدش موقع ثبت چک شناسایی شده بود.
  */
-export function clearCheque(id, { accountId, account = 'cash', occurredAt = '' } = {}) {
+export function clearCheque(id, { accountId, account = '', occurredAt = '' } = {}) {
   const db_ = database();
   const cheque = openCheque(db_, id);
   const settledAt = occurredAt || new Date().toISOString();
+  // بی‌انتخاب صریح، وصول به بانکِ خود چک می‌نشیند (بانکی که چک به آن سپرده شد یا چک
+  // پرداختی از آن کشیده شده)، نه صندوق پیش‌فرض.
+  const cashAccountId = accountId || account ? resolveAccountId({ account, accountId }) : chequeBankAccount(db_, cheque) || resolveAccountId({});
   db_.exec('BEGIN IMMEDIATE');
   try {
     const posted = postChequeJournal(db_, {
       chequeId: cheque.id, stage: 'clear', direction: cheque.direction, amount: cheque.amount,
-      occurredAt: settledAt, cashAccountId: resolveAccountId({ account, accountId }),
+      occurredAt: settledAt, cashAccountId,
       counterparty: { contactId: cheque.contactId, name: cheque.counterpartyName, analyticId: cheque.analyticId },
       ...importedChequeAccounts(db_, cheque),
-      memo: `وصول چک ${cheque.counterpartyName}`,
+      memo: `${cheque.direction === 'payable' ? 'پاس' : 'وصول'} چک ${cheque.counterpartyName}`,
     }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
-    db_.prepare("UPDATE cheques SET status='cleared',settled_entry_id=?,settled_at=? WHERE id=? AND status='open'")
-      .run(posted.id, settledAt, cheque.id);
+    db_.prepare("UPDATE cheques SET status='cleared',settled_entry_id=?,settled_at=?,bank_account_id=? WHERE id=? AND status IN ('open','deposited')")
+      .run(posted.id, settledAt, cashAccountId, cheque.id);
+    logChequeEvent(db_, cheque.id, { at: settledAt, status: 'cleared', entryId: posted.id, note: `${cheque.direction === 'payable' ? 'پاس' : 'وصول'} به ${accountName(db_, cashAccountId)}` });
     db_.exec('COMMIT');
   } catch (error) { db_.exec('ROLLBACK'); throw error; }
-  audit('clear', 'cheque', cheque.id, { amount: cheque.amount });
+  audit('clear', 'cheque', cheque.id, { amount: cheque.amount, accountId: cashAccountId });
   return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(cheque.id));
+}
+
+function assertReceivable(db_, id, message) {
+  const direction = db_.prepare('SELECT direction FROM cheques WHERE id=?').get(String(id || ''))?.direction;
+  if (direction && direction !== 'receivable') throw invalidInput(message);
+}
+
+const accountName = (db_, accountId) => db_.prepare('SELECT name FROM accounts WHERE id=?').get(accountId)?.name || accountId;
+
+/**
+ * حساب پولیِ بانکِ خود چک: بانکی که چک به آن سپرده شد، وگرنه حساب پولیِ معین و تفصیلی
+ * بانکی که چک پرداختی پارسیان از آن کشیده شده (فاز ب برای هر تفصیلی بانک یک حساب
+ * ساخته). نبودنش null است، نه حدس.
+ */
+export function chequeBankAccount(db_, cheque) {
+  const live = (accountId) => (accountId && db_.prepare('SELECT id FROM accounts WHERE id=? AND active=1').get(accountId)?.id) || null;
+  if (live(cheque.bankAccountId)) return cheque.bankAccountId;
+  if (!cheque.bankChartId) return null;
+  const hasUnits = db_.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='parsian_money_units'").get();
+  if (!hasUnits) return null;
+  const unit = db_.prepare('SELECT account_id AS accountId FROM parsian_money_units WHERE chart_account_id=? AND analytic_id IS ?')
+    .get(cheque.bankChartId, cheque.bankAnalyticId || null)
+    || db_.prepare('SELECT account_id AS accountId FROM parsian_money_units WHERE chart_account_id=? AND analytic_id=?')
+      .get(cheque.bankChartId, cheque.bankAnalyticId || '');
+  return live(unit?.accountId);
+}
+
+/**
+ * سپردن چک دریافتی به بانک برای وصول. پولی هنوز نیامده و چک همچنان «اسناد دریافتنی»
+ * است؛ پس سندی نمی‌خورد. فقط بانک به یاد می‌ماند تا وصول بعدی همان‌جا بنشیند.
+ */
+export function depositCheque(id, { accountId, account = '', occurredAt = '' } = {}) {
+  const db_ = database();
+  assertReceivable(db_, id, 'فقط چک دریافتی به بانک سپرده می‌شود.');
+  const cheque = openCheque(db_, id, ['open']);
+  if (!accountId && !account) throw invalidInput('بانکی که چک به آن سپرده شد را انتخاب کن.');
+  const bankAccountId = resolveAccountId({ account, accountId });
+  const at = occurredAt || new Date().toISOString();
+  db_.exec('BEGIN IMMEDIATE');
+  try {
+    db_.prepare("UPDATE cheques SET status='deposited',bank_account_id=? WHERE id=? AND status='open'").run(bankAccountId, cheque.id);
+    logChequeEvent(db_, cheque.id, { at, status: 'deposited', note: `سپرده به ${accountName(db_, bankAccountId)} برای وصول` });
+    db_.exec('COMMIT');
+  } catch (error) { db_.exec('ROLLBACK'); throw error; }
+  audit('deposit', 'cheque', cheque.id, { accountId: bankAccountId });
+  return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(cheque.id));
+}
+
+/** چک سپرده‌شده از بانک پس گرفته شد (بی‌وصول، بی‌برگشت): دوباره در جریان. */
+export function withdrawChequeDeposit(id, { occurredAt = '' } = {}) {
+  const db_ = database();
+  const cheque = openCheque(db_, id, ['deposited']);
+  db_.exec('BEGIN IMMEDIATE');
+  try {
+    db_.prepare("UPDATE cheques SET status='open',bank_account_id=NULL WHERE id=? AND status='deposited'").run(cheque.id);
+    logChequeEvent(db_, cheque.id, { at: occurredAt || new Date().toISOString(), status: 'open', note: 'پس‌گرفتن از بانک' });
+    db_.exec('COMMIT');
+  } catch (error) { db_.exec('ROLLBACK'); throw error; }
+  audit('withdraw-deposit', 'cheque', cheque.id, {});
+  return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(cheque.id));
+}
+
+/**
+ * حساب پرداختنیِ گیرندهٔ چک واگذارشده: حسابی که بدهی به همین شخص (همان تفصیلی) در دفتر
+ * رویش نشسته — حساب پرداختنی حساب‌یار یا حساب تأمین‌کنندهٔ پارسیان. شخصی که هیچ
+ * بدهی‌ای در دفتر ندارد حساب پرداختنی تازهٔ خودش را می‌گیرد.
+ */
+function endorseeAccount(db_, contactId, name) {
+  const analyticId = chequeAnalytic(db_, contactId, name);
+  const used = analyticId ? db_.prepare(`SELECT journal_lines.account_id AS id FROM journal_lines
+      JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+      WHERE journal_lines.analytic_id=? AND ledger_accounts.type='liability'
+        AND ledger_accounts.source_kind NOT IN ('cheque-payable')
+      GROUP BY journal_lines.account_id ORDER BY SUM(journal_lines.credit) DESC LIMIT 1`).get(analyticId)?.id : null;
+  return { accountId: used || counterpartyLedgerAccount(db_, contactId, name, 'purchase'), analyticId };
+}
+
+/**
+ * واگذاری چک دریافتی به تأمین‌کننده (پشت‌نویسی). پولی از حساب شرکت بیرون نمی‌رود؛
+ * بدهی ما به گیرنده به اندازهٔ چک کم می‌شود و اسناد دریافتنی بسته می‌شود.
+ */
+export function transferCheque(id, { contactId = '', counterpartyName = '', occurredAt = '' } = {}) {
+  const db_ = database();
+  assertReceivable(db_, id, 'فقط چک دریافتی به دیگری واگذار می‌شود؛ چک پرداختی را خودمان کشیده‌ایم.');
+  const cheque = openCheque(db_, id, ['open']);
+  const name = String(counterpartyName || (contactId ? db_.prepare('SELECT name FROM contacts WHERE id=?').get(contactId)?.name : '') || '').trim().slice(0, 120);
+  if (!name) throw invalidInput('چک به چه کسی واگذار شد؟ گیرنده را انتخاب کن.');
+  const resolvedContact = contactId || contactIdForName(name);
+  const at = occurredAt || new Date().toISOString();
+  db_.exec('BEGIN IMMEDIATE');
+  try {
+    const endorsee = endorseeAccount(db_, resolvedContact, name);
+    const posted = postChequeJournal(db_, {
+      chequeId: cheque.id, stage: 'transfer', direction: 'receivable', amount: cheque.amount, occurredAt: at,
+      counterparty: { contactId: cheque.contactId, name: cheque.counterpartyName, analyticId: cheque.analyticId },
+      ...importedChequeAccounts(db_, cheque), endorsee,
+      memo: `واگذاری چک ${cheque.counterpartyName} به ${name}`,
+    }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
+    db_.prepare("UPDATE cheques SET status='transferred',transferred_to=?,settled_entry_id=?,settled_at=? WHERE id=? AND status='open'")
+      .run(name, posted.id, at, cheque.id);
+    logChequeEvent(db_, cheque.id, { at, status: 'transferred', entryId: posted.id, note: `واگذار به ${name}` });
+    db_.exec('COMMIT');
+  } catch (error) { db_.exec('ROLLBACK'); throw error; }
+  audit('transfer', 'cheque', cheque.id, { amount: cheque.amount, to: name });
+  return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(cheque.id));
+}
+
+const RESOLVABLE = ['open', 'cleared', 'bounced', 'transferred', 'cancelled'];
+
+/**
+ * تعیین تکلیف چک «نیازمند بررسی» (کد ناشناختهٔ پارسیان). حدسی در کار نیست:
+ * - «در جریان است» چک را باز می‌کند تا وصول یا برگشتش از همین‌جا سند بخورد؛
+ * - هر وضعیت بسته (وصول، برگشت، واگذاری، ابطال) فقط با سندی پذیرفته می‌شود که همان
+ *   رویداد را در دفتر دارد؛ سند تازه‌ای ساخته نمی‌شود، چون پارسیان آن را زده است.
+ */
+export function resolveReviewCheque(id, { status = '', entryId = '', documentNumber = '', fiscalYear = '', transferredTo = '', note = '', occurredAt = '' } = {}) {
+  const db_ = database();
+  const cheque = openCheque(db_, id, ['review']);
+  if (!RESOLVABLE.includes(status)) throw invalidInput('وضعیت تازهٔ چک را انتخاب کن.');
+  let entry = null;
+  if (status !== 'open') {
+    entry = entryId
+      ? db_.prepare('SELECT id,occurred_at AS occurredAt FROM journal_entries WHERE id=?').get(String(entryId))
+      : documentNumber ? db_.prepare(`SELECT id,occurred_at AS occurredAt FROM journal_entries WHERE document_number=?
+          ${fiscalYear ? 'AND fiscal_year=?' : ''} ORDER BY fiscal_year DESC LIMIT 2`).all(...[Number(documentNumber), ...(fiscalYear ? [Number(fiscalYear)] : [])]) : null;
+    if (Array.isArray(entry)) {
+      if (entry.length > 1) throw invalidInput(`سند ${documentNumber} در چند سال هست؛ سال مالی را هم بگو.`);
+      [entry] = entry;
+    }
+    if (!entry) throw invalidInput(`برای «${CHEQUE_STATUSES[status]}» سندی که این رویداد را در دفتر دارد لازم است؛ شمارهٔ سند را بده. سند تازه‌ای ساخته نمی‌شود.`);
+  }
+  if (status === 'transferred' && !String(transferredTo).trim()) throw invalidInput('چک به چه کسی واگذار شده؟');
+  const at = occurredAt || entry?.occurredAt || new Date().toISOString();
+  db_.exec('BEGIN IMMEDIATE');
+  try {
+    db_.prepare(`UPDATE cheques SET status=?,settled_entry_id=?,settled_at=?,transferred_to=?,review_reason='' WHERE id=? AND status='review'`)
+      .run(status, entry?.id || null, status === 'open' ? null : at, status === 'transferred' ? String(transferredTo).trim().slice(0, 120) : cheque.transferredTo, cheque.id);
+    logChequeEvent(db_, cheque.id, { at, status, entryId: entry?.id || null, note: `تعیین تکلیف حسابدار${note ? `: ${note}` : ''} (پیش‌تر: ${cheque.reviewReason})` });
+    db_.exec('COMMIT');
+  } catch (error) { db_.exec('ROLLBACK'); throw error; }
+  audit('resolve', 'cheque', cheque.id, { status, entryId: entry?.id || null });
+  return hydrate(db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(cheque.id));
+}
+
+export function chequeHistory(id) {
+  const db_ = database();
+  if (!db_.prepare('SELECT 1 FROM cheques WHERE id=?').get(String(id || ''))) throw invalidInput('چک پیدا نشد.');
+  return db_.prepare(`SELECT cheque_events.at,cheque_events.status,cheque_events.note,cheque_events.source,cheque_events.entry_id AS entryId,
+      journal_entries.document_number AS documentNumber,journal_entries.fiscal_year AS fiscalYear
+    FROM cheque_events LEFT JOIN journal_entries ON journal_entries.id=cheque_events.entry_id
+    WHERE cheque_id=? ORDER BY cheque_events.at,cheque_events.id`).all(String(id))
+    .map((row) => ({ ...row, statusLabel: CHEQUE_STATUSES[row.status] || row.status }));
+}
+
+/**
+ * تقویم سررسید: چک‌های باز (در جریان و نزد بانک) به تفکیک روز سررسید، از امروز تا
+ * `days` روز بعد، به‌اضافهٔ سررسیدگذشته‌ها جدا. خالص هر روز = دریافتنی − پرداختنی.
+ */
+export function chequeCalendar({ days = 60, now = new Date() } = {}) {
+  const db_ = database();
+  const today = new Date(now);
+  const startKey = dayKey(today);
+  const end = new Date(today.getTime() + Math.max(1, Math.min(Number(days) || 60, 400)) * 86_400_000);
+  const rows = db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE status IN ('open','deposited') AND due_at IS NOT NULL ORDER BY due_at`).all().map(hydrate);
+  const overdue = [];
+  const byDay = new Map();
+  for (const row of rows) {
+    const key = dayKey(new Date(row.dueAt));
+    if (key < startKey) { overdue.push(row); continue; }
+    if (new Date(row.dueAt) > end) continue;
+    if (!byDay.has(key)) byDay.set(key, { day: key, dueAt: row.dueAt, receivable: 0, payable: 0, items: [] });
+    const day = byDay.get(key);
+    day[row.direction] += row.amount;
+    day.items.push(row);
+  }
+  const sum = (items, direction) => items.filter((item) => item.direction === direction).reduce((total, item) => total + item.amount, 0);
+  const undated = db_.prepare("SELECT COUNT(*) AS n FROM cheques WHERE status IN ('open','deposited') AND due_at IS NULL").get().n;
+  return {
+    overdue: { receivable: sum(overdue, 'receivable'), payable: sum(overdue, 'payable'), items: overdue },
+    days: [...byDay.values()].map((day) => ({ ...day, net: day.receivable - day.payable })),
+    undated,
+  };
+}
+
+function dayKey(date) {
+  // روز تهران؛ سررسید پارسیان نیمه‌شب تهران است.
+  return new Intl.DateTimeFormat('en-CA', { timeZone: currentTimeZone() || 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
 /**
@@ -421,8 +646,9 @@ export function bounceCheque(id, { occurredAt = '' } = {}) {
       ...importedChequeAccounts(db_, cheque),
       memo: `برگشت چک ${cheque.counterpartyName}`,
     }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
-    db_.prepare("UPDATE cheques SET status='bounced',settled_entry_id=?,settled_at=? WHERE id=? AND status='open'")
+    db_.prepare("UPDATE cheques SET status='bounced',settled_entry_id=?,settled_at=? WHERE id=? AND status IN ('open','deposited')")
       .run(posted.id, bouncedAt, cheque.id);
+    logChequeEvent(db_, cheque.id, { at: bouncedAt, status: 'bounced', entryId: posted.id, note: 'برگشت چک' });
     db_.exec('COMMIT');
   } catch (error) { db_.exec('ROLLBACK'); throw error; }
   audit('bounce', 'cheque', cheque.id, { amount: cheque.amount });
@@ -460,6 +686,7 @@ export function cancelCheque(id, { reason = '' } = {}) {
       reverseJournalEntry(db_, { sourceType: 'cheque_record', sourceId: row.id, memo, createdBy: actor, timeZone: currentTimeZone() });
     }
     db_.prepare("UPDATE cheques SET status='cancelled' WHERE id=? AND status='open'").run(row.id);
+    logChequeEvent(db_, row.id, { at: new Date().toISOString(), status: 'cancelled', note: memo });
     db_.exec('COMMIT');
   } catch (error) { db_.exec('ROLLBACK'); throw error; }
   audit('cancel', 'cheque', row.id, { amount: row.amount, reason: String(reason).slice(0, 200) });
@@ -472,7 +699,10 @@ export function chequeSummary() {
     FROM cheques GROUP BY direction,status`).all();
   const pick = (direction, status) => rows.find((row) => row.direction === direction && row.status === status) || { count: 0, total: 0 };
   return {
-    openReceivable: pick('receivable', 'open'),
+    // چک نزد بانک هنوز وصول نشده و جزو چک‌های دریافتی در جریان است.
+    openReceivable: ['open', 'deposited'].map((status) => pick('receivable', status))
+      .reduce((sum, row) => ({ count: sum.count + row.count, total: sum.total + row.total }), { count: 0, total: 0 }),
+    deposited: pick('receivable', 'deposited'),
     openPayable: pick('payable', 'open'),
     bounced: rows.filter((row) => row.status === 'bounced').reduce((sum, row) => sum + row.total, 0),
     review: rows.filter((row) => row.status === 'review').reduce((sum, row) => ({ count: sum.count + row.count, total: sum.total + row.total }), { count: 0, total: 0 }),
@@ -495,5 +725,6 @@ export function attachReviewedCheque({ eventId, event, line, journalEntryId, aga
   const id = `review:${eventId}`;
   database.prepare(`INSERT INTO cheques(id,direction,contact_id,counterparty_name,amount,due_at,occurred_at,against,analytic_id,note,journal_entry_id)
     VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(id,direction,event.counterpartyId,event.counterparty,line.debit || line.credit,event.dueAt,event.occurredAt,against,line.analyticId,`بررسی حسابدار: ${eventId}`,journalEntryId);
+  logChequeEvent(database, id, { at: event.occurredAt, status: 'open', entryId: journalEntryId, note: 'ثبت حسابدار از صف بررسی' });
   return id;
 }

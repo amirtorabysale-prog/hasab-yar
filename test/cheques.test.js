@@ -149,3 +149,85 @@ test('چک بدون پاسخ «بابت چه؟» ثبت نمی‌شود', () => 
       /بابت معاملهٔ تازه است یا حساب قبلی/);
   });
 });
+
+/**
+ * خانوادهٔ چرخهٔ چک بعد از ثبت: نزد بانک، پس‌گرفتن از بانک، وصول به همان بانک، واگذاری
+ * به تأمین‌کننده، برگشت چک نزد بانک، تقویم سررسید و تاریخچه. منفی‌ها: چک پرداختی نه
+ * واگذار می‌شود نه به بانک سپرده می‌شود؛ سپردن بی‌بانک رد می‌شود.
+ */
+test('نزد بانک: سند نمی‌خورد؛ وصول بی‌انتخاب حساب به همان بانک می‌نشیند', () => {
+  inWorkspace(() => {
+    const bank = database.saveAccount({ name: 'بانک صادرات جاری', kind: 'bank' });
+    const cheque = database.recordCheque({ direction: 'receivable', counterpartyName: 'بازرگانی آریا', amount: 8_000_000,
+      dueAt: new Date(Date.now() + 5 * 86_400_000).toISOString(), category: 'فروش', against: 'income' });
+    const entries = () => db().prepare('SELECT COUNT(*) AS n FROM journal_entries').get().n;
+    const before = entries();
+    assert.throws(() => database.depositCheque(cheque.id, {}), /بانکی/);
+    const deposited = database.depositCheque(cheque.id, { accountId: bank.id });
+    assert.deepEqual([deposited.status, deposited.statusLabel, deposited.bankAccountId], ['deposited', 'نزد بانک', bank.id]);
+    assert.equal(entries(), before, 'سپردن به بانک سند نمی‌سازد');
+    // نزد بانک هنوز در جریان است: در خلاصه و تقویم.
+    assert.ok(database.chequeSummary().openReceivable.total >= 8_000_000);
+    assert.ok(database.chequeCalendar({ days: 30 }).days.some((day) => day.items.some((item) => item.id === cheque.id)));
+    // پس‌گرفتن و سپردن دوباره.
+    assert.equal(database.withdrawChequeDeposit(cheque.id).status, 'open');
+    database.depositCheque(cheque.id, { accountId: bank.id });
+    const cleared = database.clearCheque(cheque.id);
+    assert.equal(cleared.status, 'cleared');
+    const bankLine = db().prepare(`SELECT journal_lines.debit FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+      WHERE journal_lines.entry_id=? AND ledger_accounts.source_key=?`).get(cleared.settledEntryId, bank.id);
+    assert.equal(bankLine?.debit, 8_000_000, 'پول به بانکِ چک آمد، نه صندوق');
+    assert.deepEqual(database.chequeHistory(cheque.id).map((row) => row.status), ['open', 'deposited', 'open', 'deposited', 'cleared']);
+    assert.equal(accounting.trialBalance(db()).balanced, true);
+  });
+});
+
+test('چک نزد بانک برگشت می‌خورد و طلب برمی‌گردد', () => {
+  inWorkspace(() => {
+    const bank = database.listAccounts().find((account) => account.name === 'بانک صادرات جاری');
+    const cheque = database.recordCheque({ direction: 'receivable', counterpartyName: 'بازرگانی آریا', amount: 3_000_000, category: 'فروش', against: 'income' });
+    database.depositCheque(cheque.id, { accountId: bank.id });
+    assert.equal(database.bounceCheque(cheque.id).status, 'bounced');
+    assert.throws(() => database.withdrawChequeDeposit(cheque.id), { code: 'CHEQUE_NOT_OPEN' });
+  });
+});
+
+test('واگذاری چک مشتری به تأمین‌کننده: بدهی به گیرنده کم می‌شود، پولی جابه‌جا نمی‌شود، درآمدی ساخته نمی‌شود', () => {
+  inWorkspace(() => {
+    const cheque = database.recordCheque({ direction: 'receivable', counterpartyName: 'فروشگاه کیان', amount: 4_000_000, category: 'فروش', against: 'income' });
+    const income = incomeTotal();
+    const cash = () => db().prepare(`SELECT COALESCE(SUM(journal_lines.debit)-SUM(journal_lines.credit),0) AS net FROM journal_lines
+      JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id WHERE ledger_accounts.source_kind='operational-account'`).get().net;
+    const cashBefore = cash();
+    assert.throws(() => database.transferCheque(cheque.id, {}), /گیرنده/);
+    const transferred = database.transferCheque(cheque.id, { counterpartyName: 'تولیدی مهر' });
+    assert.deepEqual([transferred.status, transferred.transferredTo], ['transferred', 'تولیدی مهر']);
+    assert.equal(incomeTotal(), income);
+    assert.equal(cash(), cashBefore);
+    assert.equal(balanceOfKind('vendor-payable', 'تولیدی مهر'), 4_000_000, 'بدهکار شدن حساب پرداختنی گیرنده');
+    assert.equal(balanceOfKind('cheque-receivable', 'فروشگاه کیان'), 0);
+    // چک پرداختی واگذار نمی‌شود و به بانک سپرده نمی‌شود.
+    const payable = database.recordCheque({ direction: 'payable', counterpartyName: 'تولیدی مهر', amount: 1_000_000, category: 'اجاره', against: 'income' });
+    if (payable.id && !payable.queuedForAccountant) {
+      assert.throws(() => database.transferCheque(payable.id, { counterpartyName: 'کسی' }), /فقط چک دریافتی/);
+      assert.throws(() => database.depositCheque(payable.id, { account: 'cash' }), /فقط چک دریافتی/);
+    }
+    assert.equal(accounting.trialBalance(db()).balanced, true);
+  });
+});
+
+test('تقویم سررسید: سررسیدگذشته جدا، روزها با خالص دریافتنی منهای پرداختنی', () => {
+  inWorkspace(() => {
+    const day = 86_400_000;
+    database.recordCheque({ direction: 'receivable', counterpartyName: 'مشتری تقویم', amount: 2_000_000, dueAt: new Date(Date.now() - 3 * day).toISOString(), category: 'فروش', against: 'income' });
+    const due = new Date(Date.now() + 10 * day).toISOString();
+    database.recordCheque({ direction: 'receivable', counterpartyName: 'مشتری تقویم', amount: 5_000_000, dueAt: due, category: 'فروش', against: 'income' });
+    database.recordCheque({ direction: 'payable', counterpartyName: 'مشتری تقویم', amount: 1_500_000, dueAt: due, against: 'receivable' });
+    const calendar = database.chequeCalendar({ days: 30 });
+    assert.ok(calendar.overdue.items.some((item) => item.amount === 2_000_000));
+    const tenth = calendar.days.find((row) => row.items.some((item) => item.amount === 5_000_000));
+    assert.ok(tenth.receivable >= 5_000_000 && tenth.payable >= 1_500_000);
+    assert.equal(tenth.net, tenth.receivable - tenth.payable);
+    assert.ok(!database.chequeCalendar({ days: 5 }).days.some((row) => row.items.some((item) => item.amount === 5_000_000)), 'بیرون از بازه نمی‌آید');
+  });
+});

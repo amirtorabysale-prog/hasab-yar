@@ -58,6 +58,13 @@ const EXTRA_TABLES = {
       'Acc_K', 'Acc_M', 'Acc_T', 'Taraf_K', 'Taraf_M', 'Taraf_T', 'Comment', 'Bank', 'IsActive', 'Sayad'],
     missingTableAllowed: true,
   },
+  // تاریخچهٔ چک: پارسیان پیش از هر تغییر وضعیت، ردیف قبلیِ چک را این‌جا نگه می‌دارد
+  // (در بکاپ اتیه سازان یک ردیف «در جریان» برای هر چکِ تسویه‌شده).
+  tbl_RecycleCheck: {
+    required: ['CHK_ID', 'Vos_Pas'],
+    optional: ['ID', 'ExpDate', 'Giv_Date', 'Acc_K', 'Acc_M', 'Acc_T', 'Bank_K', 'Bank_M', 'Bank_T', 'Sanad_Num', 'IsActive'],
+    missingTableAllowed: true,
+  },
   tbl_Goods: { required: ['Code', 'CName'], optional: ['GroupCode', 'UnitName_1', 'Price_1', 'VATPercent', 'Barcode'], missingTableAllowed: true },
   tbl_GoodsGroup: { required: ['Code', 'CName'], optional: ['IsService'], missingTableAllowed: true },
   tbl_Telephone: {
@@ -488,8 +495,13 @@ function readExtras(context, warnings) {
     tarafKol: row.Taraf_K || 0, tarafMoeen: row.Taraf_M || 0,
     bankKol: row.Bank_K || 0, bankMoeen: row.Bank_M || 0, bankTaf: row.Bank_T || 0,
   }));
+  const chequeHistory = tables.tbl_RecycleCheck.map((row) => ({
+    id: row.ID ?? 0, chequeId: row.CHK_ID, status: row.Vos_Pas, active: row.IsActive ?? null,
+    registeredDate: row.ExpDate || '', settledDate: row.Giv_Date || '', sanad: row.Sanad_Num || 0,
+    accKol: row.Acc_K || 0, accMoeen: row.Acc_M || 0, accTaf: row.Acc_T || 0,
+  })).sort((first, second) => first.id - second.id);
   return {
-    goods, cards, cheques,
+    goods, cards, cheques, chequeHistory,
     invoices: [...byFactor.values()].sort((first, second) => first.title - second.title || first.number - second.number),
     company: company ? {
       economicCode: company.ECOcode || '', nationalId: company.Code || '', postalCode: company.PostalCode || '',

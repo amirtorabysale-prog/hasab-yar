@@ -15,7 +15,7 @@
 
 import { persianToISO } from '../shared/persianDate.js';
 import { convertAmount } from '../shared/amountUnit.js';
-import { ensureChequeSchema } from './db/cheques.js';
+import { ensureChequeSchema, logChequeEvent } from './db/cheques.js';
 import { internalMoeenCode } from './parsianImport.js';
 
 const STATUS_BY_CODE = Object.freeze({
@@ -64,8 +64,16 @@ export function importParsianCheques(database, parsed, { fileUnit, ledgerUnit, a
 
   const insert = database.prepare(`INSERT OR IGNORE INTO cheques
     (id,direction,counterparty_name,amount,due_at,occurred_at,serial,bank_name,status,against,analytic_id,note,
-     journal_entry_id,settled_entry_id,settled_at,source,source_key,sayad,note_account_id,party_chart_id,transferred_to,review_reason)
-    VALUES (?,?,?,?,?,?,?,?,?,'receivable',?,?,?,?,?,'parsian',?,?,?,?,?,?)`);
+     journal_entry_id,settled_entry_id,settled_at,source,source_key,sayad,note_account_id,party_chart_id,transferred_to,review_reason,
+     bank_chart_id,bank_analytic_id)
+    VALUES (?,?,?,?,?,?,?,?,?,'receivable',?,?,?,?,?,'parsian',?,?,?,?,?,?,?,?)`);
+  // تاریخچه: ردیف‌های tbl_RecycleCheck وضعیت پیش از تغییر هر چک‌اند.
+  const historyByCheque = new Map();
+  for (const row of parsed.extras.chequeHistory || []) {
+    if (!historyByCheque.has(row.chequeId)) historyByCheque.set(row.chequeId, []);
+    historyByCheque.get(row.chequeId).push(row);
+  }
+  const statusOf = (direction, code) => STATUS_BY_CODE[direction][code] || 'review';
   database.exec('BEGIN IMMEDIATE');
   try {
     for (const row of cheques) {
@@ -89,14 +97,37 @@ export function importParsianCheques(database, parsed, { fileUnit, ledgerUnit, a
       const occurredAt = parsianDate(row.registeredDate, timeZone) || parsianDate(row.dueDate, timeZone);
       if (!occurredAt) { result.skipped += 1; result.warnings.push(`چک ${row.serial || row.id} پارسیان تاریخ معتبر ندارد؛ وارد نشد.`); continue; }
       const settledEntry = status === 'open' ? null : entryFor(row.settleSanad, row.settledDate);
+      // چک پرداختی از بانک خودمان کشیده شده (Bank_K/M/T)؛ پاسش در حساب‌یار به همان بانک می‌نشیند.
+      const drawnOn = direction === 'payable' && row.bankKol ? party(row.bankKol, row.bankMoeen, row.bankTaf) : null;
+      const chequeId = `parsian-cheque:${sha.slice(0, 16)}:${row.id}`;
       const changes = insert.run(
-        `parsian-cheque:${sha.slice(0, 16)}:${row.id}`, direction, clean(holder.name) || 'نامشخص (پارسیان)', amount,
+        chequeId, direction, clean(holder.name) || 'نامشخص (پارسیان)', amount,
         parsianDate(row.dueDate, timeZone), occurredAt, clean(row.serial, 40), clean(row.bank, 100), status,
         holder.analyticId, clean(row.comment, 300), entryFor(row.sanad, row.registeredDate), settledEntry,
         status === 'open' ? null : parsianDate(row.settledDate, timeZone),
         String(row.id), clean(row.sayad, 30), note, holder.chartId, clean(endorsee), reviewReason,
+        drawnOn?.chartId || null, drawnOn?.analyticId || null,
       ).changes;
       if (!changes) { result.existing += 1; continue; }
+      const registeredEntry = entryFor(row.sanad, row.registeredDate);
+      const history = historyByCheque.get(row.id) || [];
+      for (const before of history) {
+        const previous = party(before.accKol, before.accMoeen, before.accTaf);
+        const movedHolder = before.accKol && (before.accKol !== row.accKol || before.accMoeen !== row.accMoeen);
+        logChequeEvent(database, chequeId, {
+          at: parsianDate(before.registeredDate, timeZone) || occurredAt, status: statusOf(direction, before.status),
+          entryId: registeredEntry, source: 'parsian-history',
+          note: `وضعیت پیشین در پارسیان (کد ${before.status})${movedHolder ? `؛ حساب صاحب چک آن زمان ${before.accKol}-${before.accMoeen}${previous.name ? ` (${clean(previous.name, 60)})` : ''}` : ''}`,
+        });
+      }
+      if (!history.length) logChequeEvent(database, chequeId, { at: occurredAt, status: 'open', entryId: registeredEntry, source: 'parsian', note: direction === 'receivable' ? 'دریافت چک' : 'صدور چک' });
+      if (status !== 'open') {
+        logChequeEvent(database, chequeId, {
+          at: parsianDate(row.settledDate, timeZone) || occurredAt, status, entryId: settledEntry, source: 'parsian',
+          note: status === 'review' ? reviewReason : status === 'transferred' ? `واگذار به ${clean(endorsee)}` : `کد پارسیان ${row.status}`,
+        });
+      }
+      result.history = (result.history || 0) + history.length;
       result.imported += 1;
       result.byStatus[`${direction}:${status}`] = (result.byStatus[`${direction}:${status}`] || 0) + 1;
       if (status === 'review') result.review += 1;

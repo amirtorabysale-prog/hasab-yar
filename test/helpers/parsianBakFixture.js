@@ -36,6 +36,8 @@ export const PARSIAN_TABLES = {
     ['Giv_Date', 'nvarchar'], ['Money', 'float'], ['Bank_K', 'smallint'], ['Bank_M', 'smallint'], ['Bank_T', 'int'], ['Acc_K', 'smallint'], ['Acc_M', 'smallint'],
     ['Acc_T', 'int'], ['Taraf_K', 'smallint'], ['Taraf_M', 'smallint'], ['Taraf_T', 'int'], ['Chk_Kind', 'smallint'], ['Comment', 'nvarchar'], ['Bank', 'nvarchar'],
     ['Vos_Pas', 'smallint'], ['IsActive', 'bit'], ['Tick', 'bit'], ['Lashe', 'bit'], ['IsREG', 'bit'], ['Sayad', 'nvarchar']],
+  tbl_RecycleCheck: [['ID', 'int'], ['CHK_ID', 'int'], ['ExpDate', 'nvarchar'], ['Giv_Date', 'nvarchar'], ['Acc_K', 'smallint'], ['Acc_M', 'smallint'],
+    ['Acc_T', 'int'], ['Sanad_Num', 'int'], ['Vos_Pas', 'smallint'], ['IsActive', 'bit']],
   tbl_CoSpec: [['ID', 'int'], ['ECOcode', 'nvarchar'], ['PostalCode', 'nvarchar'], ['Code', 'nvarchar'], ['Address', 'nvarchar'], ['Tel', 'nvarchar'], ['Estate', 'nvarchar'], ['City', 'nvarchar']],
   // رازی که خواننده هرگز نباید بخواند (کلید سامانهٔ مؤدیان در بکاپ واقعی همین‌جاست).
   tbl_NEWMovadianInfo: [['ID', 'int'], ['PrivateKey', 'nvarchar'], ['Token', 'nvarchar']],

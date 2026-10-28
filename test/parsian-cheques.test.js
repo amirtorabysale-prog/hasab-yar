@@ -89,12 +89,18 @@ function chequeTables() {
     // نوع ناشناخته.
     cheque({ Money: 10, Chk_Kind: 2 }),
     // پرداختی‌ها: صاحب تأمین‌کننده، حساب اسناد پرداختنی.
-    cheque({ Chk_Kind: 1, Money: 200, Sanad_Num: 7, ExpDate: '1403/06/02', Vos_Pas: 7, Sanad_Num_VosolPas: 8, Giv_Date: '1403/08/01', Acc_K: 22, Acc_M: 15, Acc_T: 1, Taraf_K: 22, Taraf_M: 1, Bank: 'بانک ملت 111' }),
-    cheque({ Chk_Kind: 1, Money: 100, Sanad_Num: 7, ExpDate: '1403/06/02', Vos_Pas: 0, IsActive: true, Acc_K: 22, Acc_M: 15, Acc_T: 1, Taraf_K: 22, Taraf_M: 1, Bank: 'بانک ملت 111' }),
+    cheque({ Chk_Kind: 1, Money: 200, Sanad_Num: 7, ExpDate: '1403/06/02', Vos_Pas: 7, Sanad_Num_VosolPas: 8, Giv_Date: '1403/08/01', Acc_K: 22, Acc_M: 15, Acc_T: 1, Taraf_K: 22, Taraf_M: 1, Bank: 'بانک ملت 111', Bank_K: 10, Bank_M: 3, Bank_T: 1 }),
+    cheque({ Chk_Kind: 1, Money: 100, Sanad_Num: 7, ExpDate: '1403/06/02', Vos_Pas: 0, IsActive: true, Acc_K: 22, Acc_M: 15, Acc_T: 1, Taraf_K: 22, Taraf_M: 1, Bank: 'بانک ملت 111', Bank_K: 10, Bank_M: 3, Bank_T: 1 }),
+  ];
+  // تاریخچه: وضعیت پیش از تسویه، مثل بکاپ اتیه (یک ردیف «در جریان» برای هر چک تسویه‌شده).
+  // چک پرداختیِ پاس‌شده آن زمان روی معین دیگری بود (۲۲-۱ به‌جای ۲۲-۱۵).
+  const tbl_RecycleCheck = [
+    { ID: 1, CHK_ID: 101, ExpDate: '1403/06/01', Giv_Date: '', Acc_K: 12, Acc_M: 2, Acc_T: 1, Sanad_Num: 2, Vos_Pas: 0, IsActive: true },
+    { ID: 2, CHK_ID: 108, ExpDate: '1403/06/02', Giv_Date: '', Acc_K: 22, Acc_M: 1, Acc_T: 0, Sanad_Num: 7, Vos_Pas: 0, IsActive: true },
   ];
   const zeroAcc = { ID: 2, Cash_K: 0, Cash_M: 0, Cash_T: 0, Sell_K: 0, Sell_M: 0, Sell_T: 0, Wage_K: 0, Wage_M: 0, Wage_T: 0, Asset_K: 0, Asset_M: 0, Asset_T: 0 };
   const zeroVat = { ID: 6, VATSale_K: 0, VATSale_M: 0, VATSale_T: 0, VATBuy_K: 0, VATBuy_M: 0, VATBuy_T: 0 };
-  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document, tbl_Check, tbl_AccSetting: [zeroAcc], tbl_VATSetting: [zeroVat] };
+  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document, tbl_Check, tbl_RecycleCheck, tbl_AccSetting: [zeroAcc], tbl_VATSetting: [zeroVat] };
 }
 
 const KOL_TYPES = { 62: 'expense', 13: 'asset', 22: 'liability' };
@@ -150,6 +156,55 @@ test('ورود چک‌ها: هر وضعیت درست، بی‌هیچ سند تا
     assert.throws(() => database.cancelCheque(cheques.get('r100').id, { reason: 'آزمون' }), { code: 'CHEQUE_FROM_PARSIAN' });
     const summary = database.chequeSummary();
     assert.deepEqual([summary.openReceivable.total, summary.openPayable.total, summary.review.count], [100, 100, 2]);
+
+    // تاریخچه از tbl_RecycleCheck: «در جریان» پیش از وصول، بعد وصول با سند خودش.
+    assert.equal(result.cheques.history, 2);
+    const cleared = database.chequeHistory(cheques.get('r200').id);
+    assert.deepEqual(cleared.map((row) => [row.status, row.source]), [['open', 'parsian-history'], ['cleared', 'parsian']]);
+    assert.equal(cleared[1].entryId, entryOf(3));
+    const paid = database.chequeHistory(cheques.get('p200').id);
+    assert.match(paid[0].note, /حساب صاحب چک آن زمان 22-1/);
+    // چک بی‌تاریخچه: ثبت از خودِ چک، و برای چک نیازمند بررسی دلیلش.
+    assert.deepEqual(database.chequeHistory(cheques.get('r30').id).map((row) => row.status), ['open', 'review']);
+    // چک پرداختی بانکی را که از آن کشیده شده به یاد دارد.
+    assert.ok(cheques.get('p100').bank_chart_id);
+  });
+});
+
+test('تعیین تکلیف چک «نیازمند بررسی»: بی‌سند فقط «در جریان»؛ وضعیت بسته فقط با سندی که همان رویداد را دارد', () => {
+  inWorkspace(newWorkspace('چک پارسیان بررسی'), () => {
+    const active = database.activeWorkspaceDatabase();
+    commitParsianBackup(active, buildParsianBackup(chequeTables()), 'cheques.bak', { createdBy: owner.id, amountUnit: 'toman', kolTypes: KOL_TYPES });
+    const cheques = byAmount(active);
+    const entries = active.prepare('SELECT COUNT(*) AS n FROM journal_entries').get().n;
+    // وصول بی‌سند: حدس نه.
+    assert.throws(() => database.resolveReviewCheque(cheques.get('r30').id, { status: 'cleared' }), /سند/);
+    assert.throws(() => database.resolveReviewCheque(cheques.get('r30').id, { status: 'lost' }), /وضعیت/);
+    // واگذاری بدون گیرنده رد می‌شود.
+    const entry = active.prepare('SELECT entry_id AS id FROM parsian_imported_entries WHERE sanad=4').get().id;
+    assert.throws(() => database.resolveReviewCheque(cheques.get('r30').id, { status: 'transferred', entryId: entry }), /واگذار/);
+    const number = active.prepare('SELECT document_number AS n FROM journal_entries WHERE id=?').get(entry).n;
+    const done = database.resolveReviewCheque(cheques.get('r30').id, { status: 'cleared', documentNumber: number, note: 'در سند ۴ آمده' });
+    assert.deepEqual([done.status, done.settledEntryId, done.reviewReason], ['cleared', entry, '']);
+    // در جریان: بعد از آن وصولش از همین‌جا سند می‌خورد.
+    const reopened = database.resolveReviewCheque(cheques.get('r70').id, { status: 'open' });
+    assert.equal(reopened.status, 'open');
+    assert.equal(active.prepare('SELECT COUNT(*) AS n FROM journal_entries').get().n, entries, 'تعیین تکلیف سند تازه نمی‌سازد');
+    assert.throws(() => database.resolveReviewCheque(reopened.id, { status: 'open' }), { code: 'CHEQUE_NOT_OPEN' });
+    assert.deepEqual(database.chequeHistory(done.id).map((row) => row.status), ['open', 'review', 'cleared']);
+  });
+});
+
+test('پاس چک پرداختی پارسیان بی‌انتخاب حساب، از همان بانکی است که چک از آن کشیده شده', () => {
+  inWorkspace(newWorkspace('چک پارسیان بانک'), () => {
+    const active = database.activeWorkspaceDatabase();
+    commitParsianBackup(active, buildParsianBackup(chequeTables()), 'cheques.bak', { createdBy: owner.id, amountUnit: 'toman', kolTypes: KOL_TYPES });
+    commitParsianPhaseB(active, { contactIds: previewParsianPhaseB(active).suggestedContactIds, createdBy: owner.id });
+    const bank = active.prepare("SELECT id FROM accounts WHERE name LIKE '%ملت 111%'").get();
+    assert.ok(bank, 'فاز ب برای تفصیلی بانک حساب ساخت');
+    const paid = database.clearCheque(byAmount(active).get('p100').id, { occurredAt: new Date().toISOString() });
+    assert.equal(paid.bankAccountId, bank.id);
+    assert.match(database.chequeHistory(paid.id).at(-1).note, /پاس به .*ملت 111/);
   });
 });
 
@@ -198,6 +253,7 @@ test('جدول چکِ دفتر قدیمی: ردیف‌ها می‌مانند و 
   ensureChequeSchema(legacy);
   assert.deepEqual({ ...legacy.prepare("SELECT id,amount,status,source FROM cheques").get() }, { id: 'old', amount: 5, status: 'cleared', source: '' });
   legacy.prepare("UPDATE cheques SET status='transferred' WHERE id='old'").run();
+  legacy.prepare("UPDATE cheques SET status='deposited' WHERE id='old'").run();
   assert.throws(() => legacy.prepare("UPDATE cheques SET status='lost' WHERE id='old'").run());
   assert.equal(legacy.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='cheques_before_statuses'").get().n, 0);
   legacy.close();

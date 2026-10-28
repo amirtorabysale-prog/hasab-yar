@@ -21,11 +21,19 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
   const [status, setStatus] = useState('open');
   const [draft, setDraft] = useState(EMPTY);
   const [busy, setBusy] = useState('');
+  const [accounts, setAccounts] = useState([]);
+  const [calendar, setCalendar] = useState(null);
+  // یک چک در هر لحظه یک فرم باز دارد: وصول، سپردن، واگذاری، تعیین تکلیف یا تاریخچه.
+  const [open, setOpen] = useState({ id: '', kind: '', history: [] });
 
   const load = useCallback(async () => {
-    try { setState(await api.cheques({ status })); }
-    catch (error) { notify(error.message); }
+    try {
+      const [cheques, calendarData] = await Promise.all([api.cheques({ status }), api.chequeCalendar(60)]);
+      setState(cheques); setCalendar(calendarData);
+    } catch (error) { notify(error.message); }
   }, [notify, status]);
+
+  useEffect(() => { api.accounts().then(({ items }) => setAccounts((items || []).filter((account) => account.active !== 0))).catch(() => {}); }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -44,9 +52,18 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
 
   const act = async (cheque, action, label) => {
     setBusy(cheque.id);
-    try { await action(); await load(); await refresh?.(); notify(label); }
+    try { await action(); setOpen({ id: '', kind: '', history: [] }); await load(); await refresh?.(); notify(label); }
     catch (error) { notify(error.message); }
     setBusy('');
+  };
+
+  const toggle = async (cheque, kind) => {
+    if (open.id === cheque.id && open.kind === kind) { setOpen({ id: '', kind: '', history: [] }); return; }
+    let history = [];
+    if (kind === 'history') {
+      try { ({ items: history } = await api.chequeHistory(cheque.id)); } catch (error) { notify(error.message); return; }
+    }
+    setOpen({ id: cheque.id, kind, history });
   };
 
   const summary = state.summary || {};
@@ -59,7 +76,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
         </p>
       </div>
       <div className="flex gap-1.5 text-[12px] font-bold">
-        {[['open', 'در جریان'], ['cleared', 'وصول‌شده'], ['bounced', 'برگشتی'], ['transferred', 'واگذارشده'],
+        {[['open', 'در جریان'], ['deposited', 'نزد بانک'], ['cleared', 'وصول‌شده'], ['bounced', 'برگشتی'], ['transferred', 'واگذارشده'],
           ...(summary.review?.count ? [['review', `نیازمند بررسی (${toPersianDigits(summary.review.count)})`]] : [])].map(([id, label]) => (
           <button key={id} onClick={() => setStatus(id)} className={`tap rounded-lg px-3 ${status === id ? 'bg-accent/10 text-accent' : 'text-muted hover:bg-surface'}`}>{label}</button>
         ))}
@@ -80,6 +97,8 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
         <b className="numbers mt-0.5 block">{formatAmount(summary.bounced || 0)}</b>
       </div>
     </div>
+
+    <DueCalendar calendar={calendar} />
 
     <form onSubmit={submit} className="mt-3 rounded-xl border border-line bg-surface p-3">
       <h3 className="font-bold">ثبت چک</h3>
@@ -139,14 +158,119 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
           {cheque.reviewReason ? <p className="mt-1 text-xs leading-5 text-warn">{cheque.reviewReason}</p> : null}
         </div>
         <b className="numbers shrink-0 text-sm">{formatAmount(cheque.amount)}</b>
-        {cheque.status === 'open' ? <div className="flex shrink-0 gap-1">
-          <button disabled={busy === cheque.id} onClick={() => act(cheque, () => api.clearCheque(cheque.id), 'چک وصول شد.')}
-            className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">وصول</button>
-          <button disabled={busy === cheque.id}
-            onClick={() => { if (window.confirm(`چک ${cheque.counterpartyName} برگشت خورده؟ مبلغ به طلب همان شخص برمی‌گردد.`)) act(cheque, () => api.bounceCheque(cheque.id), 'چک برگشتی ثبت شد و طلب برگشت.'); }}
-            className="tap rounded-lg border border-expense/60 px-3 text-xs font-bold text-expense">برگشت</button>
-        </div> : <span className="shrink-0 text-xs font-bold text-muted">{cheque.statusLabel}</span>}
+        <div className="flex shrink-0 flex-wrap gap-1">
+          {['open', 'deposited'].includes(cheque.status) && <>
+            <button disabled={busy === cheque.id} onClick={() => toggle(cheque, 'clear')}
+              className="tap rounded-lg border border-income px-3 text-xs font-bold text-income">{cheque.direction === 'payable' ? 'پاس' : 'وصول'}</button>
+            {cheque.status === 'open' && cheque.direction === 'receivable' && <>
+              <button disabled={busy === cheque.id} onClick={() => toggle(cheque, 'deposit')} className="tap rounded-lg border border-line px-3 text-xs font-bold text-muted hover:text-ink">نزد بانک</button>
+              <button disabled={busy === cheque.id} onClick={() => toggle(cheque, 'transfer')} className="tap rounded-lg border border-line px-3 text-xs font-bold text-muted hover:text-ink">واگذاری</button>
+            </>}
+            {cheque.status === 'deposited' && <button disabled={busy === cheque.id} onClick={() => act(cheque, () => api.chequeAction(cheque.id, 'withdraw'), 'چک از بانک پس گرفته شد.')}
+              className="tap rounded-lg border border-line px-3 text-xs font-bold text-muted hover:text-ink">پس‌گرفتن</button>}
+            <button disabled={busy === cheque.id}
+              onClick={() => { if (window.confirm(`چک ${cheque.counterpartyName} برگشت خورده؟ مبلغ به ${cheque.direction === 'payable' ? 'بدهی ما به' : 'طلب از'} همان شخص برمی‌گردد.`)) act(cheque, () => api.bounceCheque(cheque.id), 'چک برگشتی ثبت شد.'); }}
+              className="tap rounded-lg border border-expense/60 px-3 text-xs font-bold text-expense">برگشت</button>
+          </>}
+          {cheque.status === 'review' && <button disabled={busy === cheque.id} onClick={() => toggle(cheque, 'resolve')}
+            className="tap rounded-lg border border-warn px-3 text-xs font-bold text-warn">تعیین تکلیف</button>}
+          {!['open', 'deposited', 'review'].includes(cheque.status) && <span className="self-center text-xs font-bold text-muted">{cheque.statusLabel}</span>}
+          <button onClick={() => toggle(cheque, 'history')} className="tap rounded-lg px-2 text-xs text-muted hover:text-ink">تاریخچه</button>
+        </div>
+        {open.id === cheque.id && <ChequeForm key={`${cheque.id}:${open.kind}`} kind={open.kind} cheque={cheque} accounts={accounts} contacts={contacts} history={open.history}
+          busy={busy === cheque.id} onSubmit={(action, payload, label) => act(cheque, () => api.chequeAction(cheque.id, action, payload), label)} />}
       </article>)}
     </div>
   </section>;
+}
+
+/** سررسیدهای پیش رو: سررسیدگذشته جدا، بعد هر روز با جمع دریافتنی، پرداختنی و خالص. */
+function DueCalendar({ calendar }) {
+  if (!calendar || (!calendar.overdue.items.length && !calendar.days.length)) return null;
+  const { overdue, days } = calendar;
+  return <div className="mt-3 rounded-xl border border-line bg-surface p-3">
+    <h3 className="font-bold">تقویم سررسید (۶۰ روز آینده)</h3>
+    {overdue.items.length > 0 && <p className="mt-2 rounded-lg bg-expense/10 px-3 py-2 text-xs leading-6 text-expense">
+      {toPersianDigits(overdue.items.length)} چک سررسیدش گذشته و هنوز باز است:
+      {overdue.receivable ? <> دریافتنی <b className="numbers">{formatAmount(overdue.receivable)}</b></> : null}
+      {overdue.receivable && overdue.payable ? ' ·' : ''}
+      {overdue.payable ? <> پرداختنی <b className="numbers">{formatAmount(overdue.payable)}</b></> : null}
+    </p>}
+    <div className="mt-2 divide-y divide-line">
+      {days.slice(0, 20).map((day) => <div key={day.day} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-xs">
+        <b className="w-24 shrink-0">{persianDate(day.dueAt)}</b>
+        {day.receivable ? <span className="numbers text-income">+{formatAmount(day.receivable)}</span> : null}
+        {day.payable ? <span className="numbers text-expense">−{formatAmount(day.payable)}</span> : null}
+        <span className="numbers mr-auto text-muted">خالص {formatAmount(day.net)}</span>
+        <span className="w-full truncate text-muted">{day.items.map((item) => item.counterpartyName).join('، ')}</span>
+      </div>)}
+      {days.length === 0 && <p className="py-2 text-xs text-muted">در ۶۰ روز آینده سررسیدی نیست.</p>}
+    </div>
+    {calendar.undated > 0 && <p className="mt-2 text-xs text-muted">{toPersianDigits(calendar.undated)} چک باز سررسید ندارد.</p>}
+  </div>;
+}
+
+const RESOLVE_OPTIONS = [['open', 'هنوز در جریان است'], ['cleared', 'وصول یا پاس شده'], ['bounced', 'برگشت خورده'], ['transferred', 'واگذار شده'], ['cancelled', 'ابطال شده']];
+
+/** فرم کوچک زیر هر چک. هر کار همان چیزی را می‌پرسد که بی‌آن حدس لازم می‌شد. */
+function ChequeForm({ kind, cheque, accounts, contacts, history, busy, onSubmit }) {
+  const banks = accounts.filter((account) => account.kind === 'bank');
+  const moneyAccounts = [...banks, ...accounts.filter((account) => account.kind !== 'bank')];
+  const [values, setValues] = useState({
+    accountId: cheque.defaultAccountId || cheque.bankAccountId || banks[0]?.id || moneyAccounts[0]?.id || '', occurredAt: '',
+    contactId: '', counterpartyName: '', status: 'open', documentNumber: '', fiscalYear: '', transferredTo: '', note: '',
+  });
+  const set = (patch) => setValues((current) => ({ ...current, ...patch }));
+  const field = 'tap rounded-lg border border-line bg-paper px-3 text-[13px]';
+  if (kind === 'history') {
+    return <ol className="w-full space-y-1 rounded-lg bg-paper px-3 py-2 text-xs leading-6">
+      {history.length === 0 && <li className="text-muted">تاریخچه‌ای ثبت نشده.</li>}
+      {history.map((row, index) => <li key={index}>
+        <b>{persianDate(row.at)}</b> · {row.statusLabel}{row.note ? ` — ${row.note}` : ''}
+        {row.documentNumber ? <span className="text-muted"> (سند {toPersianDigits(row.documentNumber)})</span> : null}
+      </li>)}
+    </ol>;
+  }
+  const submit = (event) => {
+    event.preventDefault();
+    const at = values.occurredAt || undefined;
+    if (kind === 'clear') onSubmit('clear', { accountId: values.accountId, occurredAt: at }, cheque.direction === 'payable' ? 'چک پاس شد.' : 'چک وصول شد.');
+    if (kind === 'deposit') onSubmit('deposit', { accountId: values.accountId, occurredAt: at }, 'چک نزد بانک ثبت شد؛ سندی نخورد.');
+    if (kind === 'transfer') onSubmit('transfer', { contactId: values.contactId, counterpartyName: values.counterpartyName, occurredAt: at }, 'چک واگذار شد و از بدهی گیرنده کم شد.');
+    if (kind === 'resolve') onSubmit('resolve', { status: values.status, documentNumber: values.documentNumber, fiscalYear: values.fiscalYear, transferredTo: values.transferredTo, note: values.note }, 'تکلیف چک روشن شد.');
+  };
+  return <form onSubmit={submit} className="grid w-full gap-2 rounded-lg bg-paper p-2 sm:grid-cols-3">
+    {(kind === 'clear' || kind === 'deposit') && <select value={values.accountId} onChange={(event) => set({ accountId: event.target.value })} className={field} aria-label="حساب">
+      {(kind === 'deposit' ? banks : moneyAccounts).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+    </select>}
+    {kind === 'deposit' && banks.length === 0 && <p className="text-xs text-warn sm:col-span-3">هنوز حساب بانکی نساخته‌ای؛ اول از «حساب‌ها» بانک را بساز.</p>}
+    {kind === 'transfer' && <>
+      <select value={values.contactId} onChange={(event) => {
+        const contact = contacts.find((item) => item.id === event.target.value);
+        set({ contactId: event.target.value, counterpartyName: contact?.name || values.counterpartyName });
+      }} className={field} aria-label="گیرنده">
+        <option value="">گیرنده را انتخاب کن</option>
+        {contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}
+      </select>
+      <input value={values.counterpartyName} onChange={(event) => set({ counterpartyName: event.target.value, contactId: '' })} placeholder="یا نام گیرنده" className={field} />
+    </>}
+    {kind === 'resolve' && <>
+      <select value={values.status} onChange={(event) => set({ status: event.target.value })} className={field} aria-label="وضعیت واقعی">
+        {RESOLVE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+      </select>
+      {values.status !== 'open' && <>
+        <input inputMode="numeric" value={values.documentNumber} onChange={(event) => set({ documentNumber: event.target.value.replace(/\D/g, '') })} placeholder="شمارهٔ سندی که این رویداد را دارد" className={`${field} numbers`} />
+        <input inputMode="numeric" value={values.fiscalYear} onChange={(event) => set({ fiscalYear: event.target.value.replace(/\D/g, '') })} placeholder="سال مالی (اگر شماره تکراری است)" className={`${field} numbers`} />
+      </>}
+      {values.status === 'transferred' && <input value={values.transferredTo} onChange={(event) => set({ transferredTo: event.target.value })} placeholder="واگذار به" className={field} />}
+      <p className="text-xs leading-5 text-muted sm:col-span-3">
+        {values.status === 'open' ? 'چک باز می‌شود و وصول یا برگشتش از همین‌جا سند می‌خورد.' : 'سند تازه‌ای ساخته نمی‌شود؛ فقط چک به سندی وصل می‌شود که همین رویداد را در دفتر دارد.'}
+      </p>
+    </>}
+    {kind !== 'resolve' && <label className="text-xs text-muted">تاریخ<PersianDateInput value={values.occurredAt} onChange={(iso) => set({ occurredAt: iso })} /></label>}
+    <button disabled={busy || ((kind === 'clear' || kind === 'deposit') && !values.accountId) || (kind === 'transfer' && !values.counterpartyName.trim())}
+      className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-45">
+      {{ clear: cheque.direction === 'payable' ? 'ثبت پاس' : 'ثبت وصول', deposit: 'ثبت نزد بانک', transfer: 'ثبت واگذاری', resolve: 'ثبت تکلیف' }[kind]}
+    </button>
+  </form>;
 }
