@@ -318,7 +318,7 @@ function ParsianPhaseB({ canManage, notify, refresh, autoDone = false }) {
             </tr></thead>
             <tbody>{preview.money.map((moeen) => <tr key={moeen.code} className="border-b border-line">
               <td className="numbers p-2">{toPersianDigits(moeen.levelCode)}</td>
-              <td className="p-2">{moeen.name}</td>
+              <td className="p-2">{moeen.name}{moeen.moeenName ? <span className="block text-[11px] text-muted">زیر معین «{moeen.moeenName}»</span> : null}</td>
               <td className="p-2 text-muted">{moeen.kindLabel}</td>
               <td className="numbers p-2">{toPersianDigits(moeen.lineCount)}</td>
               <td className="numbers p-2">{formatAmount(moeen.balance)}</td>

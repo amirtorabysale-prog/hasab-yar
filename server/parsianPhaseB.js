@@ -75,13 +75,83 @@ function moneyKol(database) {
   return { cash: find(KOL_CASH), bank: find(KOL_BANK) };
 }
 
-/** نوع عملیاتی یک معین پولی: تنخواه از نام/نقش، بقیه از کل والد یا نقش. */
-function moneyKind(moeen, kols) {
-  const name = normalizePersian(moeen.name || '');
-  if (moeen.role === 'petty-cash' || /تنخواه/.test(name)) return 'petty';
-  if (moeen.role === 'bank' || moeen.parentCode === kols.bank?.code) return 'bank';
-  if (moeen.role === 'cash' || moeen.parentCode === kols.cash?.code) return 'cash';
+/** نوع پولیِ یک نام: «تنخواه»، «بانک» یا «صندوق»؛ نامی که هیچ‌کدام نیست، null. */
+function kindFromName(value) {
+  const name = normalizePersian(value || '');
+  if (/تنخواه/.test(name)) return 'petty';
+  if (/بانک|بانك/.test(name)) return 'bank';
+  if (/صندوق/.test(name)) return 'cash';
   return null;
+}
+
+/**
+ * نوع عملیاتی یک معین پولی: نقش کدینگ، بعد نام، بعد کل والد.
+ *
+ * نام بر کل والد مقدم است: در بکاپ «اتیه سازان» معین «بانک ها» زیر کلِ نقد (۱۰) بود و
+ * فقط از روی کل والد «صندوق» ساخته شد؛ ۱۶ میلیارد ریالِ هفت حساب بانکی ماندهٔ صندوق دیده
+ * می‌شد.
+ */
+function moneyKind(moeen, kols) {
+  if (moeen.role === 'petty-cash') return 'petty';
+  if (moeen.role === 'bank') return 'bank';
+  if (moeen.role === 'cash') return 'cash';
+  const byName = kindFromName(moeen.name);
+  if (byName) return byName;
+  if (moeen.parentCode === kols.bank?.code) return 'bank';
+  if (moeen.parentCode === kols.cash?.code) return 'cash';
+  return null;
+}
+
+function ensureMoneyUnitSchema(database) {
+  database.exec(`CREATE TABLE IF NOT EXISTS parsian_money_units (
+    chart_account_id TEXT NOT NULL, analytic_id TEXT NOT NULL, account_id TEXT NOT NULL, ledger_account_id TEXT NOT NULL,
+    PRIMARY KEY (chart_account_id, analytic_id))`);
+}
+
+/**
+ * واحدهای پولی: هر تفصیلیِ زیر یک معین پولی، یک حساب عملیاتی جدا.
+ *
+ * پارسیان حساب‌های بانکی را اغلب تفصیلیِ یک معین «بانک ها» تعریف می‌کند (ملت، آینده،
+ * صادرات…). یک حساب برای کل معین یعنی تطبیق هیچ بانکی با صورت‌حسابش ممکن نیست. معینی که
+ * ردیف بی‌تفصیلی دارد (یا هیچ تفصیلی‌ای ندارد) خودش هم یک واحد است. نوع هر تفصیلی از نام
+ * خودش، وگرنه از معین.
+ */
+function moneyUnits(database) {
+  ensureMoneyUnitSchema(database);
+  const breakdown = database.prepare(`SELECT journal_lines.analytic_id AS analyticId,analytic_accounts.name AS analyticName,
+      analytic_accounts.code AS analyticCode,analytic_accounts.external_code AS externalCode,
+      COALESCE(SUM(journal_lines.debit)-SUM(journal_lines.credit),0) AS balance,COUNT(*) AS lineCount
+    FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+    LEFT JOIN analytic_accounts ON analytic_accounts.id=journal_lines.analytic_id
+    WHERE ledger_accounts.chart_account_id=? GROUP BY journal_lines.analytic_id ORDER BY analytic_accounts.code`);
+  const mapped = database.prepare('SELECT account_id AS accountId FROM parsian_money_units WHERE chart_account_id=? AND analytic_id=?');
+  const baseBound = database.prepare(`SELECT 1 FROM ledger_accounts WHERE chart_account_id=? AND source_kind='operational-account'
+    AND id NOT IN (SELECT ledger_account_id FROM parsian_money_units)`);
+  const units = [];
+  for (const moeen of moneyMoeens(database)) {
+    const rows = breakdown.all(moeen.id);
+    const plain = rows.find((row) => !row.analyticId);
+    const analytics = rows.filter((row) => row.analyticId);
+    if (!analytics.length || plain) {
+      units.push({
+        ...moeen, moeen, analyticId: null,
+        balance: Number((analytics.length ? plain?.balance : moeen.balance) || 0),
+        lineCount: Number((analytics.length ? plain?.lineCount : moeen.lineCount) || 0),
+        bound: Boolean(baseBound.get(moeen.id)),
+      });
+    }
+    for (const row of analytics) {
+      units.push({
+        ...moeen, moeen, analyticId: row.analyticId, name: row.analyticName || moeen.name,
+        code: `${moeen.code}-${row.analyticCode || row.analyticId.slice(0, 6)}`,
+        levelCode: `${moeen.levelCode || moeen.code}/${row.externalCode || row.analyticCode || ''}`,
+        kind: kindFromName(row.analyticName) || moeen.kind,
+        balance: Number(row.balance || 0), lineCount: Number(row.lineCount || 0),
+        bound: Boolean(mapped.get(moeen.id, row.analyticId)),
+      });
+    }
+  }
+  return units;
 }
 
 /**
@@ -163,15 +233,19 @@ function pettyFundPossible(moeen) {
 export function previewParsianPhaseB(database) {
   const present = parsianImportPresent(database);
   const reusableCash = reusableCashAccount(database);
-  const money = moneyMoeens(database).map((moeen) => ({
-    id: moeen.id, code: moeen.code, name: moeen.name, levelCode: moeen.levelCode, kind: moeen.kind,
-    kindLabel: KIND_LABELS[moeen.kind], balance: Number(moeen.balance || 0),
-    lineCount: Number(moeen.lineCount || 0), bound: Number(moeen.boundCount || 0) > 0,
-    // صندوق یکتای بازِ دفتر («cash» پیش‌فرض) بازاستفاده می‌شود؛ بانک و تنخواه تازه ساخته می‌شوند.
-    reuseExistingCash: moeen.kind === 'cash' && Boolean(reusableCash),
-    reuseExistingCashName: moeen.kind === 'cash' ? reusableCash?.name || '' : '',
-    fundPossible: moeen.kind !== 'petty' || pettyFundPossible(moeen),
-  }));
+  let cashReused = false;
+  const money = moneyUnits(database).map((unit) => {
+    // صندوق یکتای بازِ دفتر («cash» پیش‌فرض) به اولین صندوق می‌رسد؛ بقیه تازه ساخته می‌شوند.
+    const reuse = unit.kind === 'cash' && !unit.bound && Boolean(reusableCash) && !cashReused;
+    if (reuse) cashReused = true;
+    return {
+      id: unit.analyticId ? `${unit.id}:${unit.analyticId}` : unit.id, code: unit.code, name: unit.name, levelCode: unit.levelCode,
+      moeenName: unit.analyticId ? unit.moeen.name : '', kind: unit.kind,
+      kindLabel: KIND_LABELS[unit.kind], balance: unit.balance, lineCount: unit.lineCount, bound: unit.bound,
+      reuseExistingCash: reuse, reuseExistingCashName: reuse ? reusableCash.name : '',
+      fundPossible: unit.kind !== 'petty' || pettyFundPossible(unit),
+    };
+  });
   const candidates = contactCandidates(database);
   const canonicalCounts = new Map();
   for (const candidate of candidates) canonicalCounts.set(candidate.canonicalKey, (canonicalCounts.get(candidate.canonicalKey) || 0) + 1);
@@ -247,6 +321,23 @@ function bindMoeenLedger(database, moeen, accountId) {
 }
 
 /**
+ * حساب دفتر کلِ اختصاصیِ یک تفصیلی پولی: همان معین، به حساب عملیاتی خودش؛ ردیف‌های همان
+ * تفصیلی روی همان معین به آن می‌روند. تفصیلی و کدینگ ردیف دست نمی‌خورد، پس فایل انتقال به
+ * پارسیان همان است (همان الگوی حساب اختصاصی اشخاص).
+ */
+function bindAnalyticLedger(database, unit, accountId, result) {
+  const id = randomUUID();
+  database.prepare(`INSERT INTO ledger_accounts (id,code,name,type,normal_side,source_kind,source_key,chart_account_id)
+    VALUES (?,?,?,?,?,?,?,?)`).run(id, nextLedgerCode(database, 'asset'), unit.name.slice(0, 120), 'asset', 'debit', 'operational-account', accountId, unit.moeen.id);
+  const moved = database.prepare(`UPDATE journal_lines SET account_id=? WHERE analytic_id=?
+    AND account_id IN (SELECT id FROM ledger_accounts WHERE chart_account_id=? AND id<>?)`).run(id, unit.analyticId, unit.moeen.id, id);
+  result.linesRepointed += Number(moved.changes || 0);
+  database.prepare('INSERT INTO parsian_money_units (chart_account_id,analytic_id,account_id,ledger_account_id) VALUES (?,?,?,?)')
+    .run(unit.moeen.id, unit.analyticId, accountId, id);
+  return 'created';
+}
+
+/**
  * ثبت فاز ب. همهٔ معین‌های پولیِ هنوز وصل‌نشده و تفصیلی‌های انتخاب‌شده کاربر
  * پردازش می‌شوند؛ همه در یک تراکنش — یا همه یا هیچ.
  */
@@ -268,10 +359,10 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
   database.exec('BEGIN IMMEDIATE');
   try {
     // --- ۱) حساب‌های پولی: صندوق، بانک، تنخواه ---
-    for (const moeen of moneyMoeens(database)) {
-      if (Number(moeen.boundCount || 0) > 0) { result.accounts.existing += 1; continue; }
+    for (const moeen of moneyUnits(database)) {
+      if (moeen.bound) { result.accounts.existing += 1; continue; }
       if (moeen.kind === 'petty' && !pettyFundPossible(moeen)) {
-        result.skipped.push(`معین «${moeen.name}» (${moeen.code}) گردش یا ماندهٔ مثبت در این بکاپ ندارد؛ صندوق تنخواه ساخته نشد — با اولین پرداخت واقعی، از صفحهٔ تنخواه‌گردان بازش کن.`);
+        result.skipped.push(`${moeen.analyticId ? 'تفصیلی' : 'معین'} «${moeen.name}» (${moeen.code}) گردش یا ماندهٔ مثبت در این بکاپ ندارد؛ صندوق تنخواه ساخته نشد — با اولین پرداخت واقعی، از صفحهٔ تنخواه‌گردان بازش کن.`);
         continue;
       }
       const account = operationalAccountFor(database, moeen);
@@ -282,13 +373,14 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
             'ساخته‌شده از کدینگ پارسیان؛ سقف = ماندهٔ ورودی. سقف تازه را از صفحهٔ تنخواه‌گردان بگذار.');
         result.petty += 1;
       }
-      const state = bindMoeenLedger(database, moeen, account.id);
+      const state = moeen.analyticId ? bindAnalyticLedger(database, moeen, account.id, result) : bindMoeenLedger(database, moeen.moeen, account.id);
       if (state === 'bound') result.accounts.bound += 1;
       if (state === 'created') result.accounts.ledgerCreated += 1;
       if (state === 'already') result.accounts.existing += 1;
-      if (moeen.role === '' && MOEEN_ROLE_BY_KIND[moeen.kind]) {
-        database.prepare('UPDATE chart_accounts SET role=? WHERE id=? AND role=?').run(MOEEN_ROLE_BY_KIND[moeen.kind], moeen.id, '');
-        result.chartRolesSet += 1;
+      // نقش کدینگ از نوع خودِ معین، نه تفصیلی؛ و فقط یک بار.
+      if (moeen.moeen.role === '' && MOEEN_ROLE_BY_KIND[moeen.moeen.kind]) {
+        result.chartRolesSet += Number(database.prepare('UPDATE chart_accounts SET role=? WHERE id=? AND role=?')
+          .run(MOEEN_ROLE_BY_KIND[moeen.moeen.kind], moeen.moeen.id, '').changes || 0);
       }
       audit(account.created ? 'create' : 'update', 'account', account.id, {
         source: 'parsian-phase-b', kind: moeen.kind, moeenCode: moeen.code, moeenName: moeen.name, createdBy,

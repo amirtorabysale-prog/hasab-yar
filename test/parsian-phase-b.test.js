@@ -369,3 +369,100 @@ if (existsSync(realPath)) {
 } else {
   test('بکاپ واقعی در دسترس نیست؛ آزمون فاز ب روی آن رد شد', { skip: true }, () => {});
 }
+
+// ---------------------------------------------------------------------------
+// شکل بکاپ «اتیه سازان» (۷ آبان ۱۴۰۵): معین «بانک ها» زیر کلِ نقد، و هر حساب بانکی و هر
+// تنخواه‌دار یک تفصیلی. پیش از این همه یک حساب «صندوق» می‌شدند. عددها ساختگی‌اند.
+// ---------------------------------------------------------------------------
+
+function bankAsTafsiliTables() {
+  const kol = [
+    { Code: 10, CName: 'موجودي نقد', GroupCode: 11, iType: 0 },
+    { Code: 12, CName: 'بدهکاران', GroupCode: 11, iType: 0 },
+    { Code: 60, CName: 'فروش', GroupCode: 41, iType: 1 },
+    { Code: 62, CName: 'خريد', GroupCode: 11, iType: 1 },
+  ];
+  const moeen = [
+    { KolCode: 10, Code: 1, CName: 'صندوق' },
+    { KolCode: 10, Code: 2, CName: 'تنخواه گردانها' },
+    { KolCode: 10, Code: 3, CName: 'بانک ها' },
+    { KolCode: 12, Code: 1, CName: 'بدهکاران تجاري' },
+    { KolCode: 60, Code: 1, CName: 'فروش' },
+    { KolCode: 62, Code: 1, CName: 'خريد' },
+  ];
+  const tafsili = [
+    { KolCode: 10, MoeenCode: 2, Code: 1, CName: 'تنخواه آقاي الف' },
+    { KolCode: 10, MoeenCode: 2, Code: 2, CName: 'تنخواه آقاي ب' },
+    { KolCode: 10, MoeenCode: 3, Code: 1, CName: 'بانک ملت 111' },
+    { KolCode: 10, MoeenCode: 3, Code: 2, CName: 'بانک اينده 222' },
+    { KolCode: 10, MoeenCode: 3, Code: 3, CName: 'حساب واسطه' },
+    { KolCode: 12, MoeenCode: 1, Code: 1, CName: 'شرکت نمونه سبز' },
+  ];
+  let id = 1;
+  const row = (sanad, kolCode, moeenCode, taf, bed, bes) => ({
+    ID: id++, Sanad_Num: sanad, SanadDate: '1403/06/01', KolCode: kolCode, MoeenCode: moeenCode, TafsiliCode: taf,
+    Comment: 'آزمون', Bed: bed, Bes: bes, SanadComment: null,
+  });
+  const document = [
+    row(1, 12, 1, 1, 1000, 0), row(1, 60, 1, 0, 0, 1000),
+    row(2, 10, 3, 1, 600, 0), row(2, 12, 1, 1, 0, 600),
+    row(3, 10, 3, 2, 400, 0), row(3, 12, 1, 1, 0, 400),
+    row(4, 10, 2, 1, 100, 0), row(4, 10, 3, 1, 0, 100),
+    row(5, 62, 1, 0, 30, 0), row(5, 10, 2, 2, 0, 30),
+    row(6, 10, 3, 3, 50, 0), row(6, 10, 3, 1, 0, 50),
+    row(7, 10, 3, 2, 50, 0), row(7, 10, 3, 3, 0, 50),
+  ];
+  const zeroAcc = { ID: 2, Cash_K: 0, Cash_M: 0, Cash_T: 0, Sell_K: 0, Sell_M: 0, Sell_T: 0, Wage_K: 0, Wage_M: 0, Wage_T: 0, Asset_K: 0, Asset_M: 0, Asset_T: 0 };
+  const zeroVat = { ID: 6, VATSale_K: 0, VATSale_M: 0, VATSale_T: 0, VATBuy_K: 0, VATBuy_M: 0, VATBuy_T: 0 };
+  return { tbl_ACCGroup: GROUPS, tbl_Kol: kol, tbl_Moeen: moeen, tbl_Tafsili: tafsili, tbl_Document: document, tbl_AccSetting: [zeroAcc], tbl_VATSetting: [zeroVat] };
+}
+
+test('بانک‌ها تفصیلیِ «بانک ها» زیر کل نقد: هر بانک یک حساب بانکی جدا، هر تنخواه‌دار یک تنخواه، هیچ‌کدام شخص نیست', () => {
+  const workspace = newWorkspace('بانک تفصیلی');
+  inWorkspace(workspace, () => {
+    const active = database.activeWorkspaceDatabase();
+    commitParsianBackup(active, buildParsianBackup(bankAsTafsiliTables()), 'atiyeh-shape.bak', {
+      createdBy: owner.id, amountUnit: 'toman', kolTypes: { 62: 'expense' },
+    });
+    const preview = previewParsianPhaseB(active);
+    const units = Object.fromEntries(preview.money.map((unit) => [unit.name, [unit.kind, unit.balance, unit.moeenName]]));
+    assert.deepEqual(units, {
+      'صندوق': ['cash', 0, ''],
+      'تنخواه آقاي الف': ['petty', 100, 'تنخواه گردانها'],
+      'تنخواه آقاي ب': ['petty', -30, 'تنخواه گردانها'],
+      'بانک ملت 111': ['bank', 450, 'بانک ها'],
+      'بانک اينده 222': ['bank', 450, 'بانک ها'],
+      // نامش بانک نیست؛ نوعش از معین «بانک ها» می‌آید.
+      'حساب واسطه': ['bank', 0, 'بانک ها'],
+    });
+    // تفصیلی بانک و تنخواه شخص نیست؛ فقط مشتری (تفصیلی زیر کل ۱۰ از ورود «طرف حساب» نمی‌شود).
+    assert.deepEqual(preview.contacts.map((contact) => contact.name), ['شرکت نمونه سبز']);
+
+    const before = chartSums(active);
+    const analyticsBefore = active.prepare('SELECT id,analytic_id AS analyticId FROM journal_lines ORDER BY id').all();
+    const result = commitParsianPhaseB(active, { contactIds: preview.suggestedContactIds, createdBy: owner.id });
+    assert.equal(result.petty, 1);
+    assert.ok(result.skipped.some((text) => /تفصیلی «تنخواه آقاي ب»/.test(text)), result.skipped.join());
+
+    // هر بانک حساب خودش با ماندهٔ خودش؛ هیچ‌کدام «صندوق» نیست.
+    const balances = Object.fromEntries(active.prepare(`SELECT accounts.name,accounts.kind,COALESCE(SUM(journal_lines.debit)-SUM(journal_lines.credit),0) AS balance
+      FROM accounts JOIN ledger_accounts ON ledger_accounts.source_kind='operational-account' AND ledger_accounts.source_key=accounts.id
+      LEFT JOIN journal_lines ON journal_lines.account_id=ledger_accounts.id GROUP BY accounts.id`).all().map((row) => [row.name, [row.kind, Number(row.balance)]]));
+    assert.deepEqual(balances['بانک ملت 111'], ['bank', 450]);
+    assert.deepEqual(balances['بانک اينده 222'], ['bank', 450]);
+    assert.deepEqual(balances['حساب واسطه'], ['bank', 0]);
+    assert.deepEqual(balances['تنخواه آقاي الف'], ['other', 100]);
+    assert.equal(active.prepare("SELECT ceiling FROM petty_cash_funds").get().ceiling, 100);
+    assert.ok(!Object.values(balances).some(([kind, balance]) => kind === 'cash' && balance !== 0), JSON.stringify(balances));
+    assert.equal(active.prepare("SELECT role FROM chart_accounts WHERE name='بانک ها'").get().role, 'bank');
+
+    // هیچ سندی تازه نیست؛ جمع هر معین و تفصیلی هر ردیف دست‌نخورده (فایل انتقال همان است).
+    assert.deepEqual(chartSums(active), before);
+    assert.deepEqual(active.prepare('SELECT id,analytic_id AS analyticId FROM journal_lines ORDER BY id').all(), analyticsBefore);
+
+    // اجرای دوباره چیزی نمی‌سازد.
+    const again = commitParsianPhaseB(active, { contactIds: [], createdBy: owner.id });
+    assert.deepEqual([again.accounts.created, again.linesRepointed], [0, 0]);
+    assert.equal(previewParsianPhaseB(active).money.filter((unit) => !unit.bound && unit.fundPossible).length, 0);
+  });
+});
