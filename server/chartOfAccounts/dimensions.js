@@ -149,13 +149,14 @@ export function listCostCenters(database, { includeInactive = false } = {}) {
  * آرتیکل سند را برای ابعاد می‌سنجد. بعد فقط وقتی پذیرفته می‌شود که واقعاً وجود
  * داشته باشد و فعال باشد؛ شناسهٔ دلخواه ساکت نادیده گرفته نمی‌شود.
  */
-export function resolveLineDimensions(database, line = {}) {
+export function resolveLineDimensions(database, line = {}, { allowInactive = false } = {}) {
   const analyticId = String(line.analyticId || '').trim() || null;
   const costCenterId = String(line.costCenterId || '').trim() || null;
-  if (analyticId && !database.prepare('SELECT 1 FROM analytic_accounts WHERE id=? AND active=1').get(analyticId)) {
+  const active = allowInactive ? '' : ' AND active=1';
+  if (analyticId && !database.prepare(`SELECT 1 FROM analytic_accounts WHERE id=?${active}`).get(analyticId)) {
     throw chartError('تفصیلی انتخاب‌شده معتبر یا فعال نیست.', 'ANALYTIC_INVALID');
   }
-  if (costCenterId && !database.prepare('SELECT 1 FROM cost_centers WHERE id=? AND active=1').get(costCenterId)) {
+  if (costCenterId && !database.prepare(`SELECT 1 FROM cost_centers WHERE id=?${active}`).get(costCenterId)) {
     throw chartError('مرکز هزینهٔ انتخاب‌شده معتبر یا فعال نیست.', 'COST_CENTER_INVALID');
   }
   return { analyticId, costCenterId };

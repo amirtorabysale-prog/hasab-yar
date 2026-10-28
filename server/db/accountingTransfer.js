@@ -94,10 +94,14 @@ function accountingTransferMappings(targetSystem = 'generic-csv') {
  *
  * این «حذف» نیست و پنهان هم نمی‌ماند: تعدادشان در کنترل‌های آمادگی نوشته
  * می‌شود تا حسابدار بداند چه چیزی در بسته نیست و چرا.
+ *
+ * سندهای بستن سال (موقت، اختتامیه، افتتاحیه و معکوسشان) هم به همین دلیل نمی‌روند:
+ * نرم‌افزار مقصد سال را خودش می‌بندد و سند دوم، سود سال را دو بار جابه‌جا می‌کرد.
  */
 const OPENING_ENTRY_FILTER = `journal_entries.entry_kind<>'opening'
     AND NOT EXISTS (SELECT 1 FROM journal_entries AS reversed
-      WHERE reversed.id=journal_entries.reverses_entry_id AND reversed.entry_kind='opening')`;
+      WHERE reversed.id=journal_entries.reverses_entry_id AND reversed.entry_kind='opening')
+    AND NOT EXISTS (SELECT 1 FROM year_close_entries AS year_close WHERE year_close.entry_id=journal_entries.id)`;
 
 function openingEntriesInScope(range) {
   return Number(db.prepare(`SELECT COUNT(*) AS count FROM journal_entries

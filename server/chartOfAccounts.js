@@ -28,7 +28,7 @@ export {
   applySuggestedChartMappings,
 } from './chartOfAccounts/ledgerMapping.js';
 export {
-  chartAccountByCode, importChartOfAccounts, ensureOpeningEquityMapping, ensureTaxPenaltyTemplate,
+  chartAccountByCode, importChartOfAccounts, ensureOpeningEquityMapping, ensureTaxPenaltyTemplate, ensureRetainedEarningsTemplate,
   ensurePettyCashChartRole, installDefaultChartTemplate, saveChartAccount,
 } from './chartOfAccounts/chartStore.js';
 export {

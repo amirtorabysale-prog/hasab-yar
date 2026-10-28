@@ -46,6 +46,8 @@ export const CHART_ROLES = Object.freeze([
   // حساب انتظامی (و طرف آن) از بکاپ پارسیان: در ترازنامه و سود و زیان نیست و هیچ
   // حساب روزمره‌ای به آن نگاشت نمی‌شود.
   'memorandum',
+  // مقصد سند بستن حساب‌های موقت در پایان سال مالی.
+  'retained-earnings',
 ]);
 
 export const ANALYTIC_KINDS = Object.freeze({

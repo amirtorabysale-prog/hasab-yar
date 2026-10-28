@@ -77,6 +77,19 @@ export function ensureTaxPenaltyTemplate(database) {
 }
 
 /**
+ * «سود (زیان) انباشته» مقصد سند بستن حساب‌های موقت است. کدینگ پیشنهادیِ نصب‌شده پیش از
+ * آبان ۱۴۰۵ آن را ندارد؛ فقط روی همان کدینگ خودمان اضافه می‌شود. کدینگ واردشدهٔ دفتر
+ * دست نمی‌خورد و حسابدار هنگام بستن سال حسابش را انتخاب می‌کند.
+ */
+export function ensureRetainedEarningsTemplate(database) {
+  const group=database.prepare("SELECT id FROM chart_accounts WHERE code='5' AND source='template' AND type='equity' AND level='group' AND active=1").get();
+  if(!group || database.prepare("SELECT 1 FROM chart_accounts WHERE code IN ('52','5201') OR role='retained-earnings'").get()) return;
+  const generalId=randomUUID();
+  database.prepare("INSERT INTO chart_accounts(id,code,name,level,parent_id,type,normal_side,role,source,level_code) VALUES(?,'52','سود (زیان) انباشته','general',?,'equity','credit','','template','52')").run(generalId,group.id);
+  database.prepare("INSERT INTO chart_accounts(id,code,name,level,parent_id,type,normal_side,role,source,level_code) VALUES(?,'5201','سود (زیان) انباشته','subsidiary',?,'equity','credit','retained-earnings','template','5201')").run(randomUUID(),generalId);
+}
+
+/**
  * کدینگ پیشنهادی که پیش از مهر ۱۴۰۵ نصب شده، معین «تنخواه‌گردان» را بی‌نقش
  * دارد؛ نقشش فقط روی همان کدینگِ خودمان داده می‌شود، نه روی کدینگ وارد‌شدهٔ دفتر.
  */

@@ -77,7 +77,7 @@ const shiftDay = (dayKey, days, toDay, timeZone) => toDay(new Date(dayInstant(da
  * تا گروه بالا می‌رود؛ حسابی که نگاشت ندارد زنجیرهٔ خالی دارد و در ترازِ سطح کدینگ زیر
  * «بدون نگاشت کدینگ» می‌نشیند — هیچ ردیفی از جمع‌ها بیرون نمی‌ماند.
  */
-function readLedger(database, timeZone, { includeDrafts = false } = {}) {
+function readLedger(database, timeZone, { includeDrafts = false, beforeClose = false } = {}) {
   migrateAccountingLedger(database);
   const toDay = dayKeyFormatter(timeZone);
   const chart = new Map(database.prepare('SELECT id,code,name,level,parent_id AS parentId,type,role FROM chart_accounts').all().map((row) => [row.id, row]));
@@ -98,18 +98,24 @@ function readLedger(database, timeZone, { includeDrafts = false } = {}) {
       memorandum: roles.has('memorandum'),
     }];
   }));
-  const lines = database.prepare(`SELECT jl.id,jl.account_id AS accountId,jl.debit,jl.credit,jl.description,
+  const journalLines = database.prepare(`SELECT jl.id,jl.account_id AS accountId,jl.debit,jl.credit,jl.description,
       jl.analytic_id AS analyticId,jl.cost_center_id AS costCenterId,
-      je.id AS entryId,je.occurred_at AS occurredAt,je.document_number AS documentNumber,je.memo,je.entry_kind AS entryKind
+      je.id AS entryId,je.occurred_at AS occurredAt,je.document_number AS documentNumber,je.memo,je.entry_kind AS entryKind,
+      yc.role AS yearCloseRole
     FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+    LEFT JOIN year_close_entries yc ON yc.entry_id=je.id
     ${includeDrafts ? '' : "WHERE je.approval_state='approved'"}
     ORDER BY je.occurred_at,COALESCE(je.document_number,0),je.id,jl.rowid`).all()
-    .map((line) => ({ ...line, debit: Number(line.debit) || 0, credit: Number(line.credit) || 0, day: toDay(line.occurredAt) }));
+    .map((line) => ({ ...line, debit: Number(line.debit) || 0, credit: Number(line.credit) || 0, day: toDay(line.occurredAt), temporary: line.yearCloseRole === 'temporary' }));
+  // اختتامیه و افتتاحیه از مرز سال به بعد هم را خنثی می‌کنند؛ در هیچ مانده‌ای نیستند تا
+  // ترازنامهٔ روز آخر سال صفر نشود و ماندهٔ سال بعد دو بار شمرده نشود. دفتر روزنامه نشانشان
+  // می‌دهد. «قبل از بستن» سند بستن حساب‌های موقت را هم کنار می‌گذارد.
+  const lines = journalLines.filter((line) => line.yearCloseRole !== 'closing' && line.yearCloseRole !== 'opening' && !(beforeClose && line.temporary));
   const analytics = new Map(database.prepare('SELECT id,code,name,kind,source_kind AS sourceKind,source_key AS sourceKey FROM analytic_accounts').all().map((row) => [row.id, row]));
   const costCenters = new Map(database.prepare('SELECT id,code,name FROM cost_centers').all().map((row) => [row.id, row]));
   // روزِ هر سند تأییدنشده؛ گزارش فقط آن‌هایی را می‌شمارد که تا پایان بازه‌اش اثر دارند.
   const drafts = includeDrafts ? database.prepare("SELECT occurred_at AS occurredAt FROM journal_entries WHERE approval_state<>'approved'").all().map((row) => toDay(row.occurredAt)) : [];
-  return { toDay, timeZone, chart, accounts, lines, analytics, costCenters, includeDrafts, drafts };
+  return { toDay, timeZone, chart, accounts, lines, journalLines, analytics, costCenters, includeDrafts, drafts };
 }
 
 /** گزارشی که پیش‌نویس‌ها را هم شمرده، غیرقطعی است و باید همین را بگوید. */
@@ -166,9 +172,9 @@ const TRIAL_FIELDS = ['openingDebit', 'openingCredit', 'openingDebitBalance', 'o
  * ۲: ماندهٔ پایان · ۴: جمع گردش تا پایان + مانده · ۶: ماندهٔ اول دوره + گردش دوره + ماندهٔ پایان ·
  * ۸: ماندهٔ اول دوره + گردش دوره + جمع + ماندهٔ پایان.
  */
-export function trialBalanceReport(database, { from = '', to = '', level = 'subsidiary', includeZero = false, timeZone = 'Asia/Tehran', includeDrafts = false } = {}) {
+export function trialBalanceReport(database, { from = '', to = '', level = 'subsidiary', includeZero = false, timeZone = 'Asia/Tehran', includeDrafts = false, beforeClose = false } = {}) {
   if (!TRIAL_LEVELS.includes(level)) throw accountingError('سطح تراز معتبر نیست.', 'REPORT_LEVEL_INVALID');
-  const ledger = readLedger(database, timeZone, { includeDrafts });
+  const ledger = readLedger(database, timeZone, { includeDrafts, beforeClose });
   const range = readRange({ from, to }, ledger.toDay);
   const rows = new Map();
   const rowFor = (line) => {
@@ -199,7 +205,7 @@ export function trialBalanceReport(database, { from = '', to = '', level = 'subs
     period: totals.periodDebit === totals.periodCredit,
     closing: totals.closingDebitBalance === totals.closingCreditBalance,
   };
-  return { kind: 'trial', ...draftMark(ledger, range.toDay), level, levelLabel: LEVEL_LABELS[level], range, rows: finished, totals, checks, balanced: checks.opening && checks.period && checks.closing };
+  return { kind: 'trial', ...draftMark(ledger, range.toDay), ...(beforeClose ? { beforeClose: true } : {}), level, levelLabel: LEVEL_LABELS[level], range, rows: finished, totals, checks, balanced: checks.opening && checks.period && checks.closing };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,10 +222,10 @@ function accountsUnder(ledger, level, key) {
  *
  * ماندهٔ پایانِ این گزارش همان ماندهٔ پایانِ همان ردیف در تراز است — آزمون همین را می‌سنجد.
  */
-export function accountLedgerReport(database, { from = '', to = '', level = 'subsidiary', key = '', analyticId = '', timeZone = 'Asia/Tehran', includeDrafts = false } = {}) {
+export function accountLedgerReport(database, { from = '', to = '', level = 'subsidiary', key = '', analyticId = '', timeZone = 'Asia/Tehran', includeDrafts = false, beforeClose = false } = {}) {
   if (!TRIAL_LEVELS.includes(level)) throw accountingError('سطح دفتر معتبر نیست.', 'REPORT_LEVEL_INVALID');
   if (!key) throw accountingError('حساب دفتر انتخاب نشده است.', 'REPORT_ACCOUNT_REQUIRED');
-  const ledger = readLedger(database, timeZone, { includeDrafts });
+  const ledger = readLedger(database, timeZone, { includeDrafts, beforeClose });
   const range = readRange({ from, to }, ledger.toDay);
   const matches = level === 'analytic'
     ? (line) => (key === 'none' ? !line.analyticId : line.analyticId === key)
@@ -263,9 +269,10 @@ export function journalBookReport(database, { from = '', to = '', timeZone = 'As
   const ledger = readLedger(database, timeZone, { includeDrafts });
   const range = readRange({ from, to }, ledger.toDay);
   const entries = new Map();
-  for (const line of ledger.lines) {
+  // دفتر روزنامه همهٔ سندها را دارد، اختتامیه و افتتاحیه هم؛ نقششان کنار سند می‌آید.
+  for (const line of ledger.journalLines) {
     if (!within(line, range)) continue;
-    if (!entries.has(line.entryId)) entries.set(line.entryId, { id: line.entryId, day: line.day, documentNumber: line.documentNumber, memo: line.memo, entryKind: line.entryKind, lines: [], debit: 0, credit: 0 });
+    if (!entries.has(line.entryId)) entries.set(line.entryId, { id: line.entryId, day: line.day, documentNumber: line.documentNumber, memo: line.memo, entryKind: line.entryKind, yearCloseRole: line.yearCloseRole || null, lines: [], debit: 0, credit: 0 });
     const entry = entries.get(line.entryId);
     const account = ledger.accounts.get(line.accountId);
     entry.lines.push({ accountCode: account?.chain[0]?.code || account?.code || '', accountName: account?.name || '', description: line.description,
@@ -278,6 +285,8 @@ export function journalBookReport(database, { from = '', to = '', timeZone = 'As
   return {
     kind: 'journal', ...draftMark(ledger, range.toDay), range, entries: all.slice(0, safeLimit), truncated: all.length > safeLimit, entryCount: all.length,
     totals: { debit: sumBy(all, 'debit'), credit: sumBy(all, 'credit') },
+    // جمع اختتامیه و افتتاحیه جدا: گردش دورهٔ تراز = جمع روزنامه منهای همین.
+    yearCloseTotals: { debit: sumBy(all.filter((entry) => ['closing', 'opening'].includes(entry.yearCloseRole)), 'debit') },
     unbalanced: all.filter((entry) => entry.debit !== entry.credit).map((entry) => entry.id),
   };
 }
@@ -324,7 +333,8 @@ function incomeStatementFor(ledger, range) {
     return 'expenses';
   };
   const buckets = { revenue: new Map(), costOfSales: new Map(), expenses: new Map(), otherIncome: new Map() };
-  for (const [accountId, net] of netByAccount(ledger, (line) => within(line, range))) {
+  // سند بستن حساب‌های موقت سود را جابه‌جا می‌کند، نمی‌سازد؛ در سود و زیان نیست.
+  for (const [accountId, net] of netByAccount(ledger, (line) => within(line, range) && !line.temporary)) {
     const account = ledger.accounts.get(accountId);
     if (!['income', 'expense'].includes(account?.type) || account.memorandum) continue;
     buckets[classOf(account)].set(accountId, net * naturalSign(account.type));
@@ -358,7 +368,10 @@ export function incomeStatementReport(database, { from = '', to = '', compare = 
 }
 
 function balanceSheetFor(ledger, asOf) {
-  const nets = netByAccount(ledger, (line) => through(line, asOf));
+  // ترازنامه سند بستن حساب‌های موقت را نمی‌شمارد: سود هر سال از خود درآمد و هزینه ساخته
+  // می‌شود (پایین)، پس بستن سال هیچ عددی از ترازنامه را عوض نمی‌کند و سودِ روز آخر سال صفر
+  // نمی‌شود. حساب انباشته فقط ثبت‌های دیگرش (تقسیم سود، اندوخته) را نشان می‌دهد.
+  const nets = netByAccount(ledger, (line) => through(line, asOf) && !line.temporary);
   const yearStart = yearStartOf(asOf);
   const section = (type) => {
     const entries = new Map();
@@ -384,12 +397,11 @@ function balanceSheetFor(ledger, asOf) {
   const assets = section('asset');
   const liabilities = section('liability');
   const equity = section('equity');
-  // سودِ بسته‌نشده: سال‌های قبل «سود (زیان) انباشته» و امسال «سود (زیان) سال جاری».
-  // سندِ بستنِ حساب‌های موقت (اگر ثبت شده باشد) این‌ها را خودش صفر می‌کند.
+  // سود سال‌های قبل «سود (زیان) انباشته» و امسال «سود (زیان) سال جاری».
   let retained = 0;
   let currentYear = 0;
   for (const line of ledger.lines) {
-    if (!through(line, asOf)) continue;
+    if (!through(line, asOf) || line.temporary) continue;
     const account = ledger.accounts.get(line.accountId);
     if (!['income', 'expense'].includes(account?.type) || account.memorandum) continue;
     const profit = line.credit - line.debit;
@@ -478,12 +490,17 @@ export function equityChangesReport(database, { from = '', to = '', timeZone = '
   const rows = new Map();
   let openingProfit = 0;
   let periodProfit = 0;
+  // سند بستن موقت در بازه، سود را از ردیف «سود دوره» به حساب انباشته می‌برد: انتقال است،
+  // نه سود یا زیان تازه. ردیف سود کم می‌شود و حساب انباشته زیاد؛ جمع ثابت می‌ماند.
+  let transferred = 0;
   for (const line of ledger.lines) {
     if (line.day > range.toDay) continue;
     const account = ledger.accounts.get(line.accountId);
     if (!account || account.memorandum) continue;
     if (['income', 'expense'].includes(account.type)) {
-      if (before(line, range)) openingProfit += line.credit - line.debit; else periodProfit += line.credit - line.debit;
+      if (before(line, range)) openingProfit += line.credit - line.debit;
+      else if (line.temporary) transferred += line.credit - line.debit;
+      else periodProfit += line.credit - line.debit;
       continue;
     }
     if (account.type !== 'equity') continue;
@@ -494,7 +511,11 @@ export function equityChangesReport(database, { from = '', to = '', timeZone = '
   }
   const accounts = [...rows.values()].map((row) => ({ ...row, closing: row.opening + row.increase - row.decrease }))
     .sort((a, b) => String(a.code).localeCompare(String(b.code), 'en', { numeric: true }));
-  const profit = { key: 'profit', code: '', name: 'سود (زیان) انباشته و سود دوره', opening: openingProfit, increase: Math.max(0, periodProfit), decrease: Math.max(0, -periodProfit), closing: openingProfit + periodProfit };
+  const profit = {
+    key: 'profit', code: '', name: 'سود (زیان) انباشته و سود دوره', opening: openingProfit,
+    increase: Math.max(0, periodProfit) + Math.max(0, transferred), decrease: Math.max(0, -periodProfit) + Math.max(0, -transferred),
+    transferred, closing: openingProfit + periodProfit + transferred,
+  };
   const all = [...accounts, profit];
   const totals = { opening: sumBy(all, 'opening'), increase: sumBy(all, 'increase'), decrease: sumBy(all, 'decrease'), closing: sumBy(all, 'closing') };
   return { kind: 'equity-changes', ...draftMark(ledger, range.toDay), range, accounts, profit, periodProfit, totals };
@@ -607,7 +628,7 @@ export function costCenterReport(database, { from = '', to = '', timeZone = 'Asi
   const range = readRange({ from, to }, ledger.toDay);
   const centers = new Map();
   for (const line of ledger.lines) {
-    if (!within(line, range)) continue;
+    if (!within(line, range) || line.temporary) continue;
     const account = ledger.accounts.get(line.accountId);
     if (!['income', 'expense'].includes(account?.type) || account.memorandum) continue;
     const center = line.costCenterId ? ledger.costCenters.get(line.costCenterId) : null;

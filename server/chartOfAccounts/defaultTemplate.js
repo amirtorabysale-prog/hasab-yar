@@ -53,6 +53,8 @@ export const DEFAULT_CHART_TEMPLATE = Object.freeze([
   ['51', 'سرمایه', 'general', '5', 'equity', ''],
   ['5101', 'سرمایه و ماندهٔ افتتاحیه', 'subsidiary', '51', 'equity', 'equity'],
   ['5102', 'آورده و افزایش سرمایه', 'subsidiary', '51', 'equity', 'owner-capital'],
+  ['52', 'سود (زیان) انباشته', 'general', '5', 'equity', ''],
+  ['5201', 'سود (زیان) انباشته', 'subsidiary', '52', 'equity', 'retained-earnings'],
   ['6', 'درآمدها', 'group', '', 'income', ''],
   ['61', 'درآمد عملیاتی', 'general', '6', 'income', ''],
   ['6101', 'فروش کالا', 'subsidiary', '61', 'income', 'sales'],

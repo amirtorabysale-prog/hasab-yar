@@ -45,6 +45,8 @@ export function minimumRoleForRequest(method, path) {
   if (/^\/confirmations\/[^/]+\/(confirm|handover|answer)$/.test(normalizedPath)) return 'accountant';
   if (normalizedPath.startsWith('/workspace/members')) return 'owner';
   if (normalizedPath.startsWith('/accounting/periods/')) return 'owner';
+  // بستن و بازگشایی سال مالی دوازده دوره را قفل یا باز می‌کند و سه سند می‌زند.
+  if (normalizedPath.startsWith('/accounting/year-close/')) return 'owner';
   // کنترل و تأیید سند کار حسابدار ارشد است، نه کمک‌حسابداری که ثبت می‌زند.
   if (/^\/accounting\/journal\/[^/]+\/approval$/.test(normalizedPath)) return 'manager';
   if (normalizedPath.startsWith('/accounting/templates')) return 'manager';

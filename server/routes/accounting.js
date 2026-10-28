@@ -7,7 +7,7 @@ import {
   activeWorkspaceDatabase, getSettings, fixedAssetOverview, saveFixedAsset, postDepreciation, reviewAssistantForJournal, runRecognition, timingContracts, seeRecognitionNotice, unscheduledBalances, unscheduledBalancesForEntry, createJournalDocuments, deleteJournalTemplate, journalOverview, journalWorklistOverview, listJournalTemplates, saveJournalTemplate, submitJournalApproval, recordAudit, cancelApprovalRequest, createApprovalRequest, decideApprovalRequest, listApprovalRequests,
 } from '../db.js';
 import {
-  accountingPeriods, createAdjustingJournal, listLedgerAccounts, lockAccountingPeriod, periodForDate, reopenAccountingPeriod, trialBalance,
+  accountingPeriods, closeFiscalYear, createAdjustingJournal, fiscalYearClosings, listLedgerAccounts, lockAccountingPeriod, periodForDate, previewYearClose, reopenAccountingPeriod, reopenFiscalYear, trialBalance,
 } from '../accounting.js';
 import {
   accountLedgerReport, agingReport, balanceSheetReport, cashFlowReport, costCenterReport, equityChangesReport, incomeStatementReport,
@@ -20,8 +20,8 @@ import { buildWorkbook } from '../spreadsheet.js';
 // گزارش‌های حسابداری: هر نام یک تابعِ خالص روی دفتر فعال است. پارامترها همان رشته‌های
 // پرس‌وجو هستند؛ اعتبارسنجی تاریخ و سطح درون خودِ گزارش است.
 const REPORTS = Object.freeze({
-  trial: (db, query, timeZone) => trialBalanceReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', includeZero: query.includeZero === '1', includeDrafts: query.drafts === '1', timeZone }),
-  ledger: (db, query, timeZone) => accountLedgerReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', key: query.key, analyticId: query.analyticId, includeDrafts: query.drafts === '1', timeZone }),
+  trial: (db, query, timeZone) => trialBalanceReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', includeZero: query.includeZero === '1', includeDrafts: query.drafts === '1', beforeClose: query.beforeClose === '1', timeZone }),
+  ledger: (db, query, timeZone) => accountLedgerReport(db, { from: query.from, to: query.to, level: query.level || 'subsidiary', key: query.key, analyticId: query.analyticId, includeDrafts: query.drafts === '1', beforeClose: query.beforeClose === '1', timeZone }),
   journal: (db, query, timeZone) => journalBookReport(db, { from: query.from, to: query.to, includeDrafts: query.drafts === '1', timeZone }),
   'income-statement': (db, query, timeZone) => incomeStatementReport(db, { from: query.from, to: query.to, compare: query.compare === '1', includeDrafts: query.drafts === '1', timeZone }),
   'balance-sheet': (db, query, timeZone) => balanceSheetReport(db, { to: query.to, compare: query.compare === '1', includeDrafts: query.drafts === '1', timeZone }),
@@ -134,6 +134,30 @@ export function registerAccountingRoutes(app) {
       const item = reopenAccountingPeriod(activeWorkspaceDatabase(), request.params.period, request.user.id, request.body?.reason);
       recordAudit('reopen', 'accounting_period', request.params.period, { reason: request.body?.reason });
       return response.json({ item });
+    } catch (error) { return next(error); }
+  });
+  // بستن سال مالی: پیش‌نمایش برای همه، بستن و بازگشایی فقط مالک (مثل قفل دوره).
+  app.get('/api/accounting/year-close', (_request, response, next) => {
+    try { return response.json({ items: fiscalYearClosings(activeWorkspaceDatabase()) }); } catch (error) { return next(error); }
+  });
+  app.get('/api/accounting/year-close/:year', (request, response, next) => {
+    try { return response.json(previewYearClose(activeWorkspaceDatabase(), request.params.year, { timeZone: getSettings().timezone || 'Asia/Tehran', retainedChartAccountId: String(request.query.retained || '') })); }
+    catch (error) { return next(error); }
+  });
+  app.post('/api/accounting/year-close/:year/close', (request, response, next) => {
+    try {
+      // شناسایی‌های سررسیدرسیده پیش از بستن ثبت می‌شوند؛ همان قاعدهٔ قفل دوره.
+      runRecognition();
+      const result = closeFiscalYear(activeWorkspaceDatabase(), request.params.year, { userId: request.user.id, timeZone: getSettings().timezone || 'Asia/Tehran', retainedChartAccountId: String(request.body?.retainedChartAccountId || '') });
+      recordAudit('close', 'fiscal_year', String(request.params.year), { profit: result.profit, documents: result.documents, imported: result.imported });
+      return response.json(result);
+    } catch (error) { return next(error); }
+  });
+  app.post('/api/accounting/year-close/:year/reopen', (request, response, next) => {
+    try {
+      const result = reopenFiscalYear(activeWorkspaceDatabase(), request.params.year, { userId: request.user.id, reason: request.body?.reason, timeZone: getSettings().timezone || 'Asia/Tehran' });
+      recordAudit('reopen', 'fiscal_year', String(request.params.year), { reason: request.body?.reason, reversals: result.reversals });
+      return response.json(result);
     } catch (error) { return next(error); }
   });
   app.get('/api/accounting/journal/:id/review-history', (request,response,next) => {

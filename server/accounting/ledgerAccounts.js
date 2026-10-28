@@ -4,7 +4,7 @@
 // accounting همه از همان server/accounting.js می‌خوانند.
 
 import { randomUUID } from 'node:crypto';
-import { ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount } from '../chartOfAccounts.js';
+import { ensureChartSchema, ensureOpeningEquityMapping, ensurePettyCashChartRole, ensureRetainedEarningsTemplate, ensureTaxPenaltyTemplate, listChartAccounts, mapLedgerAccountToChart, suggestChartAccount } from '../chartOfAccounts.js';
 import { ensureJournalWorkflowSchema } from '../journalWorkflow.js';
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense'];
@@ -62,6 +62,28 @@ export function ensureAccountingSchema(database) {
       reopened_at TEXT,
       reopen_reason TEXT NOT NULL DEFAULT ''
     );
+    -- سندهای بستن سال (accounting/yearClose.js). «موقت» سند واقعی است و در مانده‌ها می‌ماند؛
+    -- «اختتامیه» و «افتتاحیه» جفتی‌اند که بعد از مرز سال هم را خنثی می‌کنند و گزارش‌ها از
+    -- محاسبه بیرونشان می‌گذارند. اختتامیه و افتتاحیهٔ آمده از بکاپ پارسیان هم همین‌جا می‌نشیند.
+    CREATE TABLE IF NOT EXISTS year_close_entries (
+      entry_id TEXT PRIMARY KEY REFERENCES journal_entries(id) ON DELETE RESTRICT,
+      year TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('temporary','closing','opening')),
+      origin TEXT NOT NULL DEFAULT 'hesabyar' CHECK(origin IN ('hesabyar','parsian'))
+    );
+    CREATE TABLE IF NOT EXISTS fiscal_year_closings (
+      id TEXT PRIMARY KEY,
+      year TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('closed','reopened')),
+      retained_account_id TEXT,
+      profit INTEGER NOT NULL DEFAULT 0,
+      closed_by TEXT,
+      closed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reopened_by TEXT,
+      reopened_at TEXT,
+      reopen_reason TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_fiscal_year_closings_year ON fiscal_year_closings(year,status);
   `);
   const seed = database.prepare(`INSERT OR IGNORE INTO ledger_accounts
     (id,code,name,type,normal_side,source_kind,source_key) VALUES (?,?,?,?,?,?,?)`);
@@ -69,6 +91,7 @@ export function ensureAccountingSchema(database) {
   // ستون‌های بعد (تفصیلی و مرکز هزینه) و نگاشت کدینگ روی همین جدول‌ها می‌نشینند.
   ensureChartSchema(database);
   ensureTaxPenaltyTemplate(database);
+  ensureRetainedEarningsTemplate(database);
   ensurePettyCashChartRole(database);
   ensureOpeningEquityMapping(database);
   ensureJournalWorkflowSchema(database);

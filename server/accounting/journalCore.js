@@ -9,21 +9,23 @@ import { listChartAccounts, mapLedgerAccountToChart, resolveLineDimensions } fro
 import { nextDocumentNumber, normalizeApprovalState } from '../journalWorkflow.js';
 import { accountingError, ensureAccountingSchema, fiscalYearForDate, isPettyCashAccount, periodForDate } from './ledgerAccounts.js';
 
-export function validateLines(database, lines) {
+export function validateLines(database, lines, { maxLines = 1000, allowInactive = false } = {}) {
   // سقف بالا عمداً بزرگ است: سند حقوق یک آرتیکل به‌ازای هر نفر دارد تا
-  // بدهی هر پرسنل جدا دیده و جدا تسویه شود.
-  if (!Array.isArray(lines) || lines.length < 2 || lines.length > 1000) throw accountingError('سند باید بین دو تا هزار آرتیکل داشته باشد.');
+  // بدهی هر پرسنل جدا دیده و جدا تسویه شود. سند اختتامیه و افتتاحیه یک آرتیکل
+  // برای هر حساب و تفصیلیِ مانده‌دار دارند و سقف خودشان را می‌دهند.
+  if (!Array.isArray(lines) || lines.length < 2 || lines.length > maxLines) throw accountingError(maxLines === 1000 ? 'سند باید بین دو تا هزار آرتیکل داشته باشد.' : `سند باید بین دو تا ${maxLines} آرتیکل داشته باشد.`);
   let debit = 0;
   let credit = 0;
   const normalized = lines.map((line) => {
     const accountId = String(line.accountId || '').trim();
-    if (!database.prepare('SELECT 1 FROM ledger_accounts WHERE id=? AND active=1').get(accountId)) throw accountingError('یکی از حساب‌های دفتر کل معتبر یا فعال نیست.');
+    // ماندهٔ حسابِ غیرفعال هم باید به سال بعد برود؛ فقط سند بستن سال از این می‌گذرد.
+    if (!database.prepare(`SELECT 1 FROM ledger_accounts WHERE id=?${allowInactive ? '' : ' AND active=1'}`).get(accountId)) throw accountingError('یکی از حساب‌های دفتر کل معتبر یا فعال نیست.');
     const lineDebit = Math.round(Number(line.debit) || 0);
     const lineCredit = Math.round(Number(line.credit) || 0);
     if (!Number.isSafeInteger(lineDebit) || !Number.isSafeInteger(lineCredit) || (lineDebit > 0) === (lineCredit > 0)) throw accountingError('هر آرتیکل باید فقط بدهکار یا فقط بستانکار و دارای مبلغ مثبت باشد.');
     debit += lineDebit;
     credit += lineCredit;
-    const dimensions = resolveLineDimensions(database, line);
+    const dimensions = resolveLineDimensions(database, line, { allowInactive });
     return {
       accountId, debit: lineDebit, credit: lineCredit,
       description: String(line.description || '').slice(0, 300),
@@ -200,7 +202,7 @@ export function insertJournal(database, rawValues) {
       if (repair.status === 'blocked') throw accountingError(repair.message, 'BANK_CHART_MAPPING_INVALID');
     }
   }
-  const validated = validateLines(database, values.lines);
+  const validated = validateLines(database, values.lines, { maxLines: values.maxLines, allowInactive: values.allowInactive });
   const id = randomUUID();
   // شماره در همان لحظهٔ درج و در همان تراکنش گرفته می‌شود تا دنبالهٔ سال مالی گپ نگیرد.
   const fiscalYear = fiscalYearForDate(values.occurredAt, values.timeZone || 'Asia/Tehran');

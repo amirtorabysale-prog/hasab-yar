@@ -20,7 +20,7 @@ export function accountingPeriods(database) {
  * شناسایی. اینجا مستقیم خوانده می‌شود چون لایهٔ رویداد خودش به این فایل وابسته
  * است.
  */
-function unpostedRecognitionThrough(database, period, timeZone = 'Asia/Tehran') {
+export function unpostedRecognitionThrough(database, period, timeZone = 'Asia/Tehran') {
   const exists = database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='recognition_schedule_items'").get();
   if (!exists) return [];
   const locked = new Set(database.prepare("SELECT period FROM accounting_periods WHERE status='locked'").all().map((row) => row.period));
