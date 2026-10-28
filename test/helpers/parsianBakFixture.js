@@ -31,6 +31,11 @@ export const PARSIAN_TABLES = {
   tbl_FactorKind: [['Code', 'smallint'], ['CName', 'nvarchar'], ['HaveDocument', 'bit']],
   tbl_Factor: [['ID', 'int'], ['Factor_Num', 'int'], ['Factor_Date', 'nvarchar'], ['TitleCode', 'smallint'], ['Sanad_Num', 'int'], ['GoodsCode', 'float'],
     ['Tedad', 'decimal'], ['Price', 'float'], ['Discont', 'float'], ['GoodsComment', 'nvarchar'], ['FactorComment', 'nvarchar']],
+  // چک، با همان نوع و ترتیب ستون‌های بکاپ اتیه سازان (۴ بیت در یک بایت مشترک).
+  tbl_Check: [['ID', 'int'], ['Chk_Num', 'int'], ['Sanad_Num', 'int'], ['Sanad_Num_VosolPas', 'int'], ['ExpDate', 'nvarchar'], ['RecDate', 'nvarchar'],
+    ['Giv_Date', 'nvarchar'], ['Money', 'float'], ['Bank_K', 'smallint'], ['Bank_M', 'smallint'], ['Bank_T', 'int'], ['Acc_K', 'smallint'], ['Acc_M', 'smallint'],
+    ['Acc_T', 'int'], ['Taraf_K', 'smallint'], ['Taraf_M', 'smallint'], ['Taraf_T', 'int'], ['Chk_Kind', 'smallint'], ['Comment', 'nvarchar'], ['Bank', 'nvarchar'],
+    ['Vos_Pas', 'smallint'], ['IsActive', 'bit'], ['Tick', 'bit'], ['Lashe', 'bit'], ['IsREG', 'bit'], ['Sayad', 'nvarchar']],
   tbl_CoSpec: [['ID', 'int'], ['ECOcode', 'nvarchar'], ['PostalCode', 'nvarchar'], ['Code', 'nvarchar'], ['Address', 'nvarchar'], ['Tel', 'nvarchar'], ['Estate', 'nvarchar'], ['City', 'nvarchar']],
   // رازی که خواننده هرگز نباید بخواند (کلید سامانهٔ مؤدیان در بکاپ واقعی همین‌جاست).
   tbl_NEWMovadianInfo: [['ID', 'int'], ['PrivateKey', 'nvarchar'], ['Token', 'nvarchar']],

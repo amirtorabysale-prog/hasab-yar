@@ -50,6 +50,14 @@ const TABLES = {
 // جدول‌هایی که راز دارند هرگز خوانده نمی‌شوند: tbl_NEWMovadianInfo (کلید خصوصی و
 // توکن سامانهٔ مؤدیان)، tbl_User (رمز کاربران)، tbl_LC و tbl_Company (قفل و مجوز).
 const EXTRA_TABLES = {
+  // چک: نوع (۰ دریافتی، ۱ پرداختی)، وضعیت (Vos_Pas)، صاحب (Acc)، حساب اسناد (Taraf)،
+  // گیرندهٔ واگذاری (Bank) و سند ثبت و تسویه. معنای کدها در server/parsianCheques.js.
+  tbl_Check: {
+    required: ['ID', 'Money', 'Chk_Kind', 'Vos_Pas'],
+    optional: ['Chk_Num', 'Sanad_Num', 'Sanad_Num_VosolPas', 'ExpDate', 'RecDate', 'Giv_Date', 'Bank_K', 'Bank_M', 'Bank_T',
+      'Acc_K', 'Acc_M', 'Acc_T', 'Taraf_K', 'Taraf_M', 'Taraf_T', 'Comment', 'Bank', 'IsActive', 'Sayad'],
+    missingTableAllowed: true,
+  },
   tbl_Goods: { required: ['Code', 'CName'], optional: ['GroupCode', 'UnitName_1', 'Price_1', 'VATPercent', 'Barcode'], missingTableAllowed: true },
   tbl_GoodsGroup: { required: ['Code', 'CName'], optional: ['IsService'], missingTableAllowed: true },
   tbl_Telephone: {
@@ -471,8 +479,17 @@ function readExtras(context, warnings) {
   }
   for (const invoice of byFactor.values()) invoice.lines.sort((first, second) => first.id - second.id);
   const [company] = tables.tbl_CoSpec;
+  const cheques = tables.tbl_Check.map((row) => ({
+    id: row.ID, kind: row.Chk_Kind, status: row.Vos_Pas, active: row.IsActive ?? null,
+    money: Number(row.Money) || 0, serial: row.Chk_Num ?? '', sayad: row.Sayad || '', bank: row.Bank || '', comment: row.Comment || '',
+    registeredDate: row.ExpDate || '', dueDate: row.RecDate || '', settledDate: row.Giv_Date || '',
+    sanad: row.Sanad_Num || 0, settleSanad: row.Sanad_Num_VosolPas || 0,
+    accKol: row.Acc_K || 0, accMoeen: row.Acc_M || 0, accTaf: row.Acc_T || 0,
+    tarafKol: row.Taraf_K || 0, tarafMoeen: row.Taraf_M || 0,
+    bankKol: row.Bank_K || 0, bankMoeen: row.Bank_M || 0, bankTaf: row.Bank_T || 0,
+  }));
   return {
-    goods, cards,
+    goods, cards, cheques,
     invoices: [...byFactor.values()].sort((first, second) => first.title - second.title || first.number - second.number),
     company: company ? {
       economicCode: company.ECOcode || '', nationalId: company.Code || '', postalCode: company.PostalCode || '',

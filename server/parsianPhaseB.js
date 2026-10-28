@@ -31,11 +31,10 @@ import { audit } from './db/core.js';
 import { nextLedgerCode } from './accounting.js';
 import { acknowledgeImportedHistory } from './balanceGuard.js';
 import { applyParsianCards } from './parsianExtras.js';
+import { partySideOfKol } from './parsianImport.js';
 
 const KOL_CASH = '10';
 const KOL_BANK = '11';
-const KOL_RECEIVABLE = '12';
-const KOL_PAYABLE = '23';
 
 // نقش کدینگی که هر نوع حساب عملیاتی می‌گیرد؛ فقط وقتی پر می‌شود که خالی باشد.
 const MOEEN_ROLE_BY_KIND = { cash: 'cash', bank: 'bank', petty: 'petty-cash' };
@@ -189,7 +188,7 @@ function contactCandidates(database) {
     WHERE kind='contact' AND active=1 AND (source_kind IS NULL OR source_kind<>'contact')
     ORDER BY code`).all();
   const byChart = database.prepare(`SELECT chart_accounts.id AS chartId,chart_accounts.code AS chartCode,chart_accounts.name AS chartName,
-      parent.code AS kolCode,parent.level_code AS kolLevelCode,
+      parent.code AS kolCode,parent.level_code AS kolLevelCode,parent.name AS kolName,
       COUNT(*) AS lineCount,COALESCE(SUM(journal_lines.debit),0) AS debit,COALESCE(SUM(journal_lines.credit),0) AS credit
     FROM journal_lines JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
     JOIN chart_accounts ON chart_accounts.id=ledger_accounts.chart_account_id
@@ -198,9 +197,8 @@ function contactCandidates(database) {
   return analytics.map((analytic) => {
     const charts = byChart.all(analytic.id).map((row) => ({
       ...row,
-      // سمت از کل پارسیان: ۱۲ دریافتنی، ۲۳ پرداختنی؛ بقیه به شخص تعلق نمی‌گیرند.
-      side: row.kolLevelCode === KOL_RECEIVABLE || row.kolCode === KOL_RECEIVABLE ? 'receivable'
-        : row.kolLevelCode === KOL_PAYABLE || row.kolCode === KOL_PAYABLE ? 'payable' : 'none',
+      // سمت از کل پارسیان، همان قاعدهٔ ورود (کد ۱۲/۲۳ یا نام)؛ بقیه به شخص تعلق نمی‌گیرند.
+      side: partySideOfKol(row.kolLevelCode || row.kolCode, row.kolName) || 'none',
     }));
     return {
       ...analytic,
@@ -468,6 +466,14 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
       audit(existing ? 'update' : 'create', 'contact', contact.id, {
         source: 'parsian-phase-b', reused: Boolean(existing), tafsili: group.map((candidate) => candidate.code), createdBy,
       });
+    }
+    // چک‌های پارسیان با تفصیلی صاحبشان آمده بودند؛ حالا که آن تفصیلی شخص شد، چک به همان
+    // شخص وصل می‌شود تا در کارت او دیده شود.
+    if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cheques'").get()) {
+      result.chequesLinked = Number(database.prepare(`UPDATE cheques SET contact_id=(SELECT source_key FROM analytic_accounts
+          WHERE analytic_accounts.id=cheques.analytic_id AND analytic_accounts.source_kind='contact')
+        WHERE source='parsian' AND contact_id IS NULL AND analytic_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM analytic_accounts WHERE analytic_accounts.id=cheques.analytic_id AND analytic_accounts.source_kind='contact')`).run().changes || 0);
     }
     // وصل‌کردن سابقه پولی جابه‌جا نمی‌کند؛ اگر ماندهٔ واقعیِ بانکی در بکاپ منفی است،
     // نگهبان موجودی آن را با همین دلیل ثبت می‌کند، نه اینکه کل اتصال را برگرداند.

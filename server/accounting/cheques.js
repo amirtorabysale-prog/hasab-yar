@@ -58,10 +58,14 @@ export function postChequeJournal(database, values, { createdBy = null, timeZone
   assertAccountingPeriodOpen(database, periodForDate(occurredAt, timeZone));
 
   const party = values.counterparty || {};
-  const notes = chequeLedgerAccounts(database, party);
-  const noteAccount = receivable ? notes.noteReceivable : notes.notePayable;
+  // چکِ واردشده از پارسیان روی حساب اسناد و حساب طرفِ خودِ پارسیان نشسته؛ وصول و برگشتش
+  // باید همان‌ها را ببندد، نه حساب چکِ ساختهٔ حساب‌یار.
+  const noteAccount = values.noteAccountId || (() => {
+    const notes = chequeLedgerAccounts(database, party);
+    return receivable ? notes.noteReceivable : notes.notePayable;
+  })();
   const analyticId = party.analyticId || null;
-  const partyAccount = () => counterpartyLedgerAccount(database, party.contactId, party.name, receivable ? 'sales' : 'purchase');
+  const partyAccount = () => values.partyAccountId || counterpartyLedgerAccount(database, party.contactId, party.name, receivable ? 'sales' : 'purchase');
 
   let lines;
   if (stage === 'record') {

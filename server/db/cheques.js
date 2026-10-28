@@ -25,7 +25,42 @@ import { unitLabel } from '../../shared/amountUnit.js';
 
 export const CHEQUE_STATUSES = Object.freeze({
   open: 'در جریان', cleared: 'وصول‌شده', bounced: 'برگشتی', cancelled: 'ابطال‌شده',
+  // چک دریافتی که به تأمین‌کننده داده شد (پشت‌نویسی)؛ و چک واردشده‌ای که وضعیتش معلوم نیست.
+  transferred: 'واگذارشده', review: 'نیازمند بررسی',
 });
+
+const STATUS_CHECK = `CHECK(status IN (${Object.keys(CHEQUE_STATUSES).map((status) => `'${status}'`).join(',')}))`;
+
+// ستون‌های بعدی. منبع («parsian») و کلیدش ورود را تکرارناپذیر می‌کنند؛ حساب اسناد و
+// معین صاحب چک برای چکِ واردشده‌ای است که حساب‌های خودِ پارسیان رویشان نشسته.
+const LATER_COLUMNS = [
+  ['source', "TEXT NOT NULL DEFAULT ''"], ['source_key', "TEXT NOT NULL DEFAULT ''"], ['sayad', "TEXT NOT NULL DEFAULT ''"],
+  ['note_account_id', 'TEXT'], ['party_chart_id', 'TEXT'], ['transferred_to', "TEXT NOT NULL DEFAULT ''"], ['review_reason', "TEXT NOT NULL DEFAULT ''"],
+];
+
+/**
+ * جدول قدیمی وضعیت «واگذارشده» و «نیازمند بررسی» را در CHECK ندارد و SQLite آن را عوض
+ * نمی‌کند؛ جدول با همان ردیف‌ها بازسازی می‌شود.
+ */
+function widenChequeStatuses(database) {
+  const sql = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='cheques'").get()?.sql || '';
+  if (!sql || sql.includes("'transferred'")) return;
+  const columns = database.prepare('PRAGMA table_info(cheques)').all().map((column) => column.name).join(',');
+  // SAVEPOINT، نه BEGIN: این تابع گاهی درون تراکنش فراخواننده صدا زده می‌شود.
+  database.exec('SAVEPOINT widen_cheque_statuses');
+  try {
+    database.exec(`ALTER TABLE cheques RENAME TO cheques_before_statuses;
+      ${sql.replace(/CREATE TABLE\s+"?cheques"?/i, 'CREATE TABLE cheques').replace(/CHECK\s*\(\s*status IN \([^)]*\)\s*\)/i, STATUS_CHECK)};
+      INSERT INTO cheques (${columns}) SELECT ${columns} FROM cheques_before_statuses;
+      DROP TABLE cheques_before_statuses;
+      CREATE INDEX IF NOT EXISTS idx_cheques_status ON cheques(status,due_at);`);
+    database.exec('RELEASE widen_cheque_statuses');
+  } catch (error) {
+    database.exec('ROLLBACK TO widen_cheque_statuses');
+    database.exec('RELEASE widen_cheque_statuses');
+    throw error;
+  }
+}
 
 export function ensureChequeSchema(database) {
   database.exec(`
@@ -39,7 +74,7 @@ export function ensureChequeSchema(database) {
       occurred_at TEXT NOT NULL,
       serial TEXT NOT NULL DEFAULT '',
       bank_name TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','cleared','bounced','cancelled')),
+      status TEXT NOT NULL DEFAULT 'open' ${STATUS_CHECK},
       against TEXT NOT NULL DEFAULT 'income' CHECK(against IN ('income','receivable')),
       obligation_id TEXT,
       analytic_id TEXT,
@@ -51,6 +86,10 @@ export function ensureChequeSchema(database) {
     );
     CREATE INDEX IF NOT EXISTS idx_cheques_status ON cheques(status,due_at);
   `);
+  const present = new Set(database.prepare('PRAGMA table_info(cheques)').all().map((column) => column.name));
+  for (const [name, type] of LATER_COLUMNS) if (!present.has(name)) database.exec(`ALTER TABLE cheques ADD COLUMN ${name} ${type}`);
+  widenChequeStatuses(database);
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_cheques_source ON cheques(source,source_key) WHERE source<>''");
   return database;
 }
 
@@ -59,7 +98,8 @@ const database = () => ensureChequeSchema(activeWorkspaceDatabase());
 const COLUMNS = `id,direction,contact_id AS contactId,counterparty_name AS counterpartyName,amount,
   due_at AS dueAt,occurred_at AS occurredAt,serial,bank_name AS bankName,status,against,
   obligation_id AS obligationId,analytic_id AS analyticId,note,journal_entry_id AS journalEntryId,
-  settled_entry_id AS settledEntryId,settled_at AS settledAt,created_at AS createdAt`;
+  settled_entry_id AS settledEntryId,settled_at AS settledAt,created_at AS createdAt,
+  source,sayad,note_account_id AS noteAccountId,party_chart_id AS partyChartId,transferred_to AS transferredTo,review_reason AS reviewReason`;
 
 const hydrate = (row) => (row ? { ...row, statusLabel: CHEQUE_STATUSES[row.status] || row.status } : null);
 
@@ -293,6 +333,21 @@ function recordEngineCheque(db_, party, { event, decision, routing }) {
   };
 }
 
+/**
+ * حساب‌های پارسیانی که چک واردشده رویشان نشسته: حساب اسناد (ثبت در ورود) و حساب صاحب چک
+ * روی معین خودش — حساب اختصاصی شخص اگر فاز ب ساخته، وگرنه حساب همان معین. چک خودِ
+ * حساب‌یار چیزی برنمی‌گرداند و همان قاعدهٔ قبلی را می‌رود.
+ */
+function importedChequeAccounts(db_, cheque) {
+  if (cheque.source !== 'parsian') return {};
+  const party = cheque.partyChartId ? (db_.prepare(`SELECT journal_lines.account_id AS id FROM journal_lines
+      JOIN ledger_accounts ON ledger_accounts.id=journal_lines.account_id
+      WHERE ledger_accounts.chart_account_id=? AND journal_lines.analytic_id IS ? LIMIT 1`).get(cheque.partyChartId, cheque.analyticId || null)
+    || db_.prepare(`SELECT id FROM ledger_accounts WHERE chart_account_id=?
+      ORDER BY CASE WHEN source_kind='chart-account' THEN 0 ELSE 1 END,rowid LIMIT 1`).get(cheque.partyChartId))?.id : null;
+  return { noteAccountId: cheque.noteAccountId || undefined, partyAccountId: party || undefined };
+}
+
 function openCheque(db_, id) {
   const row = db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(String(id || ''));
   if (!row) throw invalidInput('چک پیدا نشد.');
@@ -335,6 +390,7 @@ export function clearCheque(id, { accountId, account = 'cash', occurredAt = '' }
       chequeId: cheque.id, stage: 'clear', direction: cheque.direction, amount: cheque.amount,
       occurredAt: settledAt, cashAccountId: resolveAccountId({ account, accountId }),
       counterparty: { contactId: cheque.contactId, name: cheque.counterpartyName, analyticId: cheque.analyticId },
+      ...importedChequeAccounts(db_, cheque),
       memo: `وصول چک ${cheque.counterpartyName}`,
     }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
     db_.prepare("UPDATE cheques SET status='cleared',settled_entry_id=?,settled_at=? WHERE id=? AND status='open'")
@@ -362,6 +418,7 @@ export function bounceCheque(id, { occurredAt = '' } = {}) {
       chequeId: cheque.id, stage: 'bounce', direction: cheque.direction, amount: cheque.amount,
       occurredAt: bouncedAt,
       counterparty: { contactId: cheque.contactId, name: cheque.counterpartyName, analyticId: cheque.analyticId },
+      ...importedChequeAccounts(db_, cheque),
       memo: `برگشت چک ${cheque.counterpartyName}`,
     }, { createdBy: currentWorkspace()?.userId || null, timeZone: currentTimeZone() });
     db_.prepare("UPDATE cheques SET status='bounced',settled_entry_id=?,settled_at=? WHERE id=? AND status='open'")
@@ -382,6 +439,11 @@ export function cancelCheque(id, { reason = '' } = {}) {
   const row = db_.prepare(`SELECT ${COLUMNS} FROM cheques WHERE id=?`).get(String(id || ''));
   if (!row) throw invalidInput('چک پیدا نشد.');
   if (row.status !== 'open') throw Object.assign(new Error(`این چک از قبل «${CHEQUE_STATUSES[row.status]}» است.`), { code: 'CHEQUE_NOT_OPEN', status: 409 });
+  // سند ثبت چکِ پارسیان در خودِ بکاپ است؛ ابطالِ این‌جا آن سند را برنمی‌گرداند و چک از
+  // دفتر چک می‌رفت در حالی که اسناد دریافتنی/پرداختنی همچنان بازش نگه می‌داشت.
+  if (row.source === 'parsian') {
+    throw Object.assign(new Error('این چک از بکاپ پارسیان آمده و سند ثبتش هم همان‌جاست؛ اگر اشتباه است، با سند اصلاحی درستش کن.'), { code: 'CHEQUE_FROM_PARSIAN', status: 409 });
+  }
   if (String(row.id).startsWith('review:')) {
     throw Object.assign(new Error('این چک را حسابدار از صف بررسی ثبت کرده؛ همان ثبت را از صف بررسی برگردان تا چک هم ابطال شود.'), { code: 'CHEQUE_FROM_REVIEW', status: 409 });
   }
@@ -413,6 +475,7 @@ export function chequeSummary() {
     openReceivable: pick('receivable', 'open'),
     openPayable: pick('payable', 'open'),
     bounced: rows.filter((row) => row.status === 'bounced').reduce((sum, row) => sum + row.total, 0),
+    review: rows.filter((row) => row.status === 'review').reduce((sum, row) => ({ count: sum.count + row.count, total: sum.total + row.total }), { count: 0, total: 0 }),
   };
 }
 

@@ -39,6 +39,7 @@ import { assertAccountingPeriodOpen, createJournalBatch, ensureParsianSourceSche
 import { persianToISO } from '../shared/persianDate.js';
 import { AMOUNT_UNITS, convertAmount, normalizeAmountUnit, unitLabel } from '../shared/amountUnit.js';
 import { importParsianExtras, parsianExtrasSummary } from './parsianExtras.js';
+import { importParsianCheques } from './parsianCheques.js';
 
 const JOURNAL_CHUNK = 200;
 const TYPE_LABELS = { asset: 'دارایی', liability: 'بدهی', equity: 'سرمایه', income: 'درآمد', expense: 'هزینه' };
@@ -141,8 +142,24 @@ function tafsiliSourceKey(row) {
   return `${row.kol}:${row.moeen}:${row.code}`;
 }
 
-function tafsiliKind(row) {
-  return row.kol === 12 || row.kol === 23 ? 'contact' : 'custom';
+/**
+ * سمت طرف حسابِ یک کل پارسیان: دریافتنی، پرداختنی یا هیچ.
+ *
+ * کد ۱۲ و ۲۳ قرارداد کدینگ نمونهٔ پارسیان است، نه قاعده: در بکاپ «اتیه سازان» بستانکاران
+ * کل ۲۲ («حسابهاي پرداختي») بودند و هیچ تأمین‌کننده‌ای شخص نشد، پس چک‌های پرداختی هم صاحب
+ * نداشتند. نام کل همان‌قدر معتبر است.
+ */
+export function partySideOfKol(code, name) {
+  if (Number(code) === 12) return 'receivable';
+  if (Number(code) === 23) return 'payable';
+  const text = String(name || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک');
+  if (/دریافتنی|دریافتی|بدهکاران/.test(text)) return 'receivable';
+  if (/پرداختنی|پرداختی|بستانکاران/.test(text)) return 'payable';
+  return null;
+}
+
+function tafsiliKind(row, kolName) {
+  return partySideOfKol(row.kol, kolName) ? 'contact' : 'custom';
 }
 
 function ensureImportLog(database) {
@@ -273,11 +290,12 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {}, ledg
   // --- تفصیلی‌ها ---
   const analyticSpecs = [];
   const analyticKeys = new Map();
+  const kolNames = new Map(parsed.chart.kol.map((kol) => [kol.code, kol.name]));
   for (const row of parsed.chart.tafsili) {
     const key = tafsiliSourceKey(row);
     if (analyticKeys.has(key)) continue;
     const spec = {
-      name: row.name, kind: tafsiliKind(row), sourceKey: key,
+      name: row.name, kind: tafsiliKind(row, kolNames.get(row.kol)), sourceKey: key,
       externalCode: row.code > 0 ? String(row.code) : '', kol: row.kol, moeen: row.moeen, code: row.code,
     };
     analyticSpecs.push(spec);
@@ -581,6 +599,13 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
   } catch (error) {
     extras = { error: `اسناد و کدینگ وارد شدند، ولی کالا و فاکتورها و کارت‌های طرف حساب نیامدند: ${error.message}` };
   }
+  // چک‌ها پس از اسناد، چون به سند ثبت و تسویهٔ خودشان وصل می‌شوند؛ هیچ سند تازه‌ای نمی‌سازند.
+  let cheques;
+  try {
+    cheques = importParsianCheques(database, parsed, { fileUnit: unit, ledgerUnit, analyticIdByKey, timeZone });
+  } catch (error) {
+    cheques = { error: `اسناد وارد شدند، ولی چک‌ها نیامدند: ${error.message}` };
+  }
   const skipped = plan.vouchers.filter((voucher) => !voucher.importable).map(voucherPreview);
   return {
     chart: chartResult,
@@ -594,5 +619,6 @@ export function commitParsianBackup(database, buffer, fileName, { createdBy = nu
     skippedVouchers: skipped,
     summary: plan.summary,
     extras,
+    cheques,
   };
 }

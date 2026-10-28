@@ -59,7 +59,8 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
         </p>
       </div>
       <div className="flex gap-1.5 text-[12px] font-bold">
-        {[['open', 'در جریان'], ['cleared', 'وصول‌شده'], ['bounced', 'برگشتی']].map(([id, label]) => (
+        {[['open', 'در جریان'], ['cleared', 'وصول‌شده'], ['bounced', 'برگشتی'], ['transferred', 'واگذارشده'],
+          ...(summary.review?.count ? [['review', `نیازمند بررسی (${toPersianDigits(summary.review.count)})`]] : [])].map(([id, label]) => (
           <button key={id} onClick={() => setStatus(id)} className={`tap rounded-lg px-3 ${status === id ? 'bg-accent/10 text-accent' : 'text-muted hover:bg-surface'}`}>{label}</button>
         ))}
       </div>
@@ -131,7 +132,11 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
             {cheque.serial ? ` · شماره ${toPersianDigits(cheque.serial)}` : ''}
             {cheque.bankName ? ` · ${cheque.bankName}` : ''}
             {cheque.dueAt ? ` · سررسید ${persianDate(cheque.dueAt)}` : ''}
+            {cheque.sayad ? ` · صیاد ${toPersianDigits(cheque.sayad)}` : ''}
+            {cheque.transferredTo ? ` · واگذار به ${cheque.transferredTo}` : ''}
+            {cheque.source === 'parsian' ? ' · از پارسیان' : ''}
           </p>
+          {cheque.reviewReason ? <p className="mt-1 text-xs leading-5 text-warn">{cheque.reviewReason}</p> : null}
         </div>
         <b className="numbers shrink-0 text-sm">{formatAmount(cheque.amount)}</b>
         {cheque.status === 'open' ? <div className="flex shrink-0 gap-1">
