@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Download } from 'lucide-react';
+import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
@@ -65,7 +66,7 @@ export default function ExcelImportPanel({ canManage, notify, refresh }) {
       {kind === 'opening' && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-warn-bg px-3 py-2">
         <label className="text-[13px] font-bold text-accent">واحد مبلغ فایل<select value={amountUnit} onChange={(event) => setAmountUnit(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] text-ink"><option value="toman">تومان</option><option value="rial">ریال</option></select></label>
         <span className="text-xs leading-5 text-muted">اشتباه در این انتخاب یعنی خطای ده‌برابری؛ حساب‌یار آن را حدس نمی‌زند.</span>
-        <label className="text-[13px] font-bold text-accent">تاریخ افتتاحیه<input type="date" value={openingDate} onChange={(event) => setOpeningDate(event.target.value)} className="tap mr-2 rounded-lg border border-line bg-paper px-2 text-[13px] text-ink" /></label>
+        <label className="text-[13px] font-bold text-accent">تاریخ افتتاحیه<QuickDateInput format="date" direction="past" aria-label="تاریخ افتتاحیه" value={openingDate} onChange={setOpeningDate} className="mr-2 inline-block w-56 align-middle font-normal" /></label>
         <span className="text-xs leading-5 text-muted">خالی یعنی روز شروع ثبت در این دفتر؛ تاریخ بعد از آن پذیرفته نمی‌شود.</span>
       </div>}
       {kind !== 'analytics' && <label className="flex items-center gap-2 text-[12px] text-muted"><input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} />{kind === 'chart' ? 'کدینگ فعلی جایگزین شود (فقط وقتی هیچ نگاشتی وجود ندارد)' : 'سند افتتاحیهٔ قبلی معکوس و جایگزین شود'}</label>}

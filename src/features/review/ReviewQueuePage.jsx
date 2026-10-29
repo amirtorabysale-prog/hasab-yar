@@ -120,7 +120,7 @@ function ContractAnswer({ question, disabled, onAnswer }) {
       <button disabled={disabled} onClick={() => onAnswer({ contractEnded: false })} className={button}>قرارداد با مبلغ کمتر ادامه دارد</button>
     </div>}
     {question.id === 'contract.end-date' && <div className="mt-1 flex flex-wrap items-center gap-1">
-      <PersianDateInput value={endedAt} onChange={setEndedAt} />
+      <PersianDateInput aria-label="تاریخ پایان" value={endedAt} onChange={setEndedAt} />
       <button disabled={disabled || !endedAt} onClick={() => onAnswer({ contractEndedAt: endedAt })} className={button}>ثبت با این روز پایان</button>
     </div>}
   </div>;

@@ -234,7 +234,7 @@ export function ConfirmationSheet({ result, categories, accounts = [], contacts 
               نخستین تاریخ ناقص («1405/07/1») جمع می‌شد و روز ۱۸ را ۱ ثبت می‌کرد. */}
           {item.paymentDateUnknown && <label className="mt-3 block rounded-lg border border-line bg-surface p-3 text-sm hover:bg-paper hover:text-ink">تاریخ واقعی پرداخت
             <p className="my-2 text-xs leading-6 text-muted">تاریخ شروع پوشش یا خدمت، تاریخ پرداخت نیست. تاریخ پرداخت را مشخص کنید.</p>
-            <PersianDateInput value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
+            <PersianDateInput direction="past" aria-label="تاریخ پرداخت" value={item.occurredAt || ''} onChange={(iso) => patchField('date', { occurredAt: iso, occurredAtLabel: 'تاریخ انتخاب‌شده توسط کاربر', reviewReasons: (item.reviewReasons || []).filter(reason => !iso || !reason.startsWith('تاریخ پرداخت مشخص نیست')) })} />
           </label>}
           {item.occurredAt && <div className="flex min-h-14 items-center gap-3 border-b border-line py-2"><span className="w-12 text-[13px] text-muted">تاریخ</span><div className="flex flex-1 items-center justify-between gap-2"><b className="text-[13px]">{persianDate(item.occurredAt)}</b><span className="rounded-md bg-accent/5 px-2 py-1 text-xs font-bold text-accent">از گفتهٔ «{item.occurredAtLabel}» برداشت شد</span></div></div>}
         </div>

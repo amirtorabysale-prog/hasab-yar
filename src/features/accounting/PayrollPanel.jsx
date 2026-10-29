@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
+import { QuickMonthInput } from '../../components/QuickDateInput.jsx';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
@@ -135,8 +136,7 @@ export default function PayrollPanel({ canManage, notify }) {
 
     <form onSubmit={submit} className="mt-3 flex flex-wrap items-end gap-2">
       <label className="text-[12px] font-bold">دورهٔ حقوق
-        <input value={period} onChange={(event) => setPeriod(event.target.value)} placeholder="۱۴۰۴/۰۶" disabled={!canManage}
-          className="tap mt-1 block w-32 rounded-lg border border-line bg-paper px-2 text-[13px]" />
+        <QuickMonthInput value={period} onChange={setPeriod} disabled={!canManage} aria-label="دورهٔ حقوق" className="mt-1 w-44 font-normal" />
       </label>
       <input type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={(event) => { setFile(event.target.files?.[0] || null); setIssues([]); }} disabled={!canManage}

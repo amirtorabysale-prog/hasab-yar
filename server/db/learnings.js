@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { db, invalidInput } from './core.js';
 import { forgetAiLesson } from './aiLessons.js';
 
-/** یادگیری‌هایی که سیستم خودش ساخته: از ثبت‌های AI و از تأییدِ حسابدار در صف. */
-const LEARNED_SOURCES = new Set(['ai', 'accountant']);
+/** یادگیری‌هایی که سیستم خودش ساخته: از ثبت‌های AI، از تأییدِ حسابدار در صف و از سابقهٔ دفتر. */
+const LEARNED_SOURCES = new Set(['ai', 'accountant', 'history']);
 
+// نوع دسته همراه یادگیری می‌آید: دستهٔ ساختهٔ دفتر («هزینه اجاره دفتر») در فهرست
+// دسته‌های ثابت پارسر نیست و بی نوعش، پارسر نمی‌فهمید با جهت جمله می‌خواند یا نه.
 export function getLearnings() {
-  return db.prepare('SELECT id,keyword,category,source,created_at AS createdAt,updated_at AS updatedAt FROM learnings ORDER BY updated_at DESC').all();
+  return db.prepare(`SELECT learnings.id,keyword,category,source,categories.type AS type,created_at AS createdAt,updated_at AS updatedAt
+    FROM learnings LEFT JOIN categories ON categories.name=learnings.category ORDER BY updated_at DESC`).all();
 }
 
 // نگاشتی که کاربر خودش می‌سازد یا عوض می‌کند، مالِ خودش است ('manual')؛ حتی اگر

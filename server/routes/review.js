@@ -10,6 +10,9 @@ import {
 import { DEFAULT_AUTOMATION_POLICY } from '../../shared/automationPolicy.js';
 import { setEventTopicLabel } from '../topicPromotion.js';
 import { aiLessonThreshold, decideAiLesson, exportAiLessons, listAiLessons, saveAiLessonThreshold } from '../db/aiLessons.js';
+import { activeWorkspaceDatabase, currentTimeZone } from '../db/core.js';
+import { deleteRecurringRule, saveRecurringRule } from '../db/recurring.js';
+import { decideHistoryLesson, forgetHistoryLessons, listHistoryLessons, refreshHistoryLessons } from '../historyLearning.js';
 
 export function registerReviewRoutes(app) {
   app.post('/api/financial-events/intakes/:id/resolve', (request, response, next) => {
@@ -116,6 +119,29 @@ export function registerReviewRoutes(app) {
   app.get('/api/automation-rules', (request, response) => response.json({ items: listAutomationRules(request.query.source) }));
   app.post('/api/automation-rules', (request, response, next) => { try { return response.status(201).json({ item: saveAutomationRule(request.body || {}) }); } catch (error) { return next(error); } });
   app.delete('/api/automation-rules/:id', (request, response) => response.status(deleteAutomationRule(request.params.id) ? 204 : 404).end());
+  // یادگیری از سابقهٔ دفتر (server/historyLearning.js): تحلیل سندهای تأییدشدهٔ بکاپ و
+  // پیشنهاد ثبت دوره‌ای و واژه. دیدن برای همه؛ تحلیل با حسابدار؛ تأیید با مدیر دفتر،
+  // چون حساب کدینگ را دستهٔ ثبت روزانه می‌کند (server/access.js).
+  app.get('/api/learnings/history', (_request, response, next) => {
+    try {
+      const database = activeWorkspaceDatabase();
+      const current = listHistoryLessons(database);
+      return response.json(current.analyzed ? current : refreshHistoryLessons(database, { timeZone: currentTimeZone() }));
+    } catch (error) { return next(error); }
+  });
+  app.post('/api/learnings/history/analyze', (_request, response, next) => {
+    try { return response.json(refreshHistoryLessons(activeWorkspaceDatabase(), { timeZone: currentTimeZone() })); } catch (error) { return next(error); }
+  });
+  app.post('/api/learnings/history/forget', (_request, response, next) => {
+    try { return response.json(forgetHistoryLessons(activeWorkspaceDatabase(), { deleteRecurringRule })); } catch (error) { return next(error); }
+  });
+  app.post('/api/learnings/history/:id/decide', (request, response, next) => {
+    try {
+      return response.json({ item: decideHistoryLesson(activeWorkspaceDatabase(), request.params.id, {
+        action: request.body?.action, actor: request.user?.id || null, saveRecurringRule,
+      }) });
+    } catch (error) { return next(error); }
+  });
   app.get('/api/learnings', (_request, response) => response.json({ items: getLearnings() }));
   app.post('/api/learnings', (request, response, next) => { try { response.status(201).json({ item: saveLearning(request.body || {}) }); } catch (error) { next(error); } });
   app.put('/api/learnings/:id', (request, response, next) => { try { const item = updateLearning(request.params.id, request.body || {}); if (!item) return response.status(404).json({ message: 'یادگیری پیدا نشد.' }); return response.json({ item }); } catch (error) { return next(error); } });

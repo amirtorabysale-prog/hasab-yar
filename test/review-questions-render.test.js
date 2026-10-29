@@ -24,7 +24,9 @@ test('questions come one at a time with progress, typed dates and persisted answ
     assert.match(html,/textarea[^>]*aria-label="نام دقیق کالا چیست؟"/);
     assert.doesNotMatch(html,/aria-label="سررسید چک چیست؟"/,'سؤال دوم تا جواب اولی نیامده نشان داده نمی‌شود');
     const dateFirst=renderToStaticMarkup(React.createElement(ReviewAssistant,{item:{id:'date-first'},ai:{...ai,questions:[ai.questions[2]],context:{}},setAi(){},onSaved(){},notify(){}}));
-    assert.match(dateFirst,/input[^>]*aria-label="سررسید چک چیست؟"[^>]*type="date"/);
+    // تاریخ با انتخاب‌گر سریع شمسی گرفته می‌شود، نه کادر میلادیِ مرورگر.
+    assert.match(dateFirst,/button[^>]*aria-label="سررسید چک چیست؟"[^>]*aria-haspopup="dialog"/);
+    assert.doesNotMatch(dateFirst,/type="date"/);
     assert.doesNotMatch(html,/برای فعال شدن ثبت، فقط موارد مشخص‌شدهٔ بالا/);
     assert.doesNotMatch(html,/پاسخ این سؤال را اینجا بنویس…[^>]*aria-label="چند متر خریدید؟"/);
     assert.match(html,/جواب‌های داده‌شده/);assert.match(html,/۶۰ متر/);

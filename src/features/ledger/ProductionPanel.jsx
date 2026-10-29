@@ -65,7 +65,7 @@ export function ProductionPanel({ products = [], notify, onChange }) {
           {tracked.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
         </select>
         <input required inputMode="decimal" value={draft.quantity} onChange={(event) => setDraft({ ...draft, quantity: event.target.value.replace(/[^\d.]/g, '') })} placeholder="تعداد تولید" className={`${field} numbers`} />
-        <label className="text-xs text-muted">تاریخ<PersianDateInput value={draft.occurredAt} onChange={(iso) => setDraft({ ...draft, occurredAt: iso })} /></label>
+        <label className="text-xs text-muted">تاریخ<PersianDateInput direction="past" aria-label="تاریخ تولید" value={draft.occurredAt} onChange={(iso) => setDraft({ ...draft, occurredAt: iso })} /></label>
         <input value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="شرح (اختیاری)" className={field} />
       </div>
       {planNote && <p className="text-xs leading-5 text-muted">{planNote}</p>}

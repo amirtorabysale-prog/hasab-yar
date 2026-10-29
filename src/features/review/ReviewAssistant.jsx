@@ -1,5 +1,6 @@
 import { Check, ChevronLeft, ChevronRight, MessageCircle, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import { ReviewPriorBasis } from './ReviewPriorBasis.jsx';
 import { EntryTable } from './ReviewEntry.jsx';
 import { proposalBrief, remainingBlockers } from './reviewCase.js';
@@ -70,7 +71,7 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
       <input {...props} list={`tax-sources-${item.id}`} placeholder="شماره سال/سند، مثلاً ۱۴۰۵/۱۲" />
       <datalist id={`tax-sources-${item.id}`}>{ai.taxRefundCandidates.map((c) => <option key={c.lineId} value={c.reference}>{c.accountName} · {persianDate(c.occurredAt)} · مانده {formatAmount(c.available)} {unitLabel()}</option>)}</datalist>
     </>;
-    if (['occurredAt', 'dueAt'].includes(q.field)) return <input {...props} type="date" />;
+    if (['occurredAt', 'dueAt'].includes(q.field)) return <QuickDateInput format="date" direction={q.field === 'dueAt' ? 'any' : 'past'} value={value || ''} onChange={(date) => answerQuestion(q, date)} aria-label={q.text} className="mt-2" />;
     // جوابِ بسته («وجه در اختیار شرکت»، «برداشت شخصی» …) کارتِ انتخاب است، نه متنِ آزاد.
     if (q.options?.length) return <span role="radiogroup" aria-label={q.text} className="mt-2 grid gap-2 sm:grid-cols-2">
       {q.options.map((option) => <button key={option} type="button" role="radio" aria-checked={value === option} onClick={() => answerQuestion(q, option)}
@@ -226,8 +227,8 @@ export function ReviewAssistant({ item, ai, setAi, onSaved, notify, busy }) {
       <p className="text-muted">چیزی که پیشنهاد درست نفهمیده را بنویس؛ پیشنهاد تازه می‌آید و ثبت همچنان با تأیید توست.</p>
       {(history.length ? history : ai?.conversation || []).length > 0 && <div className="max-h-72 space-y-2 overflow-y-auto" aria-label="تاریخچه گفت‌وگوی حسابدار">{(history.length ? history : ai?.conversation || []).map((h) => <div key={h.id} className={`rounded-lg p-2.5 ${h.speaker === 'assistant' ? 'bg-surface' : 'bg-accent/5'}`}><p className="text-[12px] text-muted"><b className="text-ink">{SPEAKERS[h.speaker] || 'حسابدار'}</b> · {h.actorName || h.actor || ''} · {persianDate(h.createdAt)}</p><p className="line-clamp-4 whitespace-pre-wrap text-[14px]">{textOf(h)}</p></div>)}</div>}
       <details className="rounded-lg border border-line p-2.5"><summary className="cursor-pointer font-bold">تاریخ، طرف‌حساب و بانک</summary><p className="mt-1 text-muted">فقط اگر اطلاعات ثبت اشتباه است عوضش کن؛ جواب سؤال‌ها کافی است.</p><div className="mt-2 grid gap-2 sm:grid-cols-2">
-        <label>تاریخ رویداد<input type="date" value={facts.occurredAt || ''} onChange={(e) => setFacts({ ...facts, occurredAt: e.target.value })} className="block w-full rounded-lg border border-line p-2" /></label>
-        {ai?.lines?.some((l) => ['cheque-payable', 'cheque-receivable'].includes(l.role)) && <label>سررسید چک<input type="date" value={facts.dueAt || ''} onChange={(e) => setFacts({ ...facts, dueAt: e.target.value })} className="block w-full rounded-lg border border-line p-2" /></label>}
+        <label>تاریخ رویداد<QuickDateInput format="date" direction="past" aria-label="تاریخ رویداد" value={facts.occurredAt || ''} onChange={(occurredAt) => setFacts({ ...facts, occurredAt })} /></label>
+        {ai?.lines?.some((l) => ['cheque-payable', 'cheque-receivable'].includes(l.role)) && <label>سررسید چک<QuickDateInput format="date" aria-label="سررسید" value={facts.dueAt || ''} onChange={(dueAt) => setFacts({ ...facts, dueAt })} /></label>}
         <label>طرف حساب موجود<select value={facts.counterpartyId || ''} onChange={(e) => setFacts({ ...facts, counterpartyId: e.target.value })} className="block w-full rounded-lg border border-line p-2"><option value="">انتخاب شخص</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
         {ai?.lines?.some((l) => l.role === 'cash') && <label>بانک یا صندوق<select value={facts.accountId || ''} onChange={(e) => setFacts({ ...facts, accountId: e.target.value })} className="block w-full rounded-lg border border-line p-2"><option value="">انتخاب حساب</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
         {!facts.counterpartyId && <label>نام طرف‌حساب تازه<input value={facts.counterpartyName || ai?.newCounterparty?.name || ''} onChange={(e) => setFacts({ ...facts, counterpartyName: e.target.value })} placeholder="نام واقعی؛ همراه تأیید ساخته می‌شود" className="block w-full rounded-lg border border-line p-2" /></label>}

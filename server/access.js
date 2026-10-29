@@ -19,6 +19,10 @@ export function minimumRoleForRequest(method, path) {
   if (normalizedPath.startsWith('/topics/')) return 'accountant';
   // چند تأییدِ هم‌جهت تا پارسر خودکار از AI یاد بگیرد، سیاست دفتر است؛ تصمیم دربارهٔ
   // تک‌تک درس‌ها هم‌سطحِ ساختن یک یادگیری، یعنی حسابدار.
+  // یادگیری از سابقه: تحلیل فقط می‌خواند و پیشنهاد می‌سازد (حسابدار)؛ تأیید و برگشتش
+  // حساب کدینگ را دستهٔ ثبت روزانه و قاعدهٔ دوره‌ای می‌سازد، هم‌سطح ارتقای موضوع (مدیر).
+  if (normalizedPath === '/learnings/history/analyze') return 'accountant';
+  if (normalizedPath === '/learnings/history/forget' || (normalizedPath.startsWith('/learnings/history/') && normalizedPath.endsWith('/decide'))) return 'manager';
   if (normalizedPath === '/ai-lessons/threshold') return ['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod) ? 'viewer' : 'manager';
   if (normalizedPath.startsWith('/collaboration/requests/') && normalizedPath.endsWith('/answer')) return 'manager';
   if (normalizedPath.startsWith('/collaboration/')) return 'accountant';

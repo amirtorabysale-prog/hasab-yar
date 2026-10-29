@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import { api } from '../../lib/api.js';
 import { formatAmount, persianDate, toPersianDigits, unitLabel } from '../../lib/format.js';
 
@@ -46,7 +47,7 @@ function ResolveForm({ hold, targets, invoices, contacts, notify, onDone }) {
       <label>دستهٔ درآمد<input required value={form.category} onChange={set('category')} placeholder="مثلاً فروش خدمات" className={field} /></label>
       <label>ارزش افزودهٔ داخل مبلغ<input inputMode="numeric" value={form.vatAmount} onChange={set('vatAmount')} placeholder="۰" className={`${field} numbers`} /></label>
     </>}
-    <label>تاریخ تعیین تکلیف<input type="date" value={form.occurredAt} onChange={set('occurredAt')} className={field} /></label>
+    <label>تاریخ تعیین تکلیف<QuickDateInput format="date" direction="past" aria-label="تاریخ تعیین تکلیف" value={form.occurredAt} onChange={(occurredAt) => setForm((current) => ({ ...current, occurredAt }))} /></label>
     <label className="sm:col-span-2">دلیل یا مدرک منشأ<textarea required minLength={8} value={form.reason} onChange={set('reason')} placeholder="مثلاً فیش واریز شرکت آریا رسید" className="mt-1 min-h-16 w-full rounded-lg border border-line bg-surface p-2 text-sm" /></label>
     <button disabled={busy} className="tap rounded-lg bg-accent font-bold text-on-fill disabled:opacity-45 sm:col-span-2 hover:bg-accent/90 active:bg-accent/80">ثبت تعیین تکلیف</button>
   </form>;

@@ -1,9 +1,10 @@
 import { ChevronLeft, Download, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { HistoryLessons } from './HistoryLessons.jsx';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
-const SOURCE_LABELS = { ai: 'از AI', accountant: 'از تأیید حسابدار', topic: 'از ارتقای موضوع' };
+const SOURCE_LABELS = { ai: 'از AI', accountant: 'از تأیید حسابدار', topic: 'از ارتقای موضوع', history: 'از سابقهٔ دفتر' };
 const DECIDERS = ['owner', 'manager', 'accountant'];
 const POLICY_SETTERS = ['owner', 'manager'];
 
@@ -81,6 +82,7 @@ export function LearningPage({ categories, notify, role = '' }) {
   const pending = lessons.lessons.filter((lesson) => lesson.kind === 'category' && ['watching', 'conflict'].includes(lesson.status));
   const structural = lessons.lessons.filter((lesson) => lesson.kind === 'structural' && lesson.status === 'open');
   return <main className="px-4 py-5"><h1 className="text-xl font-extrabold">آنچه یاد گرفته‌ام</h1><p className="mt-2 text-sm leading-7 text-muted">نگاشت‌هایی که خودت ساخته‌ای یا تأیید کرده‌ای، و آنچه از ثبت‌های تأییدشدهٔ AI یاد گرفته شده. هر مورد را هر زمان بخواهی می‌توانی تغییر بدهی یا پاک کنی.</p><div className="mt-5 flex gap-2 rounded-xl border border-line bg-surface p-2"><input value={draft.keyword} onChange={(event) => setDraft({ ...draft, keyword: event.target.value })} placeholder="مثلاً اسنپ‌فود" className="tap min-w-0 flex-1 px-2 outline-none" /><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="tap max-w-32 rounded-lg border border-line px-2">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={save} className="tap grid place-items-center rounded-lg bg-accent text-on-fill hover:bg-accent/90 active:bg-accent/80" aria-label="افزودن"><Plus size={21} /></button></div><div className="mt-5 divide-y divide-line border-y border-line">{items.length ? items.map((item) => <div key={item.id} className="flex min-h-[64px] items-center gap-2"><span className="min-w-0 flex-1 truncate font-bold">{item.keyword}{SOURCE_LABELS[item.source] && <span className="ms-2 rounded-full border border-line px-2 py-0.5 text-[11px] font-bold text-muted">{SOURCE_LABELS[item.source]}</span>}</span><ChevronLeft size={17} className="text-muted" /><select value={item.category} onChange={(event) => update(item, event.target.value)} className="tap max-w-36 bg-transparent text-sm text-muted outline-none">{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><button onClick={() => remove(item.id)} className="tap grid place-items-center text-expense" aria-label={`حذف ${item.keyword}`}><Trash2 size={18} /></button></div>) : <p className="py-10 text-center text-sm text-muted">هنوز نگاشت تأییدشده‌ای ندارم.</p>}</div>
+    <HistoryLessons notify={notify} role={role} onLearned={load} />
     <section aria-labelledby="ai-lessons-title" className="mt-8">
       <h2 id="ai-lessons-title" className="text-lg font-extrabold">یادگیری از AI</h2>
       <p className="mt-2 text-sm leading-7 text-muted">وقتی AI جمله‌ای را درست‌تر از پارسر می‌فهمد و ثبتش تأیید می‌شود، یا حسابدار در صف سندی را تأیید می‌کند، اینجا می‌آید. تأیید حسابدار همان لحظه یاد گرفته می‌شود؛ دسته بعد از {toPersianDigits(lessons.threshold)} تأییدِ هم‌جهت خودکار یاد گرفته می‌شود و فقط دسته را عوض می‌کند، هرگز جهت پول را.</p>

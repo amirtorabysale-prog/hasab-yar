@@ -4,6 +4,7 @@
 
 import { Check, Mic, ReceiptText, Sparkles } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import { PRODUCT_POSITIONING } from '../../../shared/product.js';
 import { api } from '../../lib/api.js';
 import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../../lib/liveSpeech.js';
@@ -48,7 +49,7 @@ function ReceiptReviewPanel({ detail, candidates, accounts, categories, notify, 
       <label className="text-xs text-muted">دسته<select value={draft.category || ''} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-ink"><option value="">انتخاب دسته</option>{categories.filter((item) => item.type === (draft.type || 'expense')).map((item) => <option key={item.id}>{item.name}</option>)}</select></label>
       <label className="text-xs text-muted">حساب<select value={draft.accountId || 'cash'} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })} className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-ink">{accounts.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label className="text-xs text-muted">روش تسویه<input value={draft.paymentMethod || ''} onChange={(event) => setDraft({ ...draft, paymentMethod: event.target.value })} placeholder="کارت، نقد، انتقال…" className="tap mt-1 w-full rounded-lg border border-line px-3 text-ink" /></label>
-      <label className="text-xs text-muted">تاریخ رسید<input type="date" value={(draft.occurredAt || '').slice(0, 10)} onChange={(event) => setDraft({ ...draft, occurredAt: event.target.value })} className="tap numbers mt-1 w-full rounded-lg border border-line px-3 text-ink" /></label>
+      <label className="text-xs text-muted">تاریخ رسید<QuickDateInput format="date" direction="past" aria-label="تاریخ رسید" value={(draft.occurredAt || '').slice(0, 10)} onChange={(occurredAt) => setDraft({ ...draft, occurredAt })} className="mt-1" /></label>
       <label className="text-xs text-muted">شماره پیگیری<input value={draft.reference || ''} onChange={(event) => setDraft({ ...draft, reference: event.target.value })} className="tap numbers mt-1 w-full rounded-lg border border-line px-3 text-ink" /></label>
       <label className="text-xs text-muted sm:col-span-2">توضیح تکمیلی<input value={draft.note || ''} onChange={(event) => setDraft({ ...draft, note: event.target.value })} className="tap mt-1 w-full rounded-lg border border-line px-3 text-ink" /></label>
     </div>

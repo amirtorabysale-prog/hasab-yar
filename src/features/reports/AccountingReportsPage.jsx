@@ -277,8 +277,8 @@ export function AccountingReportsPage({ access, notify }) {
         <button type="button" onClick={() => window.print()} disabled={!report} className="tap inline-flex items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-bold hover:bg-subtle disabled:opacity-50"><Printer size={15} aria-hidden="true" />چاپ</button>
       </div>
       {preset === 'custom' && !meta.today && range && <div className="rq-step mt-3 grid gap-2 sm:max-w-md sm:grid-cols-2">
-        {!meta.pointInTime && <label className="text-xs font-bold text-muted">از تاریخ<PersianDateInput value={range.from} onChange={(from) => setRange((current) => ({ ...current, from }))} className="mt-1" /></label>}
-        <label className="text-xs font-bold text-muted">{meta.pointInTime ? 'در تاریخ' : 'تا تاریخ'}<PersianDateInput value={range.to} onChange={(to) => setRange((current) => ({ ...current, to }))} className="mt-1" /></label>
+        {!meta.pointInTime && <label className="text-xs font-bold text-muted">از تاریخ<PersianDateInput direction="past" aria-label="از تاریخ" value={range.from} onChange={(from) => setRange((current) => ({ ...current, from }))} className="mt-1" /></label>}
+        <label className="text-xs font-bold text-muted">{meta.pointInTime ? 'در تاریخ' : 'تا تاریخ'}<PersianDateInput aria-label="تا تاریخ" value={range.to} onChange={(to) => setRange((current) => ({ ...current, to }))} className="mt-1" /></label>
       </div>}
       {(reportId === 'trial' || reportId === 'ledger' || meta.comparable) && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
         {reportId === 'trial' && <><Segmented label="سطح تراز" options={LEVELS} value={level} onChange={setLevel} />

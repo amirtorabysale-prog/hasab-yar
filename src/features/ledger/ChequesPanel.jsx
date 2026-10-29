@@ -122,7 +122,7 @@ export default function ChequesPanel({ contacts = [], notify, refresh }) {
           placeholder="شماره چک" className="tap numbers rounded-lg border border-line px-3 text-[13px]" />
         <input value={draft.bankName} onChange={(event) => setDraft({ ...draft, bankName: event.target.value })}
           placeholder="بانک" className="tap rounded-lg border border-line px-3 text-[13px]" />
-        <label className="text-xs text-muted">سررسید<PersianDateInput value={draft.dueAt} onChange={(iso) => setDraft({ ...draft, dueAt: iso })} /></label>
+        <label className="text-xs text-muted">سررسید<PersianDateInput aria-label="سررسید چک" value={draft.dueAt} onChange={(iso) => setDraft({ ...draft, dueAt: iso })} /></label>
         <select value={draft.against} onChange={(event) => setDraft({ ...draft, against: event.target.value })} className="tap rounded-lg border border-line bg-paper px-3 text-[13px]">
           <option value="income">بابت فروش یا خرید تازه</option>
           <option value="receivable">بابت طلب یا بدهی قبلی</option>
@@ -267,7 +267,7 @@ function ChequeForm({ kind, cheque, accounts, contacts, history, busy, onSubmit 
         {values.status === 'open' ? 'چک باز می‌شود و وصول یا برگشتش از همین‌جا سند می‌خورد.' : 'سند تازه‌ای ساخته نمی‌شود؛ فقط چک به سندی وصل می‌شود که همین رویداد را در دفتر دارد.'}
       </p>
     </>}
-    {kind !== 'resolve' && <label className="text-xs text-muted">تاریخ<PersianDateInput value={values.occurredAt} onChange={(iso) => set({ occurredAt: iso })} /></label>}
+    {kind !== 'resolve' && <label className="text-xs text-muted">تاریخ<PersianDateInput direction="past" aria-label="تاریخ" value={values.occurredAt} onChange={(iso) => set({ occurredAt: iso })} /></label>}
     <button disabled={busy || ((kind === 'clear' || kind === 'deposit') && !values.accountId) || (kind === 'transfer' && !values.counterpartyName.trim())}
       className="tap rounded-lg bg-accent px-4 text-[13px] font-bold text-on-fill disabled:opacity-45">
       {{ clear: cheque.direction === 'payable' ? 'ثبت پاس' : 'ثبت وصول', deposit: 'ثبت نزد بانک', transfer: 'ثبت واگذاری', resolve: 'ثبت تکلیف' }[kind]}

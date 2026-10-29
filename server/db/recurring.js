@@ -25,9 +25,11 @@ const holdColumnChecked = new WeakSet();
 function ensureHoldColumn() {
   const database = activeWorkspaceDatabase();
   if (holdColumnChecked.has(database)) return;
-  if (!database.prepare('PRAGMA table_info(recurring_rules)').all().some((column) => column.name === 'hold')) {
-    database.exec('ALTER TABLE recurring_rules ADD COLUMN hold TEXT');
-  }
+  const columns = database.prepare('PRAGMA table_info(recurring_rules)').all().map((column) => column.name);
+  if (!columns.includes('hold')) database.exec('ALTER TABLE recurring_rules ADD COLUMN hold TEXT');
+  // بانک یا صندوقی که قاعده از آن می‌پردازد؛ خالی یعنی صندوق پیش‌فرض، مثل قبل.
+  // اجاره‌ای که سال‌ها از بانک ملت رفته، نباید ماه بعد از صندوق برود.
+  if (!columns.includes('account_id')) database.exec('ALTER TABLE recurring_rules ADD COLUMN account_id TEXT');
   holdColumnChecked.add(database);
 }
 
@@ -36,7 +38,7 @@ const parseHold = (value) => { try { return value ? JSON.parse(value) : null; } 
 export function listRecurringRules() {
   ensureHoldColumn();
   return db.prepare(`SELECT id,title,amount,type,category,day_of_month AS dayOfMonth,next_due_at AS nextDueAt,
-    active,created_at AS createdAt,hold FROM recurring_rules ORDER BY active DESC,next_due_at`).all()
+    active,created_at AS createdAt,hold,account_id AS accountId FROM recurring_rules ORDER BY active DESC,next_due_at`).all()
     .map(({ hold, ...rule }) => {
       const parsed = parseHold(hold);
       return { ...rule, hold: parsed?.reason ? parsed : null };
@@ -140,11 +142,14 @@ export function saveRecurringRule(values = {}) {
   const type = ['income', 'expense'].includes(values.type) ? values.type : 'expense';
   const day = Math.min(31, Math.max(1, Number(values.dayOfMonth) || new Date().getDate()));
   const title = String(values.title || '').trim().slice(0, 120);
+  ensureHoldColumn();
+  const accountId = values.accountId ? String(values.accountId) : null;
+  if (accountId && !db.prepare('SELECT 1 FROM accounts WHERE id=? AND active=1').get(accountId)) throw invalidInput('بانک یا صندوق این ثبت تکرارشونده پیدا نشد.');
   if (!title) throw invalidInput('عنوان ثبت تکرارشونده را وارد کن.');
-  db.prepare(`INSERT INTO recurring_rules (id,title,amount,type,category,day_of_month,next_due_at,active) VALUES (?,?,?,?,?,?,?,?)
+  db.prepare(`INSERT INTO recurring_rules (id,title,amount,type,category,day_of_month,next_due_at,active,account_id) VALUES (?,?,?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET title=excluded.title,amount=excluded.amount,type=excluded.type,category=excluded.category,
-      day_of_month=excluded.day_of_month,next_due_at=excluded.next_due_at,active=excluded.active,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, title, amount, type, String(values.category || (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها')).slice(0, 80), day, values.nextDueAt || nextMonthlyDate(day), values.active === false ? 0 : 1);
+      day_of_month=excluded.day_of_month,next_due_at=excluded.next_due_at,active=excluded.active,account_id=COALESCE(excluded.account_id,recurring_rules.account_id),updated_at=CURRENT_TIMESTAMP`)
+    .run(id, title, amount, type, String(values.category || (type === 'income' ? 'سایر درآمدها' : 'سایر هزینه‌ها')).slice(0, 80), day, values.nextDueAt || nextMonthlyDate(day), values.active === false ? 0 : 1, accountId);
   audit(values.id ? 'update' : 'create', 'recurring', id, { title, amount });
   return listRecurringRules().find((item) => item.id === id);
 }
@@ -178,6 +183,7 @@ export function materializeRecurringRules(now = new Date()) {
         insertTransactionRows({ transcript: item.title, transactions: [{
           clientId, amount: item.amount, type: item.type, category: item.category,
           rawText: item.title, note: 'ثبت خودکار دوره‌ای', source: 'text', occurredAt: nextDue, ...ownMonth,
+          ...(item.account_id ? { accountId: item.account_id } : {}),
         }] });
         if (!existed) created += 1;
         nextDue = nextMonthlyDate(item.day_of_month, new Date(nextDue), { afterOccurrence: true });

@@ -1,5 +1,6 @@
 import { Check, CircleAlert, Download, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits } from '../../lib/format.js';
 
@@ -278,10 +279,10 @@ export function TransferLayoutPanel({ target, settings, readiness, notify, refre
       </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <label className="text-[12px] font-bold">شروع سال مالی باز
-          <input dir="ltr" inputMode="numeric" value={fiscalYearStart} onChange={(event) => setFiscalYearStart(event.target.value)} placeholder="1405/01/01" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left numbers" />
+          <QuickDateInput format="jalali" aria-label="شروع سال مالی باز" placeholder="مثلاً ۱ فروردین" value={fiscalYearStart} onChange={setFiscalYearStart} className="mt-1 font-normal" />
         </label>
         <label className="text-[12px] font-bold">پایان سال مالی باز
-          <input dir="ltr" inputMode="numeric" value={fiscalYearEnd} onChange={(event) => setFiscalYearEnd(event.target.value)} placeholder="1405/12/29" className="tap mt-1 w-full rounded-lg border border-line bg-surface px-3 text-left numbers" />
+          <QuickDateInput format="jalali" aria-label="پایان سال مالی باز" placeholder="مثلاً ۲۹ اسفند" value={fiscalYearEnd} onChange={setFiscalYearEnd} className="mt-1 font-normal" />
         </label>
       </div>
       <p className="mt-2 text-xs leading-5 text-muted">این بازه باید دقیقاً با شرکت مقصد در پارسیان یکی باشد. حساب‌یار فایل دارای سند خارج از این بازه را تولید یا تحویل نمی‌دهد.</p>

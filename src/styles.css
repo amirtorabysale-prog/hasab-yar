@@ -103,6 +103,9 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
 .pulse-neutral { color: rgb(var(--c-muted)); border-right: 4px solid rgb(var(--c-line)); }
 
 .sheet-in { animation: sheet-in .22s cubic-bezier(.2, .8, .2, 1); }
+/* انتخاب‌گر تاریخ: از همان لبهٔ فیلد باز می‌شود، کوتاه و بی‌پرش. */
+.date-pop { animation: date-pop .14s cubic-bezier(.2, .8, .2, 1); transform-origin: top right; }
+@keyframes date-pop { from { transform: translateY(-4px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 /* ── آیکن‌های زنده ──────────────────────────────────────────────────────

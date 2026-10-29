@@ -1,4 +1,5 @@
 import {useState} from 'react';
+import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import {api} from '../../lib/api.js';
 import {formatAmount, unitLabel } from '../../lib/format.js';
 
@@ -24,7 +25,7 @@ export function ReviewPriorBasis({item,ai,onPrepared,notify,busy}) {
       <p>این اقدام سند جداگانه با اثر بر سرمایه افتتاحیه می‌سازد؛ پرداخت/وصول را ثبت نمی‌کند و مانده فرضی مجاز نیست.</p>
       <label className="block">مانده واقعی پیش از رویداد ({unitLabel()})<input aria-label="مانده مستند پیش از رویداد" type="number" min={basis.amount} step="1" value={amount} onChange={e=>setAmount(e.target.value)} className="block w-full rounded border border-line p-2" /></label>
       {basis.ledgerStart && basis.latestDate===basis.ledgerStart && <p className="text-muted">ثبت در این دفتر از {basis.ledgerStart} شروع شده؛ مانده‌ای که بعد از آن ایجاد شده منتقل‌شده نیست و سند خرید یا فروش اصلی خودش را می‌خواهد.</p>}
-      <label className="block">تاریخ مانده، پیش از شروع ثبت در این دفتر<input aria-label="تاریخ مانده منتقل‌شده" type="date" max={basis.latestDate} value={date} onChange={e=>setDate(e.target.value)} className="block w-full rounded border border-line p-2" /></label>
+      <label className="block">تاریخ مانده، پیش از شروع ثبت در این دفتر<QuickDateInput format="date" direction="past" aria-label="تاریخ مانده منتقل‌شده" max={basis.latestDate} value={date} onChange={setDate} /></label>
       <label className="block">مرجع مستند دفتر قبلی<textarea aria-label="مرجع مستند مانده منتقل‌شده" value={reference} maxLength={300} onChange={e=>setReference(e.target.value)} className="block w-full rounded border border-line p-2" /></label>
       <p>بدهکار: {basis.debit} · {formatAmount(Number(amount) || 0)} {unitLabel()}</p><p>بستانکار: {basis.credit} · {formatAmount(Number(amount) || 0)} {unitLabel()}</p>
       <label className="block"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} /> تأیید می‌کنم این مانده واقعی و مستند است و قبلاً در همین دفتر ثبت نشده است.</label>

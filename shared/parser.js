@@ -1001,7 +1001,7 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
   // وقتی چند نگاشت در جمله پیدا می‌شود، مشخص‌ترین (بلندترین) برنده است: «کلید برق»
   // بر «برق» مقدم است، هر کدام که دیرتر ذخیره شده باشد.
   const learned = learnings.filter((item) => normalizedLearningContext.includes(normalizePersian(item.keyword))
-    && !(moneyIn && CATEGORY_DEFINITIONS.find((definition) => definition.name === item.category)?.type === 'expense'))
+    && !(moneyIn && (item.type || CATEGORY_DEFINITIONS.find((definition) => definition.name === item.category)?.type) === 'expense'))
     .sort((left, right) => normalizePersian(right.keyword).length - normalizePersian(left.keyword).length)[0];
   // «واریز کردیم» پرداخت ماست؛ همان «واریز» نباید در سمت درآمد هم شمرده شود.
   const incomeScore = signalScore(normalizedContext.replace(/واریز\s*کرد(?:یم|م)(?![آ-ی])/g, ' '), INCOME_WORDS, INCOME_VERBS);
@@ -1041,12 +1041,15 @@ function classify(context, learnings = [], categoryContext = '', { moneyIn = fal
   // نگاشتی که از ثبت‌های تأییدشدهٔ AI یا تأییدِ حسابدار یاد گرفته شده فقط دسته را عوض می‌کند، هرگز
   // جهت پول را: اگر دسته‌اش با جهتی که فعل و نقش‌های همین جمله نشان داده‌اند نخواند،
   // کنار می‌رود. «کلید برق ← تعمیر و نگهداری» نباید «کلید برق اضافه رو فروختیم» را هزینه کند.
-  const learnedType = learned && CATEGORY_DEFINITIONS.find((definition) => definition.name === learned.category)?.type;
-  const usable = learned && !(['ai', 'accountant'].includes(learned.source) && learnedType && learnedType !== type) ? learned : null;
+  // یادگیری از سابقهٔ دفتر هم همین مرز را دارد: «اجاره» در سندهای گذشته هزینهٔ اجاره بوده،
+  // ولی «اجاره رو مستاجر داد» را هزینه نمی‌کند.
+  const learnedType = learned && (learned.type || CATEGORY_DEFINITIONS.find((definition) => definition.name === learned.category)?.type);
+  const usable = learned && !(['ai', 'accountant', 'history'].includes(learned.source) && learnedType && learnedType !== type) ? learned : null;
   let category = usable?.category;
   let categoryConfidence = 0.98;
   let categoryReason = !usable ? ''
     : usable.source === 'ai' ? `بر اساس آنچه از ثبت‌های تأییدشدهٔ AI دربارهٔ «${usable.keyword}» یاد گرفته شد انتخاب شد.`
+      : usable.source === 'history' ? `بر اساس سندهای تأییدشدهٔ گذشتهٔ همین دفتر دربارهٔ «${usable.keyword}» انتخاب شد.`
       : usable.source === 'accountant' ? `بر اساس آنچه حسابدار دربارهٔ «${usable.keyword}» تأیید کرده انتخاب شد.`
       : `بر اساس نگاشت تأییدشدهٔ «${usable.keyword}» انتخاب شد.`;
   let categoryAmbiguous = false;
