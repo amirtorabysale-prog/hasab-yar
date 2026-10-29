@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   COUNTERPARTY_RESOLUTIONS, canonicalCounterpartyName, cleanCounterpartyDisplayName, exactCounterpartyKey,
 } from '../shared/counterpartyIdentity.js';
+import { partyRoleOf } from '../shared/partyRole.js';
 
 function tableExists(database, table) {
   return Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table));
@@ -32,6 +33,43 @@ export function ensureCounterpartyIdentitySchema(database) {
     update.run(canonicalCounterpartyName(contact.name), contact.id);
   }
   database.exec('CREATE INDEX IF NOT EXISTS idx_contacts_canonical_name ON contacts(canonical_name)');
+  ensureContactRole(database);
+}
+
+/** متنی که ورود بکاپ پارسیان روی شخص ساخته‌شده می‌گذارد. */
+export const PARSIAN_CONTACT_NOTE = 'ساخته‌شده از تفصیلی‌های بکاپ پارسیان';
+
+/**
+ * نقش شخص (`employee` پرسنل، `partner` شریک، خالی یعنی هیچ‌کدام) جدا از نوعش.
+ *
+ * نوع (مشتری/تأمین‌کننده/شخص) در فاکتور و تعهد به کار می‌رود و سه‌مقداری می‌ماند؛
+ * پرسنل و شریک «شخص»اند با نقشی که کارت نشان می‌دهد. CHECK جدول contacts عوض
+ * نمی‌شود، چون بازسازی آن ارجاع چهار جدول دیگر را جابه‌جا می‌کرد.
+ */
+function ensureContactRole(database) {
+  if (columnExists(database, 'contacts', 'role')) return;
+  database.exec("ALTER TABLE contacts ADD COLUMN role TEXT NOT NULL DEFAULT ''");
+  repairParsianContactRoles(database);
+}
+
+/**
+ * اشخاصی که ورود بکاپ پیش از این اصلاح فقط از سمت حساب نوع گرفته بودند: کارمندِ زیر
+ * «حقوق پرداختنی» تأمین‌کننده شده بود. نقش از معین و کل همان تفصیلی‌ها خوانده می‌شود.
+ */
+export function repairParsianContactRoles(database) {
+  if (!tableExists(database, 'analytic_accounts') || !tableExists(database, 'chart_accounts')) return 0;
+  const analytics = database.prepare("SELECT id,name FROM analytic_accounts WHERE source_kind='contact' AND source_key=?");
+  const charts = database.prepare(`SELECT DISTINCT ca.name AS chartName,parent.name AS kolName FROM journal_lines jl
+    JOIN ledger_accounts la ON la.id=jl.account_id JOIN chart_accounts ca ON ca.id=la.chart_account_id
+    LEFT JOIN chart_accounts parent ON parent.id=ca.parent_id WHERE jl.analytic_id=?`);
+  const save = database.prepare("UPDATE contacts SET role=?,kind=CASE WHEN kind IN ('customer','vendor') THEN 'person' ELSE kind END WHERE id=?");
+  let changed = 0;
+  for (const contact of database.prepare("SELECT id,name FROM contacts WHERE note=? AND role=''").all(PARSIAN_CONTACT_NOTE)) {
+    const own = analytics.all(contact.id);
+    const role = partyRoleOf({ names: [contact.name, ...own.map((item) => item.name)], charts: own.flatMap((item) => charts.all(item.id)) });
+    if (role) { save.run(role, contact.id); changed += 1; }
+  }
+  return changed;
 }
 
 /**

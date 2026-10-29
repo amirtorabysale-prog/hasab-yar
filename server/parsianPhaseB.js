@@ -25,7 +25,8 @@
 // حدسی زده نمی‌شود؛ اجرای دوباره چیزی را تکرار نمی‌سازد.
 
 import { randomUUID } from 'node:crypto';
-import { normalizedCounterpartyInput } from './counterparties.js';
+import { PARSIAN_CONTACT_NOTE, normalizedCounterpartyInput } from './counterparties.js';
+import { partyRoleOf } from '../shared/partyRole.js';
 import { normalizePersian } from '../shared/normalize.js';
 import { audit } from './db/core.js';
 import { nextLedgerCode } from './accounting.js';
@@ -254,6 +255,7 @@ export function previewParsianPhaseB(database) {
     debit: candidate.charts.reduce((sum, chart) => sum + chart.debit, 0),
     credit: candidate.charts.reduce((sum, chart) => sum + chart.credit, 0),
     sides: [...new Set(candidate.charts.filter((chart) => chart.side !== 'none').map((chart) => chart.side))],
+    role: partyRoleOf({ names: [candidate.name], charts: candidate.charts }),
     charts: candidate.charts.map((chart) => ({
       chartCode: chart.chartCode, chartName: chart.chartName, kolCode: chart.kolCode,
       side: chart.side, lineCount: chart.lineCount,
@@ -398,11 +400,16 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
     }
     for (const [groupKey, group] of groups) {
       const sides = new Set(group.flatMap((candidate) => candidate.charts.filter((chart) => chart.side !== 'none').map((chart) => chart.side)));
-      const kind = sides.size === 1 ? (sides.has('receivable') ? 'customer' : 'vendor') : 'person';
-      const existing = database.prepare('SELECT id,name FROM contacts WHERE canonical_name=? ORDER BY created_at LIMIT 1').get(groupKey);
+      // پرسنل و شریک «شخص»اند با نقش، نه تأمین‌کننده یا مشتری: تفصیلیِ زیر «حقوق پرداختنی»
+      // پرداختنی است ولی کارمند است (shared/partyRole.js).
+      const role = partyRoleOf({ names: group.map((candidate) => candidate.name), charts: group.flatMap((candidate) => candidate.charts) });
+      const kind = role ? 'person' : sides.size === 1 ? (sides.has('receivable') ? 'customer' : 'vendor') : 'person';
+      const existing = database.prepare('SELECT id,name,role FROM contacts WHERE canonical_name=? ORDER BY created_at LIMIT 1').get(groupKey);
       let contact;
       if (existing) {
         contact = { id: existing.id, name: existing.name, reused: true };
+        // نقشی که کدینگ می‌گوید به شخص موجود افزوده می‌شود؛ نوعی که کاربر داده دست نمی‌خورد.
+        if (role && !existing.role) database.prepare('UPDATE contacts SET role=? WHERE id=?').run(role, existing.id);
         result.contacts.reused += 1;
       } else {
         // همان قاعدهٔ ذخیرهٔ شخص (نام یکسان‌شده و کلید مقایسه) ولی مستقیم روی
@@ -413,8 +420,8 @@ export function commitParsianPhaseB(database, { contactIds = [], createdBy = nul
           continue;
         }
         const contactId = randomUUID();
-        database.prepare('INSERT INTO contacts (id,name,canonical_name,kind,phone,note) VALUES (?,?,?,?,?,?)')
-          .run(contactId, displayName, canonicalName, kind, '', 'ساخته‌شده از تفصیلی‌های بکاپ پارسیان');
+        database.prepare('INSERT INTO contacts (id,name,canonical_name,kind,role,phone,note) VALUES (?,?,?,?,?,?,?)')
+          .run(contactId, displayName, canonicalName, kind, role, '', PARSIAN_CONTACT_NOTE);
         contact = { id: contactId, name: displayName, reused: false };
         result.contacts.created += 1;
       }

@@ -181,7 +181,9 @@ function ContactForm({ onSaved, onCancel, notify }) {
     event.preventDefault();
     setBusy(true);
     try {
-      const item = await api.saveContact({ name: draft.name.trim(), kind: draft.kind, phone: digitsOnly(draft.phone) });
+      // «پرسنل» و «شریک» در فهرست نوع‌اند ولی روی سرور نقشِ یک «شخص» ذخیره می‌شوند.
+      const role = ['employee', 'partner'].includes(draft.kind) ? draft.kind : '';
+      const item = await api.saveContact({ name: draft.name.trim(), kind: role ? 'person' : draft.kind, role, phone: digitsOnly(draft.phone) });
       notify('طرف حساب تعریف شد.');
       await onSaved(item.item || item);
     } catch (error) { notify(error.message); }
@@ -197,6 +199,8 @@ function ContactForm({ onSaved, onCancel, notify }) {
           <option value="person">شخص</option>
           <option value="customer">مشتری</option>
           <option value="vendor">تأمین‌کننده</option>
+          <option value="employee">پرسنل</option>
+          <option value="partner">شریک</option>
         </select>
         <input inputMode="tel" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })}
           placeholder="تلفن (اختیاری)" className="numbers tap rounded-lg border border-line bg-paper px-3 text-[13px]" />

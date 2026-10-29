@@ -12,7 +12,7 @@ import { counterpartyBalance, ledgerSideBalances } from './counterpartyCard.js';
  * و هیچ‌کدام معلوم نیست کدام درست است.
  */
 export function listContacts() {
-  const rows = db.prepare(`SELECT contacts.id,contacts.name,contacts.kind,contacts.phone,contacts.note,
+  const rows = db.prepare(`SELECT contacts.id,contacts.name,contacts.kind,contacts.role,contacts.phone,contacts.note,
     (SELECT COUNT(*) FROM obligations WHERE obligations.contact_id=contacts.id AND obligations.status='open')
     + (SELECT COUNT(*) FROM invoices WHERE invoices.contact_id=contacts.id AND invoices.status='sent') AS openCount
     FROM contacts ORDER BY contacts.updated_at DESC,contacts.name`).all();
@@ -30,18 +30,23 @@ export function saveContact(values = {}) {
   const matched = values.id ? null : resolveCounterparty(db, name, values.counterpartyResolution).contact;
   const id = values.id || matched?.id || randomUUID();
   const storedName = matched?.name || name;
-  const kind = ['person', 'customer', 'vendor'].includes(values.kind) ? values.kind : 'person';
+  // پرسنل و شریک نقش‌اند روی «شخص»؛ نوع فاکتور و تعهد سه‌مقداری می‌ماند.
+  // نقشِ نفرستاده (فرمی که فقط نوع را عوض می‌کند) نقش قبلی را پاک نمی‌کند.
+  const roleGiven = values.role !== undefined;
+  const role = ['employee', 'partner'].includes(values.role) ? values.role : '';
+  const kind = role ? 'person' : ['person', 'customer', 'vendor'].includes(values.kind) ? values.kind : 'person';
   // ویرایش صریح (با شناسه) انتخاب کاربر را می‌نشاند. قاعدهٔ «در تعارض، شخص» فقط
   // برای وقتی است که ثبتی تازه به طرف حساب موجود رسیده؛ اعمالش روی ویرایش یعنی
   // تغییر «شخص» به «مشتری» هیچ‌وقت ذخیره نمی‌شد.
   const explicitEdit = values.id ? 1 : 0;
-  db.prepare(`INSERT INTO contacts (id,name,canonical_name,kind,phone,note) VALUES (?,?,?,?,?,?)
+  db.prepare(`INSERT INTO contacts (id,name,canonical_name,kind,role,phone,note) VALUES (?,?,?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET name=excluded.name,canonical_name=excluded.canonical_name,
       kind=CASE WHEN ${explicitEdit} THEN excluded.kind WHEN contacts.kind=excluded.kind THEN contacts.kind ELSE 'person' END,
+      role=CASE WHEN ${explicitEdit} AND ${roleGiven ? 1 : 0} THEN excluded.role WHEN contacts.role='' THEN excluded.role ELSE contacts.role END,
       phone=CASE WHEN excluded.phone='' THEN contacts.phone ELSE excluded.phone END,
       note=CASE WHEN excluded.note='' THEN contacts.note ELSE excluded.note END,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, storedName, canonicalName, kind, String(values.phone || '').slice(0, 30), String(values.note || '').slice(0, 500));
-  audit(values.id || matched ? 'update' : 'create', 'contact', id, { name: storedName, kind, canonicalName });
+    .run(id, storedName, canonicalName, kind, role, String(values.phone || '').slice(0, 30), String(values.note || '').slice(0, 500));
+  audit(values.id || matched ? 'update' : 'create', 'contact', id, { name: storedName, kind, role, canonicalName });
   return listContacts().find((item) => item.id === id);
 }
 

@@ -358,7 +358,7 @@ function ParsianPhaseB({ canManage, notify, refresh, autoDone = false }) {
             <tbody>{preview.contacts.map((contact) => <tr key={contact.id} className={`border-b border-line ${selected.has(contact.id) ? '' : 'opacity-60'}`}>
               <td className="p-2"><input type="checkbox" checked={selected.has(contact.id)} onChange={() => toggle(contact.id)} aria-label={`انتخاب ${contact.name}`} /></td>
               <td className="p-2">{contact.name}</td>
-              <td className="p-2 text-muted">{contact.sides.includes('receivable') && contact.sides.includes('payable') ? 'دریافتنی و پرداختنی' : contact.sides.includes('receivable') ? 'دریافتنی' : contact.sides.includes('payable') ? 'پرداختنی' : '—'}</td>
+              <td className="p-2 text-muted">{contact.sides.includes('receivable') && contact.sides.includes('payable') ? 'دریافتنی و پرداختنی' : contact.sides.includes('receivable') ? 'دریافتنی' : contact.sides.includes('payable') ? 'پرداختنی' : '—'}{contact.role === 'employee' ? ' · پرسنل' : contact.role === 'partner' ? ' · شریک' : ''}</td>
               <td className="numbers p-2">{toPersianDigits(contact.lineCount)}</td>
               <td className="numbers p-2">{formatAmount(contact.debit - contact.credit) >= 0 ? formatAmount(contact.debit - contact.credit) : '—'}</td>
               <td className="numbers p-2">{contact.credit - contact.debit > 0 ? formatAmount(contact.credit - contact.debit) : '—'}</td>

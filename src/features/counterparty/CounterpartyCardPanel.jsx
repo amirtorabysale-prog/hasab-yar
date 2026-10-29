@@ -27,6 +27,9 @@ const shortDate = (iso) => { const parsed = new Date(iso); return Number.isNaN(p
  */
 
 const KIND_LABELS = { person: 'شخص', customer: 'مشتری', vendor: 'تأمین‌کننده' };
+// پرسنل و شریک نقش‌اند روی «شخص» (shared/partyRole.js)؛ نقش بر نوع مقدم است.
+const ROLE_LABELS = { employee: 'پرسنل', partner: 'شریک' };
+const contactLabel = (contact) => ROLE_LABELS[contact.role] || KIND_LABELS[contact.kind] || 'شخص';
 
 /** صفر واقعاً «تسویه» است و باید جور دیگری دیده شود، نه یک عددِ بی‌رنگ. */
 function balanceTone(balance) {
@@ -171,7 +174,7 @@ function ContactList({ contacts, onOpen }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-extrabold">{contact.name}</span>
                 <span className="block text-xs text-muted">
-                  {KIND_LABELS[contact.kind] || 'شخص'}
+                  {contactLabel(contact)}
                   {contact.openCount ? ` · ${toPersianDigits(contact.openCount)} سند باز` : ''}
                 </span>
               </span>
@@ -211,7 +214,7 @@ function Card({ contact, onBack, notify }) {
       </button>
 
       <header className="mt-3 rounded-2xl border border-line bg-surface p-4">
-        <p className="text-xs font-bold text-muted">{KIND_LABELS[contact.kind] || 'شخص'}</p>
+        <p className="text-xs font-bold text-muted">{contactLabel(contact)}</p>
         <h2 className="mt-1 text-xl font-extrabold">{contact.name}</h2>
         {contact.phone && <p className="numbers mt-1 text-[12px] text-muted">{toPersianDigits(contact.phone)}</p>}
         <div className="mt-4 border-t border-line pt-3">
