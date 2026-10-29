@@ -59,7 +59,9 @@ export function ledgerUnitOf(database) {
 
 /** کل انتظامی پارسیان: گروه ۹۱ و ۹۲ («حساب‌های انتظامی» و «طرف حساب‌های انتظامی»). */
 function isMemorandumKol(kol) {
-  const family = Math.floor(Number(kol.group) / 10);
+  const group = Number(kol.group);
+  // گروه دورقمی ۹x یا سه‌رقمی ۹xx.
+  const family = group >= 100 ? Math.floor(group / 100) : Math.floor(group / 10);
   return family === 9 || /انتظامي|انتظامی|انتضامي|انتضامی/.test(`${kol.groupName || ''} ${kol.name || ''}`);
 }
 
@@ -95,8 +97,46 @@ export function parsianAmountUnit(value) {
   return value;
 }
 
-/** پیشنهاد نوع از بازهٔ کدینگ استاندارد ایرانی — فقط پیشنهاد، هرگز تصمیم. */
+/**
+ * پیشنهاد نوع از کد و نام کل — فقط پیشنهاد، هرگز تصمیم.
+ *
+ * کدینگ دورقمیِ استاندارد (۱۰ تا ۶۶) و سه‌رقمی (۱۰۱ تا ۹۰۲: صدگان ۱ و ۲ دارایی، ۳ و ۴ بدهی،
+ * ۵ سرمایه، ۶ درآمد، ۷ و ۸ هزینه، ۹ انتظامی). در بکاپی با کدینگ سه‌رقمی هیچ‌کدام از ۲۲ کل
+ * پیشنهادی نداشت و «پذیرش پیشنهادها» کاری نمی‌کرد. وقتی کد و نام با هم نمی‌خوانند،
+ * پیشنهادی نیست.
+ */
+export function kolTypeSuggestion(code, name = '') {
+  const byCode = kolAccountType(code);
+  const byName = kolTypeFromName(name);
+  if (byCode && byName && byCode !== byName) return null;
+  return byCode || byName;
+}
+
+/**
+ * نوع از نام کل. ترتیب مهم است: «پیش‌پرداخت هزینه» دارایی است، «پیش‌دریافت فروش» بدهی،
+ * «سرمایه‌گذاری» دارایی، و «بهای تمام‌شدهٔ کالای فروش‌رفته» هزینه نه فروش.
+ */
+export function kolTypeFromName(name) {
+  const text = String(name || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک');
+  if (/انتظامی|انتضامی/.test(text)) return MEMORANDUM;
+  if (/پیش\s*پرداخت|سرمایه\s*گذاری/.test(text)) return 'asset';
+  if (/پیش\s*دریافت/.test(text)) return 'liability';
+  // «سایر هزینه‌ها و درآمدها» هر دو است؛ نام چیزی نمی‌گوید.
+  if (/هزینه/.test(text) && /درآمد/.test(text)) return null;
+  if (/هزینه|بهای\s*تمام|قیمت\s*تمام/.test(text)) return 'expense';
+  if (/درآمد|فروش/.test(text)) return 'income';
+  if (/سرمایه|صاحبان\s*سهام|اندوخته|سود\s*(?:و\s*زیان\s*)?انباشته/.test(text)) return 'equity';
+  if (/پرداختنی|پرداختی|بدهی|تسهیلات|وام\s*دریافتی|ذخیره/.test(text)) return 'liability';
+  if (/دارایی|موجودی|نقد|بانک|صندوق|دریافتنی|دریافتی|سفارشات/.test(text)) return 'asset';
+  return null;
+}
+
 export function kolAccountType(code) {
+  if (code >= 100 && code < 1000) {
+    const hundred = Math.floor(code / 100);
+    return hundred <= 2 ? 'asset' : hundred <= 4 ? 'liability' : hundred === 5 ? 'equity' : hundred === 6 ? 'income'
+      : hundred <= 8 ? 'expense' : MEMORANDUM;
+  }
   if (code >= 10 && code < 20) return 'asset';
   if (code >= 20 && code < 30) return 'liability';
   if (code >= 30 && code < 40) return 'equity';
@@ -233,7 +273,7 @@ export function buildParsianImportPlan(parsed, { amountUnit, kolTypes = {}, ledg
     const type = resolved.type || (memorandum ? memorandumType(row) : chosen);
     if (!resolved.type) {
       // کل انتظامی با هیچ‌کدام از پنج نوع جور نیست؛ پیشنهادش «انتظامی» است، نه یک نوع ترازنامه‌ای.
-      const suggestion = isMemorandumKol(row) ? MEMORANDUM : kolAccountType(row.code);
+      const suggestion = isMemorandumKol(row) ? MEMORANDUM : kolTypeSuggestion(row.code, row.name);
       kolTypeChoices.push({ code: row.code, name: row.name, reason: resolved.reason, suggestion, chosen, memorandumSide: isMemorandumKol(row) ? memorandumType(row) : null });
     }
     kolByCode.set(row.code, { name: row.name, type, memorandum });

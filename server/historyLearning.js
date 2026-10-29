@@ -54,7 +54,26 @@ const STOPWORDS = new Set([
   'کارت', 'شعبه', 'کد', 'ردیف', 'طبق', 'لیست', 'مربوط', 'مربوطه', 'ماهه', 'ماهانه', 'این', 'آن', 'که', 'تا', 'یا', 'هر',
   'شد', 'شده', 'گردید', 'می', 'های', 'ها', 'بر', 'را', 'سایر', 'متفرقه', 'عمومی', 'اداری', 'جاری', 'قبلی', 'بعدی',
   'تنخواه', 'صندوق', 'خرید', 'فروش', 'کالا', 'اجناس', 'مواد', 'بهای', 'تسویه', 'علی‌الحساب', 'علی', 'الحساب',
+  // واژه‌هایی که در شرح سند می‌آیند ولی دربارهٔ «بابت چه» چیزی نمی‌گویند (بکاپ سه‌رقمی ۱۴۰۵).
+  'توسط', 'شناسه', 'پیگیری', 'ارجاع', 'مرجع', 'اول', 'دوم', 'سوم', 'چهارم', 'پنجم', 'یکم', 'روزه', 'نفر', 'عدد',
+  'مرکزی', 'واریزی', 'عنوان', 'مورد', 'موارد', 'جمع', 'ماهیانه', 'اکسل', 'فایل', 'طی', 'همراه', 'جاری',
 ].map((word) => normalizePersian(word)));
+// حرف اضافهٔ چسبیده: «ازملت»، «خوارباربابت». فقط وقتی جدا می‌شود که باقی‌مانده خودش
+// جایی دیگر واژهٔ جدا بوده باشد؛ «بهداشت» به «به» + «داشت» شکسته نمی‌شود.
+const GLUED_PREFIXES = ['بابت', 'برای', 'جهت', 'از', 'به', 'با'].map((word) => normalizePersian(word));
+const GLUED_SUFFIXES = ['بابت'].map((word) => normalizePersian(word));
+
+function unglue(word, vocabulary) {
+  for (const prefix of GLUED_PREFIXES) {
+    const rest = word.slice(prefix.length);
+    if (word.startsWith(prefix) && rest.length >= 3 && vocabulary.has(rest)) return rest;
+  }
+  for (const suffix of GLUED_SUFFIXES) {
+    const rest = word.slice(0, -suffix.length);
+    if (word.endsWith(suffix) && rest.length >= 3 && vocabulary.has(rest)) return rest;
+  }
+  return word;
+}
 const MONTH_WORDS = new Set(PERSIAN_MONTHS.map(([name]) => normalizePersian(name)));
 
 function historyError(message, code, status = 400) {
@@ -147,31 +166,36 @@ function readHistory(database) {
 }
 
 /**
- * سند ساده: همهٔ ردیف‌ها یا روی یک حساب پولی‌اند یا روی یک حساب هزینه/درآمد، با
- * جهت درست (هزینه بدهکار و پول بستانکار؛ درآمد برعکس). هر چیز دیگری null است.
+ * پرداخت‌ها و دریافت‌های یک سند، به تفکیک حساب هزینه/درآمد.
+ *
+ * هزینه فقط وقتی «از این بانک پرداخت‌شده» است که **تنها** منبعِ بستانکارِ سند همان یک
+ * حساب پولی باشد؛ آن‌وقت هر ردیف هزینهٔ بدهکار از همان پول رفته، هرچه دیگری هم در طرف
+ * بدهکار باشد (علی‌الحساب شخص، چند هزینهٔ دیگر). سندی که طرف بستانکارش شخص یا بدهی دارد
+ * (خرید نسیه، تسویه از طلب) خوانده نمی‌شود: معلوم نیست کدام هزینه را چه چیزی پوشانده.
+ * درآمد برعکس: تنها بدهکارِ سند یک حساب پولی. بیشتر سندهای بکاپ ۱۴۰۵ چندسطری بودند و
+ * قاعدهٔ «یک هزینه در برابر یک پول» از ۶۵۷ سند فقط ۱۵ را می‌دید.
  */
-function simpleShape(entry, moneyOf) {
-  let money = null;
-  let category = null;
-  let moneySide = null;
-  let amount = 0;
-  for (const line of entry.lines) {
-    const account = moneyOf(line);
-    const side = line.debit > 0 ? 'debit' : 'credit';
-    if (account) {
-      if ((money && money.id !== account.id) || (moneySide && moneySide !== side)) return null;
-      money = account; moneySide = side;
-      continue;
+function paymentShapes(entry, moneyOf) {
+  const shapes = [];
+  for (const [type, moneySide] of [['expense', 'credit'], ['income', 'debit']]) {
+    const sources = entry.lines.filter((line) => (moneySide === 'credit' ? line.credit : line.debit) > 0);
+    const accounts = new Map(sources.map((line) => [line.accountId, moneyOf(line)]));
+    if (!sources.length || [...accounts.values()].some((account) => !account)) continue;
+    const moneyIds = new Set([...accounts.values()].map((account) => account.id));
+    if (moneyIds.size !== 1) continue;
+    const money = [...accounts.values()][0];
+    const byCategory = new Map();
+    for (const line of entry.lines) {
+      if (line.type !== type || !categoryEligible(line) || accounts.has(line.accountId)) continue;
+      const amount = type === 'expense' ? line.debit - line.credit : line.credit - line.debit;
+      const current = byCategory.get(line.accountId) || { type, amount: 0, money, category: line };
+      current.amount += amount;
+      if (!current.category.description && line.description) current.category = line;
+      byCategory.set(line.accountId, current);
     }
-    if (!categoryEligible(line)) return null;
-    if (category && category.accountId !== line.accountId) return null;
-    category = line;
-    amount += line.type === 'expense' ? line.debit - line.credit : line.credit - line.debit;
+    for (const shape of byCategory.values()) if (shape.amount > 0) shapes.push(shape);
   }
-  if (!money || !category || amount <= 0) return null;
-  const type = category.type;
-  if ((type === 'expense' && moneySide !== 'credit') || (type === 'income' && moneySide !== 'debit')) return null;
-  return { type, amount, money, category };
+  return shapes;
 }
 
 function cleanTitle(texts, fallback) {
@@ -236,10 +260,15 @@ function recurringPatterns(simple, lastMonth) {
 }
 
 /** واژهٔ شرح ← حساب: فقط واژه‌ای که همیشه به یک حساب رفته است. */
-function keywordPatterns(lines, excludedWords) {
+function keywordPatterns(lines, excludedWords, allTexts = []) {
+  // واژه‌هایی که جایی جدا آمده‌اند، یا نام شخص و بانک‌اند: مرجع جدا کردن حرف اضافهٔ چسبیده.
+  const vocabulary = new Set(excludedWords);
+  for (const text of allTexts) for (const word of descriptionWords(text)) vocabulary.add(word);
+  for (const line of lines) for (const word of descriptionWords(line.text)) vocabulary.add(word);
   const stats = new Map();
   for (const line of lines) {
-    const words = descriptionWords(line.text).filter((word) => !excludedWords.has(word));
+    const words = descriptionWords(line.text).map((word) => unglue(word, vocabulary))
+      .filter((word) => !excludedWords.has(word) && !STOPWORDS.has(word));
     const candidates = new Set(words);
     for (let index = 1; index < words.length; index += 1) candidates.add(`${words[index - 1]} ${words[index]}`);
     for (const keyword of candidates) {
@@ -301,8 +330,7 @@ export function analyzeLedgerHistory(database, { timeZone = 'Asia/Tehran' } = {}
     const parts = todayPersian(new Date(entry.occurredAt), timeZone);
     const month = monthIndex(parts);
     lastMonth = Math.max(lastMonth, month);
-    const shape = simpleShape(entry, moneyOf);
-    if (shape) {
+    for (const shape of paymentShapes(entry, moneyOf)) {
       const text = shape.category.description || entry.memo || '';
       simple.push({ ...shape, parts, text, entryId: entry.id, documentNumber: entry.documentNumber, fiscalYear: entry.fiscalYear, occurredAt: entry.occurredAt });
     }
@@ -318,7 +346,7 @@ export function analyzeLedgerHistory(database, { timeZone = 'Asia/Tehran' } = {}
     entries: entries.length,
     simpleEntries: simple.length,
     recurring: recurringPatterns(simple, lastMonth),
-    keywords: keywordPatterns(keywordLines, excludedWords),
+    keywords: keywordPatterns(keywordLines, excludedWords, entries.flatMap((entry) => [entry.memo, ...entry.lines.map((line) => line.description)])),
   };
 }
 

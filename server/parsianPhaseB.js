@@ -67,12 +67,39 @@ function parsianImportPresent(database) {
   };
 }
 
-/** کل‌های صندوق و بانک — کد اصلی پارسیان در کد سطح یا خود کد می‌ماند. */
+// کلی که نامش «بانک» یا «نقد» دارد ولی پول در دست نیست: وام و تسهیلات بانکی، کارمزد،
+// سپرده، اسناد و چک.
+const NOT_MONEY_KOL = /تسه[یي]لات|وام|کارمزد|هز[یي]نه|سپرده|اسناد|چک|در[یي]افتن[یي]|پرداختن[یي]/;
+
+/** نوع کل پولی از نامش: فقط «بانک» یعنی بانک، فقط «نقد/صندوق» یعنی صندوق؛ هر دو یعنی معین باید بگوید. */
+function kolKindFromName(name) {
+  const text = normalizePersian(name || '');
+  const bank = /بانک/.test(text);
+  const cash = /نقد|صندوق/.test(text);
+  return bank && !cash ? 'bank' : cash && !bank ? 'cash' : null;
+}
+
+/**
+ * کل‌های صندوق و بانک.
+ *
+ * کد ۱۰ و ۱۱ قرارداد کدینگ نمونهٔ پارسیان است، نه قاعده: در بکاپی با کدینگ سه‌رقمی، نقد و
+ * بانک کلِ ۱۰۱ «نقد و بانک» بود و هیچ بانک و صندوقی ساخته نشد؛ بی‌حساب پولی، هیچ پرداختی
+ * پرداخت شناخته نمی‌شد. پس کل پولی سه راه دارد: کد ۱۰/۱۱، والدِ حسابی که تنظیمات پارسیان
+ * صندوق یا بانک گفته، یا نامِ دارایی‌ای که نقد و بانک است.
+ */
 function moneyKol(database) {
   const rows = database.prepare(`SELECT id,code,name,level_code AS levelCode,type FROM chart_accounts
     WHERE level='general' AND active=1`).all();
-  const find = (wanted) => rows.find((row) => row.levelCode === wanted || row.code === wanted) || null;
-  return { cash: find(KOL_CASH), bank: find(KOL_BANK) };
+  const designatedParents = new Set(database.prepare(`SELECT DISTINCT parent_id AS id FROM chart_accounts
+    WHERE role IN ('cash','bank','petty-cash') AND parent_id IS NOT NULL`).all().map((row) => row.id));
+  const kols = [];
+  for (const row of rows) {
+    const code = row.levelCode || row.code;
+    const kind = code === KOL_CASH ? 'cash' : code === KOL_BANK ? 'bank' : null;
+    const named = row.type === 'asset' && !NOT_MONEY_KOL.test(normalizePersian(row.name || '')) && /نقد|بانک|صندوق|تنخواه/.test(normalizePersian(row.name || ''));
+    if (kind || named || designatedParents.has(row.id)) kols.push({ ...row, kind: kind || kolKindFromName(row.name) });
+  }
+  return kols;
 }
 
 /** نوع پولیِ یک نام: «تنخواه»، «بانک» یا «صندوق»؛ نامی که هیچ‌کدام نیست، null. */
@@ -97,9 +124,7 @@ function moneyKind(moeen, kols) {
   if (moeen.role === 'cash') return 'cash';
   const byName = kindFromName(moeen.name);
   if (byName) return byName;
-  if (moeen.parentCode === kols.bank?.code) return 'bank';
-  if (moeen.parentCode === kols.cash?.code) return 'cash';
-  return null;
+  return kols.find((kol) => kol.code === moeen.parentCode)?.kind || null;
 }
 
 function ensureMoneyUnitSchema(database) {
@@ -160,8 +185,8 @@ function moneyUnits(database) {
  */
 function moneyMoeens(database) {
   const kols = moneyKol(database);
-  if (!kols.cash && !kols.bank) return [];
-  const parents = [kols.cash, kols.bank].filter(Boolean);
+  if (!kols.length) return [];
+  const parents = kols;
   return database.prepare(`SELECT chart_accounts.id,chart_accounts.code,chart_accounts.name,chart_accounts.role,
       chart_accounts.level_code AS levelCode,chart_accounts.parent_id AS parentId,parent.code AS parentCode,
       (SELECT COUNT(*) FROM ledger_accounts WHERE ledger_accounts.chart_account_id=chart_accounts.id
