@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import { convertAmount, unitLabel } from '../shared/amountUnit.js';
 import { persianToISO } from '../shared/persianDate.js';
+import { moadianOverview } from './parsianSideRecords.js';
 
 const JALALI = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/;
 const dateToISO = (date) => {
@@ -80,6 +81,8 @@ export function parsianExtrasSummary(parsed) {
     purchaseInvoices: kindCount('purchase'),
     otherInvoices: invoices.length - kindCount('sales') - kindCount('purchase'),
     company: Boolean(extras.company && (extras.company.economicCode || extras.company.nationalId || extras.company.address)),
+    moadianRecords: (extras.moadian || []).length,
+    guaranteeCheques: (extras.guaranteeCheques || []).length,
   };
 }
 
@@ -257,9 +260,22 @@ export function listParsianInvoiceArchive(database, { kind = '', limit = 300 } =
     LEFT JOIN contacts ON analytic.source_kind='contact' AND contacts.id=analytic.source_key
     ${kind ? 'WHERE archive.kind=?' : ''}
     ORDER BY archive.occurred_at DESC,archive.number DESC LIMIT ?`).all(...(kind ? [kind, limit] : [limit]));
-  const items = rows.map((row) => ({ ...row, amountsExact: Boolean(row.amountsExact), lines: JSON.parse(row.lines || '[]'), kindLabel: INVOICE_KIND_LABELS[row.kind] || row.titleName }));
+  // وضعیت سامانهٔ مؤدیان روی هر فاکتور فروش؛ شمارهٔ فاکتور (Num) همان شمارهٔ فاکتور فروش است.
+  const moadian = moadianOverview(database);
+  const items = rows.map((row) => {
+    const sent = row.kind === 'sales' ? moadian.byInvoice.get(row.number) : null;
+    return { ...row, amountsExact: Boolean(row.amountsExact), lines: JSON.parse(row.lines || '[]'), kindLabel: INVOICE_KIND_LABELS[row.kind] || row.titleName,
+      moadian: sent ? { status: sent.status, subject: sent.subjectLabel, sentDate: sent.sentDate, messages: sent.messages } : null };
+  });
   const totals = database.prepare(`SELECT kind,COUNT(*) AS count,COALESCE(SUM(gross),0) AS gross FROM parsian_invoice_archive GROUP BY kind`).all();
-  return { items, totals };
+  const { byInvoice, ...summary } = moadian;
+  // فاکتور فروشی که در سابقهٔ همین بکاپ هیچ ارسالی به سامانه ندارد. فقط وقتی معنا دارد که
+  // بکاپ اصلاً سابقهٔ مؤدیان داشته باشد؛ بی‌سابقه یعنی نمی‌دانیم، نه «ارسال‌نشده».
+  if (summary.total) {
+    const sent = new Set(byInvoice.keys());
+    summary.notSent = database.prepare("SELECT number FROM parsian_invoice_archive WHERE kind='sales'").all().filter((row) => !sent.has(row.number)).length;
+  }
+  return { items, totals, moadian: summary };
 }
 
 /** فروش هر کالا در بایگانی فاکتورها، برای DNA (کالاهای اصلی فروش). */

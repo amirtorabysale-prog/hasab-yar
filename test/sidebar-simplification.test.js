@@ -31,7 +31,7 @@ test('گروه‌های منو تک‌مقصدها‌ند؛ فقط میز کار
 test('زبانه‌های بالای صفحه‌ها در سایدبار تکرار نشده‌اند', () => {
   // هر زبانه‌ای که نوار بالای دفتر مالی، حسابداری، کدینگ، همکاری یا تنظیمات
   // می‌سازد، دیگر برگ منو نیست.
-  const topBarSections = ['obligations', 'timing', 'invoices', 'inventory', 'reconciliation', 'recurring', 'tools',
+  const topBarSections = ['obligations', 'cheques', 'timing', 'invoices', 'inventory', 'reconciliation', 'recurring', 'tools',
     'cards-banks', 'cards-cash', 'cards-people', 'trial', 'entry', 'worklist', 'payroll', 'period',
     'mapping', 'dimensions', 'import', 'questions', 'dna', 'accounts', 'team', 'backup', 'privacy', 'security', 'learning'];
   for (const { group, item } of leaves) {

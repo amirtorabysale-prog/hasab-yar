@@ -9,6 +9,28 @@ import { api } from '../../lib/api.js';
 import { formatAmount, toPersianDigits, unitLabel } from '../../lib/format.js';
 
 const FILTERS = [['', 'همه'], ['sales', 'فروش'], ['purchase', 'خرید']];
+const MOADIAN_LABELS = { success: 'ارسال شد', failed: 'خطای سامانه', pending: 'بی‌نتیجه' };
+const MOADIAN_TONES = { success: 'border-income/40 text-income', failed: 'border-expense/40 text-expense', pending: 'border-line text-muted' };
+
+/** سابقهٔ سامانهٔ مؤدیان در بکاپ: چند صورت‌حساب رفت، کدام‌ها خطا گرفتند و چرا. */
+function MoadianSummary({ moadian }) {
+  if (!moadian?.total) return null;
+  const open = moadian.open || [];
+  return <div className="mt-3 rounded-lg border border-line bg-paper p-3 text-[13px]">
+    <p className="font-bold">سامانهٔ مؤدیان</p>
+    <p className="mt-1 text-xs leading-6 text-muted">
+      {toPersianDigits(moadian.success)} صورت‌حساب پذیرفته شد · {toPersianDigits(moadian.failed)} خطا · {toPersianDigits(moadian.pending)} بی‌نتیجه
+      {moadian.notSent > 0 ? <> · <b className="text-expense">{toPersianDigits(moadian.notSent)} فاکتور فروش هیچ ارسالی ندارد</b></> : null}
+      {' '}(از سابقهٔ همین بکاپ؛ وضعیت امروزِ سامانه را خود سامانه می‌گوید).
+    </p>
+    {open.length > 0 && <ul className="mt-2 space-y-1.5">{open.map((record) => <li key={record.source} className="text-xs leading-6">
+      <b className={record.status === 'failed' ? 'text-expense' : 'text-muted'}>{MOADIAN_LABELS[record.status]}</b>
+      {' · '}{record.invoiceNumber ? `فاکتور فروش ${toPersianDigits(record.invoiceNumber)}` : 'بی‌شمارهٔ فاکتور'} ({record.subjectLabel})
+      {record.sentDate ? ` · ${toPersianDigits(record.sentDate)}` : ''}
+      {record.messages?.length > 0 && <span className="block text-muted">{record.messages.join(' — ')}</span>}
+    </li>)}</ul>}
+  </div>;
+}
 
 export function ParsianInvoiceArchive({ notify }) {
   const [data, setData] = useState(null);
@@ -41,6 +63,7 @@ export function ParsianInvoiceArchive({ notify }) {
         <p className="text-[11px] text-muted">با مالیات، از ردیف طرف حساب در سند</p>
       </div>)}
     </div>
+    <MoadianSummary moadian={data.moadian} />
     <ul className="mt-3 divide-y divide-line rounded-lg border border-line bg-paper">
       {data.items.map((item) => <li key={item.id}>
         <details className="group px-3 py-2">
@@ -52,6 +75,8 @@ export function ParsianInvoiceArchive({ notify }) {
             <span className="flex items-center gap-3 text-xs text-muted">
               <span className="numbers">{toPersianDigits(item.jalaliDate)}</span>
               {item.sanad > 0 && <span>سند {toPersianDigits(item.sanad)}</span>}
+              {item.kind === 'sales' && !item.moadian && data.moadian?.total > 0 && <span className="rounded-full border border-expense/40 px-2 py-0.5 text-[11px] font-bold text-expense">مؤدیان: ارسال نشده</span>}
+              {item.moadian && <span title={item.moadian.messages?.join(' — ') || ''} className={`rounded-full border px-2 py-0.5 text-[11px] font-bold ${MOADIAN_TONES[item.moadian.status]}`}>مؤدیان: {MOADIAN_LABELS[item.moadian.status]}</span>}
               <b className="numbers text-[13px] text-ink">{item.gross != null ? formatAmount(item.gross) : item.subtotal != null ? formatAmount(item.subtotal) : '—'}</b>
             </span>
           </summary>
@@ -71,6 +96,7 @@ export function ParsianInvoiceArchive({ notify }) {
               {item.gross != null && item.subtotal != null && item.gross !== item.subtotal ? ` — با مالیات و عوارض ${formatAmount(item.gross)} ${unitLabel()}` : ''}
               {!item.amountsExact ? ' — بخشی از مبلغ‌ها در واحد این دفتر دقیق درنمی‌آمد؛ سند پارسیان مرجع است.' : ''}
           </p>
+          {item.moadian?.messages?.length > 0 && <p className="mt-1 text-[11px] leading-5 text-expense">پیام سامانهٔ مؤدیان: {item.moadian.messages.join(' — ')}</p>}
         </details>
       </li>)}
       {!data.items.length && <li className="px-3 py-3 text-xs text-muted">فاکتوری از این نوع در بکاپ نیست.</li>}

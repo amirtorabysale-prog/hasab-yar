@@ -83,6 +83,17 @@ const EXTRA_TABLES = {
     missingTableAllowed: true,
   },
   tbl_CoSpec: { required: [], optional: ['ECOcode', 'PostalCode', 'Code', 'Address', 'Tel', 'Estate', 'City'], missingTableAllowed: true },
+  // سابقهٔ ارسال صورت‌حساب به سامانهٔ مؤدیان: Num شمارهٔ فاکتور فروش، Mozo موضوع (۱ اصلی،
+  // ۲ اصلاحی، ۴ برگشت از فروش)، Status نتیجه. کلید و توکن سامانه در tbl_NEWMovadianInfo است
+  // و هرگز خوانده نمی‌شود؛ RefId و UID هم لازم نیست.
+  tbl_NEWMovadian: { required: ['ID'], optional: ['Num', 'Mozo', 'Status', 'SDate', 'Factor_Date', 'TaxId', 'Serial', 'Error'], missingTableAllowed: true },
+  tbl_NEWMovadian_Ebtal: { required: ['ID'], optional: ['SDate', 'Status', 'Error'], missingTableAllowed: true },
+  // چک ضمانت: سند نمی‌سازد؛ Acc طرف حساب، Bank حساب بانک، Chk_Kind مثل tbl_Check (۰ دریافتی، ۱ پرداختی).
+  tbl_CheckTazmin: {
+    required: ['ID'],
+    optional: ['Chk_Num', 'Acc_Num', 'Chk_Date', 'Chk_Money', 'BankBranch', 'Bank_K', 'Bank_M', 'Bank_T', 'Acc_K', 'Acc_M', 'Acc_T', 'Chk_Kind', 'Comment', 'Sanad_Num', 'IsActive'],
+    missingTableAllowed: true,
+  },
 };
 
 // حساب‌هایی که خود پارسیان در تنظیماتش برای هر کار تعیین کرده (صندوق، فروش،
@@ -469,7 +480,9 @@ const NEVER_LISTED = /^(sys|dt)|^tbl_(User|LC|Company|NEWMovadianInfo|SMSSetting
 // و گزارش، واحد و انبار، شرح آماده، هشدار چک) — در بکاپ اتیه سازان دیده شدند و فهرست نمی‌شوند.
 const HELPER_TABLES = new Set(['zone', 'history', 'hafez', 'keyhelp', 'roles', 'userrole', 'store_user_role', 'store_user_log', 'store_users',
   'factnum', 'factorprint', 'printsarhesab', 'accreportcode', 'accreportheader', 'wreport', 'rec_setting', 'naghdi_acc_setting', 'naghdi_cc_m',
-  'fc_dc_inuse', 'telfieldname', 'propname', 'unit', 'storehouse', 'comment', 'topcheck', 'checkalarm', 'wcontractfield'].map((name) => `tbl_${name}`));
+  'fc_dc_inuse', 'telfieldname', 'propname', 'unit', 'storehouse', 'comment', 'topcheck', 'checkalarm', 'wcontractfield',
+  // جمله‌های روز، فهرست سال‌های مالی، تنظیم چاپ چک و نتیجهٔ خطایابی داخلی پارسیان (بکاپ ۱۴۰۵).
+  'kamali', 'periodname', 'printcheck', 'dberror'].map((name) => `tbl_${name}`));
 
 /** جدول‌های کاربری پُری که خوانده نمی‌شوند، با شمار ردیف زنده؛ محتوایشان خوانده نمی‌شود. */
 function unreadTables(context) {
@@ -552,8 +565,19 @@ function readExtras(context, warnings) {
     product: row.MainGoodsCode, component: row.SubGoodsCode, quantity: Number(row.Number) || 0,
     perUnits: Number(row.NumTolid) || 1, price: Number(row.Price) || 0,
   }));
+  const moadian = [
+    ...tables.tbl_NEWMovadian.map((row) => ({ source: `m:${row.ID}`, invoiceNumber: Number(row.Num) || 0, subject: Number(row.Mozo) || 0,
+      status: row.Status || '', sentDate: row.SDate || '', invoiceDate: row.Factor_Date || '', taxId: row.TaxId || '', error: row.Error || '' })),
+    // ابطال: شمارهٔ فاکتورش در جدول نیست؛ فقط نتیجه‌اش.
+    ...tables.tbl_NEWMovadian_Ebtal.map((row) => ({ source: `e:${row.ID}`, invoiceNumber: 0, subject: 3, status: row.Status || '', sentDate: row.SDate || '', invoiceDate: '', taxId: '', error: row.Error || '' })),
+  ];
+  const guaranteeCheques = tables.tbl_CheckTazmin.map((row) => ({
+    id: row.ID, kind: row.Chk_Kind, serial: row.Chk_Num ?? '', accountNumber: row.Acc_Num ?? '', dueDate: row.Chk_Date || '',
+    money: Number(row.Chk_Money) || 0, branch: row.BankBranch || '', comment: row.Comment || '', sanad: row.Sanad_Num || 0, active: row.IsActive ?? null,
+    accKol: row.Acc_K || 0, accMoeen: row.Acc_M || 0, accTaf: row.Acc_T || 0, bankKol: row.Bank_K || 0, bankMoeen: row.Bank_M || 0, bankTaf: row.Bank_T || 0,
+  }));
   return {
-    goods, cards, cheques, chequeHistory, formulas,
+    goods, cards, cheques, chequeHistory, formulas, moadian, guaranteeCheques,
     invoices: [...byFactor.values()].sort((first, second) => first.title - second.title || first.number - second.number),
     company: company ? {
       economicCode: company.ECOcode || '', nationalId: company.Code || '', postalCode: company.PostalCode || '',

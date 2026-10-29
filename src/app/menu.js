@@ -33,7 +33,7 @@ export const MENU = Object.freeze([
   {
     id: 'cash', label: 'دریافت و پرداخت', icon: 'wallet', items: [
       { label: 'دفتر مالی', screen: 'ledger', section: 'transactions', ledgerTab: 'transactions',
-        keywords: 'دریافت پرداخت تراکنش طلب بدهی چک پیش پرداخت پیش دریافت ثبت دوره ای فاکتور انبار موجودی تطبیق بانک کارت بانک صندوق اشخاص شرکت ابزار رسید بستن صندوق پرسش از دفتر' },
+        keywords: 'دریافت پرداخت تراکنش طلب بدهی چک چک ضمانت سررسید چک پیش پرداخت پیش دریافت ثبت دوره ای فاکتور انبار موجودی تطبیق بانک کارت بانک صندوق اشخاص شرکت ابزار رسید بستن صندوق پرسش از دفتر' },
     ],
   },
   {
@@ -87,7 +87,7 @@ export const MENU = Object.freeze([
 
 /** زبانه‌های دفتر مالی که نشانی‌های قدیمی (`#/ledger/…`) به آن‌ها می‌روند. */
 export const LEDGER_SECTIONS = Object.freeze({
-  transactions: 'transactions', obligations: 'obligations', timing: 'timing', invoices: 'invoices', reconciliation: 'reconciliation',
+  transactions: 'transactions', obligations: 'obligations', cheques: 'cheques', timing: 'timing', invoices: 'invoices', reconciliation: 'reconciliation',
   recurring: 'recurring', inventory: 'inventory', tools: 'tools', counterparties: 'counterparties',
   'cards-banks': 'counterparties', 'cards-cash': 'counterparties', 'cards-people': 'counterparties',
 });

@@ -7,6 +7,8 @@ import {
   closeBankReconciliation, closeDay, createTransactionFromStatementLine, getReconciliationImport, moneyAccountCard, listAccounts, listDailyClosings, previewDayClosing, importBankStatement, ignoreReconciliationLine, listReconciliationImports, matchReconciliationLine, recordCapitalEntry, bounceCheque, cancelCheque, chequeCalendar, chequeHistory, chequeSummary, clearCheque, depositCheque, resolveReviewCheque, transferCheque, withdrawChequeDeposit, listCheques, recordCheque, transferWithFee, closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling, saveAccount,
 } from '../db.js';
 import { statementUpload } from './http.js';
+import { activeWorkspaceDatabase } from '../db/core.js';
+import { listGuaranteeCheques } from '../parsianSideRecords.js';
 
 export function registerTreasuryRoutes(app) {
   // تسویهٔ دورهٔ ارزش افزوده — از ماندهٔ دفتر، نه دوبارهٔ فاکتورها.
@@ -30,6 +32,10 @@ export function registerTreasuryRoutes(app) {
   });
   app.post('/api/accounts/transfer', (request, response, next) => {
     try { return response.status(201).json({ item: transferWithFee(request.body || {}) }); } catch (error) { return next(error); }
+  });
+  // چک‌های ضمانتِ بکاپ پارسیان: فقط دیدن؛ سند و مانده ندارند.
+  app.get('/api/cheques/guarantees', (_request, response, next) => {
+    try { return response.json({ items: listGuaranteeCheques(activeWorkspaceDatabase()) }); } catch (error) { return next(error); }
   });
   // دفتر چک: ثبت، وصول، برگشت.
   app.get('/api/cheques', (request, response, next) => {

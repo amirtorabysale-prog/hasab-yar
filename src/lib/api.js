@@ -495,6 +495,7 @@ export const api = {
   updatePettyCash: (id, payload) => request(`/api/petty-cash/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) }),
   closePettyCash: (id, payload) => request(`/api/petty-cash/${encodeURIComponent(id)}/close`, { method: 'POST', body: JSON.stringify(payload) }),
   cheques: (query = {}) => request(`/api/cheques?${new URLSearchParams(query)}`),
+  guaranteeCheques: () => request('/api/cheques/guarantees'),
   recordCheque: (payload) => request('/api/cheques', { method: 'POST', body: JSON.stringify(payload) }),
   clearCheque: (id, payload = {}) => request(`/api/cheques/${encodeURIComponent(id)}/clear`, { method: 'POST', body: JSON.stringify(payload) }),
   bounceCheque: (id, payload = {}) => request(`/api/cheques/${encodeURIComponent(id)}/bounce`, { method: 'POST', body: JSON.stringify(payload) }),

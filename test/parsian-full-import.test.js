@@ -177,7 +177,7 @@ test('بکاپ بدون جدول‌های پایه: اسناد مثل قبل و�
 test('ورود کامل در دفتر ریالی: همهٔ بخش‌ها از همان بکاپ پر می‌شوند', () => {
   const run = ledger('شرکت نمونه — ریالی');
   const preview = run(() => previewParsianBackup(database.activeWorkspaceDatabase(), buildParsianBackup(companyTables()), 'company.bak', { amountUnit: 'rial' }));
-  assert.deepEqual(preview.extras, { goods: 3, cards: 2, unlinkedCards: 1, salesInvoices: 24, purchaseInvoices: 12, otherInvoices: 0, company: true });
+  assert.deepEqual(preview.extras, { goods: 3, cards: 2, unlinkedCards: 1, salesInvoices: 24, purchaseInvoices: 12, otherInvoices: 0, company: true, moadianRecords: 0, guaranteeCheques: 0 });
   const result = importCompany(run);
   assert.equal(result.journals.entries, 61);
   assert.equal(result.extras.products.created, 3);

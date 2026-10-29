@@ -44,6 +44,17 @@ export const PARSIAN_TABLES = {
   tbl_Ghest: [['ID', 'int'], ['Money', 'float']],
   tbl_Hafez: [['ID', 'int'], ['Text', 'nvarchar']],
   tbl_CoSpec: [['ID', 'int'], ['ECOcode', 'nvarchar'], ['PostalCode', 'nvarchar'], ['Code', 'nvarchar'], ['Address', 'nvarchar'], ['Tel', 'nvarchar'], ['Estate', 'nvarchar'], ['City', 'nvarchar']],
+  // سابقهٔ سامانهٔ مؤدیان و چک ضمانت (بکاپ ۱۴۰۵) و چهار جدول بی‌اثر که هشدار نمی‌سازند.
+  tbl_NEWMovadian: [['ID', 'int'], ['Code', 'int'], ['Num', 'int'], ['RecType', 'smallint'], ['Serial', 'int'], ['SDate', 'nvarchar'], ['TaxId', 'nvarchar'],
+    ['Status', 'nvarchar'], ['Error', 'nvarchar'], ['Mozo', 'smallint'], ['Factor_Date', 'nvarchar']],
+  tbl_NEWMovadian_Ebtal: [['ID', 'int'], ['SDate', 'nvarchar'], ['Status', 'nvarchar'], ['Error', 'nvarchar']],
+  tbl_CheckTazmin: [['ID', 'int'], ['Chk_Num', 'nvarchar'], ['Acc_Num', 'nvarchar'], ['Chk_Date', 'nvarchar'], ['Chk_Money', 'float'], ['BankBranch', 'nvarchar'],
+    ['Bank_K', 'smallint'], ['Bank_M', 'smallint'], ['Bank_T', 'int'], ['Acc_K', 'smallint'], ['Acc_M', 'smallint'], ['Acc_T', 'int'], ['Chk_Kind', 'smallint'],
+    ['Comment', 'nvarchar'], ['Sanad_Num', 'int'], ['IsActive', 'bit']],
+  tbl_Kamali: [['ID', 'int'], ['Code', 'int'], ['Comment', 'nvarchar']],
+  tbl_PeriodName: [['ID', 'int'], ['YName', 'nvarchar']],
+  tbl_PrintCheck: [['ID', 'int'], ['Comment', 'nvarchar']],
+  tbl_DBError: [['ID', 'int'], ['Taraz', 'nvarchar']],
   // رازی که خواننده هرگز نباید بخواند (کلید سامانهٔ مؤدیان در بکاپ واقعی همین‌جاست).
   tbl_NEWMovadianInfo: [['ID', 'int'], ['PrivateKey', 'nvarchar'], ['Token', 'nvarchar']],
 };
