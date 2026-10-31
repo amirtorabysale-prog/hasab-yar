@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart3, BookOpenCheck, ChevronDown, ChevronLeft, FolderTree, HandCoins, Home, Landmark, LayoutGrid, PiggyBank, ReceiptText, Search, Settings, Users, WalletCards, X } from 'lucide-react';
+import { BarChart3, BookOpenCheck, ChevronDown, ChevronLeft, FolderTree, HandCoins, Home, Landmark, LayoutGrid, MessageSquareText, PiggyBank, ReceiptText, Search, Settings, Users, WalletCards, X } from 'lucide-react';
 import { findMenuItem, searchMenu, visibleMenu } from './menu.js';
 import { DnaIcon } from '../components/DnaHelix.jsx';
 import { formatAmount, toPersianDigits } from '../lib/format.js';
@@ -14,7 +14,7 @@ import { profileDefinition } from '../../shared/product.js';
 const SCREEN_ICONS = {
   home: Home, wallet: WalletCards, chart: BarChart3, settings: Settings,
   grid: LayoutGrid, inbox: ReceiptText, book: BookOpenCheck, landmark: Landmark,
-  coins: HandCoins, users: Users, petty: PiggyBank,
+  coins: HandCoins, users: Users, petty: PiggyBank, sms: MessageSquareText,
 };
 
 /** صفحه‌های مجاز این کاربر؛ تا وقتی دسترسی نرسیده، ناوبری خالی می‌ماند نه حدسی. */

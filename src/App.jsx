@@ -70,6 +70,7 @@ const SessionsPanel = namedLazy(() => import('./features/settings/SettingsPage.j
 const SettingsPage = namedLazy(() => import('./features/settings/SettingsPage.jsx'), 'SettingsPage');
 const TaxPage = namedLazy(() => import('./features/tax/TaxPage.jsx'), 'TaxPage');
 const PettyCashPage = namedLazy(() => import('./features/pettyCash/PettyCashPage.jsx'), 'PettyCashPage');
+const BankSmsPage = namedLazy(() => import('./features/bankSms/BankSmsPage.jsx'), 'BankSmsPage');
 // فقط وقتی فهم گفته در دفتر فعال است و گفته‌ای مرکب آمده بارگذاری می‌شود.
 const UnderstandingSheet = namedLazy(() => import('./features/understanding/UnderstandingSheet.jsx'), 'UnderstandingSheet');
 const WorkspacePanel = lazy(() => import('./features/settings/WorkspacePanel.jsx'));
@@ -620,6 +621,7 @@ export default function App() {
           {screen === 'chart' && data.settings.profileType === 'business' && <ChartPage access={access} notify={notify} refreshApp={load} initialTab={section} onTabChange={(id) => { setSection(id); writeRoute('chart', id); }} />}
           {screen === 'collaboration' && data.settings.profileType === 'business' && <CollaborationPage access={access} notify={notify} navigate={navigate} initialTab={section} />}
           {screen === 'dna' && data.settings.profileType === 'business' && <DnaPage notify={notify} />}
+          {screen === 'bank-sms' && <BankSmsPage categories={data.categories} notify={notify} refresh={load} />}
           {screen === 'petty-cash' && data.settings.profileType === 'business' && <PettyCashPage accounts={data.accounts} access={access} notify={notify} refresh={load} autoCreate={section === 'new'} />}
           {screen === 'settings' && (() => {
             // تنظیمات یک ستون بلند بود: پشتیبان و رمز ته صفحه گم می‌شدند. حالا هر
