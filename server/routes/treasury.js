@@ -5,6 +5,7 @@
 
 import {
   closeBankReconciliation, closeDay, createTransactionFromStatementLine, getReconciliationImport, moneyAccountCard, listAccounts, listDailyClosings, previewDayClosing, importBankStatement, ignoreReconciliationLine, listReconciliationImports, matchReconciliationLine, recordCapitalEntry, bounceCheque, cancelCheque, chequeCalendar, chequeHistory, chequeSummary, clearCheque, depositCheque, resolveReviewCheque, transferCheque, withdrawChequeDeposit, listCheques, recordCheque, transferWithFee, closePettyCashFund, fundPettyCashFromSpeech, listPettyCashFunds, openPettyCashFund, replenishPettyCashFund, updatePettyCashCeiling, saveAccount,
+  bankSmsSettings, saveBankSmsSettings, listBankSms, ingestBankSms, assignBankSmsAccount, matchBankSms, recordBankSms, ignoreBankSms, reopenBankSms,
 } from '../db.js';
 import { statementUpload } from './http.js';
 import { activeWorkspaceDatabase } from '../db/core.js';
@@ -99,6 +100,17 @@ export function registerTreasuryRoutes(app) {
   });
   app.post('/api/reconciliation/lines/:id/match', (request, response, next) => { try { return response.json({ item: matchReconciliationLine(request.params.id, request.body?.transactionId) }); } catch (error) { return next(error); } });
   app.post('/api/reconciliation/lines/:id/create', (request, response, next) => { try { const item = createTransactionFromStatementLine(request.params.id, request.body || {}); return item ? response.status(201).json({ item }) : response.status(404).json({ message: 'ردیف باز پیدا نشد.' }); } catch (error) { return next(error); } });
+  // پیامک بانکی: تنظیمات (کلی و هر بانک)، ورود پیامک، تطبیق، ثبت و کنار گذاشتن.
+  const smsRoute = (handler) => (request, response, next) => { try { return response.json(handler(request)); } catch (error) { return next(error); } };
+  app.get('/api/bank-sms/settings', smsRoute(() => ({ settings: bankSmsSettings() })));
+  app.put('/api/bank-sms/settings', smsRoute((request) => ({ settings: saveBankSmsSettings(request.body || {}) })));
+  app.get('/api/bank-sms', smsRoute((request) => listBankSms({ status: String(request.query.status || '') })));
+  app.post('/api/bank-sms', smsRoute((request) => ingestBankSms(request.body?.messages || request.body || [])));
+  app.post('/api/bank-sms/:id/account', smsRoute((request) => ({ item: assignBankSmsAccount(request.params.id, request.body?.accountId) })));
+  app.post('/api/bank-sms/:id/match', smsRoute((request) => ({ item: matchBankSms(request.params.id, request.body?.transactionId) })));
+  app.post('/api/bank-sms/:id/record', smsRoute((request) => ({ item: recordBankSms(request.params.id, request.body || {}) })));
+  app.post('/api/bank-sms/:id/ignore', smsRoute((request) => ({ item: ignoreBankSms(request.params.id, request.body?.reason) })));
+  app.post('/api/bank-sms/:id/reopen', smsRoute((request) => ({ item: reopenBankSms(request.params.id) })));
   app.post('/api/reconciliation/lines/:id/ignore', (request, response, next) => { try { return response.json({ item: ignoreReconciliationLine(request.params.id, request.body?.reason) }); } catch (error) { return next(error); } });
   app.post('/api/reconciliation/imports/:id/close', (request, response, next) => { try { return response.json({ item: closeBankReconciliation(request.params.id) }); } catch (error) { return next(error); } });
   app.get('/api/closings', (_request, response) => response.json({ items: listDailyClosings() }));

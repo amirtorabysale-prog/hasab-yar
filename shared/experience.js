@@ -79,6 +79,11 @@ export const SCREENS = Object.freeze([
     id: 'petty-cash', label: 'تنخواه‌گردان', icon: 'petty',
     experiences: [EXPERIENCES.SIMPLE, EXPERIENCES.PROFESSIONAL], minimumRole: 'viewer',
   }),
+  // پیامک بانکی: هر کسب‌وکار یا پرونده‌ای که حساب بانکی دارد.
+  Object.freeze({
+    id: 'bank-sms', label: 'پیامک بانکی', icon: 'sms',
+    experiences: [EXPERIENCES.SIMPLE, EXPERIENCES.PROFESSIONAL], minimumRole: 'viewer',
+  }),
   Object.freeze({
     id: 'settings', label: 'تنظیمات', icon: 'settings',
     experiences: [EXPERIENCES.SIMPLE, EXPERIENCES.PROFESSIONAL], minimumRole: 'viewer',

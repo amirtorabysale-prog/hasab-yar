@@ -49,3 +49,4 @@ if (String(process.env.SEED_DEMO).toLowerCase() === 'true') seedDemo();
 
 export * from './db/reviewIntakes.js';
 export * from './db/understanding.js';
+export * from './db/bankSms.js';

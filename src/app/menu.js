@@ -37,6 +37,11 @@ export const MENU = Object.freeze([
     ],
   },
   {
+    id: 'bank-sms', label: 'پیامک بانکی', icon: 'sms', items: [
+      { label: 'پیامک‌های بانکی', screen: 'bank-sms', keywords: 'پیامک اس ام اس sms بانک برداشت واریز مانده تطبیق' },
+    ],
+  },
+  {
     id: 'petty', label: 'تنخواه‌گردان', icon: 'petty', items: [
       { label: 'مدیریت تنخواه', screen: 'petty-cash', keywords: 'تنخواه شارژ دارنده سقف پرداخت' },
     ],

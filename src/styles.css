@@ -148,6 +148,9 @@ main table tbody tr:hover { background: rgb(var(--c-subtle)); }
   :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-wallet-cards > path:nth-child(2) { translate: 0 -1px; }
   :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-wallet-cards > path:nth-child(1) { translate: 0 1.5px; }
   /* تنخواه‌گردان: قلک سر خم می‌کند، انگار سکه می‌گیرد؛ دمش تکان می‌خورد. */
+  /* پیامک: حباب مثل پیامِ تازه‌رسیده کمی بالا می‌پرد و کج می‌شود. */
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf) .lucide-message-square-text { transform-origin: 20% 90%; }
+  :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-message-square-text { translate: 0 -2px; rotate: -8deg; }
   :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf) .lucide-piggy-bank { transform-origin: 50% 85%; }
   :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf):hover .lucide-piggy-bank { translate: none; rotate: 8deg; }
   :is(button:not(:disabled), a[href], [role="button"], [role="tab"], summary, .menu-group, .menu-leaf) .lucide-piggy-bank > path:nth-child(3) { transform-origin: right bottom; }
