@@ -4,7 +4,7 @@
 // احراز هویت، CSRF و مرز نقش و تجربه پیش از این‌ها در index.js اعمال می‌شود.
 
 import {
-  listTaxRates, importPayrollFile, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun, settleVatPeriod, claimVatRefund, saveTaxRate, taxReport, askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
+  listTaxRates, importPayrollFile, listEmployees, saveEmployee, endEmployment, resumeEmployment, listPayrollRuns, payPayrollLiability, payPayrollSalaries, reversePayrollRun, settleVatPeriod, claimVatRefund, saveTaxRate, taxReport, askTaxAssistant, listTaxAssistantQuestions, listTaxKnowledgeSources, resolveTaxAssistantQuestion, saveTaxKnowledgeSource,
   // منابع نسخه‌دار: تا این اصلاح import نشده بودند و هر نه مسیر /api/tax-knowledge ۵۰۰ می‌داد.
   listTaxDocuments, getTaxDocument, saveTaxDocumentDraft, listTaxReviewQueue, getTaxDocumentVersion,
   publishTaxDocumentVersion, rejectTaxDocumentVersion, saveTaxDocumentRelation, citableTaxVersions,
@@ -22,6 +22,22 @@ export function registerTaxAndPayrollRoutes(app) {
     } catch (error) { return next(error); }
   });
   // لیست حقوق: فایل دفتر، سند، و تسویهٔ سه بدهیِ جدا.
+  // پروندهٔ پرسنل: زیر /api/payroll تا همان مرز نقش «مدیر» را داشته باشد.
+  app.get('/api/payroll/personnel', (request, response, next) => {
+    try { return response.json({ items: listEmployees({ includeEnded: request.query?.all === '1' }) }); } catch (error) { return next(error); }
+  });
+  app.post('/api/payroll/personnel', (request, response, next) => {
+    try { return response.status(201).json({ item: saveEmployee({ ...(request.body || {}), id: undefined }) }); } catch (error) { return next(error); }
+  });
+  app.put('/api/payroll/personnel/:id', (request, response, next) => {
+    try { return response.json({ item: saveEmployee({ ...(request.body || {}), id: request.params.id }) }); } catch (error) { return next(error); }
+  });
+  app.post('/api/payroll/personnel/:id/end', (request, response, next) => {
+    try { return response.json({ item: endEmployment(request.params.id, request.body || {}) }); } catch (error) { return next(error); }
+  });
+  app.post('/api/payroll/personnel/:id/resume', (request, response, next) => {
+    try { return response.json({ item: resumeEmployment(request.params.id) }); } catch (error) { return next(error); }
+  });
   app.get('/api/payroll', (request, response, next) => {
     try { return response.json({ items: listPayrollRuns({ limit: request.query?.limit }) }); } catch (error) { return next(error); }
   });
