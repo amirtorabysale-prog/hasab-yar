@@ -511,6 +511,12 @@ export const api = {
   chequeAction: (id, action, payload = {}) => request(`/api/cheques/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: JSON.stringify(payload) }),
   chequeHistory: (id) => request(`/api/cheques/${encodeURIComponent(id)}/history`),
   chequeCalendar: (days = 60) => request(`/api/cheques/calendar?days=${days}`),
+  personnel: ({ all = false } = {}) => request(`/api/payroll/personnel${all ? '?all=1' : ''}`),
+  savePersonnel: (values) => (values.id
+    ? request(`/api/payroll/personnel/${encodeURIComponent(values.id)}`, { method: 'PUT', body: JSON.stringify(values) })
+    : request('/api/payroll/personnel', { method: 'POST', body: JSON.stringify(values) })),
+  endPersonnel: (id, endDate) => request(`/api/payroll/personnel/${encodeURIComponent(id)}/end`, { method: 'POST', body: JSON.stringify({ endDate }) }),
+  resumePersonnel: (id) => request(`/api/payroll/personnel/${encodeURIComponent(id)}/resume`, { method: 'POST', body: '{}' }),
   payrollRuns: () => request('/api/payroll'),
   importPayrollFile: (file, { period, occurredAt, note } = {}) => {
     const form = new FormData();
