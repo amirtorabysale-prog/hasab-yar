@@ -20,6 +20,7 @@ function ensureSchema() {
       id TEXT PRIMARY KEY,
       contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
+      nickname TEXT NOT NULL DEFAULT '',
       national_id TEXT NOT NULL DEFAULT '',
       start_date TEXT,
       end_date TEXT,
@@ -38,9 +39,11 @@ function ensureSchema() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_national_id ON employees(national_id) WHERE national_id != '';
   `);
+  const columns = new Set(db.prepare('PRAGMA table_info(employees)').all().map((column) => column.name));
+  if (!columns.has('nickname')) db.exec("ALTER TABLE employees ADD COLUMN nickname TEXT NOT NULL DEFAULT ''");
 }
 
-const COLUMNS = `id,contact_id AS contactId,name,national_id AS nationalId,start_date AS startDate,end_date AS endDate,
+const COLUMNS = `id,contact_id AS contactId,name,nickname,national_id AS nationalId,start_date AS startDate,end_date AS endDate,
   job_title AS jobTitle,department,employment_type AS employmentType,base_wage AS baseWage,marital,children,
   insurance_number AS insuranceNumber,mobile,iban,note,created_at AS createdAt,updated_at AS updatedAt`;
 
@@ -80,13 +83,13 @@ export function saveEmployee(values = {}) {
   const contactId = sameName && existing.contactId ? existing.contactId : contactIdForName(value.name, values.counterpartyResolution);
   // نقش «شریک» دست نمی‌خورد؛ شخصِ بی‌نقش «پرسنل» می‌شود.
   if (contactId) db.prepare("UPDATE contacts SET role='employee',kind='person',updated_at=CURRENT_TIMESTAMP WHERE id=? AND role=''").run(contactId);
-  db.prepare(`INSERT INTO employees (id,contact_id,name,national_id,start_date,job_title,department,employment_type,base_wage,
-      marital,children,insurance_number,mobile,iban,note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,name=excluded.name,national_id=excluded.national_id,
+  db.prepare(`INSERT INTO employees (id,contact_id,name,nickname,national_id,start_date,job_title,department,employment_type,base_wage,
+      marital,children,insurance_number,mobile,iban,note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET contact_id=excluded.contact_id,name=excluded.name,nickname=excluded.nickname,national_id=excluded.national_id,
       start_date=excluded.start_date,job_title=excluded.job_title,department=excluded.department,employment_type=excluded.employment_type,
       base_wage=excluded.base_wage,marital=excluded.marital,children=excluded.children,insurance_number=excluded.insurance_number,
       mobile=excluded.mobile,iban=excluded.iban,note=excluded.note,updated_at=CURRENT_TIMESTAMP`)
-    .run(id, contactId, value.name, value.nationalId, value.startDate || null, value.jobTitle, value.department, value.employmentType,
+    .run(id, contactId, value.name, value.nickname, value.nationalId, value.startDate || null, value.jobTitle, value.department, value.employmentType,
       value.baseWage, value.marital, value.children, value.insuranceNumber, value.mobile, value.iban, value.note);
   audit(existing ? 'update' : 'create', 'employee', id, { name: value.name });
   return getEmployee(id);
