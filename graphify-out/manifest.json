@@ -5862,9 +5862,9 @@
     "semantic_hash": ""
   },
   "src/features/accounting/PersonnelPanel.jsx": {
-    "mtime": 1793522199.2839534,
-    "seen": 1793522661.722118,
-    "ast_hash": "c654c9a17f663c838d29da58032b5597",
+    "mtime": 1793523926.8695722,
+    "seen": 1793524424.406815,
+    "ast_hash": "b16e0f0b3bfe660857639c4223c3a3b6",
     "semantic_hash": ""
   },
   "src/features/bankSms/BankSmsPage.jsx": {
@@ -5922,15 +5922,27 @@
     "semantic_hash": ""
   },
   "graphify-out/converted/scenarios-100-ai_9efe5aa3.md": {
-    "mtime": 1793522315.390957,
-    "seen": 1793522661.7240436,
+    "mtime": 1793524062.6424112,
+    "seen": 1793524424.4085028,
     "ast_hash": "f41af9c8d81c149331a1f7a39e791275",
     "semantic_hash": ""
   },
   "graphify-out/converted/stress-test-scenarios_932d2fe7.md": {
-    "mtime": 1793522315.44674,
-    "seen": 1793522661.7240493,
+    "mtime": 1793524062.700822,
+    "seen": 1793524424.408506,
     "ast_hash": "9ed3a2bdebe3eac936fd911bb04f9492",
+    "semantic_hash": ""
+  },
+  "shared/personnelLine.js": {
+    "mtime": 1793523926.8669612,
+    "seen": 1793524424.4066272,
+    "ast_hash": "47fc8a5f471677d8f3d7f150868d6ee6",
+    "semantic_hash": ""
+  },
+  "test/personnel-line.test.js": {
+    "mtime": 1793523926.8687618,
+    "seen": 1793524424.4075685,
+    "ast_hash": "7ef83efe33c50d44d4c9770df934ed16",
     "semantic_hash": ""
   },
   "package-lock.json": {
