@@ -2646,9 +2646,9 @@
     "semantic_hash": ""
   },
   "docs/bank-reconciliation.md": {
-    "mtime": 1791648410.2238162,
-    "seen": 1793520589.4704015,
-    "ast_hash": "069112c04e027d1b534286e13ea65050",
+    "mtime": 1793526230.0618353,
+    "seen": 1793526601.1706536,
+    "ast_hash": "5a763cf8365b7bc2f590b92725f6e503",
     "semantic_hash": ""
   },
   "docs/depreciation.md": {
@@ -2760,9 +2760,9 @@
     "semantic_hash": ""
   },
   "docs/project-progress.md": {
-    "mtime": 1793484014.0399218,
-    "seen": 1793520589.470429,
-    "ast_hash": "708123124edf30008f921daf9412ffbb",
+    "mtime": 1793526217.4538345,
+    "seen": 1793526601.170688,
+    "ast_hash": "713f66d12273e6768d34dd7488529baa",
     "semantic_hash": ""
   },
   "docs/release-safety.md": {
@@ -2868,9 +2868,9 @@
     "semantic_hash": ""
   },
   "docs/voice-entry.md": {
-    "mtime": 1791648410.232824,
-    "seen": 1793520589.4704611,
-    "ast_hash": "3b982fd653a14c6888644d1ef89f194c",
+    "mtime": 1793526230.0618353,
+    "seen": 1793526601.1707187,
+    "ast_hash": "1661c753c676f7ef05ff9186f4179dda",
     "semantic_hash": ""
   },
   "docs/voice-test-runbook.md": {
@@ -5922,14 +5922,14 @@
     "semantic_hash": ""
   },
   "graphify-out/converted/scenarios-100-ai_9efe5aa3.md": {
-    "mtime": 1793524062.6424112,
-    "seen": 1793524424.4085028,
+    "mtime": 1793526231.8316672,
+    "seen": 1793526601.1707323,
     "ast_hash": "f41af9c8d81c149331a1f7a39e791275",
     "semantic_hash": ""
   },
   "graphify-out/converted/stress-test-scenarios_932d2fe7.md": {
-    "mtime": 1793524062.700822,
-    "seen": 1793524424.408506,
+    "mtime": 1793526231.8978355,
+    "seen": 1793526601.1707344,
     "ast_hash": "9ed3a2bdebe3eac936fd911bb04f9492",
     "semantic_hash": ""
   },
