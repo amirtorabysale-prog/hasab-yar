@@ -33,6 +33,8 @@ export const MARITAL = Object.freeze([
  */
 export const PERSONNEL_STEPS = Object.freeze([
   { id: 'name', label: 'نام و نام خانوادگی', kind: 'name', required: true, say: '«علی رضایی»' },
+  // اختیاری: «اوستا»، «حاج‌آقا»، «علی کوچیکه» — همان چیزی که در کارگاه صدایش می‌کنند.
+  { id: 'nickname', label: 'لقب', kind: 'text', say: '«اوستا»، «حاج‌آقا» یا «بعداً»' },
   { id: 'nationalId', label: 'کد ملی', kind: 'nationalId', say: '«۰۰۸۴۵۷۵۹۴۸» یا رقم‌به‌رقم' },
   { id: 'startDate', label: 'تاریخ شروع کار', kind: 'date', say: '«اول مهر ۱۴۰۲» یا «۱۴۰۲/۰۷/۰۱»' },
   { id: 'jobTitle', label: 'سمت', kind: 'text', say: '«انباردار»، «حسابدار»' },
@@ -124,7 +126,7 @@ export function spokenDigits(input) {
 }
 
 // پیش‌گفتار و پس‌گفتار محاوره که جزو پاسخ نیست: «اسمش علی رضاییه هست»، «سمتش انباردار».
-const LEAD_WORDS = ['اسم', 'نام', 'اسم و فامیل', 'اسم و فامیلی', 'نام و نام خانوادگی', 'سمت', 'شغل', 'عنوان', 'کد ملی', 'کدملی',
+const LEAD_WORDS = ['لقب', 'اسم مستعار', 'صداش میکنن', 'صداش می کنن', 'بهش میگن', 'اسم', 'نام', 'اسم و فامیل', 'اسم و فامیلی', 'نام و نام خانوادگی', 'سمت', 'شغل', 'عنوان', 'کد ملی', 'کدملی',
   'شماره', 'شماره بیمه', 'بیمه', 'موبایل', 'شماره موبایل', 'تلفن', 'شبا', 'شماره شبا', 'حقوق', 'مزد', 'حقوق پایه', 'مزد پایه',
   'تاریخ شروع', 'تعداد فرزند', 'تعداد بچه', 'بخش', 'نوع همکاری', 'وضعیت تاهل'].sort((a, b) => b.length - a.length);
 const LEAD = new RegExp(`^(?:(?:خب|خوب|بله|آره|اره)\\s+)?(?:(?:${LEAD_WORDS.join('|')})(?:ش|اش|شون|ایشون)?\\s*(?:هم\\s+)?(?::|\\s)\\s*)+`);
@@ -332,9 +334,42 @@ export function validatePersonnel(values = {}) {
   return {
     errors,
     value: {
-      name, nationalId, startDate, jobTitle: text('jobTitle'), department, employmentType,
+      name, nickname: text('nickname', 40), nationalId, startDate, jobTitle: text('jobTitle'), department, employmentType,
       baseWage: Number.isSafeInteger(baseWage) && baseWage > 0 ? baseWage : 0, marital, children,
       insuranceNumber, mobile: mobile || '', iban: iban || '', note: clean(values.note).slice(0, 300),
     },
   };
+}
+
+// ------------------------------------------------------------ فرمان‌های صوتی
+
+/**
+ * فرمانِ آخرِ گفته‌های یک مرحله.
+ *
+ * موتور گفتار Chrome بعد از هر مکث کوتاه تکه‌ای را «نهایی» اعلام می‌کند؛ «امیرحسین»
+ * یک تکه است و «ترابی» تکهٔ بعد، «۱۲۷» یک تکه و «۳۹۲» تکهٔ بعد. پس پایان یک تکه
+ * پایان پاسخ نیست: گفته‌های هر مرحله روی هم جمع می‌شوند و مرحله فقط با فرمان
+ * صریح بسته می‌شود — «بعدی» یا «تأیید» (یا دکمهٔ تأیید). فرمان می‌تواند ته همان
+ * جمله بیاید: «امیرحسین ترابی، بعدی».
+ *
+ * `{ command, rest }` — `command` یکی از next، skip، back، clear، save یا null؛
+ * `rest` گفته‌های پیش از فرمان.
+ */
+const COMMANDS = [
+  ['next', ['بعدی', 'برو بعدی', 'مرحله بعد', 'مرحله بعدی', 'تایید', 'تأیید', 'تاییده', 'درسته', 'درست است', 'اوکی', 'ok', 'okay']],
+  ['skip', ['بعدا', 'بعداً', 'بعدا میگم', 'رد کن', 'رد شو', 'بگذر', 'ازش بگذر']],
+  ['back', ['برگرد', 'مرحله قبل', 'مرحله قبلی', 'قبلی', 'برو قبلی']],
+  ['clear', ['پاک کن', 'پاکش کن', 'از اول', 'اشتباه شد', 'اشتباه گفتم']],
+  ['save', ['ذخیره', 'ذخیره کن', 'ذخیرش کن', 'ذخیره‌اش کن']],
+];
+const COMMAND_PATTERNS = COMMANDS.map(([command, phrases]) => [command,
+  new RegExp(`(?:^|\\s)(?:${phrases.map((phrase) => clean(phrase).replace(/\s+/g, '\\s+')).sort((a, b) => b.length - a.length).join('|')})$`, 'i')]);
+
+export function splitVoiceCommand(input) {
+  const text = clean(input).replace(/[.!؟?،,؛;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const [command, pattern] of COMMAND_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match) return { command, rest: text.slice(0, match.index).trim() };
+  }
+  return { command: null, rest: text };
 }

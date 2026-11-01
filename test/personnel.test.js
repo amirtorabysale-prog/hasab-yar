@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tempDatabase } from './helpers/tempPath.js';
+import { appendSpeechSegment } from '../src/lib/liveSpeech.js';
 import {
-  PERSONNEL_STEPS, normalizeMobile, personnelCompleteness, readPersonnelAnswer, spokenDigits, validIban, validNationalId, validatePersonnel,
+  PERSONNEL_STEPS, splitVoiceCommand, normalizeMobile, personnelCompleteness, readPersonnelAnswer, spokenDigits, validIban, validNationalId, validatePersonnel,
 } from '../shared/personnel.js';
 
 /**
@@ -18,7 +19,7 @@ const value = (step, text) => {
 };
 
 test('مرحله‌ها به ترتیب، فقط نام اجباری', () => {
-  assert.deepEqual(PERSONNEL_STEPS.map((step) => step.id), ['name', 'nationalId', 'startDate', 'jobTitle', 'department', 'employmentType', 'baseWage', 'marital', 'children', 'insuranceNumber', 'mobile', 'iban']);
+  assert.deepEqual(PERSONNEL_STEPS.map((step) => step.id), ['name', 'nickname', 'nationalId', 'startDate', 'jobTitle', 'department', 'employmentType', 'baseWage', 'marital', 'children', 'insuranceNumber', 'mobile', 'iban']);
   assert.deepEqual(PERSONNEL_STEPS.filter((step) => step.required).map((step) => step.id), ['name']);
 });
 
@@ -58,6 +59,11 @@ test('تاریخ شروع: شمسی نوشته، گفتاری، سال کوتا�
 
 test('سمت، بخش، نوع همکاری، تأهل: محاوره و نفی', () => {
   assert.equal(value('jobTitle', 'سمتش انباردار'), 'انباردار');
+  // لقب: اختیاری، با پیش‌گفتار محاوره.
+  assert.equal(value('nickname', 'لقبش اوستا'), 'اوستا');
+  assert.equal(value('nickname', 'بهش میگن حاج آقا'), 'حاج آقا');
+  assert.equal(value('nickname', 'صداش میکنن علی کوچیکه'), 'علی کوچیکه');
+  assert.deepEqual(read('nickname', 'نداره'), { skip: true });
   assert.equal(value('department', 'کارگر تولیده'), 'production');
   assert.equal(value('department', 'حسابداره تو دفتر'), 'admin');
   assert.equal(value('department', 'ویزیتور'), 'sales');
@@ -105,10 +111,53 @@ test('فرمان‌ها: «برگرد» و «بعداً» در هر مرحله',
 
 test('کامل‌بودن پرونده و کنترل پیش از ذخیره', () => {
   const partial = personnelCompleteness({ name: 'علی رضایی', nationalId: '0084575948', children: 0 });
-  assert.equal(partial.percent, 25);
+  assert.equal(partial.percent, 23, '۳ از ۱۳');
   assert.ok(partial.missing.includes('شمارهٔ شبا'));
   const { errors } = validatePersonnel({ name: 'ع', nationalId: '0084575949', mobile: '123', iban: 'IR00', department: 'cleaning', baseWage: -5 });
   assert.deepEqual(errors.map((error) => error.field).sort(), ['baseWage', 'department', 'iban', 'mobile', 'name', 'nationalId']);
+});
+
+/**
+ * گزارش مالک محصول (۱۰ آبان ۱۴۰۵): «امیرحسین ترابی را نمی‌گیرد، تا بگی امیرحسین خودش ثبتش
+ * می‌کند»؛ «۱۲۷۳۹۲۵۳۵۱ را ۱۲۷ می‌نویسد و با ۳۹۲ قبلی را پاک می‌کند». Chrome پس از هر مکث
+ * تکه‌ای را نهایی می‌کند؛ گفته‌های مرحله جمع می‌شوند و فقط فرمان صریح مرحله را می‌بندد.
+ * همان مسیر صفحه: هر تکه با appendSpeechSegment روی گفته‌ها، بعد splitVoiceCommand.
+ */
+function speak(step, segments) {
+  let buffer = '';
+  for (const segment of segments) {
+    buffer = appendSpeechSegment(buffer, segment);
+    const { command, rest } = splitVoiceCommand(buffer);
+    if (command) return { command, rest, result: rest ? read(step, rest) : null };
+  }
+  return { command: null, rest: buffer, result: null };
+}
+
+test('گفتار تکه‌تکه: مکث پاسخ را نمی‌بُرد؛ فقط «بعدی/تأیید» مرحله را می‌بندد', () => {
+  for (const [step, segments, expected] of [
+    ['name', ['امیرحسین', 'ترابی', 'بعدی'], 'امیرحسین ترابی'],
+    ['name', ['اسمش امیرحسین', 'ترابی هست، تأیید'], 'امیرحسین ترابی'],
+    ['nationalId', ['۱۲۷', '۳۹۲', '۵۳۵۱', 'تأیید'], '1273925351'],
+    ['nationalId', ['صد و بیست و هفت', 'سیصد و نود و دو', 'پنجاه و سه', 'پنجاه و یک', 'بعدی'], '1273925351'],
+    ['mobile', ['۰۹۱۲', '۳۴۵', '۶۷۸۹', 'درسته'], '09123456789'],
+    ['startDate', ['اول مهر', 'هزار و چهارصد و دو', 'بعدی'], '2023-09-23T08:30:00.000Z'],
+    ['iban', ['IR82', '0540 1026 8002', '0817 9090 02', 'اوکی'], 'IR820540102680020817909002'],
+  ]) {
+    const spoken = speak(step, segments);
+    assert.equal(spoken.command, 'next', segments.join(' | '));
+    assert.equal(spoken.result.value, expected, segments.join(' | '));
+  }
+  assert.equal(speak('baseWage', ['هجده', 'میلیون تومن', 'بعدی']).result.amountToman, 18_000_000);
+  // بی فرمان چیزی بسته نمی‌شود، هرچقدر هم پاسخ معتبر به نظر برسد.
+  assert.deepEqual(speak('name', ['امیرحسین']), { command: null, rest: 'امیرحسین', result: null });
+  assert.equal(speak('nationalId', ['۱۲۷', '۳۹۲']).command, null);
+  // فرمان‌ها.
+  assert.equal(speak('jobTitle', ['انباردار', 'پاک کن']).command, 'clear');
+  assert.equal(speak('jobTitle', ['برگرد']).command, 'back');
+  assert.equal(speak('iban', ['بعداً']).command, 'skip');
+  assert.equal(speak('name', ['امیرحسین ترابی', 'ذخیره']).rest, 'امیرحسین ترابی');
+  // نیمهٔ کد ملی با «بعدی» پذیرفته نمی‌شود؛ مرحله باز می‌ماند.
+  assert.equal(speak('nationalId', ['۱۲۷', '۳۹۲', 'بعدی']).result.ok, false);
 });
 
 process.env.DATABASE_PATH = tempDatabase('personnel');
@@ -132,8 +181,9 @@ test('پرونده روی همان «شخص» با نقش پرسنل؛ کد مل
     assert.throws(() => database.saveEmployee({ name: 'رضا کریمی', nationalId: '0084575948' }), /علی رضایی/);
     assert.throws(() => database.saveEmployee({ name: 'رضا کریمی', nationalId: '0084575949' }), (error) => error.code === 'PERSONNEL_INVALID' && error.details.errors[0].field === 'nationalId');
     // ویرایش همان پرونده، نه ردیف تازه.
-    const edited = database.saveEmployee({ ...ali, id: ali.id, jobTitle: 'سرشیفت' });
+    const edited = database.saveEmployee({ ...ali, id: ali.id, jobTitle: 'سرشیفت', nickname: 'اوستا' });
     assert.equal(edited.jobTitle, 'سرشیفت');
+    assert.equal(edited.nickname, 'اوستا');
     assert.equal(database.listEmployees().length, 1);
   });
 });

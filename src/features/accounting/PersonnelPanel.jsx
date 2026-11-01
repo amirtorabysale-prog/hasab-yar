@@ -3,18 +3,18 @@ import { Check, Mic, Pencil, Plus, Square, X } from 'lucide-react';
 import { QuickDateInput } from '../../components/QuickDateInput.jsx';
 import { api } from '../../lib/api.js';
 import { withCounterpartyConfirmation } from '../../lib/counterpartyPrompt.js';
-import { createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../../lib/liveSpeech.js';
+import { appendSpeechSegment, createPersianRecognizer, liveSpeechErrorMessage, liveSpeechSupported } from '../../lib/liveSpeech.js';
 import { currentAmountUnit, formatAmount, toPersianDigits, tomanToLedger, unitLabel } from '../../lib/format.js';
-import { DEPARTMENTS, EMPLOYMENT_TYPES, MARITAL, PERSONNEL_STEPS, readPersonnelAnswer } from '../../../shared/personnel.js';
+import { DEPARTMENTS, EMPLOYMENT_TYPES, MARITAL, PERSONNEL_STEPS, readPersonnelAnswer, splitVoiceCommand } from '../../../shared/personnel.js';
 
 /**
  * تعریف پرسنل — یک راهنمای مرحله‌به‌مرحله، با صدا یا دست.
  *
  * روی میکروفن که بزنی، مرحله‌ها به ترتیب پرسیده می‌شوند. هرچه می‌گویی همان لحظه
- * زیر مرحلهٔ جاری تایپ می‌شود؛ وقتی جمله تمام شد و پاسخ معتبر بود، مرحله تیک
- * می‌خورد و راهنما به مرحلهٔ بعد می‌رود. «بعداً» مرحله را رد می‌کند، «برگرد»
- * به مرحلهٔ قبل می‌رود و «ذخیره» پرونده را ثبت می‌کند. پاسخی که خوانده نشود
- * حدس زده نمی‌شود: مرحله باز می‌ماند و دلیلش گفته می‌شود.
+ * زیر مرحلهٔ جاری تایپ می‌شود و روی هم جمع می‌شود — مکث وسط «امیرحسین … ترابی»
+ * یا «۱۲۷ … ۳۹۲ …» پاسخ را نمی‌بُرد. مرحله فقط با اجازهٔ تو بسته می‌شود: «بعدی»
+ * یا «تأیید» (یا دکمهٔ تأیید). «پاک کن» از نو، «بعداً» رد، «برگرد» قبلی و «ذخیره»
+ * ثبت. پاسخی که خوانده نشود حدس زده نمی‌شود: مرحله باز می‌ماند و دلیلش گفته می‌شود.
  */
 
 const LABEL = {
@@ -86,6 +86,26 @@ function ManualInput({ step, values, onAnswer, onValue }) {
   </form>;
 }
 
+/**
+ * گفته‌های مرحلهٔ جاری و پیش‌نمایش خواندنشان. چیزی ثبت نمی‌شود تا «بعدی» یا
+ * «تأیید» گفته شود یا دکمهٔ تأیید زده شود.
+ */
+function VoiceDraft({ step, heard, onConfirm, onClear }) {
+  const text = splitVoiceCommand(heard).rest;
+  const preview = text ? readPersonnelAnswer(step.id, text) : null;
+  return <div className="rounded-md bg-surface px-2 py-1.5" aria-live="polite">
+    <p dir="auto" className="min-h-6 text-[14px]">{heard || <span className="text-muted">گوش می‌دهم…</span>}</p>
+    {preview && <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+      {preview.ok
+        ? <span className="font-bold text-income">خوانده شد: {toPersianDigits(preview.display)} · بگو «بعدی»</span>
+        : preview.skip ? <span className="text-muted">«بعداً» رد می‌کند</span>
+          : !preview.back && <span className="text-muted">{preview.message}</span>}
+      {preview.ok && <button type="button" onClick={onConfirm} className="tap rounded-md bg-accent px-2 text-[12px] font-bold text-on-fill">تأیید</button>}
+      <button type="button" onClick={onClear} className="font-bold text-muted hover:text-expense">پاک کن</button>
+    </div>}
+  </div>;
+}
+
 function PersonnelWizard({ employee, onClose, onSaved, notify }) {
   const [state, setState] = useState(() => initialState(employee));
   const [heard, setHeard] = useState('');
@@ -99,6 +119,8 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
   const recognizerRef = useRef(null);
   const listeningRef = useRef(false);
   const consumedRef = useRef('');
+  // گفته‌های نهاییِ مرحلهٔ جاری، روی هم؛ با عوض شدن مرحله خالی می‌شود.
+  const bufferRef = useRef('');
   const saveRef = useRef(null);
 
   const answered = PERSONNEL_STEPS.filter((step) => state.status[step.id] !== 'pending').length;
@@ -132,14 +154,50 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
   const answer = useCallback((text) => {
     const { current } = stateRef.current;
     const active = PERSONNEL_STEPS[current];
-    if (SAVE_WORDS.test(String(text).replace(/[.!؟?،]/g, '').trim())) { saveRef.current?.(); return; }
-    if (!active) return;
+    if (SAVE_WORDS.test(String(text).replace(/[.!؟?،]/g, '').trim())) { saveRef.current?.(); return true; }
+    if (!active) return false;
     const result = readPersonnelAnswer(active.id, text);
-    if (result.back) { goBack(); return; }
-    if (result.skip) { commit(active.id, null, 'skipped'); return; }
-    if (!result.ok) { setError(result.message); return; }
+    if (result.back) { goBack(); return true; }
+    if (result.skip) { commit(active.id, null, 'skipped'); return true; }
+    if (!result.ok) { setError(result.message); return false; }
     commit(active.id, active.kind === 'amount' ? spokenAmountToLedger(result) : result.value);
+    return true;
   }, [commit, goBack]);
+
+  /**
+   * تکهٔ نهاییِ تازه از گفتار: به گفته‌های همین مرحله اضافه می‌شود و فقط اگر با
+   * فرمان تمام شده باشد کاری انجام می‌شود. پایانِ تکه پایانِ پاسخ نیست.
+   */
+  const hearSegment = useCallback((segment) => {
+    const buffer = appendSpeechSegment(bufferRef.current, segment);
+    const { command, rest } = splitVoiceCommand(buffer);
+    if (!command) { bufferRef.current = buffer; setHeard(buffer); return; }
+    bufferRef.current = '';
+    setHeard('');
+    const active = PERSONNEL_STEPS[stateRef.current.current];
+    if (command === 'clear') { setError(''); return; }
+    if (command === 'back') { goBack(); return; }
+    if (command === 'skip') {
+      if (active?.required) { bufferRef.current = rest; setHeard(rest); setError(`«${active.label}» لازم است و نمی‌شود بعداً گفت.`); return; }
+      if (active) commit(active.id, null, 'skipped');
+      return;
+    }
+    if (command === 'save') {
+      if (rest && active && !answer(rest)) { bufferRef.current = rest; setHeard(rest); return; }
+      saveRef.current?.();
+      return;
+    }
+    // «بعدی» / «تأیید»
+    if (!active) return;
+    if (!rest) {
+      // مرحله‌ای که از قبل پاسخ دارد با «بعدی» فقط جلو می‌رود.
+      if (stateRef.current.status[active.id] !== 'pending') { commit(active.id, stateRef.current.values[active.id], stateRef.current.status[active.id]); return; }
+      setError('هنوز چیزی برای این مرحله نگفتی.');
+      return;
+    }
+    // پاسخ نامعتبر می‌ماند تا کاربر ادامه دهد یا «پاک کن» بگوید.
+    if (!answer(rest)) { bufferRef.current = rest; setHeard(rest); }
+  }, [answer, commit, goBack]);
 
   const stopListening = useCallback(() => {
     listeningRef.current = false;
@@ -157,12 +215,14 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
         const consumed = consumedRef.current;
         const final = snapshot.finalTranscript || '';
         const fresh = (final.startsWith(consumed) ? final.slice(consumed.length) : final).trim();
-        const live = (snapshot.transcript.startsWith(consumed) ? snapshot.transcript.slice(consumed.length) : snapshot.transcript).trim();
-        setHeard(live);
         if (fresh) {
           consumedRef.current = final;
-          answer(fresh);
+          hearSegment(fresh);
+          return;
         }
+        // تکهٔ نیمه‌تمام فقط نمایش است؛ چیزی را نمی‌بندد.
+        const interim = (snapshot.transcript.startsWith(consumed) ? snapshot.transcript.slice(consumed.length) : snapshot.transcript).trim();
+        setHeard(appendSpeechSegment(bufferRef.current, interim));
       },
       // Chrome پس از سکوت نشست را می‌بندد؛ تا کاربر خودش نبسته، دوباره گوش می‌دهیم.
       onEnd: () => { if (listeningRef.current) { try { startSession(); } catch { stopListening(); } } },
@@ -174,7 +234,7 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
     });
     recognizerRef.current = recognizer;
     recognizer.start();
-  }, [answer, notify, stopListening]);
+  }, [hearSegment, notify, stopListening]);
 
   const toggleListening = () => {
     if (listening) { stopListening(); return; }
@@ -184,6 +244,8 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
     try { startSession(); } catch { stopListening(); notify('میکروفن شروع نشد؛ دستی وارد کن.'); }
   };
 
+  // مرحلهٔ تازه، گفته‌های تازه.
+  useEffect(() => { bufferRef.current = ''; setHeard(''); }, [state.current]);
   useEffect(() => () => { listeningRef.current = false; try { recognizerRef.current?.abort(); } catch { /* بسته است */ } }, []);
   // همهٔ مرحله‌ها پاسخ گرفتند: گوش دادن تمام می‌شود.
   useEffect(() => { if (finished && listeningRef.current) stopListening(); }, [finished, stopListening]);
@@ -235,7 +297,7 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
         {listening ? 'توقف' : 'گفتن با صدا'}
       </button>
       <p className="text-xs leading-6 text-muted">{listening
-        ? 'بگو؛ هر مرحله که تیک خورد، بعدی را بگو. «بعداً» رد می‌کند، «برگرد» قبلی، «ذخیره» ثبت.'
+        ? 'کامل بگو و آخرش «بعدی» یا «تأیید». «پاک کن» از نو، «بعداً» رد، «برگرد» قبلی، «ذخیره» ثبت.'
         : 'روی میکروفن بزن و به ترتیب بگو، یا هر مرحله را دستی پر کن.'}</p>
     </div>
 
@@ -255,7 +317,7 @@ function PersonnelWizard({ employee, onClose, onSaved, notify }) {
           </button>
           {active && <div className="space-y-2 px-3 pb-3">
             <p className="text-xs text-muted">بگو یا بنویس: {item.say}</p>
-            {listening && <p className="min-h-6 rounded-md bg-surface px-2 py-1 text-[14px]" aria-live="polite">{heard || <span className="text-muted">گوش می‌دهم…</span>}</p>}
+            {listening && <VoiceDraft step={item} heard={heard} onConfirm={() => hearSegment('تأیید')} onClear={() => hearSegment('پاک کن')} />}
             {error && <p className="text-xs font-bold text-expense" role="alert">{error}</p>}
             <ManualInput step={item} values={state.values} onAnswer={answer} onValue={(value) => commit(item.id, value)} />
             <div className="flex gap-3 text-xs font-bold text-muted">
@@ -313,7 +375,7 @@ export default function PersonnelPanel({ canManage, notify }) {
     {items.length > 0 && <ul className="mt-3 divide-y divide-line rounded-xl border border-line bg-surface">
       {items.map((item) => <li key={item.id} className="flex items-center gap-3 px-3 py-2.5">
         <div className="min-w-0 flex-1">
-          <p className={`truncate text-[14px] font-bold ${item.active ? '' : 'text-muted line-through'}`}>{item.name}</p>
+          <p className={`truncate text-[14px] font-bold ${item.active ? '' : 'text-muted line-through'}`}>{item.name}{item.nickname && <span className="font-normal text-muted"> · «{item.nickname}»</span>}</p>
           <p className="mt-0.5 truncate text-xs text-muted">{[item.jobTitle, LABEL.department[item.department], item.baseWage ? `${formatAmount(item.baseWage)} ${unitLabel()}` : ''].filter(Boolean).join(' · ') || '—'}</p>
         </div>
         <span title={item.completeness.missing.length ? `هنوز گفته نشده: ${item.completeness.missing.join('، ')}` : 'پرونده کامل است'}
